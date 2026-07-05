@@ -13,6 +13,7 @@ const commonFunctionNodes = [
   'function_definition',
   'function_expression',
   'function_item',
+  'function_signature_item',
   'function_declarator',
   'method_declaration',
   'method_definition',

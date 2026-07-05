@@ -1249,6 +1249,14 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
     return undefined;
   }
 
+  // A Rust closure bound to a simple `let` identifier (`let add = |x| ...;`) takes that identifier
+  // as its name, mirroring how JS arrow functions assigned to a variable are named, so calls to the
+  // binding resolve as intra-file edges.
+  if (node.type === 'closure_expression' && parent.type === 'let_declaration') {
+    const patternNode = parent.childForFieldName('pattern');
+    return patternNode?.type === 'identifier' ? patternNode.text : undefined;
+  }
+
   const parentName = parent.childForFieldName('name');
   return parentName?.text;
 }
