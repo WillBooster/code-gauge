@@ -34,6 +34,7 @@ const commonClassNodes = [
   'trait_item',
   'struct_item',
   'enum_item',
+  'union_item',
 ] as const;
 
 const commonDecisionNodes = [
