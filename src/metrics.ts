@@ -70,7 +70,6 @@ const operandNodeTypes = new Set([
   'imaginary_literal',
   'string',
   'string_literal',
-  'string_content',
   'template_string',
   'character_literal',
   'char_literal',
@@ -1373,7 +1372,8 @@ function isImportNode(node: Parser.SyntaxNode): boolean {
     node.type === 'import_from_statement' ||
     node.type === 'import_spec' ||
     node.type === 'import_spec_list' ||
-    node.type === 'use_declaration'
+    node.type === 'use_declaration' ||
+    node.type === 'extern_crate_declaration'
   );
 }
 
@@ -1444,6 +1444,12 @@ function isRustLocalImportSource(source: string): boolean {
  * forms `use std::collections::HashMap;` and `use std::fmt;`.
  */
 function findRustImportSources(node: Parser.SyntaxNode): string[] {
+  // `extern crate serde as s;` names the crate directly; the alias is irrelevant to the source.
+  if (node.type === 'extern_crate_declaration') {
+    const nameNode = node.childForFieldName('name');
+    return nameNode ? [normalizeImportSource(nameNode.text)] : [];
+  }
+
   const argument = node.childForFieldName('argument');
   return argument ? rustImportSources(argument, '') : [];
 }
