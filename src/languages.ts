@@ -32,7 +32,6 @@ const commonClassNodes = [
   'class_definition',
   'interface_declaration',
   'trait_item',
-  'impl_item',
   'struct_item',
   'enum_item',
 ] as const;

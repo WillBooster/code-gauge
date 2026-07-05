@@ -1428,52 +1428,67 @@ function isRustLocalImportSource(source: string): boolean {
 
 /**
  * Extracts the module path(s) a Rust `use` declaration reaches into, dropping the imported leaf item(s).
- * For example `use std::collections::HashMap;` yields `std::collections` and `use serde::{...};` yields `serde`.
+ * Grouped imports are fully expanded so each imported item resolves to its own module, e.g.
+ * `use std::{collections::HashMap, fmt};` yields `std::collections` and `std`, matching the single-item
+ * forms `use std::collections::HashMap;` and `use std::fmt;`.
  */
 function findRustImportSources(node: Parser.SyntaxNode): string[] {
   const argument = node.childForFieldName('argument');
-  return argument ? rustImportSourcesFromArgument(argument) : [];
+  return argument ? rustImportSources(argument, '') : [];
 }
 
-function rustImportSourcesFromArgument(argument: Parser.SyntaxNode): string[] {
-  // A prefix-less brace group (`use {std::fmt, std::io};`) parses as a bare `use_list`; each entry
-  // carries its own path, so flatten them. Prefixed groups (`use std::{fmt, io};`) are `scoped_use_list`
-  // and resolve to the shared prefix instead.
-  if (argument.type === 'use_list') {
-    return argument.namedChildren.flatMap(rustImportSourcesFromArgument);
-  }
-
-  const source = rustImportSourceFromArgument(argument);
-  return source ? [source] : [];
-}
-
-function rustImportSourceFromArgument(argument: Parser.SyntaxNode): string | undefined {
-  switch (argument.type) {
-    case 'scoped_identifier':
+/** Resolves the module source(s) of a `use` tree node, given the module `prefix` accumulated from ancestors. */
+function rustImportSources(node: Parser.SyntaxNode, prefix: string): string[] {
+  switch (node.type) {
+    case 'use_list': {
+      return node.namedChildren.flatMap((child) => rustImportSources(child, prefix));
+    }
     case 'scoped_use_list': {
-      const pathNode = argument.childForFieldName('path');
-      return pathNode ? normalizeImportSource(pathNode.text) : undefined;
+      const listNode = node.childForFieldName('list');
+      const nextPrefix = joinModulePath(prefix, rustPathText(node.childForFieldName('path')));
+      return listNode ? rustImportSources(listNode, nextPrefix) : withModulePrefix(nextPrefix);
+    }
+    case 'scoped_identifier': {
+      // Drop the leaf item: the source is the prefix plus this node's own `path` field.
+      return withModulePrefix(joinModulePath(prefix, rustPathText(node.childForFieldName('path'))));
     }
     case 'use_wildcard': {
-      // `use a::b::*;` imports from `a::b`; the wildcard's whole inner path is the source
-      // (it has no `path` field, and its last segment is the module rather than an item).
-      const pathNode = argument.namedChild(0);
-      return pathNode ? normalizeImportSource(pathNode.text) : undefined;
+      // `use a::b::*;` imports from `a::b`; the wildcard has no `path` field, so its whole inner path counts.
+      return withModulePrefix(joinModulePath(prefix, rustPathText(node.namedChild(0))));
     }
     case 'use_as_clause': {
-      const pathNode = argument.childForFieldName('path');
-      return pathNode ? rustImportSourceFromArgument(pathNode) : undefined;
+      const pathNode = node.childForFieldName('path');
+      return pathNode ? rustImportSources(pathNode, prefix) : [];
+    }
+    case 'self': {
+      // `self` in a group (`use std::io::{self, Write};`) refers to the prefix module itself.
+      return withModulePrefix(prefix);
     }
     case 'identifier':
     case 'crate':
-    case 'self':
     case 'super': {
-      return normalizeImportSource(argument.text);
+      // A bare leaf item: at the top level (`use tokio;`) it is the module; inside a group its module is the prefix.
+      return withModulePrefix(prefix === '' ? normalizeImportSource(node.text) : prefix);
     }
     default: {
-      return undefined;
+      return [];
     }
   }
+}
+
+function rustPathText(node: Parser.SyntaxNode | null): string {
+  return node ? normalizeImportSource(node.text) : '';
+}
+
+function joinModulePath(prefix: string, segment: string): string {
+  if (!segment) {
+    return prefix;
+  }
+  return prefix ? `${prefix}::${segment}` : segment;
+}
+
+function withModulePrefix(source: string): string[] {
+  return source ? [source] : [];
 }
 
 function findPythonImportSources(node: Parser.SyntaxNode, options: { expandPythonSubmodules: boolean }): string[] {
