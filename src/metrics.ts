@@ -762,7 +762,9 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
 
   visit(root);
 
-  const relativeImportCount = [...importSources].filter(isRelativeImportSource).length;
+  const relativeImportCount = [...importSources].filter((source) =>
+    isRelativeImportSource(source, language.name)
+  ).length;
 
   return {
     importCount,
@@ -1417,8 +1419,14 @@ function findDynamicImportSources(node: Parser.SyntaxNode): string[] {
   return firstArgument && isStringNode(firstArgument) ? [unquote(firstArgument.text)] : [];
 }
 
-function isRelativeImportSource(source: string): boolean {
-  return source.startsWith('.') || source.startsWith('/') || isRustLocalImportSource(source);
+function isRelativeImportSource(source: string, language: LanguageName): boolean {
+  if (source.startsWith('.') || source.startsWith('/')) {
+    return true;
+  }
+
+  // `crate`/`self`/`super` are local only in Rust; other languages may legitimately import a module
+  // literally named that, so the in-crate rule must not leak across languages.
+  return language === 'rust' && isRustLocalImportSource(source);
 }
 
 /** Rust in-crate imports address the module tree through `crate`, `self`, or `super`. */
