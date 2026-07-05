@@ -237,12 +237,17 @@ function analyzeFunction(node: Parser.SyntaxNode, language: LanguageDefinition, 
 function countParameters(node: Parser.SyntaxNode): number {
   const parametersNode =
     node.childForFieldName('parameters') ??
-    node.namedChildren.find((child) => child.type === 'formal_parameters' || child.type === 'parameter_list');
+    node.namedChildren.find(
+      (child) =>
+        child.type === 'formal_parameters' || child.type === 'parameter_list' || child.type === 'closure_parameters'
+    );
   if (!parametersNode) {
     return 0;
   }
 
-  return parametersNode.namedChildren.filter((child) => child.type !== 'comment').length;
+  // Rust's `self` receiver is not a declared parameter.
+  return parametersNode.namedChildren.filter((child) => child.type !== 'comment' && child.type !== 'self_parameter')
+    .length;
 }
 
 function measureCallGraph(analyses: FunctionAnalysis[]): {
@@ -662,7 +667,15 @@ function isTopLevelDeclarationNode(node: Parser.SyntaxNode): boolean {
     node.type === 'type_spec' ||
     node.type === 'const_spec' ||
     node.type === 'var_spec' ||
-    node.type === 'variable_declarator'
+    node.type === 'variable_declarator' ||
+    node.type === 'struct_item' ||
+    node.type === 'enum_item' ||
+    node.type === 'union_item' ||
+    node.type === 'trait_item' ||
+    node.type === 'type_item' ||
+    node.type === 'const_item' ||
+    node.type === 'static_item' ||
+    node.type === 'mod_item'
   );
 }
 
@@ -809,7 +822,8 @@ function isAssignmentNode(node: Parser.SyntaxNode): boolean {
     node.type === 'assignment_statement' ||
     node.type === 'assignment' ||
     node.type === 'augmented_assignment' ||
-    node.type === 'short_var_declaration'
+    node.type === 'short_var_declaration' ||
+    node.type === 'compound_assignment_expr'
   );
 }
 
@@ -822,7 +836,10 @@ function isLoopNode(node: Parser.SyntaxNode): boolean {
     node.type === 'for_statement' ||
     node.type === 'for_in_statement' ||
     node.type === 'while_statement' ||
-    node.type === 'do_statement'
+    node.type === 'do_statement' ||
+    node.type === 'for_expression' ||
+    node.type === 'while_expression' ||
+    node.type === 'loop_expression'
   );
 }
 
@@ -830,12 +847,13 @@ function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
   return (
     (node.type === 'lexical_declaration' && node.firstChild?.text === 'let') ||
     (node.type === 'variable_declaration' && node.firstChild?.text === 'var') ||
-    node.type === 'var_declaration'
+    node.type === 'var_declaration' ||
+    (node.type === 'let_declaration' && node.children.some((child) => child.type === 'mutable_specifier'))
   );
 }
 
 function isReturnNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'return_statement';
+  return node.type === 'return_statement' || node.type === 'return_expression';
 }
 
 function isThrowNode(node: Parser.SyntaxNode): boolean {
@@ -1256,7 +1274,7 @@ function isReactComponentWrapperCall(node: Parser.SyntaxNode): boolean {
 }
 
 function isCallNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'call_expression' || node.type === 'call';
+  return node.type === 'call_expression' || node.type === 'call' || node.type === 'macro_invocation';
 }
 
 function findCalleeName(node: Parser.SyntaxNode): string | undefined {
@@ -1308,7 +1326,8 @@ function isImportNode(node: Parser.SyntaxNode): boolean {
     node.type === 'import_declaration' ||
     node.type === 'import_from_statement' ||
     node.type === 'import_spec' ||
-    node.type === 'import_spec_list'
+    node.type === 'import_spec_list' ||
+    node.type === 'use_declaration'
   );
 }
 
@@ -1339,6 +1358,10 @@ function findImportSources(
     }
   }
 
+  if (language.name === 'rust') {
+    return findRustImportSources(node);
+  }
+
   if (isDynamicImportNode(node)) {
     return findDynamicImportSources(node);
   }
@@ -1354,7 +1377,50 @@ function findDynamicImportSources(node: Parser.SyntaxNode): string[] {
 }
 
 function isRelativeImportSource(source: string): boolean {
-  return source.startsWith('.') || source.startsWith('/');
+  return source.startsWith('.') || source.startsWith('/') || isRustLocalImportSource(source);
+}
+
+/** Rust in-crate imports address the module tree through `crate`, `self`, or `super`. */
+function isRustLocalImportSource(source: string): boolean {
+  return /^(?:crate|self|super)(?:::|$)/u.test(source);
+}
+
+/**
+ * Extracts the module path a Rust `use` declaration reaches into, dropping the imported leaf item(s).
+ * For example `use std::collections::HashMap;` yields `std::collections` and `use serde::{...};` yields `serde`.
+ */
+function findRustImportSources(node: Parser.SyntaxNode): string[] {
+  const argument = node.childForFieldName('argument');
+  if (!argument) {
+    return [];
+  }
+
+  const source = rustImportSourceFromArgument(argument);
+  return source ? [source] : [];
+}
+
+function rustImportSourceFromArgument(argument: Parser.SyntaxNode): string | undefined {
+  switch (argument.type) {
+    case 'scoped_identifier':
+    case 'scoped_use_list':
+    case 'use_wildcard': {
+      const pathNode = argument.childForFieldName('path');
+      return pathNode ? normalizeImportSource(pathNode.text) : undefined;
+    }
+    case 'use_as_clause': {
+      const pathNode = argument.childForFieldName('path');
+      return pathNode ? rustImportSourceFromArgument(pathNode) : undefined;
+    }
+    case 'identifier':
+    case 'crate':
+    case 'self':
+    case 'super': {
+      return normalizeImportSource(argument.text);
+    }
+    default: {
+      return undefined;
+    }
+  }
 }
 
 function findPythonImportSources(node: Parser.SyntaxNode, options: { expandPythonSubmodules: boolean }): string[] {

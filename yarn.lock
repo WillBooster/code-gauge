@@ -3810,6 +3810,7 @@ __metadata:
     tree-sitter-go: "npm:^0.21.2"
     tree-sitter-javascript: "npm:^0.21.4"
     tree-sitter-python: "npm:^0.21.0"
+    tree-sitter-rust: "npm:^0.21.0"
     tree-sitter-typescript: "npm:^0.21.2"
     vitest: "npm:4.1.9"
   bin:
@@ -7950,6 +7951,22 @@ __metadata:
     tree_sitter:
       optional: true
   checksum: 10c0/165937ab8e059847fd494202f417aa0d9883e4e245facccf3717323c60558456ce62a13e648f4679462112b63f9879fc8262f79c90318b62870ddbf00d529988
+  languageName: node
+  linkType: hard
+
+"tree-sitter-rust@npm:^0.21.0":
+  version: 0.21.0
+  resolution: "tree-sitter-rust@npm:0.21.0"
+  dependencies:
+    node-addon-api: "npm:^7.1.0"
+    node-gyp: "npm:latest"
+    node-gyp-build: "npm:^4.8.0"
+  peerDependencies:
+    tree-sitter: ^0.21.1
+  peerDependenciesMeta:
+    tree_sitter:
+      optional: true
+  checksum: 10c0/8927cb744f5b0f3463890bddf5133ba4c5a659052037fc13d8c28359a2a786a5a2c30292b04c29e33ce17a112509d4f004c1bc4f99dfef83f27f724751ce24df
   languageName: node
   linkType: hard
 

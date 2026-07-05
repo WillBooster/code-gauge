@@ -1,6 +1,7 @@
 import Go from 'tree-sitter-go';
 import JavaScript from 'tree-sitter-javascript';
 import Python from 'tree-sitter-python';
+import Rust from 'tree-sitter-rust';
 import TypeScript from 'tree-sitter-typescript';
 import type { LanguageDefinition, LanguageName, ParserLanguage } from './types.js';
 
@@ -21,6 +22,7 @@ const commonFunctionNodes = [
   'generator_function_declaration',
   'lambda',
   'lambda_expression',
+  'closure_expression',
 ] as const;
 
 const commonClassNodes = [
@@ -49,6 +51,10 @@ const commonDecisionNodes = [
   'match_arm',
   'conditional_expression',
   'ternary_expression',
+  'if_expression',
+  'while_expression',
+  'for_expression',
+  'loop_expression',
 ] as const;
 
 function normalizeGrammar(module: GrammarModule): ParserLanguage {
@@ -99,6 +105,11 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
   {
     name: 'go',
     parserLanguage: normalizeGrammar(Go as unknown as GrammarModule),
+  },
+  {
+    name: 'rust',
+    aliases: ['rs'],
+    parserLanguage: normalizeGrammar(Rust as unknown as GrammarModule),
   },
 ].map((language) => ({
   functionNodeTypes: commonFunctionNodes,

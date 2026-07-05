@@ -90,6 +90,17 @@ const languageCases: LanguageCase[] = [
       maxCyclomaticComplexity: 2,
     },
   },
+  {
+    name: 'Rust',
+    language: 'rust',
+    fixture: 'sample.rs',
+    expected: {
+      language: 'rust',
+      functionCount: 1,
+      functionNames: ['choose'],
+      maxCyclomaticComplexity: 2,
+    },
+  },
 ];
 
 describe('measureCode e2e', () => {
@@ -151,6 +162,7 @@ describe('measureCode e2e', () => {
       { alias: 'js', code: 'function run() { return 1; }', expectedLanguage: 'javascript' },
       { alias: 'ts', code: 'export function run(): number { return 1; }', expectedLanguage: 'typescript' },
       { alias: 'py', code: 'def run():\n    return 1', expectedLanguage: 'python' },
+      { alias: 'rs', code: 'fn run() -> i32 { 1 }', expectedLanguage: 'rust' },
     ];
 
     for (const { alias, code, expectedLanguage } of cases) {
@@ -188,6 +200,6 @@ describe('measureCode e2e', () => {
   });
 
   it('lists built-in languages', () => {
-    expect(supportedLanguages).toEqual(['javascript', 'jsx', 'typescript', 'tsx', 'python', 'go']);
+    expect(supportedLanguages).toEqual(['javascript', 'jsx', 'typescript', 'tsx', 'python', 'go', 'rust']);
   });
 });

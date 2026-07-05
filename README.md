@@ -16,7 +16,7 @@ npm install -g code-gauge
 code-gauge path/to/project
 ```
 
-The CLI scans JavaScript, JSX, TypeScript, TSX, Python, and Go files. By default it skips generated, vendor, test, and tool directories, prints a summary, and lists the highest-risk findings. TypeScript project metrics and React component classification turn on automatically when a `tsconfig.json` is found.
+The CLI scans JavaScript, JSX, TypeScript, TSX, Python, Go, and Rust files. By default it skips generated, vendor, test, and tool directories, prints a summary, and lists the highest-risk findings. TypeScript project metrics and React component classification turn on automatically when a `tsconfig.json` is found.
 
 ## Options
 
@@ -92,7 +92,7 @@ over-flags one language or under-flags another. `languageThresholds` overrides i
 profile without repeating the whole set. Each file resolves its thresholds as **base → its language profile →
 the `react` profile** (the last applies when the file contains a React component), so later profiles win.
 
-Valid profile keys are `javascript`, `jsx`, `typescript`, `tsx`, `python`, `go`, and `react`. Built-in
+Valid profile keys are `javascript`, `jsx`, `typescript`, `tsx`, `python`, `go`, `rust`, and `react`. Built-in
 overrides raise `stateMutation` and `structuralCoordination` for Python (every binding is an assignment, so
 these run far higher than in TypeScript) and raise `import` for React files (which pull in many components).
 Anything you specify is merged on top of the built-in overrides, so `{ "python": { "stateMutation": 8 } }`
@@ -124,7 +124,7 @@ Command-line `--<metric>-threshold` flags set the global base only; use the conf
 
 ## Supported languages
 
-Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, and Go. Additional tree-sitter grammars can be registered with `TreeMeasurer.registerLanguage`.
+Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, and Rust. Additional tree-sitter grammars can be registered with `TreeMeasurer.registerLanguage`.
 
 ## Programmatic API
 
