@@ -237,10 +237,7 @@ function analyzeFunction(node: Parser.SyntaxNode, language: LanguageDefinition, 
 function countParameters(node: Parser.SyntaxNode): number {
   const parametersNode =
     node.childForFieldName('parameters') ??
-    node.namedChildren.find(
-      (child) =>
-        child.type === 'formal_parameters' || child.type === 'parameter_list' || child.type === 'closure_parameters'
-    );
+    node.namedChildren.find((child) => child.type === 'formal_parameters' || child.type === 'parameter_list');
   if (!parametersNode) {
     return 0;
   }
@@ -1412,13 +1409,20 @@ function isRustLocalImportSource(source: string): boolean {
 }
 
 /**
- * Extracts the module path a Rust `use` declaration reaches into, dropping the imported leaf item(s).
+ * Extracts the module path(s) a Rust `use` declaration reaches into, dropping the imported leaf item(s).
  * For example `use std::collections::HashMap;` yields `std::collections` and `use serde::{...};` yields `serde`.
  */
 function findRustImportSources(node: Parser.SyntaxNode): string[] {
   const argument = node.childForFieldName('argument');
-  if (!argument) {
-    return [];
+  return argument ? rustImportSourcesFromArgument(argument) : [];
+}
+
+function rustImportSourcesFromArgument(argument: Parser.SyntaxNode): string[] {
+  // A prefix-less brace group (`use {std::fmt, std::io};`) parses as a bare `use_list`; each entry
+  // carries its own path, so flatten them. Prefixed groups (`use std::{fmt, io};`) are `scoped_use_list`
+  // and resolve to the shared prefix instead.
+  if (argument.type === 'use_list') {
+    return argument.namedChildren.flatMap(rustImportSourcesFromArgument);
   }
 
   const source = rustImportSourceFromArgument(argument);
