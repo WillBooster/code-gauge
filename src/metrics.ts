@@ -848,8 +848,22 @@ function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
     (node.type === 'lexical_declaration' && node.firstChild?.text === 'let') ||
     (node.type === 'variable_declaration' && node.firstChild?.text === 'var') ||
     node.type === 'var_declaration' ||
-    (node.type === 'let_declaration' && node.children.some((child) => child.type === 'mutable_specifier'))
+    (node.type === 'let_declaration' && hasRustMutableLetBinding(node))
   );
+}
+
+/**
+ * A Rust `let` binds mutably either via a direct `mut` (`let mut x = ...`) or via a `mut_pattern`
+ * nested in a destructuring pattern (`let (mut a, b) = ...`). Only the pattern is inspected so a
+ * borrow in the value such as `let x = &mut y;` is not miscounted as a mutable binding.
+ */
+function hasRustMutableLetBinding(node: Parser.SyntaxNode): boolean {
+  if (node.children.some((child) => child.type === 'mutable_specifier')) {
+    return true;
+  }
+
+  const pattern = node.childForFieldName('pattern');
+  return pattern ? pattern.descendantsOfType('mut_pattern').length > 0 : false;
 }
 
 function isReturnNode(node: Parser.SyntaxNode): boolean {
@@ -1278,6 +1292,10 @@ function isCallNode(node: Parser.SyntaxNode): boolean {
 }
 
 function findCalleeName(node: Parser.SyntaxNode): string | undefined {
+  // The `namedChild(0)` fallback covers Rust `macro_invocation` (whose callee is the `macro` field,
+  // not `function`), so macros resolve to their name. `findRightmostIdentifier` must be kept rather
+  // than reading `calleeNode.text`: member calls like `self.map.get(key)` must resolve to `get`, not
+  // the full `self.map.get`, so intra-file call-graph name matching stays correct.
   const calleeNode = node.childForFieldName('function') ?? node.namedChild(0);
   if (!calleeNode) {
     return undefined;
@@ -1402,9 +1420,14 @@ function findRustImportSources(node: Parser.SyntaxNode): string[] {
 function rustImportSourceFromArgument(argument: Parser.SyntaxNode): string | undefined {
   switch (argument.type) {
     case 'scoped_identifier':
-    case 'scoped_use_list':
-    case 'use_wildcard': {
+    case 'scoped_use_list': {
       const pathNode = argument.childForFieldName('path');
+      return pathNode ? normalizeImportSource(pathNode.text) : undefined;
+    }
+    case 'use_wildcard': {
+      // `use a::b::*;` imports from `a::b`; the wildcard's whole inner path is the source
+      // (it has no `path` field, and its last segment is the module rather than an item).
+      const pathNode = argument.namedChild(0);
       return pathNode ? normalizeImportSource(pathNode.text) : undefined;
     }
     case 'use_as_clause': {
