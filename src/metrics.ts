@@ -850,9 +850,11 @@ function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
 }
 
 /**
- * A Rust `let` binds mutably either via a direct `mut` (`let mut x = ...`) or via a `mut_pattern`
- * nested in a destructuring pattern (`let (mut a, b) = ...`). Only the pattern is inspected so a
- * borrow in the value such as `let x = &mut y;` is not miscounted as a mutable binding.
+ * A Rust `let` binds mutably via a direct `mut` (`let mut x = ...`) or a `mut` inside its
+ * destructuring pattern — a `mut_pattern` (`let (mut a, b) = ...`) or a shorthand `field_pattern`
+ * (`let Point { mut x } = ...`). Only the pattern is inspected so a borrow in the value such as
+ * `let x = &mut y;` is not miscounted, and a `mut` under a `reference_pattern` (`let &mut x = y;`,
+ * which binds `x` immutably) is excluded.
  */
 function hasRustMutableLetBinding(node: Parser.SyntaxNode): boolean {
   if (node.children.some((child) => child.type === 'mutable_specifier')) {
@@ -860,7 +862,13 @@ function hasRustMutableLetBinding(node: Parser.SyntaxNode): boolean {
   }
 
   const pattern = node.childForFieldName('pattern');
-  return pattern ? pattern.descendantsOfType('mut_pattern').length > 0 : false;
+  if (!pattern) {
+    return false;
+  }
+
+  return pattern
+    .descendantsOfType('mutable_specifier')
+    .some((specifier) => specifier.parent?.type !== 'reference_pattern');
 }
 
 function isReturnNode(node: Parser.SyntaxNode): boolean {
