@@ -63,6 +63,7 @@ const languageByExtension = new Map<string, LanguageName>([
   ['.mjs', 'javascript'],
   ['.mts', 'typescript'],
   ['.py', 'python'],
+  ['.rs', 'rust'],
   ['.ts', 'typescript'],
   ['.tsx', 'tsx'],
 ]);
@@ -87,6 +88,7 @@ const ignoredDirectoryNames = new Set([
   'fixtures',
   'generated',
   'node_modules',
+  'target',
   'test-fixtures',
   'vendor',
   'venv',

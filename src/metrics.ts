@@ -63,10 +63,16 @@ const operandNodeTypes = new Set([
   'number',
   'integer',
   'float',
+  'integer_literal',
+  'float_literal',
+  'int_literal',
+  'rune_literal',
+  'imaginary_literal',
   'string',
   'string_literal',
   'template_string',
   'character_literal',
+  'char_literal',
   'true',
   'false',
   'null',
@@ -242,7 +248,9 @@ function countParameters(node: Parser.SyntaxNode): number {
     return 0;
   }
 
-  return parametersNode.namedChildren.filter((child) => child.type !== 'comment').length;
+  // Rust's `self` receiver is not a declared parameter.
+  return parametersNode.namedChildren.filter((child) => child.type !== 'comment' && child.type !== 'self_parameter')
+    .length;
 }
 
 function measureCallGraph(analyses: FunctionAnalysis[]): {
@@ -662,7 +670,15 @@ function isTopLevelDeclarationNode(node: Parser.SyntaxNode): boolean {
     node.type === 'type_spec' ||
     node.type === 'const_spec' ||
     node.type === 'var_spec' ||
-    node.type === 'variable_declarator'
+    node.type === 'variable_declarator' ||
+    node.type === 'struct_item' ||
+    node.type === 'enum_item' ||
+    node.type === 'union_item' ||
+    node.type === 'trait_item' ||
+    node.type === 'type_item' ||
+    node.type === 'const_item' ||
+    node.type === 'static_item' ||
+    node.type === 'mod_item'
   );
 }
 
@@ -748,7 +764,9 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
 
   visit(root);
 
-  const relativeImportCount = [...importSources].filter(isRelativeImportSource).length;
+  const relativeImportCount = [...importSources].filter((source) =>
+    isRelativeImportSource(source, language.name)
+  ).length;
 
   return {
     importCount,
@@ -809,7 +827,8 @@ function isAssignmentNode(node: Parser.SyntaxNode): boolean {
     node.type === 'assignment_statement' ||
     node.type === 'assignment' ||
     node.type === 'augmented_assignment' ||
-    node.type === 'short_var_declaration'
+    node.type === 'short_var_declaration' ||
+    node.type === 'compound_assignment_expr'
   );
 }
 
@@ -822,7 +841,10 @@ function isLoopNode(node: Parser.SyntaxNode): boolean {
     node.type === 'for_statement' ||
     node.type === 'for_in_statement' ||
     node.type === 'while_statement' ||
-    node.type === 'do_statement'
+    node.type === 'do_statement' ||
+    node.type === 'for_expression' ||
+    node.type === 'while_expression' ||
+    node.type === 'loop_expression'
   );
 }
 
@@ -830,12 +852,35 @@ function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
   return (
     (node.type === 'lexical_declaration' && node.firstChild?.text === 'let') ||
     (node.type === 'variable_declaration' && node.firstChild?.text === 'var') ||
-    node.type === 'var_declaration'
+    node.type === 'var_declaration' ||
+    (node.type === 'let_declaration' && hasRustMutableLetBinding(node))
   );
 }
 
+/**
+ * A Rust `let` binds mutably via a direct `mut` (`let mut x = ...`) or a `mut` inside its
+ * destructuring pattern — a `mut_pattern` (`let (mut a, b) = ...`) or a shorthand `field_pattern`
+ * (`let Point { mut x } = ...`). Only the pattern is inspected so a borrow in the value such as
+ * `let x = &mut y;` is not miscounted, and a `mut` under a `reference_pattern` (`let &mut x = y;`,
+ * which binds `x` immutably) is excluded.
+ */
+function hasRustMutableLetBinding(node: Parser.SyntaxNode): boolean {
+  if (node.children.some((child) => child.type === 'mutable_specifier')) {
+    return true;
+  }
+
+  const pattern = node.childForFieldName('pattern');
+  if (!pattern) {
+    return false;
+  }
+
+  return pattern
+    .descendantsOfType('mutable_specifier')
+    .some((specifier) => specifier.parent?.type !== 'reference_pattern');
+}
+
 function isReturnNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'return_statement';
+  return node.type === 'return_statement' || node.type === 'return_expression';
 }
 
 function isThrowNode(node: Parser.SyntaxNode): boolean {
@@ -973,6 +1018,12 @@ const duplicateBlockTypes = new Set([
   'elif_clause',
   'expression_statement',
   'return_statement',
+  'return_expression',
+  'if_expression',
+  'for_expression',
+  'while_expression',
+  'loop_expression',
+  'match_expression',
   'jsx_element',
   'jsx_self_closing_element',
 ]);
@@ -1217,6 +1268,14 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
     return undefined;
   }
 
+  // A Rust closure bound to a simple `let` identifier (`let add = |x| ...;`) takes that identifier
+  // as its name, mirroring how JS arrow functions assigned to a variable are named, so calls to the
+  // binding resolve as intra-file edges.
+  if (node.type === 'closure_expression' && parent.type === 'let_declaration') {
+    const patternNode = parent.childForFieldName('pattern');
+    return patternNode?.type === 'identifier' ? patternNode.text : undefined;
+  }
+
   const parentName = parent.childForFieldName('name');
   return parentName?.text;
 }
@@ -1256,10 +1315,14 @@ function isReactComponentWrapperCall(node: Parser.SyntaxNode): boolean {
 }
 
 function isCallNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'call_expression' || node.type === 'call';
+  return node.type === 'call_expression' || node.type === 'call' || node.type === 'macro_invocation';
 }
 
 function findCalleeName(node: Parser.SyntaxNode): string | undefined {
+  // The `namedChild(0)` fallback covers Rust `macro_invocation` (whose callee is the `macro` field,
+  // not `function`), so macros resolve to their name. `findRightmostIdentifier` must be kept rather
+  // than reading `calleeNode.text`: member calls like `self.map.get(key)` must resolve to `get`, not
+  // the full `self.map.get`, so intra-file call-graph name matching stays correct.
   const calleeNode = node.childForFieldName('function') ?? node.namedChild(0);
   if (!calleeNode) {
     return undefined;
@@ -1308,7 +1371,9 @@ function isImportNode(node: Parser.SyntaxNode): boolean {
     node.type === 'import_declaration' ||
     node.type === 'import_from_statement' ||
     node.type === 'import_spec' ||
-    node.type === 'import_spec_list'
+    node.type === 'import_spec_list' ||
+    node.type === 'use_declaration' ||
+    node.type === 'extern_crate_declaration'
   );
 }
 
@@ -1339,6 +1404,10 @@ function findImportSources(
     }
   }
 
+  if (language.name === 'rust') {
+    return findRustImportSources(node);
+  }
+
   if (isDynamicImportNode(node)) {
     return findDynamicImportSources(node);
   }
@@ -1353,8 +1422,90 @@ function findDynamicImportSources(node: Parser.SyntaxNode): string[] {
   return firstArgument && isStringNode(firstArgument) ? [unquote(firstArgument.text)] : [];
 }
 
-function isRelativeImportSource(source: string): boolean {
-  return source.startsWith('.') || source.startsWith('/');
+function isRelativeImportSource(source: string, language: LanguageName): boolean {
+  if (source.startsWith('.') || source.startsWith('/')) {
+    return true;
+  }
+
+  // `crate`/`self`/`super` are local only in Rust; other languages may legitimately import a module
+  // literally named that, so the in-crate rule must not leak across languages.
+  return language === 'rust' && isRustLocalImportSource(source);
+}
+
+/** Rust in-crate imports address the module tree through `crate`, `self`, or `super`. */
+function isRustLocalImportSource(source: string): boolean {
+  return /^(?:crate|self|super)(?:::|$)/u.test(source);
+}
+
+/**
+ * Extracts the module path(s) a Rust `use` declaration reaches into, dropping the imported leaf item(s).
+ * Grouped imports are fully expanded so each imported item resolves to its own module, e.g.
+ * `use std::{collections::HashMap, fmt};` yields `std::collections` and `std`, matching the single-item
+ * forms `use std::collections::HashMap;` and `use std::fmt;`.
+ */
+function findRustImportSources(node: Parser.SyntaxNode): string[] {
+  // `extern crate serde as s;` names the crate directly; the alias is irrelevant to the source.
+  if (node.type === 'extern_crate_declaration') {
+    const nameNode = node.childForFieldName('name');
+    return nameNode ? [normalizeImportSource(nameNode.text)] : [];
+  }
+
+  const argument = node.childForFieldName('argument');
+  return argument ? rustImportSources(argument, '') : [];
+}
+
+/** Resolves the module source(s) of a `use` tree node, given the module `prefix` accumulated from ancestors. */
+function rustImportSources(node: Parser.SyntaxNode, prefix: string): string[] {
+  switch (node.type) {
+    case 'use_list': {
+      return node.namedChildren.flatMap((child) => rustImportSources(child, prefix));
+    }
+    case 'scoped_use_list': {
+      const listNode = node.childForFieldName('list');
+      const nextPrefix = joinModulePath(prefix, rustPathText(node.childForFieldName('path')));
+      return listNode ? rustImportSources(listNode, nextPrefix) : withModulePrefix(nextPrefix);
+    }
+    case 'scoped_identifier': {
+      // Drop the leaf item: the source is the prefix plus this node's own `path` field.
+      return withModulePrefix(joinModulePath(prefix, rustPathText(node.childForFieldName('path'))));
+    }
+    case 'use_wildcard': {
+      // `use a::b::*;` imports from `a::b`; the wildcard has no `path` field, so its whole inner path counts.
+      return withModulePrefix(joinModulePath(prefix, rustPathText(node.namedChild(0))));
+    }
+    case 'use_as_clause': {
+      const pathNode = node.childForFieldName('path');
+      return pathNode ? rustImportSources(pathNode, prefix) : [];
+    }
+    case 'self': {
+      // `self` in a group (`use std::io::{self, Write};`) refers to the prefix module itself.
+      return withModulePrefix(prefix);
+    }
+    case 'identifier':
+    case 'crate':
+    case 'super': {
+      // A bare leaf item: at the top level (`use tokio;`) it is the module; inside a group its module is the prefix.
+      return withModulePrefix(prefix === '' ? normalizeImportSource(node.text) : prefix);
+    }
+    default: {
+      return [];
+    }
+  }
+}
+
+function rustPathText(node: Parser.SyntaxNode | null): string {
+  return node ? normalizeImportSource(node.text) : '';
+}
+
+function joinModulePath(prefix: string, segment: string): string {
+  if (!segment) {
+    return prefix;
+  }
+  return prefix ? `${prefix}::${segment}` : segment;
+}
+
+function withModulePrefix(source: string): string[] {
+  return source ? [source] : [];
 }
 
 function findPythonImportSources(node: Parser.SyntaxNode, options: { expandPythonSubmodules: boolean }): string[] {

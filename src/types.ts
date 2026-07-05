@@ -1,4 +1,4 @@
-export type SupportedLanguage = 'go' | 'javascript' | 'jsx' | 'python' | 'typescript' | 'tsx';
+export type SupportedLanguage = 'go' | 'javascript' | 'jsx' | 'python' | 'rust' | 'typescript' | 'tsx';
 
 export type LanguageName = SupportedLanguage | (string & {});
 export type ParserLanguage = unknown;
