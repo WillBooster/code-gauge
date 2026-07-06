@@ -26,6 +26,7 @@ The CLI scans JavaScript, JSX, TypeScript, TSX, Python, Go, and Rust files. By d
 | `--include-tests`          | Include test files and test directories.                                    |
 | `--tsconfig <path>`        | Use this `tsconfig.json` instead of the auto-detected one.                  |
 | `--max-findings <n>`       | Maximum number of findings to print (default: 20).                          |
+| `--largest-files <n>`      | List the `n` largest files by code LOC (config key: `largestFiles`).        |
 | `--json`                   | Print machine-readable JSON.                                                |
 | `--fail-on-risk`           | Exit with code 1 when any high-risk finding is reported.                    |
 | `--fail-on-error`          | Exit with code 1 when any file or directory cannot be scanned.              |

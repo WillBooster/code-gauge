@@ -66,6 +66,7 @@ export interface CodeGaugeConfig {
   /** Per-profile overrides keyed by language name or `react`; merged over `thresholds` for matching files. */
   languageThresholds?: Partial<Record<ProfileKey, Partial<Thresholds>>>;
   maxFindings?: number;
+  largestFiles?: number;
   includeTests?: boolean;
   failOnRisk?: boolean;
   failOnError?: boolean;
@@ -77,6 +78,8 @@ export interface ResolvedOptions {
   thresholds: Thresholds;
   profileThresholds: Partial<Record<ProfileKey, Partial<Thresholds>>>;
   maxFindings: number;
+  /** Number of largest files by code LOC to list; 0 disables the section. */
+  largestFiles: number;
   includeTests: boolean;
   failOnRisk: boolean;
   failOnError: boolean;
@@ -119,6 +122,7 @@ export interface CliOptions {
   stateMutationThreshold?: number;
   duplicateSymbolGroupThreshold?: number;
   maxFindings?: number;
+  largestFiles?: number;
   includeTests?: boolean;
   failOnRisk?: boolean;
   failOnError?: boolean;
@@ -156,6 +160,7 @@ export function resolveOptions(cli: CliOptions, config: CodeGaugeConfig): Resolv
     thresholds,
     profileThresholds: mergeProfileThresholds(defaultProfileThresholds, config.languageThresholds),
     maxFindings: cli.maxFindings ?? config.maxFindings ?? defaultMaxFindings,
+    largestFiles: cli.largestFiles ?? config.largestFiles ?? 0,
     includeTests: cli.includeTests ?? config.includeTests ?? false,
     failOnRisk: cli.failOnRisk ?? config.failOnRisk ?? false,
     failOnError: cli.failOnError ?? config.failOnError ?? false,
@@ -272,6 +277,9 @@ function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
 
   if (raw.maxFindings !== undefined) {
     config.maxFindings = requirePositiveInteger(raw.maxFindings, 'maxFindings', configFile);
+  }
+  if (raw.largestFiles !== undefined) {
+    config.largestFiles = requirePositiveInteger(raw.largestFiles, 'largestFiles', configFile);
   }
   for (const key of ['includeTests', 'failOnRisk', 'failOnError'] as const) {
     if (raw[key] !== undefined) {
