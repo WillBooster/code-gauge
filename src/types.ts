@@ -110,8 +110,15 @@ export interface DuplicationMetrics {
   duplicateBlockCount: number;
   /** Number of distinct shapes that appear more than once. */
   duplicateBlockGroupCount: number;
+  /** 1-based line ranges of every counted copy, grouped by shared shape. */
+  duplicateBlockGroups: DuplicateBlockOccurrence[][];
   /** Node count of the largest duplicated block, indicating how big the copied region is. */
   maxDuplicateBlockSize: number;
+}
+
+export interface DuplicateBlockOccurrence {
+  endLine: number;
+  startLine: number;
 }
 
 export interface TypeComplexityMetrics {
