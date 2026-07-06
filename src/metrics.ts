@@ -6,6 +6,7 @@ import type {
   CohesionMetrics,
   CouplingMetrics,
   DeclarationMetrics,
+  DuplicateBlockOccurrence,
   DuplicationMetrics,
   FunctionMetrics,
   HalsteadMetrics,
@@ -1069,11 +1070,9 @@ function measureDuplication(root: Parser.SyntaxNode): DuplicationMetrics {
   }
 
   // Count larger blocks first and skip any candidate nested inside an already-counted duplicate.
-  const counted: DuplicateCandidate[] = [];
   const consumed: Parser.SyntaxNode[] = [];
-  let duplicateBlockCount = 0;
   let maxDuplicateBlockSize = 0;
-  const groupCounts = new Map<string, number>();
+  const countedByShape = new Map<string, DuplicateCandidate[]>();
   for (const [shape, group] of byShape) {
     if (group.length < 2) {
       continue;
@@ -1082,21 +1081,30 @@ function measureDuplication(root: Parser.SyntaxNode): DuplicationMetrics {
       if (consumed.some((ancestor) => isAncestor(ancestor, candidate.node))) {
         continue;
       }
-      counted.push(candidate);
       consumed.push(candidate.node);
-      groupCounts.set(shape, (groupCounts.get(shape) ?? 0) + 1);
+      const counted = countedByShape.get(shape) ?? [];
+      counted.push(candidate);
+      countedByShape.set(shape, counted);
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, candidate.size);
     }
   }
+  let duplicateBlockCount = 0;
   let duplicateBlockGroupCount = 0;
-  for (const count of groupCounts.values()) {
-    if (count >= 2) {
-      duplicateBlockCount += count - 1;
-      duplicateBlockGroupCount += 1;
+  const duplicateBlockGroups: DuplicateBlockOccurrence[][] = [];
+  for (const counted of countedByShape.values()) {
+    if (counted.length < 2) {
+      continue;
     }
+    duplicateBlockCount += counted.length - 1;
+    duplicateBlockGroupCount += 1;
+    duplicateBlockGroups.push(
+      counted
+        .map(({ node }) => ({ startLine: node.startPosition.row + 1, endLine: node.endPosition.row + 1 }))
+        .toSorted((left, right) => left.startLine - right.startLine)
+    );
   }
 
-  return { duplicateBlockCount, duplicateBlockGroupCount, maxDuplicateBlockSize };
+  return { duplicateBlockCount, duplicateBlockGroupCount, duplicateBlockGroups, maxDuplicateBlockSize };
 }
 
 /** Serializes a subtree by node type only (ignoring identifiers and literals) and reports its node count. */

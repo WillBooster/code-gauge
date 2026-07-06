@@ -24,6 +24,8 @@ interface FileMetrics {
 }
 
 interface RiskTrigger {
+  /** Optional location hint (e.g. duplicated block line ranges) appended to the printed trigger. */
+  detail?: string;
   metric: string;
   score: number;
   threshold: number;
@@ -93,6 +95,9 @@ const ignoredDirectoryNames = new Set([
   'vendor',
   'venv',
 ]);
+
+/** Caps the `Duplicate symbols` section so large repositories do not flood the report. */
+const maxDuplicateSymbolGroupLines = 10;
 
 const testDirectoryNames = new Set(['__tests__', 'test', 'tests']);
 const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-]test)\.[^.]+$/iu;
@@ -548,7 +553,13 @@ function findRiskyFileMetrics(
   const formattedFile = formatPath(file, displayRoot);
   addTrigger(triggers, 'file LOC', metrics.lines.code, thresholds.fileLoc);
   addTrigger(triggers, 'import sources', metrics.coupling.importSourceCount, thresholds.import);
-  addTrigger(triggers, 'duplicated blocks', metrics.duplication.duplicateBlockCount, thresholds.duplicateBlock);
+  addTrigger(
+    triggers,
+    'duplicated blocks',
+    metrics.duplication.duplicateBlockCount,
+    thresholds.duplicateBlock,
+    formatDuplicateBlockGroups(metrics.duplication.duplicateBlockGroups)
+  );
   if (architecture) {
     const hasFileScaleRisk = metrics.lines.code >= 100 || architecture.directLocalDependencyCount >= 8;
     if (hasFileScaleRisk) {
@@ -641,12 +652,29 @@ function findRiskyFunctionMetrics(
   ];
 }
 
-function addTrigger(triggers: RiskTrigger[], metric: string, value: number, threshold: number): void {
+function addTrigger(
+  triggers: RiskTrigger[],
+  metric: string,
+  value: number,
+  threshold: number,
+  detail?: string
+): void {
   if (value < threshold) {
     return;
   }
 
-  triggers.push({ metric, value, threshold, score: value / threshold });
+  triggers.push({ metric, value, threshold, score: value / threshold, detail });
+}
+
+/** Formats duplicated block groups as `12-34 ~ 56-78; 90-99 ~ 100-109` (copies joined by ` ~ `, groups by `; `). */
+function formatDuplicateBlockGroups(groups: { endLine: number; startLine: number }[][]): string | undefined {
+  if (groups.length === 0) {
+    return undefined;
+  }
+
+  return groups
+    .map((group) => group.map(({ startLine, endLine }) => `${startLine}-${endLine}`).join(' ~ '))
+    .join('; ');
 }
 
 function isReactComponent(
@@ -757,6 +785,20 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     }
   }
 
+  const duplicateSymbolGroups = result.architecture?.duplicateSymbolGroups ?? [];
+  if (duplicateSymbolGroups.length > 0) {
+    const reportedGroups = duplicateSymbolGroups
+      .toSorted((left, right) => right.files.length - left.files.length || left.name.localeCompare(right.name))
+      .slice(0, maxDuplicateSymbolGroupLines);
+    const totalSuffix = duplicateSymbolGroups.length > reportedGroups.length ? ` of ${duplicateSymbolGroups.length}` : '';
+    writeStdout(`\nDuplicate symbols (top ${reportedGroups.length}${totalSuffix}):\n`);
+    for (const group of reportedGroups) {
+      writeStdout(
+        `${group.name}: ${group.declarations.map((declaration) => `${declaration.file}:${declaration.line}`).join(', ')}\n`
+      );
+    }
+  }
+
   if (options.largestFiles > 0) {
     const largestFiles = findLargestFiles(result.files, options.largestFiles, result.displayRoot);
     writeStdout(`\nLargest files by code LOC (top ${largestFiles.length}):\n`);
@@ -811,7 +853,8 @@ function formatRiskName(risk: RiskFinding): string {
 function formatRiskMetrics(risk: RiskFinding): string {
   const triggerText = risk.triggers
     .map(
-      (trigger) => `${trigger.metric} ${formatMetricValue(trigger.value)} >= ${formatMetricValue(trigger.threshold)}`
+      (trigger) =>
+        `${trigger.metric} ${formatMetricValue(trigger.value)} >= ${formatMetricValue(trigger.threshold)}${trigger.detail ? ` [${trigger.detail}]` : ''}`
     )
     .join(', ');
   return `(${triggerText}; cyclomatic ${risk.cyclomaticComplexity}, cognitive ${risk.cognitiveComplexity})`;
