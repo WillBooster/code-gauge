@@ -652,13 +652,7 @@ function findRiskyFunctionMetrics(
   ];
 }
 
-function addTrigger(
-  triggers: RiskTrigger[],
-  metric: string,
-  value: number,
-  threshold: number,
-  detail?: string
-): void {
+function addTrigger(triggers: RiskTrigger[], metric: string, value: number, threshold: number, detail?: string): void {
   if (value < threshold) {
     return;
   }
@@ -672,9 +666,7 @@ function formatDuplicateBlockGroups(groups: { endLine: number; startLine: number
     return undefined;
   }
 
-  return groups
-    .map((group) => group.map(({ startLine, endLine }) => `${startLine}-${endLine}`).join(' ~ '))
-    .join('; ');
+  return groups.map((group) => group.map(({ startLine, endLine }) => `${startLine}-${endLine}`).join(' ~ ')).join('; ');
 }
 
 function isReactComponent(
@@ -790,7 +782,8 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     const reportedGroups = duplicateSymbolGroups
       .toSorted((left, right) => right.files.length - left.files.length || left.name.localeCompare(right.name))
       .slice(0, maxDuplicateSymbolGroupLines);
-    const totalSuffix = duplicateSymbolGroups.length > reportedGroups.length ? ` of ${duplicateSymbolGroups.length}` : '';
+    const totalSuffix =
+      duplicateSymbolGroups.length > reportedGroups.length ? ` of ${duplicateSymbolGroups.length}` : '';
     writeStdout(`\nDuplicate symbols (top ${reportedGroups.length}${totalSuffix}):\n`);
     for (const group of reportedGroups) {
       writeStdout(
