@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { API, SignatureKind, type Checker, type Type } from '@typescript/native-preview/unstable/async';
-import { getTokenPosOfNode, SyntaxKind, type Node, type SourceFile } from '@typescript/native-preview/unstable/ast';
+import { API, SignatureKind, type Checker, type Type } from 'typescript/unstable/async';
+import { getTokenPosOfNode, SyntaxKind, type Node, type SourceFile } from 'typescript/unstable/ast';
 
 export interface ReactComponentFunctionMetric {
   file: string;
