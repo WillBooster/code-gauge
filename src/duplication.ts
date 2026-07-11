@@ -36,6 +36,7 @@ const duplicateBlockTypes = new Set([
   'catch_clause',
   'finally_clause',
   'elif_clause',
+  'ensure',
   'expression_statement',
   'return_statement',
   'return_expression',
@@ -72,6 +73,9 @@ const statementContainerTypes = new Set([
   'class_body',
   'block_body',
   'do_block',
+  // Ruby loop bodies are a named `do` node, and `ensure` holds statements directly.
+  'do',
+  'ensure',
   'then',
   'else',
   // Case-like nodes hold their statements directly, without an inner block.

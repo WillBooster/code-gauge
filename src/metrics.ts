@@ -1795,6 +1795,17 @@ function findCalleeName(node: Parser.SyntaxNode): string | undefined {
   // not `function`), so macros resolve to their name. `findRightmostIdentifier` must be kept rather
   // than reading `calleeNode.text`: member calls like `self.map.get(key)` must resolve to `get`, not
   // the full `self.map.get`, so intra-file call-graph name matching stays correct.
+  // Ruby lambdas/procs are invoked via `helper.call(...)`; the receiver is the real callee.
+  // `helper[...]` (element_reference) is intentionally NOT treated as a call: it is
+  // indistinguishable from ordinary array/hash indexing and would distort call counts.
+  if (node.type === 'call') {
+    const methodNode = node.childForFieldName('method');
+    const receiverNode = node.childForFieldName('receiver');
+    if (methodNode?.text === 'call' && receiverNode?.type === 'identifier') {
+      return receiverNode.text;
+    }
+  }
+
   const calleeNode =
     node.childForFieldName('function') ??
     node.childForFieldName('name') ??
