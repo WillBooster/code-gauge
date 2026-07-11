@@ -1266,14 +1266,33 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
   return parentName?.text;
 }
 
+/**
+ * Unwraps a C/C++ declarator chain to the declared name, handling parenthesized declarators
+ * (function pointers), qualified names, destructors, and operator overloads explicitly; a
+ * rightmost-identifier fallback would pick up parameter names from nested `function_declarator`s.
+ */
 function findDeclaratorName(node: Parser.SyntaxNode): string | undefined {
-  let declarator = node.childForFieldName('declarator');
-  while (declarator) {
-    const next = declarator.childForFieldName('declarator');
-    if (!next) {
-      return findRightmostIdentifier(declarator);
+  let current = node.childForFieldName('declarator');
+  while (current) {
+    switch (current.type) {
+      case 'identifier':
+      case 'field_identifier':
+      case 'destructor_name':
+      case 'operator_name': {
+        return current.text;
+      }
+      case 'qualified_identifier': {
+        current = current.childForFieldName('name');
+        break;
+      }
+      case 'parenthesized_declarator': {
+        current = current.namedChild(0);
+        break;
+      }
+      default: {
+        current = current.childForFieldName('declarator');
+      }
     }
-    declarator = next;
   }
   return undefined;
 }

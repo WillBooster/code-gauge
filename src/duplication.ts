@@ -126,6 +126,20 @@ const literalKindByType = new Map([
 
 const commentTypes = new Set(['comment', 'line_comment', 'block_comment']);
 
+/**
+ * Where a grammar names callees/members with a plain `identifier` (Java `method_invocation.name`,
+ * Ruby `call.method`, Python `attribute.attribute`, plain calls elsewhere), the leaf in that field
+ * must stay verbatim like `property_identifier` does: calling a different API is a semantic
+ * difference, not a rename.
+ */
+const semanticNameFieldByParentType = new Map([
+  ['call_expression', 'function'],
+  ['method_invocation', 'name'],
+  ['call', 'method'],
+  ['attribute', 'attribute'],
+  ['macro_invocation', 'macro'],
+]);
+
 /** Minimum normalized token count for a region to be considered for duplication, to skip trivial repeats. */
 const minDuplicateTokenCount = 40;
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
@@ -215,7 +229,7 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
     return;
   }
 
-  if (node.isNamed && anonymizedIdentifierTypes.has(node.type)) {
+  if (node.isNamed && anonymizedIdentifierTypes.has(node.type) && !isSemanticNameLeaf(node)) {
     tokens.push({ kind: 'id', text: node.text });
     return;
   }
@@ -224,6 +238,12 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
   // `property_identifier`/`type_identifier`, which must distinguish otherwise-identical structures.
   const literalKind = node.isNamed ? literalKindByType.get(node.type) : undefined;
   tokens.push({ kind: 'text', text: literalKind ?? node.text });
+}
+
+function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
+  const parent = node.parent;
+  const field = parent ? semanticNameFieldByParentType.get(parent.type) : undefined;
+  return field !== undefined && parent?.childForFieldName(field)?.id === node.id;
 }
 
 function collectBlockCandidates(tokens: Token[], blockRanges: TokenRange[]): DuplicateCandidate[] {
