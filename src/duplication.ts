@@ -126,6 +126,9 @@ const literalKindByType = new Map([
 
 const commentTypes = new Set(['comment', 'line_comment', 'block_comment']);
 
+/** Children of a string node that carry only literal content; anything else is interpolation. */
+const stringFragmentTypes = new Set(['string_fragment', 'string_content', 'escape_sequence', 'heredoc_content']);
+
 /**
  * Where a grammar names callees/members with a plain `identifier` (Java `method_invocation.name`,
  * Ruby `call.method`, Python `attribute.attribute`, plain calls elsewhere), the leaf in that field
@@ -204,6 +207,10 @@ function collectTokens(
     const startTokenIndex = tokens.length;
     if (node.childCount === 0) {
       appendLeafToken(node, tokens);
+    } else if (atomicLiteralKind(node) !== undefined) {
+      // Interpolation-free strings collapse to their kind tag so copies differing only in quote
+      // style or content still match; delimiter tokens would otherwise break the equivalence.
+      tokens.push({ kind: 'text', text: atomicLiteralKind(node) ?? '#str' });
     } else if (!commentTypes.has(node.type)) {
       const statementRanges: TokenRange[] = [];
       const isContainer = node.isNamed && statementContainerTypes.has(node.type);
@@ -226,6 +233,15 @@ function collectTokens(
   }
 
   visit(root);
+}
+
+/** The kind tag of a string-like node with no interpolation, or undefined to descend normally. */
+function atomicLiteralKind(node: Parser.SyntaxNode): string | undefined {
+  const kind = node.isNamed ? literalKindByType.get(node.type) : undefined;
+  if (kind === undefined) {
+    return undefined;
+  }
+  return node.namedChildren.every((child) => stringFragmentTypes.has(child.type)) ? kind : undefined;
 }
 
 function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {

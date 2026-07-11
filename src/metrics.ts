@@ -767,7 +767,15 @@ function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean)
   return declarationFromNode(node, exported);
 }
 
-const cVariableDeclaratorTypes = new Set(['init_declarator', 'pointer_declarator', 'array_declarator', 'identifier']);
+const cVariableDeclaratorTypes = new Set([
+  'init_declarator',
+  'pointer_declarator',
+  'array_declarator',
+  'reference_declarator',
+  'identifier',
+  // C/C++ struct/class members
+  'field_identifier',
+]);
 
 /**
  * A bare `function_declarator` (`int f(int);`) is a prototype, but one whose name is parenthesized
@@ -1066,18 +1074,25 @@ function isLoopNode(node: Parser.SyntaxNode): boolean {
 
 /** Java and C/C++ declare several bindings per statement, so each mutable declarator counts. */
 function countMutableBindings(node: Parser.SyntaxNode): number {
+  // Java (`variable_declarator` children) and C/C++ (declarator children) both use
+  // `field_declaration` for members, so the two are told apart by shape, not node type.
   if (node.type === 'local_variable_declaration' || node.type === 'field_declaration') {
-    if (!isJavaMutableDeclaration(node)) {
-      return 0;
+    const javaDeclarators = node.namedChildren.filter((child) => child.type === 'variable_declarator');
+    if (javaDeclarators.length > 0) {
+      return isJavaMutableDeclaration(node) ? javaDeclarators.length : 0;
     }
-    return node.namedChildren.filter((child) => child.type === 'variable_declarator').length;
+    return countCMutableBindings(node);
   }
 
   if (node.type === 'declaration') {
-    return node.namedChildren.filter((child) => isCVariableDeclarator(child) && isCMutableBinding(node, child)).length;
+    return countCMutableBindings(node);
   }
 
   return isMutableBindingNode(node) ? 1 : 0;
+}
+
+function countCMutableBindings(node: Parser.SyntaxNode): number {
+  return node.namedChildren.filter((child) => isCVariableDeclarator(child) && isCMutableBinding(node, child)).length;
 }
 
 function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
@@ -1104,6 +1119,14 @@ function isJavaMutableDeclaration(node: Parser.SyntaxNode): boolean {
 function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.SyntaxNode): boolean {
   let current =
     declarator.type === 'init_declarator' ? (declarator.childForFieldName('declarator') ?? declarator) : declarator;
+  // A C++ reference binding can never be reseated, so it is immutable regardless of qualifiers.
+  if (
+    declarator.type === 'reference_declarator' ||
+    declarator.childForFieldName('declarator')?.type === 'reference_declarator'
+  ) {
+    return false;
+  }
+
   let insidePointer = false;
   while (
     current.type === 'pointer_declarator' ||
@@ -1117,7 +1140,7 @@ function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.Sy
     }
     if (current.type === 'pointer_declarator') {
       insidePointer = true;
-      if (inner.type === 'identifier' && hasConstQualifier(current)) {
+      if ((inner.type === 'identifier' || inner.type === 'field_identifier') && hasConstQualifier(current)) {
         return false;
       }
     }

@@ -188,9 +188,11 @@ function resolveJavaImport(source: string, javaFileIndex: Map<string, string[]>)
       continue;
     }
     const relativePath = `${candidateSegments.join('/')}.java`;
-    const match = (javaFileIndex.get(className) ?? []).find(
-      (file) => file === relativePath || file.endsWith(`/${relativePath}`)
-    );
+    // Indexed paths use the platform separator (backslashes on Windows), so normalize for matching.
+    const match = (javaFileIndex.get(className) ?? []).find((file) => {
+      const normalized = file.replaceAll('\\', '/');
+      return normalized === relativePath || normalized.endsWith(`/${relativePath}`);
+    });
     if (match) {
       return match;
     }
