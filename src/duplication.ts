@@ -123,6 +123,7 @@ const literalKindByType = new Map([
   ['heredoc_content', '#str'],
   // Strings are leaves in some grammars (Go/Rust) and fragment containers in others.
   ['string', '#str'],
+  ['template_string', '#str'],
   ['string_literal', '#str'],
   ['interpreted_string_literal', '#str'],
   ['raw_string_literal', '#str'],
@@ -144,6 +145,9 @@ const stringFragmentTypes = new Set([
   'raw_string_content',
   'escape_sequence',
   'heredoc_content',
+  // Python string delimiters are named children; they never carry interpolation.
+  'string_start',
+  'string_end',
 ]);
 
 /**
