@@ -1541,6 +1541,12 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
     return unwrapDeclaratorName(parent.childForFieldName('declarator'));
   }
 
+  // A Go func literal bound via `add := func...` or `var add = func...` takes the identifier at
+  // the same list position; unpaired or non-identifier targets stay unnamed.
+  if (node.type === 'func_literal' && parent.type === 'expression_list') {
+    return findGoFuncLiteralName(node, parent);
+  }
+
   const parentName = parent.childForFieldName('name');
   return parentName?.text;
 }
@@ -1591,6 +1597,26 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | un
       }
     }
   }
+  return undefined;
+}
+
+function findGoFuncLiteralName(node: Parser.SyntaxNode, expressionList: Parser.SyntaxNode): string | undefined {
+  const holder = expressionList.parent;
+  const valueIndex = expressionList.namedChildren.findIndex((child) => child.id === node.id);
+  if (!holder || valueIndex === -1) {
+    return undefined;
+  }
+
+  if (holder.type === 'short_var_declaration') {
+    const target = holder.childForFieldName('left')?.namedChild(valueIndex);
+    return target?.type === 'identifier' ? target.text : undefined;
+  }
+
+  if (holder.type === 'var_spec') {
+    const target = findChildrenByFieldName(holder, 'name')[valueIndex];
+    return target?.type === 'identifier' ? target.text : undefined;
+  }
+
   return undefined;
 }
 
