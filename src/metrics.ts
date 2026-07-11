@@ -813,7 +813,17 @@ function isDeclarationContainer(node: Parser.SyntaxNode): boolean {
     node.type === 'type_declaration' ||
     node.type === 'const_declaration' ||
     node.type === 'var_declaration' ||
-    node.type === 'var_spec_list'
+    node.type === 'var_spec_list' ||
+    // C/C++ wrappers around top-level symbols; declarations in inactive preprocessor arms are
+    // still collected, which is the norm for un-preprocessed analysis.
+    node.type === 'namespace_definition' ||
+    node.type === 'linkage_specification' ||
+    node.type === 'template_declaration' ||
+    node.type === 'declaration_list' ||
+    node.type === 'preproc_ifdef' ||
+    node.type === 'preproc_if' ||
+    node.type === 'preproc_else' ||
+    node.type === 'preproc_elif'
   );
 }
 

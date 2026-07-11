@@ -138,6 +138,8 @@ const semanticNameFieldByParentType = new Map([
   ['call', 'method'],
   ['attribute', 'attribute'],
   ['macro_invocation', 'macro'],
+  // Java names accessed fields with a plain identifier in the `field` field.
+  ['field_access', 'field'],
 ]);
 
 /** Minimum normalized token count for a region to be considered for duplication, to skip trivial repeats. */
@@ -244,8 +246,18 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
 
 function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
   const parent = node.parent;
-  const field = parent ? semanticNameFieldByParentType.get(parent.type) : undefined;
-  return field !== undefined && parent?.childForFieldName(field)?.id === node.id;
+  if (!parent) {
+    return false;
+  }
+
+  // Java method references (`Foo::bar`) name their identifiers without grammar fields; both the
+  // type/object and the referenced method are semantic.
+  if (parent.type === 'method_reference') {
+    return true;
+  }
+
+  const field = semanticNameFieldByParentType.get(parent.type);
+  return field !== undefined && parent.childForFieldName(field)?.id === node.id;
 }
 
 function collectBlockCandidates(tokens: Token[], blockRanges: TokenRange[]): DuplicateCandidate[] {
