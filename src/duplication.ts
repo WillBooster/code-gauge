@@ -310,31 +310,61 @@ function collectBlockCandidates(tokens: Token[], blockRanges: TokenRange[]): Dup
   return candidates;
 }
 
+interface WindowOccurrences {
+  count: number;
+  /** -1 once occurrences span more than one container. */
+  containerIndex: number;
+  minStart: number;
+  maxStart: number;
+}
+
 /**
  * Enumerates runs of consecutive sibling statements. Every container statement participates; only
  * the window length is capped, so enumeration stays linear in the statement count. Windows are
  * grouped by a cheap rolling hash of per-statement fingerprints, and only locally maximal repeated
- * windows — those that stop repeating when extended by one statement on either side — become
- * candidates with an exact (window-consistent) fingerprint. Without the maximality filter a
- * degenerate file of near-identical statements would fingerprint every sub-window of every
- * repeated region.
+ * windows — those whose one-statement extensions stop repeating — become candidates with an exact
+ * (window-consistent) fingerprint. Without the maximality filter a degenerate file of
+ * near-identical statements would fingerprint every sub-window of every repeated region.
  */
 function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]): DuplicateCandidate[] {
   const candidates: DuplicateCandidate[] = [];
-  const occurrenceCountByWindowKey = new Map<number, number>();
+  const occurrencesByWindowKey = new Map<number, WindowOccurrences>();
   const containerWindows = containers.map((statements) => enumerateContainerWindows(tokens, statements));
-  for (const windows of containerWindows) {
-    for (const row of windows.windowKeysByStart) {
+  for (const [containerIndex, windows] of containerWindows.entries()) {
+    for (const [start, row] of windows.windowKeysByStart.entries()) {
       for (const windowKey of row) {
-        if (windowKey !== undefined) {
-          occurrenceCountByWindowKey.set(windowKey, (occurrenceCountByWindowKey.get(windowKey) ?? 0) + 1);
+        if (windowKey === undefined) {
+          continue;
+        }
+        const occurrences = occurrencesByWindowKey.get(windowKey);
+        if (occurrences) {
+          occurrences.count += 1;
+          if (occurrences.containerIndex !== containerIndex) {
+            occurrences.containerIndex = -1;
+          }
+          occurrences.minStart = Math.min(occurrences.minStart, start);
+          occurrences.maxStart = Math.max(occurrences.maxStart, start);
+        } else {
+          occurrencesByWindowKey.set(windowKey, { count: 1, containerIndex, minStart: start, maxStart: start });
         }
       }
     }
   }
 
-  const repeats = (windowKey: number | undefined): boolean =>
-    windowKey !== undefined && (occurrenceCountByWindowKey.get(windowKey) ?? 0) >= 2;
+  // A window only "repeats" when two of its occurrences can coexist without overlapping: sliding
+  // matches inside a homogeneous run (start spread smaller than the window length) can never both
+  // be counted and must neither qualify a window nor dominate its sub-windows.
+  const repeats = (windowKey: number | undefined, length: number): boolean => {
+    if (windowKey === undefined) {
+      return false;
+    }
+    const occurrences = occurrencesByWindowKey.get(windowKey);
+    return (
+      occurrences !== undefined &&
+      occurrences.count >= 2 &&
+      (occurrences.containerIndex === -1 || occurrences.maxStart - occurrences.minStart >= length)
+    );
+  };
 
   for (const [containerIndex, statements] of containers.entries()) {
     const windows = containerWindows[containerIndex];
@@ -343,14 +373,14 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
     }
     for (const [start, row] of windows.windowKeysByStart.entries()) {
       for (const [length, windowKey] of row.entries()) {
-        if (!repeats(windowKey)) {
+        if (!repeats(windowKey, length)) {
           continue;
         }
         // Dominated windows are skipped: the one-statement extension also repeats, so a larger
         // candidate covering this window exists.
         const extendedRight = windows.windowKeysByStart[start]?.[length + 1];
         const extendedLeft = windows.windowKeysByStart[start - 1]?.[length + 1];
-        if (repeats(extendedRight) || repeats(extendedLeft)) {
+        if (repeats(extendedRight, length + 1) || repeats(extendedLeft, length + 1)) {
           continue;
         }
         const first = statements[start];

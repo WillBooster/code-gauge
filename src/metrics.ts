@@ -1575,6 +1575,15 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
     return findGoFuncLiteralName(node, parent);
   }
 
+  // Ruby lambdas assigned to a name (`choose = ->(x) {...}` / `ADD = lambda { ... }`) take that
+  // name; Ruby assignments use the `left` field, and `lambda { }` blocks hang off a `call`.
+  if (node.type === 'lambda' && parent.type === 'assignment') {
+    return findRubyAssignmentName(parent);
+  }
+  if ((node.type === 'block' || node.type === 'do_block') && isRubyLambdaCall(parent)) {
+    return parent.parent?.type === 'assignment' ? findRubyAssignmentName(parent.parent) : undefined;
+  }
+
   const parentName = parent.childForFieldName('name');
   return parentName?.text;
 }
@@ -1628,6 +1637,19 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | un
     }
   }
   return undefined;
+}
+
+function findRubyAssignmentName(assignment: Parser.SyntaxNode): string | undefined {
+  const leftNode = assignment.childForFieldName('left');
+  return leftNode?.type === 'identifier' || leftNode?.type === 'constant' ? leftNode.text : undefined;
+}
+
+function isRubyLambdaCall(node: Parser.SyntaxNode): boolean {
+  if (node.type !== 'call' || node.childForFieldName('receiver')) {
+    return false;
+  }
+  const methodNode = node.childForFieldName('method');
+  return methodNode?.type === 'identifier' && (methodNode.text === 'lambda' || methodNode.text === 'proc');
 }
 
 function findGoFuncLiteralName(node: Parser.SyntaxNode, expressionList: Parser.SyntaxNode): string | undefined {
