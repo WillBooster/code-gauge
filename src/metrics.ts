@@ -2144,7 +2144,11 @@ function unquote(value: string): string {
 }
 
 function isExportNode(node: Parser.SyntaxNode): boolean {
-  return node.type.startsWith('export') || node.type === 'public_field_definition';
+  // Java's JPMS `exports com.example.api;` directive is module wiring, not a symbol export.
+  return (
+    (node.type.startsWith('export') && node.type !== 'exports_module_directive') ||
+    node.type === 'public_field_definition'
+  );
 }
 
 function findRecursiveIndexes(graph: Map<number, Set<number>>): Set<number> {

@@ -202,8 +202,11 @@ function resolveJavaImport(source: string, javaFileIndex: Map<string, string[]>)
   if (source.endsWith('.*')) {
     return undefined;
   }
+  // Trailing segments are dropped one by one so nested types and static members resolve to their
+  // enclosing top-level class file (`com.example.Outer.Inner.CONST` -> `Outer.java`).
   const segments = source.split('.');
-  for (const candidateSegments of [segments, segments.slice(0, -1)]) {
+  for (let end = segments.length; end >= 1; end -= 1) {
+    const candidateSegments = segments.slice(0, end);
     const className = candidateSegments.at(-1);
     if (!className) {
       continue;
