@@ -47,7 +47,20 @@ export const configFileName = 'code-gauge.config.json';
  * Profile keys for per-language and React-specific threshold overrides. A file resolves its
  * thresholds as base → its language profile → the `react` profile (when it contains a component).
  */
-export const profileKeys = ['javascript', 'jsx', 'typescript', 'tsx', 'python', 'go', 'rust', 'react'] as const;
+export const profileKeys = [
+  'javascript',
+  'jsx',
+  'typescript',
+  'tsx',
+  'python',
+  'go',
+  'rust',
+  'java',
+  'ruby',
+  'c',
+  'cpp',
+  'react',
+] as const;
 export type ProfileKey = (typeof profileKeys)[number];
 
 /**

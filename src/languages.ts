@@ -1,6 +1,10 @@
+import C from 'tree-sitter-c';
+import Cpp from 'tree-sitter-cpp';
 import Go from 'tree-sitter-go';
+import Java from 'tree-sitter-java';
 import JavaScript from 'tree-sitter-javascript';
 import Python from 'tree-sitter-python';
+import Ruby from 'tree-sitter-ruby';
 import Rust from 'tree-sitter-rust';
 import TypeScript from 'tree-sitter-typescript';
 import type { LanguageDefinition, LanguageName, ParserLanguage } from './types.js';
@@ -15,6 +19,7 @@ const commonFunctionNodes = [
   'function_item',
   'function_signature_item',
   'function_declarator',
+  'func_literal',
   'method_declaration',
   'method_definition',
   'method_spec',
@@ -57,6 +62,57 @@ const commonDecisionNodes = [
   'for_expression',
   'loop_expression',
 ] as const;
+
+// Go `switch`/`select` branches are `*_case` nodes, not the `case_clause`/`switch_case` of other grammars.
+const goDecisionNodes = [...commonDecisionNodes, 'expression_case', 'type_case', 'communication_case'] as const;
+
+const javaFunctionNodes = [
+  ...commonFunctionNodes,
+  'constructor_declaration',
+  'compact_constructor_declaration',
+] as const;
+const javaClassNodes = [
+  ...commonClassNodes,
+  'enum_declaration',
+  'record_declaration',
+  'annotation_type_declaration',
+] as const;
+const javaDecisionNodes = [
+  ...commonDecisionNodes,
+  'enhanced_for_statement',
+  'switch_block_statement_group',
+  'switch_rule',
+] as const;
+
+// Ruby node types are keyword-like (`if`, `while`, ...), so they must stay Ruby-specific: the same
+// strings appear as anonymous keyword tokens in other grammars and would be double-counted there.
+const rubyFunctionNodes = ['method', 'singleton_method', 'lambda'] as const;
+const rubyClassNodes = ['class', 'singleton_class', 'module'] as const;
+const rubyDecisionNodes = [
+  'if',
+  'elsif',
+  'unless',
+  'while',
+  'until',
+  'for',
+  'when',
+  'in_clause',
+  'rescue',
+  'conditional',
+  'if_modifier',
+  'unless_modifier',
+  'while_modifier',
+  'until_modifier',
+  'rescue_modifier',
+] as const;
+
+// `function_declarator` must stay out: it is nested inside every `function_definition` (which
+// would double-count) and also appears in body-less prototypes.
+const cFunctionNodes = ['function_definition', 'lambda_expression'] as const;
+const cClassNodes = ['struct_specifier', 'enum_specifier', 'union_specifier'] as const;
+const cDecisionNodes = [...commonDecisionNodes, 'case_statement'] as const;
+const cppClassNodes = [...cClassNodes, 'class_specifier'] as const;
+const cppDecisionNodes = [...cDecisionNodes, 'for_range_loop'] as const;
 
 function normalizeGrammar(module: GrammarModule): ParserLanguage {
   if (isGrammarWrapper(module, 'default')) {
@@ -106,11 +162,47 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
   {
     name: 'go',
     parserLanguage: normalizeGrammar(Go as unknown as GrammarModule),
+    decisionNodeTypes: goDecisionNodes,
+    nestingNodeTypes: goDecisionNodes,
   },
   {
     name: 'rust',
     aliases: ['rs'],
     parserLanguage: normalizeGrammar(Rust as unknown as GrammarModule),
+  },
+  {
+    name: 'java',
+    parserLanguage: normalizeGrammar(Java as unknown as GrammarModule),
+    functionNodeTypes: javaFunctionNodes,
+    classNodeTypes: javaClassNodes,
+    decisionNodeTypes: javaDecisionNodes,
+    nestingNodeTypes: javaDecisionNodes,
+  },
+  {
+    name: 'ruby',
+    aliases: ['rb'],
+    parserLanguage: normalizeGrammar(Ruby as unknown as GrammarModule),
+    functionNodeTypes: rubyFunctionNodes,
+    classNodeTypes: rubyClassNodes,
+    decisionNodeTypes: rubyDecisionNodes,
+    nestingNodeTypes: rubyDecisionNodes,
+  },
+  {
+    name: 'c',
+    parserLanguage: normalizeGrammar(C as unknown as GrammarModule),
+    functionNodeTypes: cFunctionNodes,
+    classNodeTypes: cClassNodes,
+    decisionNodeTypes: cDecisionNodes,
+    nestingNodeTypes: cDecisionNodes,
+  },
+  {
+    name: 'cpp',
+    aliases: ['c++', 'cxx'],
+    parserLanguage: normalizeGrammar(Cpp as unknown as GrammarModule),
+    functionNodeTypes: cFunctionNodes,
+    classNodeTypes: cppClassNodes,
+    decisionNodeTypes: cppDecisionNodes,
+    nestingNodeTypes: cppDecisionNodes,
   },
 ].map((language) => ({
   functionNodeTypes: commonFunctionNodes,

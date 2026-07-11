@@ -1,4 +1,5 @@
 import Parser from 'tree-sitter';
+import { measureDuplication } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
 import type {
   CallGraphMetrics,
@@ -6,8 +7,6 @@ import type {
   CohesionMetrics,
   CouplingMetrics,
   DeclarationMetrics,
-  DuplicateBlockOccurrence,
-  DuplicationMetrics,
   FunctionMetrics,
   HalsteadMetrics,
   LanguageDefinition,
@@ -47,9 +46,43 @@ const operatorTexts = new Set([
   '^',
   '<<',
   '>>',
+  '>>>',
   '=>',
+  '**=',
+  '<<=',
+  '>>=',
+  '>>>=',
+  '&=',
+  '|=',
+  '^=',
+  '&&=',
+  '||=',
+  '??=',
+  '??',
+  '?.',
+  '?',
+  '//',
+  '//=',
+  '@=',
+  ':=',
+  '<-',
+  '<=>',
+  '=~',
+  '..',
+  '...',
+  '..=',
+  'and',
+  'or',
+  'not',
+  'in',
+  'is',
+  'instanceof',
+  'typeof',
+  'new',
+  'delete',
   'return',
   'throw',
+  'raise',
   'yield',
   'await',
   'break',
@@ -61,6 +94,13 @@ const operandNodeTypes = new Set([
   'property_identifier',
   'field_identifier',
   'type_identifier',
+  'constant',
+  'instance_variable',
+  'class_variable',
+  'global_variable',
+  'simple_symbol',
+  'self',
+  'this',
   'number',
   'integer',
   'float',
@@ -69,11 +109,21 @@ const operandNodeTypes = new Set([
   'int_literal',
   'rune_literal',
   'imaginary_literal',
+  'number_literal',
+  'decimal_integer_literal',
+  'hex_integer_literal',
+  'octal_integer_literal',
+  'binary_integer_literal',
+  'decimal_floating_point_literal',
+  'hex_floating_point_literal',
   'string',
   'string_literal',
+  'string_fragment',
+  'string_content',
   'template_string',
   'character_literal',
   'char_literal',
+  'character',
   'true',
   'false',
   'null',
@@ -102,6 +152,7 @@ interface FunctionAnalysis {
   returnsJsx: boolean;
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
+  nestingDepth: number;
   callCount: number;
   parameterCount: number;
   callees: Set<string>;
@@ -156,7 +207,7 @@ export class TreeMeasurer {
       bytes: Buffer.byteLength(code),
       lines,
       functions: functionMetrics,
-      classCount: collectNodes(root, new Set(language.classNodeTypes)).length,
+      classCount: countClasses(root, language),
       functionCount: functionMetrics.length,
       cyclomaticComplexity: globalComplexity.cyclomaticComplexity,
       maxCyclomaticComplexity: maxMetric(functionMetrics, 'cyclomaticComplexity'),
@@ -169,7 +220,7 @@ export class TreeMeasurer {
       cohesion: structuralMetrics.cohesion,
       syntaxFeatures: structuralMetrics.syntaxFeatures,
       typeComplexity: structuralMetrics.typeComplexity,
-      duplication: measureDuplication(root),
+      duplication: measureDuplication(root, lines.total),
       halstead,
       maintainabilityIndex: calculateMaintainabilityIndex(
         halstead.volume,
@@ -202,6 +253,7 @@ function measureStructuralMetrics(
     returnsJsx: analysis.returnsJsx,
     cyclomaticComplexity: analysis.cyclomaticComplexity,
     cognitiveComplexity: analysis.cognitiveComplexity,
+    nestingDepth: analysis.nestingDepth,
     callCount: analysis.callCount,
     uniqueCalleeCount: analysis.callees.size,
     fanIn: callGraph.fanInByIndex.get(analysis.index) ?? 0,
@@ -233,6 +285,7 @@ function analyzeFunction(node: Parser.SyntaxNode, language: LanguageDefinition, 
     returnsJsx: returnsJsx(node, language),
     cyclomaticComplexity: complexity.cyclomaticComplexity,
     cognitiveComplexity: complexity.cognitiveComplexity,
+    nestingDepth: complexity.nestingDepth,
     callCount: calls.callCount,
     parameterCount: countParameters(node),
     callees: calls.callees,
@@ -242,9 +295,12 @@ function analyzeFunction(node: Parser.SyntaxNode, language: LanguageDefinition, 
 
 /** Counts declared parameters of a function/method, ignoring punctuation and comments. */
 function countParameters(node: Parser.SyntaxNode): number {
-  const parametersNode =
-    node.childForFieldName('parameters') ??
-    node.namedChildren.find((child) => child.type === 'formal_parameters' || child.type === 'parameter_list');
+  // An unparenthesized arrow-function parameter (`x => x + 1`) is a bare `parameter` field.
+  if (node.childForFieldName('parameter')) {
+    return 1;
+  }
+
+  const parametersNode = findParametersNode(node);
   if (!parametersNode) {
     return 0;
   }
@@ -252,6 +308,25 @@ function countParameters(node: Parser.SyntaxNode): number {
   // Rust's `self` receiver is not a declared parameter.
   return parametersNode.namedChildren.filter((child) => child.type !== 'comment' && child.type !== 'self_parameter')
     .length;
+}
+
+function findParametersNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
+  const direct = node.childForFieldName('parameters');
+  if (direct) {
+    return direct;
+  }
+
+  // C/C++ parameters hang off the (possibly pointer-wrapped) declarator, not the definition itself.
+  let declarator = node.childForFieldName('declarator');
+  while (declarator) {
+    const parameters = declarator.childForFieldName('parameters');
+    if (parameters) {
+      return parameters;
+    }
+    declarator = declarator.childForFieldName('declarator');
+  }
+
+  return node.namedChildren.find((child) => child.type === 'formal_parameters' || child.type === 'parameter_list');
 }
 
 function measureCallGraph(analyses: FunctionAnalysis[]): {
@@ -341,8 +416,10 @@ function measureComplexity(
       return;
     }
 
-    const isDecision = decisionNodes.has(current.type);
-    const isNesting = nestingNodes.has(current.type);
+    // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
+    // `if` keyword token), so only named nodes count as decisions.
+    const isDecision = current.isNamed && decisionNodes.has(current.type);
+    const isNesting = current.isNamed && nestingNodes.has(current.type);
 
     if (isDecision) {
       cyclomaticComplexity += 1;
@@ -411,7 +488,15 @@ function collectIdentifiers(root: Parser.SyntaxNode): Set<string> {
   const identifiers = new Set<string>();
 
   function visit(node: Parser.SyntaxNode): void {
-    if (node.type === 'identifier' || node.type === 'property_identifier' || node.type === 'field_identifier') {
+    if (
+      node.type === 'identifier' ||
+      node.type === 'property_identifier' ||
+      node.type === 'field_identifier' ||
+      node.type === 'constant' ||
+      node.type === 'instance_variable' ||
+      node.type === 'class_variable' ||
+      node.type === 'global_variable'
+    ) {
       identifiers.add(node.text);
     }
 
@@ -422,6 +507,13 @@ function collectIdentifiers(root: Parser.SyntaxNode): Set<string> {
 
   visit(root);
   return identifiers;
+}
+
+/** C/C++ `struct Foo`-style type references reuse the declaration node type, so a body is required. */
+function countClasses(root: Parser.SyntaxNode, language: LanguageDefinition): number {
+  return collectNodes(root, new Set(language.classNodeTypes)).filter(
+    (node) => !node.type.endsWith('_specifier') || node.childForFieldName('body') !== null
+  ).length;
 }
 
 function collectNodes(root: Parser.SyntaxNode, nodeTypes: Set<string>): Parser.SyntaxNode[] {
@@ -581,7 +673,7 @@ function measureModule(root: Parser.SyntaxNode, language: LanguageDefinition): M
   const importSources = new Set<string>();
 
   function visitImports(node: Parser.SyntaxNode): void {
-    if (isImportSourceNode(node)) {
+    if (isImportSourceNode(node, language)) {
       for (const source of findImportSources(node, language, { expandPythonSubmodules: true })) {
         importSources.add(source);
       }
@@ -744,11 +836,11 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
   let exportCount = 0;
 
   function visit(node: Parser.SyntaxNode): void {
-    if (isImportNode(node) || isDynamicImportNode(node)) {
+    if (isImportNode(node) || isDynamicImportNode(node) || isRubyRequireCall(node, language)) {
       importCount += 1;
     }
 
-    if (isImportSourceNode(node)) {
+    if (isImportSourceNode(node, language)) {
       for (const source of findImportSources(node, language, { expandPythonSubmodules: false })) {
         importSources.add(source);
       }
@@ -828,6 +920,7 @@ function isAssignmentNode(node: Parser.SyntaxNode): boolean {
     node.type === 'assignment_statement' ||
     node.type === 'assignment' ||
     node.type === 'augmented_assignment' ||
+    node.type === 'operator_assignment' ||
     node.type === 'short_var_declaration' ||
     node.type === 'compound_assignment_expr'
   );
@@ -841,11 +934,19 @@ function isLoopNode(node: Parser.SyntaxNode): boolean {
   return (
     node.type === 'for_statement' ||
     node.type === 'for_in_statement' ||
+    node.type === 'enhanced_for_statement' ||
+    node.type === 'for_range_loop' ||
     node.type === 'while_statement' ||
     node.type === 'do_statement' ||
     node.type === 'for_expression' ||
     node.type === 'while_expression' ||
-    node.type === 'loop_expression'
+    node.type === 'loop_expression' ||
+    // Ruby loop nodes are keyword-named; only named nodes reach this check.
+    node.type === 'while' ||
+    node.type === 'until' ||
+    node.type === 'for' ||
+    node.type === 'while_modifier' ||
+    node.type === 'until_modifier'
   );
 }
 
@@ -889,43 +990,60 @@ function isThrowNode(node: Parser.SyntaxNode): boolean {
 }
 
 function isTryNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'try_statement';
+  return node.type === 'try_statement' || node.type === 'try_with_resources_statement';
 }
 
-function measureCohesion(analyses: FunctionAnalysis[]): CohesionMetrics {
-  const allIdentifiers = new Set<string>();
-  const sharedIdentifiers = new Set<string>();
-  let overlapTotal = 0;
-  let pairCount = 0;
+/** Caps the pairwise overlap computation so files with thousands of functions stay fast. */
+const maxCohesionPairCount = 250_000;
 
+function measureCohesion(analyses: FunctionAnalysis[]): CohesionMetrics {
+  // An identifier is shared iff it appears in at least two functions, so a frequency map computes
+  // both identifier counts exactly without enumerating function pairs.
+  const functionCountByIdentifier = new Map<string, number>();
   for (const analysis of analyses) {
     for (const identifier of analysis.identifiers) {
-      allIdentifiers.add(identifier);
+      functionCountByIdentifier.set(identifier, (functionCountByIdentifier.get(identifier) ?? 0) + 1);
+    }
+  }
+  let sharedIdentifierCount = 0;
+  for (const count of functionCountByIdentifier.values()) {
+    if (count >= 2) {
+      sharedIdentifierCount += 1;
     }
   }
 
+  // The average pairwise Jaccard overlap is quadratic in the function count, so beyond the cap it
+  // is estimated from an evenly strided, deterministic sample of pairs.
+  const totalPairCount = (analyses.length * (analyses.length - 1)) / 2;
+  const stride = Math.max(1, Math.ceil(totalPairCount / maxCohesionPairCount));
+  let overlapTotal = 0;
+  let sampledPairCount = 0;
+  let pairIndex = 0;
   for (let leftIndex = 0; leftIndex < analyses.length; leftIndex += 1) {
     for (let rightIndex = leftIndex + 1; rightIndex < analyses.length; rightIndex += 1) {
+      if (pairIndex % stride !== 0) {
+        pairIndex += 1;
+        continue;
+      }
+      pairIndex += 1;
+
       const left = analyses[leftIndex];
       const right = analyses[rightIndex];
       if (!left || !right) {
         continue;
       }
 
-      const intersection = intersectSets(left.identifiers, right.identifiers);
-      const unionSize = new Set([...left.identifiers, ...right.identifiers]).size;
-      for (const identifier of intersection) {
-        sharedIdentifiers.add(identifier);
-      }
-      overlapTotal += unionSize === 0 ? 0 : intersection.size / unionSize;
-      pairCount += 1;
+      const intersectionSize = countIntersection(left.identifiers, right.identifiers);
+      const unionSize = left.identifiers.size + right.identifiers.size - intersectionSize;
+      overlapTotal += unionSize === 0 ? 0 : intersectionSize / unionSize;
+      sampledPairCount += 1;
     }
   }
 
   return {
-    averageFunctionIdentifierOverlap: pairCount === 0 ? 1 : overlapTotal / pairCount,
-    sharedIdentifierCount: sharedIdentifiers.size,
-    uniqueIdentifierCount: allIdentifiers.size,
+    averageFunctionIdentifierOverlap: sampledPairCount === 0 ? 1 : overlapTotal / sampledPairCount,
+    sharedIdentifierCount,
+    uniqueIdentifierCount: functionCountByIdentifier.size,
   };
 }
 
@@ -998,153 +1116,6 @@ function measureTypeComplexity(root: Parser.SyntaxNode): TypeComplexityMetrics {
   return metrics;
 }
 
-const duplicateBlockTypes = new Set([
-  'statement_block',
-  'block',
-  'if_statement',
-  'for_statement',
-  'for_in_statement',
-  'while_statement',
-  'do_statement',
-  'try_statement',
-  'with_statement',
-  'switch_statement',
-  'switch_case',
-  'case_clause',
-  'match_statement',
-  'match_arm',
-  'except_clause',
-  'catch_clause',
-  'finally_clause',
-  'elif_clause',
-  'expression_statement',
-  'return_statement',
-  'return_expression',
-  'if_expression',
-  'for_expression',
-  'while_expression',
-  'loop_expression',
-  'match_expression',
-  'jsx_element',
-  'jsx_self_closing_element',
-]);
-
-/** Minimum subtree size (node count) for a block to be considered for duplication, to skip trivial repeats. */
-const minDuplicateBlockSize = 24;
-
-interface DuplicateCandidate {
-  node: Parser.SyntaxNode;
-  shape: string;
-  size: number;
-}
-
-/**
- * Detects copy-pasted code blocks within a file by grouping control-flow / block / JSX subtrees that
- * share the same syntactic shape (node types, ignoring identifiers and literals). Only maximal,
- * non-overlapping blocks are counted so nested matches are not double-counted. Literal-only structures
- * such as array or object data are excluded because their element nodes are not block types.
- */
-function measureDuplication(root: Parser.SyntaxNode): DuplicationMetrics {
-  const candidates: DuplicateCandidate[] = [];
-  const shapeCache = new Map<number, { shape: string; size: number }>();
-
-  function visit(node: Parser.SyntaxNode): void {
-    if (duplicateBlockTypes.has(node.type)) {
-      const { size } = describeShape(node, shapeCache);
-      if (size >= minDuplicateBlockSize) {
-        const { shape } = describeShape(node, shapeCache);
-        candidates.push({ node, shape, size });
-      }
-    }
-    for (const child of node.namedChildren) {
-      visit(child);
-    }
-  }
-  visit(root);
-
-  const byShape = new Map<string, DuplicateCandidate[]>();
-  for (const candidate of candidates) {
-    const group = byShape.get(candidate.shape) ?? [];
-    group.push(candidate);
-    byShape.set(candidate.shape, group);
-  }
-
-  // Count larger blocks first and skip any candidate nested inside an already-counted duplicate.
-  const consumed: Parser.SyntaxNode[] = [];
-  let maxDuplicateBlockSize = 0;
-  const countedByShape = new Map<string, DuplicateCandidate[]>();
-  for (const [shape, group] of byShape) {
-    if (group.length < 2) {
-      continue;
-    }
-    for (const candidate of group.toSorted((left, right) => right.size - left.size)) {
-      if (consumed.some((ancestor) => isAncestor(ancestor, candidate.node))) {
-        continue;
-      }
-      consumed.push(candidate.node);
-      const counted = countedByShape.get(shape) ?? [];
-      counted.push(candidate);
-      countedByShape.set(shape, counted);
-      maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, candidate.size);
-    }
-  }
-  let duplicateBlockCount = 0;
-  let duplicateBlockGroupCount = 0;
-  const duplicateBlockGroups: DuplicateBlockOccurrence[][] = [];
-  for (const counted of countedByShape.values()) {
-    if (counted.length < 2) {
-      continue;
-    }
-    duplicateBlockCount += counted.length - 1;
-    duplicateBlockGroupCount += 1;
-    duplicateBlockGroups.push(
-      counted
-        .map(({ node }) => ({ startLine: node.startPosition.row + 1, endLine: node.endPosition.row + 1 }))
-        .toSorted((left, right) => left.startLine - right.startLine)
-    );
-  }
-
-  return { duplicateBlockCount, duplicateBlockGroupCount, duplicateBlockGroups, maxDuplicateBlockSize };
-}
-
-/** Serializes a subtree by node type only (ignoring identifiers and literals) and reports its node count. */
-function describeShape(
-  node: Parser.SyntaxNode,
-  cache: Map<number, { shape: string; size: number }>
-): { shape: string; size: number } {
-  const cached = cache.get(node.id);
-  if (cached) {
-    return cached;
-  }
-
-  let shape = node.type;
-  let size = 1;
-  if (node.namedChildCount > 0) {
-    const parts: string[] = [];
-    for (const child of node.namedChildren) {
-      const childShape = describeShape(child, cache);
-      parts.push(childShape.shape);
-      size += childShape.size;
-    }
-    shape = `${node.type}(${parts.join(',')})`;
-  }
-
-  const result = { shape, size };
-  cache.set(node.id, result);
-  return result;
-}
-
-function isAncestor(ancestor: Parser.SyntaxNode, node: Parser.SyntaxNode): boolean {
-  let current = node.parent;
-  while (current) {
-    if (current.id === ancestor.id) {
-      return true;
-    }
-    current = current.parent;
-  }
-  return false;
-}
-
 function measureLines(code: string, root: Parser.SyntaxNode): CodeMetrics['lines'] {
   const sourceLines = code.length === 0 ? [] : code.split(/\r\n|\n|\r/);
   const commentSpans = collectCommentSpans(root);
@@ -1210,7 +1181,7 @@ function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics
   const operands = new Map<string, number>();
 
   function visit(node: Parser.SyntaxNode): void {
-    if (node.type === 'comment') {
+    if (node.type === 'comment' || node.type === 'line_comment' || node.type === 'block_comment') {
       return;
     }
 
@@ -1271,6 +1242,12 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
     return nameNode.text;
   }
 
+  // C/C++ definitions name the function inside the (possibly pointer-wrapped) declarator chain.
+  const declaratorName = findDeclaratorName(node);
+  if (declaratorName) {
+    return declaratorName;
+  }
+
   const parent = node.parent;
   if (!parent) {
     return undefined;
@@ -1286,6 +1263,18 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
 
   const parentName = parent.childForFieldName('name');
   return parentName?.text;
+}
+
+function findDeclaratorName(node: Parser.SyntaxNode): string | undefined {
+  let declarator = node.childForFieldName('declarator');
+  while (declarator) {
+    const next = declarator.childForFieldName('declarator');
+    if (!next) {
+      return findRightmostIdentifier(declarator);
+    }
+    declarator = next;
+  }
+  return undefined;
 }
 
 function findWrappedComponentName(node: Parser.SyntaxNode): string | undefined {
@@ -1323,15 +1312,25 @@ function isReactComponentWrapperCall(node: Parser.SyntaxNode): boolean {
 }
 
 function isCallNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'call_expression' || node.type === 'call' || node.type === 'macro_invocation';
+  return (
+    node.type === 'call_expression' ||
+    node.type === 'call' ||
+    node.type === 'method_invocation' ||
+    node.type === 'macro_invocation'
+  );
 }
 
 function findCalleeName(node: Parser.SyntaxNode): string | undefined {
-  // The `namedChild(0)` fallback covers Rust `macro_invocation` (whose callee is the `macro` field,
+  // Java `method_invocation` names its callee `name` and Ruby `call` names it `method`. The
+  // `namedChild(0)` fallback covers Rust `macro_invocation` (whose callee is the `macro` field,
   // not `function`), so macros resolve to their name. `findRightmostIdentifier` must be kept rather
   // than reading `calleeNode.text`: member calls like `self.map.get(key)` must resolve to `get`, not
   // the full `self.map.get`, so intra-file call-graph name matching stays correct.
-  const calleeNode = node.childForFieldName('function') ?? node.namedChild(0);
+  const calleeNode =
+    node.childForFieldName('function') ??
+    node.childForFieldName('name') ??
+    node.childForFieldName('method') ??
+    node.namedChild(0);
   if (!calleeNode) {
     return undefined;
   }
@@ -1381,14 +1380,29 @@ function isImportNode(node: Parser.SyntaxNode): boolean {
     node.type === 'import_spec' ||
     node.type === 'import_spec_list' ||
     node.type === 'use_declaration' ||
-    node.type === 'extern_crate_declaration'
+    node.type === 'extern_crate_declaration' ||
+    node.type === 'preproc_include'
   );
 }
 
-function isImportSourceNode(node: Parser.SyntaxNode): boolean {
+function isImportSourceNode(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
   return (
-    isImportNode(node) || isDynamicImportNode(node) || (isExportNode(node) && node.childForFieldName('source') !== null)
+    isImportNode(node) ||
+    isDynamicImportNode(node) ||
+    isRubyRequireCall(node, language) ||
+    (isExportNode(node) && node.childForFieldName('source') !== null)
   );
+}
+
+const rubyRequireMethods = new Set(['require', 'require_relative', 'load']);
+
+function isRubyRequireCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
+  if (language.name !== 'ruby' || node.type !== 'call') {
+    return false;
+  }
+
+  const methodNode = node.childForFieldName('method');
+  return methodNode?.type === 'identifier' && rubyRequireMethods.has(methodNode.text);
 }
 
 function isDynamicImportNode(node: Parser.SyntaxNode): boolean {
@@ -1416,12 +1430,40 @@ function findImportSources(
     return findRustImportSources(node);
   }
 
+  if (language.name === 'java' && node.type === 'import_declaration') {
+    const importedPath = node.namedChild(0);
+    return importedPath ? [normalizeImportSource(importedPath.text)] : [];
+  }
+
+  if (isRubyRequireCall(node, language)) {
+    return findRubyRequireSources(node);
+  }
+
+  // C/C++ `#include` paths live in the `path` field as a string literal or `<...>` token.
+  if (node.type === 'preproc_include') {
+    const pathNode = node.childForFieldName('path');
+    return pathNode ? [unquote(pathNode.text)] : [];
+  }
+
   if (isDynamicImportNode(node)) {
     return findDynamicImportSources(node);
   }
 
   const sourceNode = node.childForFieldName('source') ?? findFirstStringNode(node);
   return sourceNode ? [unquote(sourceNode.text)] : [];
+}
+
+/** Resolves `require`/`require_relative`/`load` sources; `require_relative` is always file-relative. */
+function findRubyRequireSources(node: Parser.SyntaxNode): string[] {
+  const argumentsNode = node.childForFieldName('arguments');
+  const firstArgument = argumentsNode?.namedChild(0);
+  if (!firstArgument || firstArgument.type !== 'string') {
+    return [];
+  }
+
+  const source = unquote(firstArgument.text);
+  const isRelative = node.childForFieldName('method')?.text === 'require_relative';
+  return [isRelative && !source.startsWith('.') ? `./${source}` : source];
 }
 
 function findDynamicImportSources(node: Parser.SyntaxNode): string[] {
@@ -1619,7 +1661,7 @@ function isStringNode(node: Parser.SyntaxNode): boolean {
 }
 
 function unquote(value: string): string {
-  return value.replaceAll(/^['"`]|['"`]$/gu, '');
+  return value.replaceAll(/^['"`<]|['"`>]$/gu, '');
 }
 
 function isExportNode(node: Parser.SyntaxNode): boolean {
@@ -1682,14 +1724,15 @@ function measureCallDepth(index: number, graph: Map<number, Set<number>>, pathIn
   return maxDepth;
 }
 
-function intersectSets(left: Set<string>, right: Set<string>): Set<string> {
-  const intersection = new Set<string>();
-  for (const value of left) {
-    if (right.has(value)) {
-      intersection.add(value);
+function countIntersection(left: Set<string>, right: Set<string>): number {
+  const [smaller, larger] = left.size <= right.size ? [left, right] : [right, left];
+  let count = 0;
+  for (const value of smaller) {
+    if (larger.has(value)) {
+      count += 1;
     }
   }
-  return intersection;
+  return count;
 }
 
 function calculateMaintainabilityIndex(volume: number, complexity: number, loc: number): number {

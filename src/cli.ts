@@ -57,14 +57,25 @@ interface ScanResult {
 }
 
 const languageByExtension = new Map<string, LanguageName>([
+  ['.c', 'c'],
+  ['.cc', 'cpp'],
   ['.cjs', 'javascript'],
+  ['.cpp', 'cpp'],
   ['.cts', 'typescript'],
+  ['.cxx', 'cpp'],
   ['.go', 'go'],
+  // Headers may be C or C++; the C++ grammar parses both.
+  ['.h', 'cpp'],
+  ['.hh', 'cpp'],
+  ['.hpp', 'cpp'],
+  ['.hxx', 'cpp'],
+  ['.java', 'java'],
   ['.js', 'javascript'],
   ['.jsx', 'jsx'],
   ['.mjs', 'javascript'],
   ['.mts', 'typescript'],
   ['.py', 'python'],
+  ['.rb', 'ruby'],
   ['.rs', 'rust'],
   ['.ts', 'typescript'],
   ['.tsx', 'tsx'],

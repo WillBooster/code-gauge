@@ -101,6 +101,52 @@ const languageCases: LanguageCase[] = [
       maxCyclomaticComplexity: 2,
     },
   },
+  {
+    name: 'Java',
+    language: 'java',
+    fixture: 'sample.java',
+    expected: {
+      language: 'java',
+      functionCount: 1,
+      functionNames: ['choose'],
+      classCount: 1,
+      maxCyclomaticComplexity: 2,
+    },
+  },
+  {
+    name: 'Ruby',
+    language: 'ruby',
+    fixture: 'sample.rb',
+    expected: {
+      language: 'ruby',
+      functionCount: 1,
+      functionNames: ['choose'],
+      maxCyclomaticComplexity: 2,
+    },
+  },
+  {
+    name: 'C',
+    language: 'c',
+    fixture: 'sample.c',
+    expected: {
+      language: 'c',
+      functionCount: 1,
+      functionNames: ['choose'],
+      maxCyclomaticComplexity: 2,
+    },
+  },
+  {
+    name: 'C++',
+    language: 'cpp',
+    fixture: 'sample.cpp',
+    expected: {
+      language: 'cpp',
+      functionCount: 1,
+      functionNames: ['choose'],
+      classCount: 1,
+      maxCyclomaticComplexity: 2,
+    },
+  },
 ];
 
 describe('measureCode e2e', () => {
@@ -163,6 +209,7 @@ describe('measureCode e2e', () => {
       { alias: 'ts', code: 'export function run(): number { return 1; }', expectedLanguage: 'typescript' },
       { alias: 'py', code: 'def run():\n    return 1', expectedLanguage: 'python' },
       { alias: 'rs', code: 'fn run() -> i32 { 1 }', expectedLanguage: 'rust' },
+      { alias: 'rb', code: 'def run\n  1\nend', expectedLanguage: 'ruby' },
     ];
 
     for (const { alias, code, expectedLanguage } of cases) {
@@ -196,10 +243,24 @@ describe('measureCode e2e', () => {
   });
 
   it('throws for unsupported languages', () => {
-    expect(() => measureCode('puts "hello"', { language: 'ruby' })).toThrow('Unsupported language: ruby');
+    expect(() => measureCode('main = putStrLn "hello"', { language: 'haskell' })).toThrow(
+      'Unsupported language: haskell'
+    );
   });
 
   it('lists built-in languages', () => {
-    expect(supportedLanguages).toEqual(['javascript', 'jsx', 'typescript', 'tsx', 'python', 'go', 'rust']);
+    expect(supportedLanguages).toEqual([
+      'javascript',
+      'jsx',
+      'typescript',
+      'tsx',
+      'python',
+      'go',
+      'rust',
+      'java',
+      'ruby',
+      'c',
+      'cpp',
+    ]);
   });
 });
