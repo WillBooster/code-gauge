@@ -140,37 +140,58 @@ function resolveLocalImport(
     return fromFile.endsWith('.java') ? resolveJavaImport(source, javaFileIndex) : undefined;
   }
   const bases = localImportBases(fromFile, source);
-  const stems = bases.flatMap((base) => {
+
+  // An explicit-path source (`#include "b.hpp"`, `require_relative "./b.rb"`) resolves exactly
+  // before any extension probing, so a sibling `b.ts` cannot shadow the named file.
+  for (const base of bases) {
+    if (fileSet.has(base)) {
+      return base;
+    }
+  }
+
+  const { extensions, indexFiles } = importProbes(fromFile);
+  const stems = bases.map((base) => {
     const extension = path.extname(base);
-    return extension ? [base.slice(0, -extension.length), base] : [base];
+    return extension ? base.slice(0, -extension.length) : base;
   });
   for (const stem of stems) {
-    for (const candidate of [
-      `${stem}.ts`,
-      `${stem}.tsx`,
-      `${stem}.js`,
-      `${stem}.jsx`,
-      `${stem}.py`,
-      `${stem}.rb`,
-      `${stem}.h`,
-      `${stem}.hpp`,
-      `${stem}.hh`,
-      `${stem}.hxx`,
-      `${stem}.c`,
-      `${stem}.cpp`,
-      `${stem}.cc`,
-      `${stem}.cxx`,
-      path.join(stem, 'index.ts'),
-      path.join(stem, 'index.tsx'),
-      path.join(stem, 'index.js'),
-      path.join(stem, '__init__.py'),
-    ]) {
+    for (const extension of extensions) {
+      if (fileSet.has(`${stem}${extension}`)) {
+        return `${stem}${extension}`;
+      }
+    }
+    for (const indexFile of indexFiles) {
+      const candidate = path.join(stem, indexFile);
       if (fileSet.has(candidate)) {
         return candidate;
       }
     }
   }
   return undefined;
+}
+
+const jsExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts']);
+const cExtensions = new Set(['.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hh', '.hxx']);
+
+/** Extension-less sources probe only extensions the importing language can actually load. */
+function importProbes(fromFile: string): { extensions: string[]; indexFiles: string[] } {
+  const fromExtension = path.extname(fromFile);
+  if (fromExtension === '.rb') {
+    return { extensions: ['.rb'], indexFiles: [] };
+  }
+  if (fromExtension === '.py') {
+    return { extensions: ['.py'], indexFiles: ['__init__.py'] };
+  }
+  if (cExtensions.has(fromExtension)) {
+    return { extensions: ['.h', '.hpp', '.hh', '.hxx', '.c', '.cpp', '.cc', '.cxx'], indexFiles: [] };
+  }
+  if (jsExtensions.has(fromExtension)) {
+    return { extensions: ['.ts', '.tsx', '.js', '.jsx'], indexFiles: ['index.ts', 'index.tsx', 'index.js'] };
+  }
+  return {
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.py', '.rb', '.h', '.hpp', '.hh', '.hxx', '.c', '.cpp', '.cc', '.cxx'],
+    indexFiles: ['index.ts', 'index.tsx', 'index.js', '__init__.py'],
+  };
 }
 
 /** Indexes scanned `.java` files by class name so dotted imports resolve without scanning all files. */
