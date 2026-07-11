@@ -1048,19 +1048,55 @@ function isJavaMutableDeclaration(node: Parser.SyntaxNode): boolean {
 }
 
 /**
- * C/C++ variable declarations bind mutably unless `const`/`constexpr`-qualified. Declarations
- * whose declarator is a bare `function_declarator` are prototypes, not bindings.
+ * C/C++ variable declarations bind mutably unless the binding itself is `const`/`constexpr`
+ * qualified. Declarations whose declarator is a bare `function_declarator` are prototypes, not
+ * bindings.
  */
 function isCMutableDeclaration(node: Parser.SyntaxNode): boolean {
   if (node.type !== 'declaration') {
     return false;
   }
 
-  if (node.namedChildren.some((child) => child.type === 'type_qualifier')) {
-    return false;
+  return node.namedChildren
+    .filter((child) => cVariableDeclaratorTypes.has(child.type))
+    .some((declarator) => isCMutableBinding(node, declarator));
+}
+
+/**
+ * A base-type `const` (`const int x`) freezes a plain binding but not a pointer binding
+ * (`const int *p` leaves `p` reassignable), while a pointer-level `const` on the level that
+ * directly declares the name (`int * const p`, `int ** const s`) freezes it; `volatile` and
+ * `restrict` never do.
+ */
+function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.SyntaxNode): boolean {
+  let current =
+    declarator.type === 'init_declarator' ? (declarator.childForFieldName('declarator') ?? declarator) : declarator;
+  let insidePointer = false;
+  while (
+    current.type === 'pointer_declarator' ||
+    current.type === 'array_declarator' ||
+    current.type === 'parenthesized_declarator'
+  ) {
+    const inner = current.childForFieldName('declarator') ?? current.namedChildren.at(-1);
+    if (!inner) {
+      break;
+    }
+    if (current.type === 'pointer_declarator') {
+      insidePointer = true;
+      if (inner.type === 'identifier' && hasConstQualifier(current)) {
+        return false;
+      }
+    }
+    current = inner;
   }
 
-  return node.namedChildren.some((child) => cVariableDeclaratorTypes.has(child.type));
+  return insidePointer || !hasConstQualifier(declaration);
+}
+
+function hasConstQualifier(node: Parser.SyntaxNode): boolean {
+  return node.namedChildren.some(
+    (child) => child.type === 'type_qualifier' && (child.text === 'const' || child.text === 'constexpr')
+  );
 }
 
 /**
