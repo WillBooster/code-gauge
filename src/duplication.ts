@@ -357,29 +357,42 @@ function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, 
     byFingerprint.set(candidate.fingerprint, group);
   }
 
-  const duplicates = [...byFingerprint.entries()]
+  let duplicates = [...byFingerprint.entries()]
     .filter(([, group]) => hasDistinctRegions(group))
     .flatMap(([fingerprint, group]) => dedupeByRegion(group).map((candidate) => ({ fingerprint, candidate })));
   duplicates.sort((left, right) => right.candidate.tokenCount - left.candidate.tokenCount);
 
-  const keptRegions: { startIndex: number; endIndex: number }[] = [];
-  const counted = new Map<string, DuplicateCandidate[]>();
-  for (const { fingerprint, candidate } of duplicates) {
-    if (keptRegions.some((region) => overlaps(region, candidate))) {
-      continue;
+  // Greedy selection can keep a candidate whose group ends up below two survivors; such an
+  // uncounted region must not block smaller groups, so the largest failed group is removed and the
+  // selection reruns. One group at a time: freeing a failed group's regions can rescue another.
+  while (true) {
+    const keptRegions: { startIndex: number; endIndex: number }[] = [];
+    const counted = new Map<string, DuplicateCandidate[]>();
+    for (const { fingerprint, candidate } of duplicates) {
+      if (keptRegions.some((region) => overlaps(region, candidate))) {
+        continue;
+      }
+      keptRegions.push(candidate);
+      const group = counted.get(fingerprint) ?? [];
+      group.push(candidate);
+      counted.set(fingerprint, group);
     }
-    keptRegions.push(candidate);
-    const group = counted.get(fingerprint) ?? [];
-    group.push(candidate);
-    counted.set(fingerprint, group);
-  }
 
-  for (const [fingerprint, group] of counted) {
-    if (group.length < 2) {
-      counted.delete(fingerprint);
+    let failedFingerprint: string | undefined;
+    let failedTokenCount = -1;
+    for (const [fingerprint, group] of counted) {
+      const tokenCount = group[0]?.tokenCount ?? 0;
+      if (group.length < 2 && tokenCount > failedTokenCount) {
+        failedFingerprint = fingerprint;
+        failedTokenCount = tokenCount;
+      }
     }
+    if (failedFingerprint === undefined) {
+      return counted;
+    }
+
+    duplicates = duplicates.filter((entry) => entry.fingerprint !== failedFingerprint);
   }
-  return counted;
 }
 
 function hasDistinctRegions(group: DuplicateCandidate[]): boolean {
