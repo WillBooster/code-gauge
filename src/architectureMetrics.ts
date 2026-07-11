@@ -93,11 +93,12 @@ export function measureArchitecture(
 
 function measureDependencyGraph(files: SourceFile[]): Map<string, Set<string>> {
   const fileSet = new Set(files.map((file) => file.relativeFile));
+  const javaFileIndex = buildJavaFileIndex(fileSet);
   const graph = new Map<string, Set<string>>();
   for (const file of files) {
     const dependencies = new Set<string>();
     for (const source of file.metrics.module.importSources) {
-      const resolved = resolveLocalImport(file.relativeFile, source, fileSet);
+      const resolved = resolveLocalImport(file.relativeFile, source, fileSet, javaFileIndex);
       if (resolved) {
         dependencies.add(resolved);
       }
@@ -107,9 +108,15 @@ function measureDependencyGraph(files: SourceFile[]): Map<string, Set<string>> {
   return graph;
 }
 
-function resolveLocalImport(fromFile: string, source: string, fileSet: Set<string>): string | undefined {
+function resolveLocalImport(
+  fromFile: string,
+  source: string,
+  fileSet: Set<string>,
+  javaFileIndex: Map<string, string[]>
+): string | undefined {
   if (!source.startsWith('.')) {
-    return undefined;
+    // Java imports are dotted class paths without a leading dot; other absolute sources are external.
+    return fromFile.endsWith('.java') ? resolveJavaImport(source, javaFileIndex) : undefined;
   }
   const bases = localImportBases(fromFile, source);
   const stems = bases.flatMap((base) => {
@@ -123,12 +130,15 @@ function resolveLocalImport(fromFile: string, source: string, fileSet: Set<strin
       `${stem}.js`,
       `${stem}.jsx`,
       `${stem}.py`,
+      `${stem}.rb`,
       `${stem}.h`,
       `${stem}.hpp`,
       `${stem}.hh`,
+      `${stem}.hxx`,
       `${stem}.c`,
       `${stem}.cpp`,
       `${stem}.cc`,
+      `${stem}.cxx`,
       path.join(stem, 'index.ts'),
       path.join(stem, 'index.tsx'),
       path.join(stem, 'index.js'),
@@ -137,6 +147,52 @@ function resolveLocalImport(fromFile: string, source: string, fileSet: Set<strin
       if (fileSet.has(candidate)) {
         return candidate;
       }
+    }
+  }
+  return undefined;
+}
+
+/** Indexes scanned `.java` files by class name so dotted imports resolve without scanning all files. */
+function buildJavaFileIndex(fileSet: Set<string>): Map<string, string[]> {
+  const index = new Map<string, string[]>();
+  for (const file of fileSet) {
+    if (!file.endsWith('.java')) {
+      continue;
+    }
+    const className = path.basename(file, '.java');
+    const files = index.get(className) ?? [];
+    files.push(file);
+    index.set(className, files);
+  }
+  for (const files of index.values()) {
+    files.sort();
+  }
+  return index;
+}
+
+/**
+ * Resolves a Java dotted import (`com.example.Helper`) to a scanned file whose path ends with the
+ * package path, tolerating source-root prefixes (`src/main/java/...`). Static imports fall back to
+ * the enclosing class once the member segment fails to match; wildcard imports name a package, not
+ * a file, and stay unresolved. Ambiguity across source roots resolves to the lexicographically
+ * first path for determinism.
+ */
+function resolveJavaImport(source: string, javaFileIndex: Map<string, string[]>): string | undefined {
+  if (source.endsWith('.*')) {
+    return undefined;
+  }
+  const segments = source.split('.');
+  for (const candidateSegments of [segments, segments.slice(0, -1)]) {
+    const className = candidateSegments.at(-1);
+    if (!className) {
+      continue;
+    }
+    const relativePath = `${candidateSegments.join('/')}.java`;
+    const match = (javaFileIndex.get(className) ?? []).find(
+      (file) => file === relativePath || file.endsWith(`/${relativePath}`)
+    );
+    if (match) {
+      return match;
     }
   }
   return undefined;
