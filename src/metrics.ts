@@ -1185,6 +1185,9 @@ function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics
       return;
     }
 
+    // Operators are counted from leaf tokens only: keyword-named nodes (Ruby `return`, Python
+    // `await`, ...) always contain a same-text anonymous keyword leaf, so counting the named node
+    // as well would double-count.
     if (node.childCount === 0) {
       const text = code.slice(node.startIndex, node.endIndex);
       if (operatorTexts.has(text) || operatorTexts.has(node.type)) {
@@ -1193,10 +1196,6 @@ function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics
         incrementCount(operands, text);
       }
       return;
-    }
-
-    if (operatorTexts.has(node.type)) {
-      incrementCount(operators, node.type);
     }
 
     for (const child of node.children) {
