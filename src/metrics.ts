@@ -923,7 +923,13 @@ function findDeclarationName(node: Parser.SyntaxNode): string | undefined {
     return findGoMethodDeclarationName(node);
   }
 
-  const nameNode = node.childForFieldName('name');
+  let nameNode = node.childForFieldName('name');
+  // C++ class/struct template specializations name the type via a `template_type` wrapper
+  // (`template<> class Box<int>`); the unqualified inner name keeps specializations in the same
+  // symbol group as the primary template.
+  if (nameNode?.type === 'template_type') {
+    nameNode = nameNode.childForFieldName('name');
+  }
   if (nameNode) {
     return isDeclarationNameNode(nameNode) ? nameNode.text : undefined;
   }
