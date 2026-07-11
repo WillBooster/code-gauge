@@ -336,14 +336,15 @@ function findParametersNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefi
     return node.parent?.parent?.childForFieldName('parameters') ?? undefined;
   }
 
-  // C/C++ parameters hang off the (possibly pointer-wrapped) declarator, not the definition itself.
+  // C/C++ parameters hang off the (possibly pointer/reference-wrapped) declarator, not the
+  // definition itself.
   let declarator = node.childForFieldName('declarator');
   while (declarator) {
     const parameters = declarator.childForFieldName('parameters');
     if (parameters) {
       return parameters;
     }
-    declarator = declarator.childForFieldName('declarator');
+    declarator = nextDeclarator(declarator);
   }
 
   return node.namedChildren.find((child) => child.type === 'formal_parameters' || child.type === 'parameter_list');
@@ -1134,7 +1135,7 @@ function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.Sy
     current.type === 'parenthesized_declarator' ||
     current.type === 'function_declarator'
   ) {
-    const inner = current.childForFieldName('declarator') ?? current.namedChildren.at(-1);
+    const inner = nextDeclarator(current);
     if (!inner) {
       break;
     }
@@ -1494,6 +1495,21 @@ function findDeclaratorName(node: Parser.SyntaxNode): string | undefined {
 }
 
 /**
+ * Steps into the inner declarator; `reference_declarator` and `parenthesized_declarator` do not
+ * expose a `declarator` field in tree-sitter-cpp, so their sole named child is the inner node.
+ */
+function nextDeclarator(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
+  const direct = node.childForFieldName('declarator');
+  if (direct) {
+    return direct;
+  }
+  if (node.type === 'reference_declarator' || node.type === 'parenthesized_declarator') {
+    return node.namedChild(0);
+  }
+  return null;
+}
+
+/**
  * Unwraps a C/C++ declarator chain to the declared name, handling parenthesized declarators
  * (function pointers), qualified names, destructors, and operator overloads explicitly; a
  * rightmost-identifier fallback would pick up parameter names from nested `function_declarator`s.
@@ -1512,12 +1528,8 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | un
         current = current.childForFieldName('name');
         break;
       }
-      case 'parenthesized_declarator': {
-        current = current.namedChild(0);
-        break;
-      }
       default: {
-        current = current.childForFieldName('declarator');
+        current = nextDeclarator(current);
       }
     }
   }
