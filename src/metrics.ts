@@ -309,6 +309,11 @@ function countParameters(node: Parser.SyntaxNode): number {
     return 0;
   }
 
+  // A Java bare lambda parameter (`x -> x + 1`) puts a lone identifier in the `parameters` field.
+  if (parametersNode.type === 'identifier') {
+    return 1;
+  }
+
   // Rust's `self` receiver is not a declared parameter, and C/C++ `f(void)` declares none.
   return parametersNode.namedChildren.filter(
     (child) => child.type !== 'comment' && child.type !== 'self_parameter' && !isVoidParameter(child)
@@ -1120,21 +1125,19 @@ function isJavaMutableDeclaration(node: Parser.SyntaxNode): boolean {
 function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.SyntaxNode): boolean {
   let current =
     declarator.type === 'init_declarator' ? (declarator.childForFieldName('declarator') ?? declarator) : declarator;
-  // A C++ reference binding can never be reseated, so it is immutable regardless of qualifiers.
-  if (
-    declarator.type === 'reference_declarator' ||
-    declarator.childForFieldName('declarator')?.type === 'reference_declarator'
-  ) {
-    return false;
-  }
-
   let insidePointer = false;
   while (
+    current.type === 'reference_declarator' ||
     current.type === 'pointer_declarator' ||
     current.type === 'array_declarator' ||
     current.type === 'parenthesized_declarator' ||
     current.type === 'function_declarator'
   ) {
+    // A C++ reference binding can never be reseated, so it is immutable regardless of qualifiers;
+    // references can nest under pointers (`int *&rp`), so the whole chain is checked.
+    if (current.type === 'reference_declarator') {
+      return false;
+    }
     const inner = nextDeclarator(current);
     if (!inner) {
       break;
@@ -1486,6 +1489,12 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
     return patternNode?.type === 'identifier' ? patternNode.text : undefined;
   }
 
+  // A C++ lambda assigned to a variable (`auto f = [](int x) { ... };`) takes the variable name,
+  // like Rust `let` closures above, so calls to the binding resolve as intra-file edges.
+  if (node.type === 'lambda_expression' && parent.type === 'init_declarator') {
+    return unwrapDeclaratorName(parent.childForFieldName('declarator'));
+  }
+
   const parentName = parent.childForFieldName('name');
   return parentName?.text;
 }
@@ -1521,7 +1530,9 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | un
       case 'identifier':
       case 'field_identifier':
       case 'destructor_name':
-      case 'operator_name': {
+      case 'operator_name':
+      // A C++ conversion operator (`operator int()`) is its own declarator node.
+      case 'operator_cast': {
         return current.text;
       }
       case 'qualified_identifier': {
