@@ -109,7 +109,9 @@ const literalKindByType = new Map([
   ['decimal_floating_point_literal', '#num'],
   ['hex_floating_point_literal', '#num'],
   ['string_fragment', '#str'],
+  ['multiline_string_fragment', '#str'],
   ['string_content', '#str'],
+  ['raw_string_content', '#str'],
   ['heredoc_content', '#str'],
   // Strings are leaves in some grammars (Go/Rust) and fragment containers in others.
   ['string', '#str'],
@@ -127,7 +129,14 @@ const literalKindByType = new Map([
 const commentTypes = new Set(['comment', 'line_comment', 'block_comment']);
 
 /** Children of a string node that carry only literal content; anything else is interpolation. */
-const stringFragmentTypes = new Set(['string_fragment', 'string_content', 'escape_sequence', 'heredoc_content']);
+const stringFragmentTypes = new Set([
+  'string_fragment',
+  'multiline_string_fragment',
+  'string_content',
+  'raw_string_content',
+  'escape_sequence',
+  'heredoc_content',
+]);
 
 /**
  * Where a grammar names callees/members with a plain `identifier` (Java `method_invocation.name`,

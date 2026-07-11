@@ -1791,7 +1791,15 @@ function findRubyRequireSources(node: Parser.SyntaxNode): string[] {
     return [];
   }
 
-  const source = unquote(firstArgument.text);
+  // Dynamic requires (`require "#{name}"`) name no static source.
+  if (firstArgument.namedChildren.some((child) => child.type === 'interpolation')) {
+    return [];
+  }
+
+  // Percent literals (`%q(foo)`) keep their delimiters in `text`; the content children are exact.
+  const contentNodes = firstArgument.namedChildren.filter((child) => child.type === 'string_content');
+  const source =
+    contentNodes.length > 0 ? contentNodes.map((child) => child.text).join('') : unquote(firstArgument.text);
   const isRelative = node.childForFieldName('method')?.text === 'require_relative';
   return [isRelative && !source.startsWith('.') ? `./${source}` : source];
 }
