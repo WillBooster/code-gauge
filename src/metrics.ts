@@ -197,7 +197,9 @@ export class TreeMeasurer {
       bufferSize: code.length + 1,
     });
     const root = tree.rootNode;
-    const functions = collectNodes(root, new Set(language.functionNodeTypes));
+    const functions = collectNodes(root, new Set(language.functionNodeTypes)).filter(
+      (node) => !isLambdaBodyBlock(node)
+    );
     const structuralMetrics = measureStructuralMetrics(root, functions, language);
     const functionMetrics = structuralMetrics.functions;
     const globalComplexity = measureComplexity(root, language, 0, false);
@@ -328,6 +330,12 @@ function findParametersNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefi
     return direct;
   }
 
+  // A Java compact constructor implicitly takes the record's components, declared on the
+  // `record_declaration` two levels up (via `class_body`).
+  if (node.type === 'compact_constructor_declaration') {
+    return node.parent?.parent?.childForFieldName('parameters') ?? undefined;
+  }
+
   // C/C++ parameters hang off the (possibly pointer-wrapped) declarator, not the definition itself.
   let declarator = node.childForFieldName('declarator');
   while (declarator) {
@@ -410,6 +418,19 @@ function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<strin
   return new Map([...indexesByName.entries()].filter((entry): entry is [string, number] => entry[1] !== undefined));
 }
 
+/**
+ * A Ruby stabby lambda (`->(x) { ... }`) wraps its body in a `block`/`do_block`, which is itself a
+ * function node type; the wrapper is part of the lambda, not a separate function, so it must not
+ * count as one or act as a nested-function boundary.
+ */
+function isLambdaBodyBlock(node: Parser.SyntaxNode): boolean {
+  return (node.type === 'block' || node.type === 'do_block') && node.parent?.type === 'lambda';
+}
+
+function isFunctionBoundary(node: Parser.SyntaxNode, functionNodeTypes: Set<string>): boolean {
+  return functionNodeTypes.has(node.type) && !isLambdaBodyBlock(node);
+}
+
 function measureComplexity(
   node: Parser.SyntaxNode,
   language: LanguageDefinition,
@@ -424,7 +445,7 @@ function measureComplexity(
   const nestingNodes = new Set(language.nestingNodeTypes);
 
   function visit(current: Parser.SyntaxNode, currentNesting: number, insideRoot: boolean): void {
-    if (stopAtNestedFunctions && !insideRoot && functionNodes.has(current.type)) {
+    if (stopAtNestedFunctions && !insideRoot && isFunctionBoundary(current, functionNodes)) {
       return;
     }
 
@@ -493,7 +514,7 @@ function collectCalls(
   let callCount = 0;
 
   function visit(node: Parser.SyntaxNode, insideRoot: boolean): void {
-    if (!insideRoot && functionNodeTypes.has(node.type)) {
+    if (!insideRoot && isFunctionBoundary(node, functionNodeTypes)) {
       return;
     }
 
@@ -1135,7 +1156,9 @@ function hasRustMutableLetBinding(node: Parser.SyntaxNode): boolean {
 }
 
 function isReturnNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'return_statement' || node.type === 'return_expression';
+  // Ruby's named `return` node is safe here: the visitor walks named children only, so the
+  // anonymous `return` keyword leaf is never seen.
+  return node.type === 'return_statement' || node.type === 'return_expression' || node.type === 'return';
 }
 
 function isThrowNode(node: Parser.SyntaxNode): boolean {
@@ -1634,7 +1657,13 @@ function findImportSources(
 
   if (language.name === 'java' && node.type === 'import_declaration') {
     const importedPath = node.namedChild(0);
-    return importedPath ? [normalizeImportSource(importedPath.text)] : [];
+    if (!importedPath) {
+      return [];
+    }
+    // The `.*` suffix is preserved so wildcard (package) imports stay unresolvable to a single file.
+    const isWildcard = node.namedChildren.some((child) => child.type === 'asterisk');
+    const source = normalizeImportSource(importedPath.text);
+    return [isWildcard ? `${source}.*` : source];
   }
 
   if (isRubyRequireCall(node, language)) {
