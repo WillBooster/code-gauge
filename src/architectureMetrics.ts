@@ -66,9 +66,15 @@ export function measureArchitecture(
   const duplicateSymbolGroups = measureDuplicateSymbolGroups(sourceFiles);
   const duplicateGroupCountByFile = measureDuplicateGroupCountByFile(duplicateSymbolGroups);
   const metrics = sourceFiles.map((sourceFile) => {
-    const directDependencies = dependencyGraph.get(sourceFile.relativeFile) ?? new Set<string>();
+    const directDependencies = dependencyGraph.dependenciesByFile.get(sourceFile.relativeFile) ?? new Set<string>();
+    const nonRelativeLocalImportCount =
+      dependencyGraph.nonRelativeLocalImportCountByFile.get(sourceFile.relativeFile) ?? 0;
     const structuralCoordination = measureStructuralCoordination(sourceFile.metrics);
-    const structuralFeatureGroups = measureStructuralFeatureGroups(sourceFile.metrics);
+    const structuralFeatureGroups = measureStructuralFeatureGroups(
+      sourceFile.metrics,
+      directDependencies.size,
+      nonRelativeLocalImportCount
+    );
     return {
       file: sourceFile.relativeFile,
       directLocalDependencyCount: directDependencies.size,
@@ -76,7 +82,10 @@ export function measureArchitecture(
       structuralBreadthScore: structuralFeatureGroups.length,
       structuralCoordination,
       structuralFeatureGroups,
-      transitiveLocalDependencyCount: measureTransitiveDependencyCount(sourceFile.relativeFile, dependencyGraph),
+      transitiveLocalDependencyCount: measureTransitiveDependencyCount(
+        sourceFile.relativeFile,
+        dependencyGraph.dependenciesByFile
+      ),
     };
   });
 
@@ -91,21 +100,33 @@ export function measureArchitecture(
   };
 }
 
-function measureDependencyGraph(files: SourceFile[]): Map<string, Set<string>> {
+interface DependencyGraph {
+  dependenciesByFile: Map<string, Set<string>>;
+  /** Import sources without a relative prefix (Java dotted paths) that still resolved locally. */
+  nonRelativeLocalImportCountByFile: Map<string, number>;
+}
+
+function measureDependencyGraph(files: SourceFile[]): DependencyGraph {
   const fileSet = new Set(files.map((file) => file.relativeFile));
   const javaFileIndex = buildJavaFileIndex(fileSet);
-  const graph = new Map<string, Set<string>>();
+  const dependenciesByFile = new Map<string, Set<string>>();
+  const nonRelativeLocalImportCountByFile = new Map<string, number>();
   for (const file of files) {
     const dependencies = new Set<string>();
+    let nonRelativeLocalImportCount = 0;
     for (const source of file.metrics.module.importSources) {
       const resolved = resolveLocalImport(file.relativeFile, source, fileSet, javaFileIndex);
       if (resolved) {
         dependencies.add(resolved);
+        if (!source.startsWith('.')) {
+          nonRelativeLocalImportCount += 1;
+        }
       }
     }
-    graph.set(file.relativeFile, dependencies);
+    dependenciesByFile.set(file.relativeFile, dependencies);
+    nonRelativeLocalImportCountByFile.set(file.relativeFile, nonRelativeLocalImportCount);
   }
-  return graph;
+  return { dependenciesByFile, nonRelativeLocalImportCountByFile };
 }
 
 function resolveLocalImport(
@@ -310,13 +331,21 @@ function measureStructuralCoordination(metrics: CodeMetrics): StructuralCoordina
   };
 }
 
-function measureStructuralFeatureGroups(metrics: CodeMetrics): string[] {
+/**
+ * Java imports are dotted package paths, so per-file coupling classifies them as external even
+ * when they resolve inside the scanned project; the dependency graph corrects both feature tags.
+ */
+function measureStructuralFeatureGroups(
+  metrics: CodeMetrics,
+  directLocalDependencyCount: number,
+  nonRelativeLocalImportCount: number
+): string[] {
   const groups = new Set<string>();
   addGroup(groups, 'class-shapes', metrics.classCount > 0);
   addGroup(groups, 'control-flow', metrics.cognitiveComplexity > 0);
-  addGroup(groups, 'external-dependencies', metrics.coupling.externalImportCount > 0);
+  addGroup(groups, 'external-dependencies', metrics.coupling.externalImportCount - nonRelativeLocalImportCount > 0);
   addGroup(groups, 'functions', metrics.functionCount > 0);
-  addGroup(groups, 'local-dependencies', metrics.coupling.relativeImportCount > 0);
+  addGroup(groups, 'local-dependencies', metrics.coupling.relativeImportCount > 0 || directLocalDependencyCount > 0);
   addGroup(groups, 'module-api', metrics.coupling.exportCount > 0 || metrics.module.declarations.length > 0);
   addGroup(
     groups,

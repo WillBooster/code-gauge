@@ -198,7 +198,7 @@ export class TreeMeasurer {
     });
     const root = tree.rootNode;
     const functions = collectNodes(root, new Set(language.functionNodeTypes)).filter(
-      (node) => !isLambdaBodyBlock(node)
+      (node) => !isLambdaBodyBlock(node) && isImplementedFunction(node)
     );
     const structuralMetrics = measureStructuralMetrics(root, functions, language);
     const functionMetrics = structuralMetrics.functions;
@@ -422,6 +422,22 @@ function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<strin
     indexesByName.set(analysis.name, indexesByName.has(analysis.name) ? undefined : analysis.index);
   }
   return new Map([...indexesByName.entries()].filter((entry): entry is [string, number] => entry[1] !== undefined));
+}
+
+/**
+ * C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members and Java
+ * `method_declaration` covers abstract/interface methods; those have no `body` and are signatures,
+ * not implementations, matching how TypeScript method signatures are excluded.
+ */
+const bodyRequiredFunctionTypes = new Set([
+  'function_definition',
+  'method_declaration',
+  'constructor_declaration',
+  'compact_constructor_declaration',
+]);
+
+function isImplementedFunction(node: Parser.SyntaxNode): boolean {
+  return !bodyRequiredFunctionTypes.has(node.type) || node.childForFieldName('body') !== null;
 }
 
 /**
