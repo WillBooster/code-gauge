@@ -1587,8 +1587,9 @@ function isImportSourceNode(node: Parser.SyntaxNode, language: LanguageDefinitio
 
 const rubyRequireMethods = new Set(['require', 'require_relative', 'load']);
 
+/** Only receiverless Kernel-style calls import; `loader.require(...)` is an ordinary method call. */
 function isRubyRequireCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  if (language.name !== 'ruby' || node.type !== 'call') {
+  if (language.name !== 'ruby' || node.type !== 'call' || node.childForFieldName('receiver')) {
     return false;
   }
 
