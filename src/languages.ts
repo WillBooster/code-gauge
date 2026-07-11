@@ -88,7 +88,8 @@ const javaDecisionNodes = [
 // strings appear as anonymous keyword tokens in other grammars and would be double-counted there.
 // `block`/`do_block` are Ruby's closures (`items.map { ... }`), the analog of JS callbacks.
 const rubyFunctionNodes = ['method', 'singleton_method', 'lambda', 'block', 'do_block'] as const;
-const rubyClassNodes = ['class', 'singleton_class', 'module'] as const;
+// `singleton_class` (`class << self`) opens an eigenclass scope, not a new type declaration.
+const rubyClassNodes = ['class', 'module'] as const;
 const rubyDecisionNodes = [
   'if',
   'elsif',

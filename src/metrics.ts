@@ -882,8 +882,23 @@ function isCVariableDeclarator(node: Parser.SyntaxNode): boolean {
   );
 }
 
+/**
+ * tree-sitter-cpp has no C++20 module support, so `export module foo;` / `import bar;` misparse as
+ * `declaration` nodes whose "type" is the keyword; they declare nothing and bind nothing.
+ */
+function isMisparsedCppModuleDeclaration(node: Parser.SyntaxNode): boolean {
+  const typeNode = node.childForFieldName('type');
+  return (
+    typeNode?.type === 'type_identifier' &&
+    (typeNode.text === 'import' || typeNode.text === 'export' || typeNode.text === 'module')
+  );
+}
+
 /** Extracts each declared variable from a C/C++ `declaration`; prototypes declare no symbol. */
 function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+  if (isMisparsedCppModuleDeclaration(node)) {
+    return [];
+  }
   return node.namedChildren.filter(isCVariableDeclarator).flatMap((child) => {
     const name = unwrapDeclaratorName(child);
     return name ? [{ exported, name, startLine: child.startPosition.row + 1 }] : [];
@@ -1195,6 +1210,9 @@ function countMutableBindings(node: Parser.SyntaxNode): number {
 }
 
 function countCMutableBindings(node: Parser.SyntaxNode): number {
+  if (isMisparsedCppModuleDeclaration(node)) {
+    return 0;
+  }
   return node.namedChildren.filter((child) => isCVariableDeclarator(child) && isCMutableBinding(node, child)).length;
 }
 
