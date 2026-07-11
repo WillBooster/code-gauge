@@ -59,6 +59,7 @@ A finding is reported when a measured value is **greater than or equal to** its 
   },
   "languageThresholds": {
     "python": { "stateMutation": 90, "structuralCoordination": 350 },
+    "ruby": { "stateMutation": 90, "structuralCoordination": 350 },
     "react": { "import": 30 }
   },
   "maxFindings": 20,
@@ -95,8 +96,9 @@ the `react` profile** (the last applies when the file contains a React component
 
 Valid profile keys are `javascript`, `jsx`, `typescript`, `tsx`, `python`, `go`, `rust`, `java`, `ruby`, `c`,
 `cpp`, and `react`. Built-in
-overrides raise `stateMutation` and `structuralCoordination` for Python (every binding is an assignment, so
-these run far higher than in TypeScript) and raise `import` for React files (which pull in many components).
+overrides raise `stateMutation` and `structuralCoordination` for Python and Ruby (every binding is an
+assignment, so these run far higher than in TypeScript) and raise `import` for React files (which pull in
+many components).
 Anything you specify is merged on top of the built-in overrides, so `{ "python": { "stateMutation": 8 } }`
 restores the global value for Python while keeping the other built-in adjustments.
 

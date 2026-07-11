@@ -1241,7 +1241,9 @@ function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.Sy
     }
     if (current.type === 'pointer_declarator') {
       insidePointer = true;
-      if ((inner.type === 'identifier' || inner.type === 'field_identifier') && hasConstQualifier(current)) {
+      // `const` on the pointer level that owns the name freezes the binding even when array or
+      // function wrappers sit between the pointer and the name (`int * const a[3]`).
+      if (hasConstQualifier(current) && !declaratorChainContainsPointer(inner)) {
         return false;
       }
     }
@@ -1249,6 +1251,17 @@ function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.Sy
   }
 
   return insidePointer || !hasConstQualifier(declaration);
+}
+
+function declaratorChainContainsPointer(declarator: Parser.SyntaxNode): boolean {
+  let current: Parser.SyntaxNode | null | undefined = declarator;
+  while (current) {
+    if (current.type === 'pointer_declarator') {
+      return true;
+    }
+    current = nextDeclarator(current);
+  }
+  return false;
 }
 
 function hasConstQualifier(node: Parser.SyntaxNode): boolean {
@@ -1734,7 +1747,12 @@ function isCallNode(node: Parser.SyntaxNode): boolean {
     node.type === 'call_expression' ||
     node.type === 'call' ||
     node.type === 'method_invocation' ||
-    node.type === 'macro_invocation'
+    node.type === 'macro_invocation' ||
+    // Constructor invocations are calls: JS/C++ `new_expression`, Java `object_creation_expression`
+    // and `this(...)`/`super(...)`.
+    node.type === 'new_expression' ||
+    node.type === 'object_creation_expression' ||
+    node.type === 'explicit_constructor_invocation'
   );
 }
 
@@ -1748,6 +1766,9 @@ function findCalleeName(node: Parser.SyntaxNode): string | undefined {
     node.childForFieldName('function') ??
     node.childForFieldName('name') ??
     node.childForFieldName('method') ??
+    // Constructor calls name the constructed type (`constructor` in JS, `type` in Java/C++).
+    node.childForFieldName('constructor') ??
+    node.childForFieldName('type') ??
     node.namedChild(0);
   if (!calleeNode) {
     return undefined;
@@ -1761,6 +1782,7 @@ function findRightmostIdentifier(node: Parser.SyntaxNode): string | undefined {
     node.type === 'identifier' ||
     node.type === 'property_identifier' ||
     node.type === 'field_identifier' ||
+    node.type === 'type_identifier' ||
     node.type === 'attribute'
   ) {
     return node.text;

@@ -70,6 +70,8 @@ export type ProfileKey = (typeof profileKeys)[number];
  */
 export const defaultProfileThresholds: Partial<Record<ProfileKey, Partial<Thresholds>>> = {
   python: { stateMutation: 90, structuralCoordination: 350 },
+  // Ruby scores state mutation via assignments like Python (bindings are assignments).
+  ruby: { stateMutation: 90, structuralCoordination: 350 },
   react: { import: 30 },
 };
 
