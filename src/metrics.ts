@@ -338,7 +338,7 @@ function findParametersNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefi
 
   // C/C++ parameters hang off the (possibly pointer/reference-wrapped) declarator, not the
   // definition itself.
-  let declarator = node.childForFieldName('declarator');
+  let declarator: Parser.SyntaxNode | null | undefined = node.childForFieldName('declarator');
   while (declarator) {
     const parameters = declarator.childForFieldName('parameters');
     if (parameters) {
@@ -1498,15 +1498,15 @@ function findDeclaratorName(node: Parser.SyntaxNode): string | undefined {
  * Steps into the inner declarator; `reference_declarator` and `parenthesized_declarator` do not
  * expose a `declarator` field in tree-sitter-cpp, so their sole named child is the inner node.
  */
-function nextDeclarator(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
+function nextDeclarator(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
   const direct = node.childForFieldName('declarator');
   if (direct) {
     return direct;
   }
   if (node.type === 'reference_declarator' || node.type === 'parenthesized_declarator') {
-    return node.namedChild(0);
+    return node.namedChild(0) ?? undefined;
   }
-  return null;
+  return undefined;
 }
 
 /**
@@ -1515,7 +1515,7 @@ function nextDeclarator(node: Parser.SyntaxNode): Parser.SyntaxNode | null {
  * rightmost-identifier fallback would pick up parameter names from nested `function_declarator`s.
  */
 function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | undefined {
-  let current = declarator;
+  let current: Parser.SyntaxNode | null | undefined = declarator;
   while (current) {
     switch (current.type) {
       case 'identifier':
