@@ -928,7 +928,7 @@ function findDeclarationName(node: Parser.SyntaxNode): string | undefined {
 
   // C/C++ function definitions name the function inside the declarator chain; this must run before
   // the generic fallback, which would otherwise pick up the return type's `type_identifier`.
-  const declaratorName = findDeclaratorName(node);
+  const declaratorName = unwrapDeclaratorName(node.childForFieldName('declarator'), true);
   if (declaratorName) {
     return declaratorName;
   }
@@ -1547,7 +1547,7 @@ function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics
     // as well would double-count.
     if (node.childCount === 0) {
       const text = code.slice(node.startIndex, node.endIndex);
-      if (operatorTexts.has(text) || operatorTexts.has(node.type)) {
+      if ((operatorTexts.has(text) || operatorTexts.has(node.type)) && isCountableQuestionToken(node, text)) {
         incrementCount(operators, text || node.type);
       } else if (operandNodeTypes.has(node.type)) {
         incrementCount(operands, text);
@@ -1665,9 +1665,13 @@ function nextDeclarator(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined 
  * Unwraps a C/C++ declarator chain to the declared name, handling parenthesized declarators
  * (function pointers), qualified names, destructors, and operator overloads explicitly; a
  * rightmost-identifier fallback would pick up parameter names from nested `function_declarator`s.
+ * With `qualified`, out-of-line scopes are kept (`Foo::process` -> `Foo.process`, mirroring Go's
+ * `Receiver.Method` declarations) so same-named methods of different types do not collide in
+ * cross-file duplicate-symbol groups; call-graph names stay unqualified so callee matching works.
  */
-function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | undefined {
+function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null, qualified = false): string | undefined {
   let current: Parser.SyntaxNode | null | undefined = declarator;
+  let scopePrefix = '';
   while (current) {
     switch (current.type) {
       case 'identifier':
@@ -1677,11 +1681,20 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | un
       case 'operator_name':
       // A C++ conversion operator (`operator int()`) is its own declarator node.
       case 'operator_cast': {
-        return current.text;
+        return scopePrefix ? `${scopePrefix}.${current.text}` : current.text;
       }
       // Template specializations (`id<int>`) and qualified names both carry a `name` field.
-      case 'template_function':
+      case 'template_function': {
+        current = current.childForFieldName('name');
+        break;
+      }
       case 'qualified_identifier': {
+        if (qualified) {
+          const scope = current.childForFieldName('scope')?.text.replaceAll(/\s+/gu, '');
+          if (scope) {
+            scopePrefix = scopePrefix ? `${scopePrefix}.${scope}` : scope;
+          }
+        }
         current = current.childForFieldName('name');
         break;
       }
@@ -1793,6 +1806,22 @@ function findCalleeName(node: Parser.SyntaxNode): string | undefined {
   }
 
   return findRightmostIdentifier(calleeNode);
+}
+
+/** Ternary/conditional and Rust try parents make `?` an operator; TS optional markers do not. */
+const questionOperatorParentTypes = new Set([
+  'ternary_expression',
+  'conditional_expression',
+  'conditional',
+  'try_expression',
+]);
+
+function isCountableQuestionToken(node: Parser.SyntaxNode, text: string): boolean {
+  if (text !== '?') {
+    return true;
+  }
+  const parentType = node.parent?.type;
+  return parentType !== undefined && questionOperatorParentTypes.has(parentType);
 }
 
 function findRightmostIdentifier(node: Parser.SyntaxNode): string | undefined {
