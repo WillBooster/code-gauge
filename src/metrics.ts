@@ -307,9 +307,19 @@ function countParameters(node: Parser.SyntaxNode): number {
     return 0;
   }
 
-  // Rust's `self` receiver is not a declared parameter.
-  return parametersNode.namedChildren.filter((child) => child.type !== 'comment' && child.type !== 'self_parameter')
-    .length;
+  // Rust's `self` receiver is not a declared parameter, and C/C++ `f(void)` declares none.
+  return parametersNode.namedChildren.filter(
+    (child) => child.type !== 'comment' && child.type !== 'self_parameter' && !isVoidParameter(child)
+  ).length;
+}
+
+/** C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator. */
+function isVoidParameter(node: Parser.SyntaxNode): boolean {
+  return (
+    node.type === 'parameter_declaration' &&
+    node.childForFieldName('declarator') === null &&
+    node.childForFieldName('type')?.text === 'void'
+  );
 }
 
 function findParametersNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
@@ -728,7 +738,27 @@ function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean)
     return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported));
   }
 
+  // C/C++ global variables live in `declaration` nodes with one or more declarators.
+  if (node.type === 'declaration') {
+    return declarationsFromCDeclaration(node, exported);
+  }
+
   return declarationFromNode(node, exported);
+}
+
+const cVariableDeclaratorTypes = new Set(['init_declarator', 'pointer_declarator', 'array_declarator', 'identifier']);
+
+/**
+ * Extracts each declared variable from a C/C++ `declaration`. Function declarators are skipped:
+ * a top-level `int f(int);` is a prototype, not a symbol definition.
+ */
+function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+  return node.namedChildren
+    .filter((child) => cVariableDeclaratorTypes.has(child.type))
+    .flatMap((child) => {
+      const name = unwrapDeclaratorName(child);
+      return name ? [{ exported, name, startLine: child.startPosition.row + 1 }] : [];
+    });
 }
 
 function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
@@ -1001,8 +1031,36 @@ function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
     (node.type === 'lexical_declaration' && node.firstChild?.text === 'let') ||
     (node.type === 'variable_declaration' && node.firstChild?.text === 'var') ||
     node.type === 'var_declaration' ||
-    (node.type === 'let_declaration' && hasRustMutableLetBinding(node))
+    (node.type === 'let_declaration' && hasRustMutableLetBinding(node)) ||
+    isJavaMutableDeclaration(node) ||
+    isCMutableDeclaration(node)
   );
+}
+
+/** Java variable/field declarations bind mutably unless marked `final`. */
+function isJavaMutableDeclaration(node: Parser.SyntaxNode): boolean {
+  if (node.type !== 'local_variable_declaration' && node.type !== 'field_declaration') {
+    return false;
+  }
+
+  const modifiers = node.namedChildren.find((child) => child.type === 'modifiers');
+  return !modifiers?.children.some((child) => child.text === 'final');
+}
+
+/**
+ * C/C++ variable declarations bind mutably unless `const`/`constexpr`-qualified. Declarations
+ * whose declarator is a bare `function_declarator` are prototypes, not bindings.
+ */
+function isCMutableDeclaration(node: Parser.SyntaxNode): boolean {
+  if (node.type !== 'declaration') {
+    return false;
+  }
+
+  if (node.namedChildren.some((child) => child.type === 'type_qualifier')) {
+    return false;
+  }
+
+  return node.namedChildren.some((child) => cVariableDeclaratorTypes.has(child.type));
 }
 
 /**
@@ -1310,13 +1368,17 @@ function findFunctionName(node: Parser.SyntaxNode): string | undefined {
   return parentName?.text;
 }
 
+function findDeclaratorName(node: Parser.SyntaxNode): string | undefined {
+  return unwrapDeclaratorName(node.childForFieldName('declarator'));
+}
+
 /**
  * Unwraps a C/C++ declarator chain to the declared name, handling parenthesized declarators
  * (function pointers), qualified names, destructors, and operator overloads explicitly; a
  * rightmost-identifier fallback would pick up parameter names from nested `function_declarator`s.
  */
-function findDeclaratorName(node: Parser.SyntaxNode): string | undefined {
-  let current = node.childForFieldName('declarator');
+function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | undefined {
+  let current = declarator;
   while (current) {
     switch (current.type) {
       case 'identifier':
