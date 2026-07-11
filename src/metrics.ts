@@ -315,9 +315,20 @@ function countParameters(node: Parser.SyntaxNode): number {
   }
 
   // Rust's `self` receiver is not a declared parameter, and C/C++ `f(void)` declares none.
-  return parametersNode.namedChildren.filter(
-    (child) => child.type !== 'comment' && child.type !== 'self_parameter' && !isVoidParameter(child)
+  const namedCount = sum(
+    parametersNode.namedChildren
+      .filter((child) => child.type !== 'comment' && child.type !== 'self_parameter' && !isVoidParameter(child))
+      // Go declares several names per declaration (`a, b int`); each name is a parameter.
+      .map((child) =>
+        child.type === 'parameter_declaration' ? Math.max(1, findChildrenByFieldName(child, 'name').length) : 1
+      )
+  );
+  // C++ C-style varargs (`int f(int a, ...)`) leave `...` as an anonymous token, unlike C's named
+  // `variadic_parameter`.
+  const anonymousVariadicCount = parametersNode.children.filter(
+    (child) => !child.isNamed && child.text === '...'
   ).length;
+  return namedCount + anonymousVariadicCount;
 }
 
 /** C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator. */
