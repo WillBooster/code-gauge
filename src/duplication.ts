@@ -74,6 +74,14 @@ const statementContainerTypes = new Set([
   'do_block',
   'then',
   'else',
+  // Case-like nodes hold their statements directly, without an inner block.
+  'case_statement',
+  'switch_block_statement_group',
+  'switch_rule',
+  'expression_case',
+  'type_case',
+  'communication_case',
+  'default_case',
 ]);
 
 /**

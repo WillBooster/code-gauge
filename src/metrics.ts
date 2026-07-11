@@ -817,7 +817,30 @@ function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean)
     return declarationsFromTypeDefinition(node, exported);
   }
 
+  // Ruby modules/classes nest further types in their body, like C++ namespaces.
+  if (rubyTypeNodeTypes.has(node.type)) {
+    return declarationsFromRubyType(node, exported);
+  }
+
   return declarationFromNode(node, exported);
+}
+
+const rubyTypeNodeTypes = new Set(['module', 'class', 'singleton_class']);
+
+/**
+ * Emits a Ruby type and its nested types. Methods are intentionally not collected as module
+ * declarations: names like `initialize` repeat everywhere and would flood cross-file
+ * duplicate-symbol groups.
+ */
+function declarationsFromRubyType(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+  const declarations = declarationFromNode(node, exported);
+  const bodyNode = node.childForFieldName('body');
+  for (const child of bodyNode?.namedChildren ?? []) {
+    if (rubyTypeNodeTypes.has(child.type)) {
+      declarations.push(...declarationsFromRubyType(child, exported));
+    }
+  }
+  return declarations;
 }
 
 function declarationsFromTypeDefinition(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
