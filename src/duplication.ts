@@ -130,9 +130,8 @@ const commentTypes = new Set(['comment', 'line_comment', 'block_comment']);
 const minDuplicateTokenCount = 40;
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
 const minSequenceStatementCount = 2;
-/** Caps statement-sequence window enumeration so pathological files stay fast. */
+/** Caps the window length so statement-sequence enumeration stays linear in the statement count. */
 const maxSequenceStatementCount = 100;
-const maxContainerStatementCount = 2000;
 
 interface Token {
   /** Normalization target: identifiers to anonymize, literal kind tags, or the raw token text. */
@@ -240,23 +239,54 @@ function collectBlockCandidates(tokens: Token[], blockRanges: TokenRange[]): Dup
 }
 
 /**
- * Enumerates runs of consecutive sibling statements. Windows are pre-grouped by a cheap rolling
- * hash of per-statement fingerprints; only windows whose hash repeats get the exact (and window-
- * consistent) fingerprint, keeping the enumeration close to linear on typical files.
+ * Enumerates runs of consecutive sibling statements. Every container statement participates; only
+ * the window length is capped, so enumeration stays linear in the statement count. Windows are
+ * pre-grouped by a cheap rolling hash of per-statement fingerprints in a counting pass, and only
+ * windows whose hash repeats get the exact (and window-consistent) fingerprint; a hash collision
+ * merely wastes a fingerprint computation because candidates are regrouped by exact fingerprint.
  */
 function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]): DuplicateCandidate[] {
-  const windowsByHash = new Map<string, { statements: TokenRange[]; start: number; end: number }[]>();
-  for (const statements of containers) {
-    const limited = statements.slice(0, maxContainerStatementCount);
-    const statementHashes = limited.map((statement) =>
+  const statementHashesByContainer = containers.map((statements) =>
+    statements.map((statement) =>
       hashText(fingerprintTokens(tokens, statement.startTokenIndex, statement.endTokenIndex))
-    );
-    for (let start = 0; start < limited.length; start += 1) {
+    )
+  );
+
+  const occurrenceCountByWindowHash = new Map<number, number>();
+  forEachSequenceWindow(containers, statementHashesByContainer, (windowHash) => {
+    occurrenceCountByWindowHash.set(windowHash, (occurrenceCountByWindowHash.get(windowHash) ?? 0) + 1);
+  });
+
+  const candidates: DuplicateCandidate[] = [];
+  forEachSequenceWindow(containers, statementHashesByContainer, (windowHash, statements, start, end) => {
+    if ((occurrenceCountByWindowHash.get(windowHash) ?? 0) < 2) {
+      return;
+    }
+    const first = statements[start];
+    const last = statements[end];
+    if (first && last) {
+      candidates.push(toCandidate(tokens, first.startTokenIndex, last.endTokenIndex, first.node, last.node));
+    }
+  });
+  return candidates;
+}
+
+function forEachSequenceWindow(
+  containers: TokenRange[][],
+  statementHashesByContainer: number[][],
+  callback: (windowHash: number, statements: TokenRange[], start: number, end: number) => void
+): void {
+  for (const [containerIndex, statements] of containers.entries()) {
+    const statementHashes = statementHashesByContainer[containerIndex];
+    if (!statementHashes) {
+      continue;
+    }
+    for (let start = 0; start < statements.length; start += 1) {
       let hash = 5381;
       let tokenCount = 0;
-      const maxEnd = Math.min(limited.length, start + maxSequenceStatementCount);
+      const maxEnd = Math.min(statements.length, start + maxSequenceStatementCount);
       for (let end = start; end < maxEnd; end += 1) {
-        const statement = limited[end];
+        const statement = statements[end];
         const statementHash = statementHashes[end];
         if (!statement || statementHash === undefined) {
           break;
@@ -267,29 +297,10 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
         if (statementCount < minSequenceStatementCount || tokenCount < minDuplicateTokenCount) {
           continue;
         }
-        const key = `${hash}:${statementCount}`;
-        const group = windowsByHash.get(key) ?? [];
-        group.push({ statements: limited, start, end });
-        windowsByHash.set(key, group);
+        callback(combineHashes(hash, statementCount), statements, start, end);
       }
     }
   }
-
-  const candidates: DuplicateCandidate[] = [];
-  for (const windows of windowsByHash.values()) {
-    if (windows.length < 2) {
-      continue;
-    }
-    for (const window of windows) {
-      const first = window.statements[window.start];
-      const last = window.statements[window.end];
-      if (!first || !last) {
-        continue;
-      }
-      candidates.push(toCandidate(tokens, first.startTokenIndex, last.endTokenIndex, first.node, last.node));
-    }
-  }
-  return candidates;
 }
 
 function toCandidate(
