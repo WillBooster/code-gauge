@@ -272,6 +272,11 @@ function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
     return true;
   }
 
+  // `call` names its callee `method` in Ruby but `function` in Python; accept both fields.
+  if (parent.type === 'call' && parent.childForFieldName('function')?.id === node.id) {
+    return true;
+  }
+
   const field = semanticNameFieldByParentType.get(parent.type);
   return field !== undefined && parent.childForFieldName(field)?.id === node.id;
 }
