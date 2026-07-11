@@ -437,7 +437,13 @@ const bodyRequiredFunctionTypes = new Set([
 ]);
 
 function isImplementedFunction(node: Parser.SyntaxNode): boolean {
-  return !bodyRequiredFunctionTypes.has(node.type) || node.childForFieldName('body') !== null;
+  if (!bodyRequiredFunctionTypes.has(node.type) || node.childForFieldName('body') !== null) {
+    return true;
+  }
+
+  // C++ constructor/destructor function-try-blocks carry their `try_statement` outside the
+  // `body` field; they are implementations, unlike `= 0`/`= default`/`= delete` members.
+  return node.namedChildren.some((child) => child.type === 'try_statement');
 }
 
 /**
@@ -1140,6 +1146,17 @@ function countMutableBindings(node: Parser.SyntaxNode): number {
     return countCMutableBindings(node);
   }
 
+  // tree-sitter-cpp parses the in-class `int count = 0;` member as a pure-virtual-like
+  // `function_definition` whose declarator is a bare field name; real functions have a
+  // `function_declarator` and stay excluded.
+  if (node.type === 'function_definition') {
+    const declarator = node.childForFieldName('declarator');
+    if (declarator?.type === 'field_identifier' || declarator?.type === 'identifier') {
+      return countCMutableBindings(node);
+    }
+    return 0;
+  }
+
   return isMutableBindingNode(node) ? 1 : 0;
 }
 
@@ -1588,6 +1605,8 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | un
       case 'operator_cast': {
         return current.text;
       }
+      // Template specializations (`id<int>`) and qualified names both carry a `name` field.
+      case 'template_function':
       case 'qualified_identifier': {
         current = current.childForFieldName('name');
         break;
