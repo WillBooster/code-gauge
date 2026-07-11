@@ -749,16 +749,25 @@ function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean)
 const cVariableDeclaratorTypes = new Set(['init_declarator', 'pointer_declarator', 'array_declarator', 'identifier']);
 
 /**
- * Extracts each declared variable from a C/C++ `declaration`. Function declarators are skipped:
- * a top-level `int f(int);` is a prototype, not a symbol definition.
+ * A bare `function_declarator` (`int f(int);`) is a prototype, but one whose name is parenthesized
+ * (`int (*fp)(int);`) declares a function-pointer variable.
  */
+function isCVariableDeclarator(node: Parser.SyntaxNode): boolean {
+  if (cVariableDeclaratorTypes.has(node.type)) {
+    return true;
+  }
+
+  return (
+    node.type === 'function_declarator' && node.childForFieldName('declarator')?.type === 'parenthesized_declarator'
+  );
+}
+
+/** Extracts each declared variable from a C/C++ `declaration`; prototypes declare no symbol. */
 function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  return node.namedChildren
-    .filter((child) => cVariableDeclaratorTypes.has(child.type))
-    .flatMap((child) => {
-      const name = unwrapDeclaratorName(child);
-      return name ? [{ exported, name, startLine: child.startPosition.row + 1 }] : [];
-    });
+  return node.namedChildren.filter(isCVariableDeclarator).flatMap((child) => {
+    const name = unwrapDeclaratorName(child);
+    return name ? [{ exported, name, startLine: child.startPosition.row + 1 }] : [];
+  });
 }
 
 function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
@@ -967,9 +976,7 @@ function measureSyntaxFeatures(root: Parser.SyntaxNode): SyntaxFeatureMetrics {
     if (isLoopNode(node)) {
       metrics.loopStatementCount += 1;
     }
-    if (isMutableBindingNode(node)) {
-      metrics.mutableBindingCount += 1;
-    }
+    metrics.mutableBindingCount += countMutableBindings(node);
     if (isReturnNode(node)) {
       metrics.returnStatementCount += 1;
     }
@@ -1026,40 +1033,35 @@ function isLoopNode(node: Parser.SyntaxNode): boolean {
   );
 }
 
+/** Java and C/C++ declare several bindings per statement, so each mutable declarator counts. */
+function countMutableBindings(node: Parser.SyntaxNode): number {
+  if (node.type === 'local_variable_declaration' || node.type === 'field_declaration') {
+    if (!isJavaMutableDeclaration(node)) {
+      return 0;
+    }
+    return node.namedChildren.filter((child) => child.type === 'variable_declarator').length;
+  }
+
+  if (node.type === 'declaration') {
+    return node.namedChildren.filter((child) => isCVariableDeclarator(child) && isCMutableBinding(node, child)).length;
+  }
+
+  return isMutableBindingNode(node) ? 1 : 0;
+}
+
 function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
   return (
     (node.type === 'lexical_declaration' && node.firstChild?.text === 'let') ||
     (node.type === 'variable_declaration' && node.firstChild?.text === 'var') ||
     node.type === 'var_declaration' ||
-    (node.type === 'let_declaration' && hasRustMutableLetBinding(node)) ||
-    isJavaMutableDeclaration(node) ||
-    isCMutableDeclaration(node)
+    (node.type === 'let_declaration' && hasRustMutableLetBinding(node))
   );
 }
 
 /** Java variable/field declarations bind mutably unless marked `final`. */
 function isJavaMutableDeclaration(node: Parser.SyntaxNode): boolean {
-  if (node.type !== 'local_variable_declaration' && node.type !== 'field_declaration') {
-    return false;
-  }
-
   const modifiers = node.namedChildren.find((child) => child.type === 'modifiers');
   return !modifiers?.children.some((child) => child.text === 'final');
-}
-
-/**
- * C/C++ variable declarations bind mutably unless the binding itself is `const`/`constexpr`
- * qualified. Declarations whose declarator is a bare `function_declarator` are prototypes, not
- * bindings.
- */
-function isCMutableDeclaration(node: Parser.SyntaxNode): boolean {
-  if (node.type !== 'declaration') {
-    return false;
-  }
-
-  return node.namedChildren
-    .filter((child) => cVariableDeclaratorTypes.has(child.type))
-    .some((declarator) => isCMutableBinding(node, declarator));
 }
 
 /**
@@ -1075,7 +1077,8 @@ function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.Sy
   while (
     current.type === 'pointer_declarator' ||
     current.type === 'array_declarator' ||
-    current.type === 'parenthesized_declarator'
+    current.type === 'parenthesized_declarator' ||
+    current.type === 'function_declarator'
   ) {
     const inner = current.childForFieldName('declarator') ?? current.namedChildren.at(-1);
     if (!inner) {
@@ -1175,31 +1178,35 @@ function measureCohesion(analyses: FunctionAnalysis[]): CohesionMetrics {
   }
 
   // The average pairwise Jaccard overlap is quadratic in the function count, so beyond the cap it
-  // is estimated from an evenly strided, deterministic sample of pairs.
-  const totalPairCount = (analyses.length * (analyses.length - 1)) / 2;
+  // is estimated from an evenly strided, deterministic sample of pairs. Sampled linear pair
+  // indexes are converted to (left, right) by walking triangular rows, so the traversal cost is
+  // O(sample + functions) rather than all n(n-1)/2 pairs.
+  const functionCount = analyses.length;
+  const totalPairCount = (functionCount * (functionCount - 1)) / 2;
   const stride = Math.max(1, Math.ceil(totalPairCount / maxCohesionPairCount));
   let overlapTotal = 0;
   let sampledPairCount = 0;
-  let pairIndex = 0;
-  for (let leftIndex = 0; leftIndex < analyses.length; leftIndex += 1) {
-    for (let rightIndex = leftIndex + 1; rightIndex < analyses.length; rightIndex += 1) {
-      if (pairIndex % stride !== 0) {
-        pairIndex += 1;
-        continue;
-      }
-      pairIndex += 1;
-
-      const left = analyses[leftIndex];
-      const right = analyses[rightIndex];
-      if (!left || !right) {
-        continue;
-      }
-
-      const intersectionSize = countIntersection(left.identifiers, right.identifiers);
-      const unionSize = left.identifiers.size + right.identifiers.size - intersectionSize;
-      overlapTotal += unionSize === 0 ? 0 : intersectionSize / unionSize;
-      sampledPairCount += 1;
+  let leftIndex = 0;
+  let rowStartPairIndex = 0;
+  let rowLength = functionCount - 1;
+  for (let pairIndex = 0; pairIndex < totalPairCount; pairIndex += stride) {
+    while (pairIndex >= rowStartPairIndex + rowLength) {
+      rowStartPairIndex += rowLength;
+      leftIndex += 1;
+      rowLength = functionCount - 1 - leftIndex;
     }
+    const rightIndex = leftIndex + 1 + (pairIndex - rowStartPairIndex);
+
+    const left = analyses[leftIndex];
+    const right = analyses[rightIndex];
+    if (!left || !right) {
+      continue;
+    }
+
+    const intersectionSize = countIntersection(left.identifiers, right.identifiers);
+    const unionSize = left.identifiers.size + right.identifiers.size - intersectionSize;
+    overlapTotal += unionSize === 0 ? 0 : intersectionSize / unionSize;
+    sampledPairCount += 1;
   }
 
   return {

@@ -146,6 +146,8 @@ const minDuplicateTokenCount = 40;
 const minSequenceStatementCount = 2;
 /** Caps the window length so statement-sequence enumeration stays linear in the statement count. */
 const maxSequenceStatementCount = 100;
+/** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
+const maxSelectionRerunCount = 20;
 
 interface Token {
   /** Normalization target: identifiers to anonymize, literal kind tags, or the raw token text. */
@@ -253,7 +255,15 @@ function collectBlockCandidates(tokens: Token[], blockRanges: TokenRange[]): Dup
     if (tokenCount < minDuplicateTokenCount) {
       continue;
     }
-    candidates.push(toCandidate(tokens, range.startTokenIndex, range.endTokenIndex, range.node, range.node));
+    candidates.push(
+      toCandidate(
+        `b:${fingerprintTokens(tokens, range.startTokenIndex, range.endTokenIndex)}`,
+        range.startTokenIndex,
+        range.endTokenIndex,
+        range.node,
+        range.node
+      )
+    );
   }
   return candidates;
 }
@@ -261,77 +271,108 @@ function collectBlockCandidates(tokens: Token[], blockRanges: TokenRange[]): Dup
 /**
  * Enumerates runs of consecutive sibling statements. Every container statement participates; only
  * the window length is capped, so enumeration stays linear in the statement count. Windows are
- * pre-grouped by a cheap rolling hash of per-statement fingerprints in a counting pass, and only
- * windows whose hash repeats get the exact (and window-consistent) fingerprint; a hash collision
- * merely wastes a fingerprint computation because candidates are regrouped by exact fingerprint.
+ * grouped by a cheap rolling hash of per-statement fingerprints, and only locally maximal repeated
+ * windows — those that stop repeating when extended by one statement on either side — become
+ * candidates with an exact (window-consistent) fingerprint. Without the maximality filter a
+ * degenerate file of near-identical statements would fingerprint every sub-window of every
+ * repeated region.
  */
 function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]): DuplicateCandidate[] {
-  const statementHashesByContainer = containers.map((statements) =>
-    statements.map((statement) =>
-      hashText(fingerprintTokens(tokens, statement.startTokenIndex, statement.endTokenIndex))
-    )
-  );
-
-  const occurrenceCountByWindowHash = new Map<number, number>();
-  forEachSequenceWindow(containers, statementHashesByContainer, (windowHash) => {
-    occurrenceCountByWindowHash.set(windowHash, (occurrenceCountByWindowHash.get(windowHash) ?? 0) + 1);
-  });
-
   const candidates: DuplicateCandidate[] = [];
-  forEachSequenceWindow(containers, statementHashesByContainer, (windowHash, statements, start, end) => {
-    if ((occurrenceCountByWindowHash.get(windowHash) ?? 0) < 2) {
-      return;
-    }
-    const first = statements[start];
-    const last = statements[end];
-    if (first && last) {
-      candidates.push(toCandidate(tokens, first.startTokenIndex, last.endTokenIndex, first.node, last.node));
-    }
-  });
-  return candidates;
-}
-
-function forEachSequenceWindow(
-  containers: TokenRange[][],
-  statementHashesByContainer: number[][],
-  callback: (windowHash: number, statements: TokenRange[], start: number, end: number) => void
-): void {
-  for (const [containerIndex, statements] of containers.entries()) {
-    const statementHashes = statementHashesByContainer[containerIndex];
-    if (!statementHashes) {
-      continue;
-    }
-    for (let start = 0; start < statements.length; start += 1) {
-      let hash = 5381;
-      let tokenCount = 0;
-      const maxEnd = Math.min(statements.length, start + maxSequenceStatementCount);
-      for (let end = start; end < maxEnd; end += 1) {
-        const statement = statements[end];
-        const statementHash = statementHashes[end];
-        if (!statement || statementHash === undefined) {
-          break;
+  const occurrenceCountByWindowKey = new Map<number, number>();
+  const containerWindows = containers.map((statements) => enumerateContainerWindows(tokens, statements));
+  for (const windows of containerWindows) {
+    for (const row of windows.windowKeysByStart) {
+      for (const windowKey of row) {
+        if (windowKey !== undefined) {
+          occurrenceCountByWindowKey.set(windowKey, (occurrenceCountByWindowKey.get(windowKey) ?? 0) + 1);
         }
-        hash = combineHashes(hash, statementHash);
-        tokenCount += statement.endTokenIndex - statement.startTokenIndex;
-        const statementCount = end - start + 1;
-        if (statementCount < minSequenceStatementCount || tokenCount < minDuplicateTokenCount) {
-          continue;
-        }
-        callback(combineHashes(hash, statementCount), statements, start, end);
       }
     }
   }
+
+  const repeats = (windowKey: number | undefined): boolean =>
+    windowKey !== undefined && (occurrenceCountByWindowKey.get(windowKey) ?? 0) >= 2;
+
+  for (const [containerIndex, statements] of containers.entries()) {
+    const windows = containerWindows[containerIndex];
+    if (!windows) {
+      continue;
+    }
+    for (const [start, row] of windows.windowKeysByStart.entries()) {
+      for (const [length, windowKey] of row.entries()) {
+        if (!repeats(windowKey)) {
+          continue;
+        }
+        // Dominated windows are skipped: the one-statement extension also repeats, so a larger
+        // candidate covering this window exists.
+        const extendedRight = windows.windowKeysByStart[start]?.[length + 1];
+        const extendedLeft = windows.windowKeysByStart[start - 1]?.[length + 1];
+        if (repeats(extendedRight) || repeats(extendedLeft)) {
+          continue;
+        }
+        const first = statements[start];
+        const last = statements[start + length - 1];
+        if (first && last) {
+          candidates.push(
+            toCandidate(
+              `s:${fingerprintTokens(tokens, first.startTokenIndex, last.endTokenIndex)}`,
+              first.startTokenIndex,
+              last.endTokenIndex,
+              first.node,
+              last.node
+            )
+          );
+        }
+      }
+    }
+  }
+  return candidates;
+}
+
+interface ContainerWindows {
+  /** windowKeysByStart[start][length] is the rolling-hash key of the window, or undefined if it is below the size thresholds. */
+  windowKeysByStart: (number | undefined)[][];
+}
+
+function enumerateContainerWindows(tokens: Token[], statements: TokenRange[]): ContainerWindows {
+  const statementHashes = statements.map((statement) =>
+    hashText(fingerprintTokens(tokens, statement.startTokenIndex, statement.endTokenIndex))
+  );
+  const windowKeysByStart: (number | undefined)[][] = [];
+  for (let start = 0; start < statements.length; start += 1) {
+    const row: (number | undefined)[] = [];
+    let hash = 5381;
+    let tokenCount = 0;
+    const maxEnd = Math.min(statements.length, start + maxSequenceStatementCount);
+    for (let end = start; end < maxEnd; end += 1) {
+      const statement = statements[end];
+      const statementHash = statementHashes[end];
+      if (!statement || statementHash === undefined) {
+        break;
+      }
+      hash = combineHashes(hash, statementHash);
+      tokenCount += statement.endTokenIndex - statement.startTokenIndex;
+      const statementCount = end - start + 1;
+      row[statementCount] =
+        statementCount >= minSequenceStatementCount && tokenCount >= minDuplicateTokenCount
+          ? combineHashes(hash, statementCount)
+          : undefined;
+    }
+    windowKeysByStart.push(row);
+  }
+  return { windowKeysByStart };
 }
 
 function toCandidate(
-  tokens: Token[],
+  fingerprint: string,
   startTokenIndex: number,
   endTokenIndex: number,
   firstNode: Parser.SyntaxNode,
   lastNode: Parser.SyntaxNode
 ): DuplicateCandidate {
   return {
-    fingerprint: fingerprintTokens(tokens, startTokenIndex, endTokenIndex),
+    fingerprint,
     tokenCount: endTokenIndex - startTokenIndex,
     startIndex: firstNode.startIndex,
     endIndex: lastNode.endIndex,
@@ -388,25 +429,25 @@ function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, 
     byFingerprint.set(candidate.fingerprint, group);
   }
 
-  let duplicates = [...byFingerprint.entries()]
-    .filter(([, group]) => hasDistinctRegions(group))
-    .flatMap(([fingerprint, group]) => dedupeByRegion(group).map((candidate) => ({ fingerprint, candidate })));
-  duplicates.sort((left, right) => right.candidate.tokenCount - left.candidate.tokenCount);
+  let duplicates = [...byFingerprint.values()].filter(hasDistinctRegions).flatMap(dedupeByRegion);
+  duplicates.sort((left, right) => right.tokenCount - left.tokenCount);
 
   // Greedy selection can keep a candidate whose group ends up below two survivors; such an
   // uncounted region must not block smaller groups, so the largest failed group is removed and the
   // selection reruns. One group at a time: freeing a failed group's regions can rescue another.
-  while (true) {
+  // The rerun cap bounds degenerate inputs; past it the remaining failed groups are dropped,
+  // trading a sliver of recall on such files for bounded runtime.
+  for (let rerun = 0; ; rerun += 1) {
     const keptRegions: { startIndex: number; endIndex: number }[] = [];
     const counted = new Map<string, DuplicateCandidate[]>();
-    for (const { fingerprint, candidate } of duplicates) {
+    for (const candidate of duplicates) {
       if (keptRegions.some((region) => overlaps(region, candidate))) {
         continue;
       }
       keptRegions.push(candidate);
-      const group = counted.get(fingerprint) ?? [];
+      const group = counted.get(candidate.fingerprint) ?? [];
       group.push(candidate);
-      counted.set(fingerprint, group);
+      counted.set(candidate.fingerprint, group);
     }
 
     let failedFingerprint: string | undefined;
@@ -419,10 +460,23 @@ function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, 
       }
     }
     if (failedFingerprint === undefined) {
+      for (const [fingerprint, group] of counted) {
+        if (group.length < 2) {
+          counted.delete(fingerprint);
+        }
+      }
+      return counted;
+    }
+    if (rerun >= maxSelectionRerunCount) {
+      for (const [fingerprint, group] of counted) {
+        if (group.length < 2) {
+          counted.delete(fingerprint);
+        }
+      }
       return counted;
     }
 
-    duplicates = duplicates.filter((entry) => entry.fingerprint !== failedFingerprint);
+    duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
   }
 }
 
