@@ -86,7 +86,8 @@ const javaDecisionNodes = [
 
 // Ruby node types are keyword-like (`if`, `while`, ...), so they must stay Ruby-specific: the same
 // strings appear as anonymous keyword tokens in other grammars and would be double-counted there.
-const rubyFunctionNodes = ['method', 'singleton_method', 'lambda'] as const;
+// `block`/`do_block` are Ruby's closures (`items.map { ... }`), the analog of JS callbacks.
+const rubyFunctionNodes = ['method', 'singleton_method', 'lambda', 'block', 'do_block'] as const;
 const rubyClassNodes = ['class', 'singleton_class', 'module'] as const;
 const rubyDecisionNodes = [
   'if',

@@ -420,8 +420,8 @@ function measureComplexity(
 
     // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
     // `if` keyword token), so only named nodes count as decisions.
-    const isDecision = current.isNamed && decisionNodes.has(current.type);
-    const isNesting = current.isNamed && nestingNodes.has(current.type);
+    const isDecision = current.isNamed && decisionNodes.has(current.type) && !isDefaultSwitchBranch(current);
+    const isNesting = current.isNamed && nestingNodes.has(current.type) && !isDefaultSwitchBranch(current);
 
     if (isDecision) {
       cyclomaticComplexity += 1;
@@ -446,6 +446,24 @@ function measureComplexity(
   }
 
   return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
+}
+
+/**
+ * C/C++ `default:` shares the `case_statement` node type with `case` (only `case` has a `value`
+ * field), and Java's default group/rule carries an expressionless `switch_label`; a default branch
+ * adds no decision, so these must not count toward complexity or nesting.
+ */
+function isDefaultSwitchBranch(node: Parser.SyntaxNode): boolean {
+  if (node.type === 'case_statement') {
+    return node.childForFieldName('value') === null;
+  }
+
+  if (node.type === 'switch_block_statement_group' || node.type === 'switch_rule') {
+    const label = node.namedChildren.find((child) => child.type === 'switch_label');
+    return label !== undefined && label.namedChildCount === 0;
+  }
+
+  return false;
 }
 
 function isBooleanOperator(node: Parser.SyntaxNode): boolean {
@@ -1459,10 +1477,16 @@ function findImportSources(
     return findRubyRequireSources(node);
   }
 
-  // C/C++ `#include` paths live in the `path` field as a string literal or `<...>` token.
+  // C/C++ `#include` paths live in the `path` field as a string literal or `<...>` token. Quoted
+  // includes resolve relative to the including file, unlike `<...>` system includes.
   if (node.type === 'preproc_include') {
     const pathNode = node.childForFieldName('path');
-    return pathNode ? [unquote(pathNode.text)] : [];
+    if (!pathNode) {
+      return [];
+    }
+    const source = unquote(pathNode.text);
+    const isLocal = pathNode.type === 'string_literal' && !source.startsWith('.') && !source.startsWith('/');
+    return [isLocal ? `./${source}` : source];
   }
 
   if (isDynamicImportNode(node)) {
