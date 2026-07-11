@@ -732,7 +732,9 @@ function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean)
 }
 
 function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  if (!isTopLevelDeclarationNode(node)) {
+  // C/C++ `struct Foo;`-style forward declarations reuse the declaration node type; only
+  // definitions with a body declare a module-level symbol.
+  if (!isTopLevelDeclarationNode(node) || (node.type.endsWith('_specifier') && !node.childForFieldName('body'))) {
     return [];
   }
 
@@ -741,13 +743,20 @@ function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): Declar
 }
 
 function findDeclarationName(node: Parser.SyntaxNode): string | undefined {
-  if (node.type === 'method_declaration') {
+  if (node.type === 'method_declaration' && node.childForFieldName('receiver')) {
     return findGoMethodDeclarationName(node);
   }
 
   const nameNode = node.childForFieldName('name');
   if (nameNode) {
     return isDeclarationNameNode(nameNode) ? nameNode.text : undefined;
+  }
+
+  // C/C++ function definitions name the function inside the declarator chain; this must run before
+  // the generic fallback, which would otherwise pick up the return type's `type_identifier`.
+  const declaratorName = findDeclaratorName(node);
+  if (declaratorName) {
+    return declaratorName;
   }
 
   return node.namedChildren.find(isDeclarationNameNode)?.text;
@@ -791,7 +800,22 @@ function isTopLevelDeclarationNode(node: Parser.SyntaxNode): boolean {
     node.type === 'type_item' ||
     node.type === 'const_item' ||
     node.type === 'static_item' ||
-    node.type === 'mod_item'
+    node.type === 'mod_item' ||
+    // Java
+    node.type === 'enum_declaration' ||
+    node.type === 'record_declaration' ||
+    node.type === 'annotation_type_declaration' ||
+    // Ruby (keyword-like node types exist only in the Ruby grammar as named nodes; in other
+    // grammars a top-level `class`/`method` never appears as a direct named child of the root)
+    node.type === 'method' ||
+    node.type === 'singleton_method' ||
+    node.type === 'class' ||
+    node.type === 'module' ||
+    // C/C++ (body-less forward declarations are filtered in declarationFromNode)
+    node.type === 'struct_specifier' ||
+    node.type === 'class_specifier' ||
+    node.type === 'enum_specifier' ||
+    node.type === 'union_specifier'
   );
 }
 
@@ -800,7 +824,9 @@ function isDeclarationNameNode(node: Parser.SyntaxNode): boolean {
     node.type === 'identifier' ||
     node.type === 'type_identifier' ||
     node.type === 'property_identifier' ||
-    node.type === 'field_identifier'
+    node.type === 'field_identifier' ||
+    // Ruby classes/modules are named by a `constant`.
+    node.type === 'constant'
   );
 }
 
