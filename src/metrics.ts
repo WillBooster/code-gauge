@@ -1126,11 +1126,33 @@ function isReturnNode(node: Parser.SyntaxNode): boolean {
 }
 
 function isThrowNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'throw_statement' || node.type === 'raise_statement';
+  return node.type === 'throw_statement' || node.type === 'raise_statement' || isRubyRaiseCall(node);
+}
+
+/** Ruby raises via receiverless `raise`/`fail` calls; a receiver call like `object.raise` is not one. */
+function isRubyRaiseCall(node: Parser.SyntaxNode): boolean {
+  if (node.type !== 'call' || node.childForFieldName('receiver')) {
+    return false;
+  }
+
+  const methodNode = node.childForFieldName('method');
+  return methodNode?.type === 'identifier' && (methodNode.text === 'raise' || methodNode.text === 'fail');
 }
 
 function isTryNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'try_statement' || node.type === 'try_with_resources_statement';
+  return node.type === 'try_statement' || node.type === 'try_with_resources_statement' || isRubyRescueConstruct(node);
+}
+
+/**
+ * Ruby protects code with `rescue` clauses directly under an explicit `begin` or an implicit
+ * method/block `body_statement`; counting the construct (not each clause) matches try-statement
+ * counting in other languages.
+ */
+function isRubyRescueConstruct(node: Parser.SyntaxNode): boolean {
+  return (
+    (node.type === 'begin' || node.type === 'body_statement') &&
+    node.namedChildren.some((child) => child.type === 'rescue')
+  );
 }
 
 /** Caps the pairwise overlap computation so files with thousands of functions stay fast. */
