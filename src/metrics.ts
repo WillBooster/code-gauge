@@ -519,12 +519,21 @@ function isDefaultSwitchBranch(node: Parser.SyntaxNode): boolean {
   return false;
 }
 
+/** Parents under which `&&`/`||`/`and`/`or` tokens are actual boolean operators. */
+const booleanOperatorParentTypes = new Set(['binary_expression', 'binary', 'boolean_operator']);
+
+/**
+ * The parent guard is required because the same tokens appear in non-boolean syntax: C++ rvalue
+ * references (`int&&`), ref-qualifiers, `operator&&`, and Rust's empty closure parameter list
+ * (`|| 5`) must not count as decisions.
+ */
 function isBooleanOperator(node: Parser.SyntaxNode): boolean {
-  if (node.isNamed) {
+  if (node.isNamed || !booleanOperators.has(node.text)) {
     return false;
   }
 
-  return booleanOperators.has(node.text);
+  const parent = node.parent;
+  return parent !== null && booleanOperatorParentTypes.has(parent.type);
 }
 
 function collectCalls(
@@ -786,7 +795,27 @@ function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean)
     return declarationsFromCDeclaration(node, exported);
   }
 
+  // C `typedef` declares alias name(s) and possibly a tagged type in one node.
+  if (node.type === 'type_definition') {
+    return declarationsFromTypeDefinition(node, exported);
+  }
+
   return declarationFromNode(node, exported);
+}
+
+function declarationsFromTypeDefinition(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+  // `typedef struct Foo { ... } Bar;` declares both the tag `Foo` and the alias `Bar`.
+  const typeNode = node.childForFieldName('type');
+  const declarations = typeNode ? declarationFromNode(typeNode, exported) : [];
+  const seenNames = new Set(declarations.map((declaration) => declaration.name));
+  for (const declarator of findChildrenByFieldName(node, 'declarator')) {
+    const name = declarator.type === 'type_identifier' ? declarator.text : unwrapDeclaratorName(declarator);
+    if (name && !seenNames.has(name)) {
+      seenNames.add(name);
+      declarations.push({ exported, name, startLine: declarator.startPosition.row + 1 });
+    }
+  }
+  return declarations;
 }
 
 const cVariableDeclaratorTypes = new Set([
@@ -912,6 +941,7 @@ function isTopLevelDeclarationNode(node: Parser.SyntaxNode): boolean {
     node.type === 'class' ||
     node.type === 'module' ||
     // C/C++ (body-less forward declarations are filtered in declarationFromNode)
+    node.type === 'alias_declaration' ||
     node.type === 'struct_specifier' ||
     node.type === 'class_specifier' ||
     node.type === 'enum_specifier' ||
@@ -1545,6 +1575,7 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | un
     switch (current.type) {
       case 'identifier':
       case 'field_identifier':
+      case 'type_identifier':
       case 'destructor_name':
       case 'operator_name':
       // A C++ conversion operator (`operator int()`) is its own declarator node.
