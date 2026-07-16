@@ -134,6 +134,12 @@ const operandNodeTypes = new Set([
   'simple_symbol',
   'self',
   'this',
+  'super',
+  // C/C++/Rust built-in types are leaves of their own node type, unlike Go's `type_identifier`.
+  'primitive_type',
+  'boolean_type',
+  'void_type',
+  'auto',
   'number',
   'integer',
   'float',
@@ -167,6 +173,7 @@ const operandNodeTypes = new Set([
   'null_literal',
   'undefined',
   'nil',
+  'none',
 ]);
 
 /**
@@ -174,8 +181,18 @@ const operandNodeTypes = new Set([
  * have no content leaf at all, and regex literals would otherwise count their `/` delimiters as
  * division operators. Interpolated regex contents are deliberately swallowed by the atom.
  */
-// C++ user-defined literals (`42_km`) are atomic too, keeping their suffix in the operand identity.
-const atomicOperandNodeTypes = new Set(['interpreted_string_literal', 'regex', 'user_defined_literal']);
+// C++ user-defined literals (`42_km`) are atomic too, keeping their suffix in the operand identity,
+// and multi-token built-in types (Java `int`, C `unsigned long`) wrap anonymous keyword leaves so
+// they count as one operand.
+const atomicOperandNodeTypes = new Set([
+  'interpreted_string_literal',
+  'regex',
+  'user_defined_literal',
+  'integral_type',
+  'floating_point_type',
+  'sized_type_specifier',
+  'placeholder_type_specifier',
+]);
 
 interface ComplexityResult {
   cyclomaticComplexity: number;
@@ -247,7 +264,7 @@ export class TreeMeasurer {
     const structuralMetrics = measureStructuralMetrics(root, functions, language);
     const functionMetrics = structuralMetrics.functions;
     const globalComplexity = measureComplexity(root, language, 0, false);
-    const lines = measureLines(code, root);
+    const { lines, codeLineNumbers } = classifyLines(code, root);
     const halstead = measureHalstead(root, code);
 
     return {
@@ -268,7 +285,7 @@ export class TreeMeasurer {
       cohesion: structuralMetrics.cohesion,
       syntaxFeatures: structuralMetrics.syntaxFeatures,
       typeComplexity: structuralMetrics.typeComplexity,
-      duplication: measureDuplication(root, collectCodeLineNumbers(code, root)),
+      duplication: measureDuplication(root, codeLineNumbers),
       halstead,
       maintainabilityIndex: calculateMaintainabilityIndex(
         halstead.volume,
@@ -569,6 +586,13 @@ function measureComplexity(
       cognitiveComplexity += 1;
     }
 
+    // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
+    // add one independent execution path without nesting.
+    if (isPatternGuard(current)) {
+      cyclomaticComplexity += 1;
+      cognitiveComplexity += 1;
+    }
+
     const childNesting = isNesting && !isContinuation ? currentNesting + 1 : currentNesting;
     nestingDepth = Math.max(nestingDepth, childNesting);
 
@@ -582,6 +606,17 @@ function measureComplexity(
   }
 
   return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
+}
+
+/** Java `guard`, Ruby `if_guard`, Python `if_clause`, and Rust guards inside `match_pattern`. */
+function isPatternGuard(node: Parser.SyntaxNode): boolean {
+  if (!node.isNamed) {
+    return false;
+  }
+  if (node.type === 'guard' || node.type === 'if_guard' || node.type === 'if_clause') {
+    return true;
+  }
+  return node.type === 'match_pattern' && node.children.some((child) => !child.isNamed && child.type === 'if');
 }
 
 /** Ruby `elsif`, Python `elif`, and `else if` (an if node in an else/alternative position). */
@@ -613,6 +648,17 @@ function isDefaultSwitchBranch(node: Parser.SyntaxNode): boolean {
   if (node.type === 'switch_block_statement_group' || node.type === 'switch_rule') {
     const label = node.namedChildren.find((child) => child.type === 'switch_label');
     return label !== undefined && label.namedChildCount === 0;
+  }
+
+  // Python `case _:` and Rust `_ =>` fallback arms are unconditional like `default`; a guard on a
+  // wildcard is charged separately as a flat decision, so the arm itself still adds nothing.
+  if (node.type === 'case_clause' || node.type === 'match_arm') {
+    const pattern = node.namedChildren.find((child) => child.type === 'case_pattern' || child.type === 'match_pattern');
+    return (
+      pattern !== undefined &&
+      pattern.child(0)?.type === '_' &&
+      (pattern.childCount === 1 || pattern.child(1)?.type === 'if')
+    );
   }
 
   return false;
@@ -1020,6 +1066,8 @@ function findJavaPackageScope(root: Parser.SyntaxNode): string {
   return nameNode ? `${nameNode.text}::` : '';
 }
 
+const rubyTypeNodeTypes = new Set(['module', 'class', 'singleton_class']);
+
 function collectTopLevelDeclarations(
   node: Parser.SyntaxNode,
   exported: boolean,
@@ -1092,8 +1140,6 @@ function qualifyDeclarations(
       : { ...declaration, name: `${scope}${declaration.name}` }
   );
 }
-
-const rubyTypeNodeTypes = new Set(['module', 'class', 'singleton_class']);
 
 /**
  * Emits a Ruby type and its nested types. Methods are intentionally not collected as module
@@ -1953,40 +1999,43 @@ function measureTypeComplexity(root: Parser.SyntaxNode): TypeComplexityMetrics {
  * 1-based numbers of lines that are neither blank nor comment-only, matching measureLines'
  * classification so duplication line coverage and its code-line denominator agree.
  */
-function collectCodeLineNumbers(code: string, root: Parser.SyntaxNode): Set<number> {
+function classifyLines(
+  code: string,
+  root: Parser.SyntaxNode
+): { lines: CodeMetrics['lines']; codeLineNumbers: Set<number> } {
   const sourceLines = code.length === 0 ? [] : code.split(/\r\n|\n|\r/);
-  const commentSpans = collectCommentSpans(root);
-  const codeLineNumbers = new Set<number>();
-  for (const [index, line] of sourceLines.entries()) {
-    if (line.trim() !== '' && !isCommentOnlyLine(line, index, commentSpans)) {
-      codeLineNumbers.add(index + 1);
-    }
+  // Spans are bucketed by line so classification stays linear; scanning every span per line made
+  // this pass quadratic on comment-heavy files.
+  const commentSpansByLine = new Map<number, CommentSpan[]>();
+  for (const span of collectCommentSpans(root)) {
+    const spans = commentSpansByLine.get(span.line) ?? [];
+    spans.push(span);
+    commentSpansByLine.set(span.line, spans);
   }
-  return codeLineNumbers;
-}
-
-function measureLines(code: string, root: Parser.SyntaxNode): CodeMetrics['lines'] {
-  const sourceLines = code.length === 0 ? [] : code.split(/\r\n|\n|\r/);
-  const commentSpans = collectCommentSpans(root);
   let blank = 0;
   let comment = 0;
+  const codeLineNumbers = new Set<number>();
 
   for (const [index, line] of sourceLines.entries()) {
     if (line.trim() === '') {
       blank += 1;
       continue;
     }
-
-    if (isCommentOnlyLine(line, index, commentSpans)) {
+    if (isCommentOnlyLine(line, commentSpansByLine.get(index) ?? [])) {
       comment += 1;
+    } else {
+      codeLineNumbers.add(index + 1);
     }
   }
 
   return {
-    total: sourceLines.length,
-    code: sourceLines.length - blank - comment,
-    comment,
-    blank,
+    lines: {
+      total: sourceLines.length,
+      code: codeLineNumbers.size,
+      comment,
+      blank,
+    },
+    codeLineNumbers,
   };
 }
 
@@ -2013,8 +2062,7 @@ function collectCommentSpans(root: Parser.SyntaxNode): CommentSpan[] {
   return spans;
 }
 
-function isCommentOnlyLine(line: string, lineIndex: number, spans: CommentSpan[]): boolean {
-  const relevantSpans = spans.filter((span) => span.line === lineIndex);
+function isCommentOnlyLine(line: string, relevantSpans: CommentSpan[]): boolean {
   if (relevantSpans.length === 0) {
     return false;
   }
@@ -2154,21 +2202,6 @@ function findDeclaratorName(node: Parser.SyntaxNode): string | undefined {
 }
 
 /**
- * Steps into the inner declarator; `reference_declarator` and `parenthesized_declarator` do not
- * expose a `declarator` field in tree-sitter-cpp, so their sole named child is the inner node.
- */
-function nextDeclarator(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
-  const direct = node.childForFieldName('declarator');
-  if (direct) {
-    return direct;
-  }
-  if (node.type === 'reference_declarator' || node.type === 'parenthesized_declarator') {
-    return node.namedChild(0) ?? undefined;
-  }
-  return undefined;
-}
-
-/**
  * Unwraps a C/C++ declarator chain to the declared name, handling parenthesized declarators
  * (function pointers), qualified names, destructors, and operator overloads explicitly; a
  * rightmost-identifier fallback would pick up parameter names from nested `function_declarator`s.
@@ -2214,6 +2247,21 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null, qualified = 
         current = nextDeclarator(current);
       }
     }
+  }
+  return undefined;
+}
+
+/**
+ * Steps into the inner declarator; `reference_declarator` and `parenthesized_declarator` do not
+ * expose a `declarator` field in tree-sitter-cpp, so their sole named child is the inner node.
+ */
+function nextDeclarator(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
+  const direct = node.childForFieldName('declarator');
+  if (direct) {
+    return direct;
+  }
+  if (node.type === 'reference_declarator' || node.type === 'parenthesized_declarator') {
+    return node.namedChild(0) ?? undefined;
   }
   return undefined;
 }
@@ -2307,6 +2355,18 @@ function isCallNode(node: Parser.SyntaxNode): boolean {
   );
 }
 
+/** Function-literal node types across supported grammars whose invocation names no callee. */
+const anonymousCallableNodeTypes = new Set([
+  'arrow_function', // JS/TS
+  'function_expression', // JS/TS
+  'function', // older JS grammars / Python-style
+  'lambda', // Python, Ruby
+  'lambda_expression', // C++, Java
+  'closure_expression', // Rust
+  'func_literal', // Go
+  'anonymous_function', // misc grammars
+]);
+
 function findCalleeName(node: Parser.SyntaxNode): string | undefined {
   // Java `method_invocation` names its callee `name` and Ruby `call` names it `method`. The
   // `namedChild(0)` fallback covers Rust `macro_invocation` (whose callee is the `macro` field,
@@ -2349,18 +2409,6 @@ function findCalleeName(node: Parser.SyntaxNode): string | undefined {
 
   return findRightmostIdentifier(unwrappedCallee);
 }
-
-/** Function-literal node types across supported grammars whose invocation names no callee. */
-const anonymousCallableNodeTypes = new Set([
-  'arrow_function', // JS/TS
-  'function_expression', // JS/TS
-  'function', // older JS grammars / Python-style
-  'lambda', // Python, Ruby
-  'lambda_expression', // C++, Java
-  'closure_expression', // Rust
-  'func_literal', // Go
-  'anonymous_function', // misc grammars
-]);
 
 function unwrapParenthesizedExpression(node: Parser.SyntaxNode): Parser.SyntaxNode {
   let current = node;
@@ -2488,18 +2536,6 @@ function isRustModDeclaration(node: Parser.SyntaxNode, language: LanguageDefinit
   return language.name === 'rust' && node.type === 'mod_item' && !node.childForFieldName('body');
 }
 
-const rubyRequireMethods = new Set(['require', 'require_relative', 'load']);
-
-/** Only receiverless Kernel-style calls import; `loader.require(...)` is an ordinary method call. */
-function isRubyRequireCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  if (language.name !== 'ruby' || node.type !== 'call' || node.childForFieldName('receiver')) {
-    return false;
-  }
-
-  const methodNode = node.childForFieldName('method');
-  return methodNode?.type === 'identifier' && rubyRequireMethods.has(methodNode.text);
-}
-
 function isDynamicImportNode(node: Parser.SyntaxNode): boolean {
   if (!isCallNode(node)) {
     return false;
@@ -2567,6 +2603,18 @@ function findImportSources(
 
   const sourceNode = node.childForFieldName('source') ?? findFirstStringNode(node);
   return sourceNode ? [unquote(sourceNode.text)] : [];
+}
+
+const rubyRequireMethods = new Set(['require', 'require_relative', 'load']);
+
+/** Only receiverless Kernel-style calls import; `loader.require(...)` is an ordinary method call. */
+function isRubyRequireCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
+  if (language.name !== 'ruby' || node.type !== 'call' || node.childForFieldName('receiver')) {
+    return false;
+  }
+
+  const methodNode = node.childForFieldName('method');
+  return methodNode?.type === 'identifier' && rubyRequireMethods.has(methodNode.text);
 }
 
 /** Resolves `require`/`require_relative`/`load` sources; `require_relative` is always file-relative. */

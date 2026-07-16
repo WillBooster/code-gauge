@@ -13,7 +13,7 @@ export interface Thresholds {
   fanOut: number;
   parameter: number;
   duplicateBlock: number;
-  /** Percentage (1-100) of a file's lines covered by duplicated blocks. */
+  /** Percentage (1-100) of a file's code lines (comments/blanks excluded) covered by duplicates. */
   duplicationRatioPercent: number;
   transitiveDependency: number;
   structuralBreadth: number;

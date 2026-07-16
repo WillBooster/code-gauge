@@ -304,7 +304,11 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
   const startRow = node.startPosition.row;
   const endRow = node.endPosition.row;
   if (node.isNamed && shorthandPropertyTypes.has(node.type)) {
-    tokens.push({ kind: 'text', text: node.text, startRow, endRow }, { kind: 'id', text: node.text, startRow, endRow });
+    tokens.push(
+      { kind: 'text', text: node.text, startRow, endRow },
+      { kind: 'text', text: ':', startRow, endRow },
+      { kind: 'id', text: node.text, startRow, endRow }
+    );
     return;
   }
 
@@ -407,6 +411,12 @@ interface WindowOccurrences {
   maxStart: number;
 }
 
+interface SequenceWindow {
+  containerIndex: number;
+  start: number;
+  length: number;
+}
+
 /**
  * Enumerates runs of consecutive sibling statements. Every container statement participates; only
  * the window length is capped, so enumeration stays linear in the statement count. Windows are
@@ -489,15 +499,14 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
   }
 
   // The rolling hash anonymizes identifiers per statement, so a window can look repeated coarsely
-  // while its exact (window-consistent) fingerprints differ — leaving singleton groups whose truly
-  // repeating sub-windows were all suppressed as dominated. Fingerprints still unmatched after a
-  // round therefore fall back to their one-statement-shorter sub-windows; window lengths strictly
-  // decrease, so the worklist terminates.
+  // while its exact (window-consistent) fingerprints differ, and a longer window's match can
+  // dominate sub-windows that other copies still need (three copies where only two extend one
+  // statement further). Every emitted window therefore exposes its repeating, unvisited
+  // sub-windows; `visited` bounds the worklist and lengths strictly decrease, so it terminates.
   const visited = new Set(maximalWindows.map(windowId));
-  const countByFingerprint = new Map<string, number>();
   let frontier = maximalWindows;
   while (frontier.length > 0) {
-    const emitted: { window: SequenceWindow; fingerprint: string }[] = [];
+    const emitted: SequenceWindow[] = [];
     for (const window of frontier) {
       const statements = containers[window.containerIndex];
       const first = statements?.[window.start];
@@ -507,14 +516,10 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
       }
       const fingerprint = `s:${fingerprintTokens(tokens, first.startTokenIndex, last.endTokenIndex)}`;
       candidates.push(toCandidate(fingerprint, first.startTokenIndex, last.endTokenIndex, first.node, last.node));
-      countByFingerprint.set(fingerprint, (countByFingerprint.get(fingerprint) ?? 0) + 1);
-      emitted.push({ window, fingerprint });
+      emitted.push(window);
     }
     frontier = [];
-    for (const { window, fingerprint } of emitted) {
-      if ((countByFingerprint.get(fingerprint) ?? 0) >= 2) {
-        continue;
-      }
+    for (const window of emitted) {
       for (const start of [window.start, window.start + 1]) {
         const subWindow = { containerIndex: window.containerIndex, start, length: window.length - 1 };
         const subWindowKey = containerWindows[window.containerIndex]?.windowKeysByStart[start]?.[subWindow.length];
@@ -531,12 +536,6 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
     }
   }
   return candidates;
-}
-
-interface SequenceWindow {
-  containerIndex: number;
-  start: number;
-  length: number;
 }
 
 function windowId(window: SequenceWindow): string {
@@ -647,11 +646,15 @@ function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, 
     byFingerprint.set(candidate.fingerprint, group);
   }
 
-  let duplicates = [...byFingerprint.values()]
-    .map(dedupeByRegion)
-    .filter((group) => group.length >= 2)
-    .flat();
-  duplicates.sort((left, right) => right.tokenCount - left.tokenCount);
+  const groups = [...byFingerprint.values()].map(dedupeByRegion).filter((group) => group.length >= 2);
+  // Greedy order ranks by total coverage (region size × copies): a 3×3-statement group must beat
+  // a 2×4-statement group overlapping two of its copies, or the third copy is silently dropped
+  // and the reported duplication shrinks as more copies are added.
+  const groupSizeByFingerprint = new Map(groups.map((group) => [group[0]?.fingerprint ?? '', group.length]));
+  const coverage = (candidate: DuplicateCandidate): number =>
+    candidate.tokenCount * (groupSizeByFingerprint.get(candidate.fingerprint) ?? 1);
+  let duplicates = groups.flat();
+  duplicates.sort((left, right) => coverage(right) - coverage(left));
 
   // Greedy selection can keep a candidate whose group ends up below two survivors; such an
   // uncounted region must not block smaller groups, so the largest failed group is removed and the

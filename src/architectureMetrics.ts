@@ -108,7 +108,7 @@ interface DependencyGraph {
 
 function measureDependencyGraph(files: SourceFile[]): DependencyGraph {
   const fileSet = new Set(files.map((file) => file.relativeFile));
-  const javaFileIndex = buildJavaFileIndex(fileSet);
+  const javaFileIndex = buildJavaFileIndex(files);
   const dependenciesByFile = new Map<string, Set<string>>();
   const nonRelativeLocalImportCountByFile = new Map<string, number>();
   for (const file of files) {
@@ -116,7 +116,8 @@ function measureDependencyGraph(files: SourceFile[]): DependencyGraph {
     let nonRelativeLocalImportCount = 0;
     for (const source of file.metrics.module.importSources) {
       const resolved = resolveLocalImport(file.relativeFile, source, fileSet, javaFileIndex);
-      if (resolved) {
+      // A file importing itself (`import './a.js'` inside a.ts) is not a dependency.
+      if (resolved && resolved !== file.relativeFile) {
         dependencies.add(resolved);
         // Only Java needs the external-count correction: its dotted imports classify as external
         // in coupling metrics. Rust crate::/self::/super:: sources already classify as relative,
@@ -132,11 +133,28 @@ function measureDependencyGraph(files: SourceFile[]): DependencyGraph {
   return { dependenciesByFile, nonRelativeLocalImportCountByFile };
 }
 
+const jsExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts']);
+// Must cover every extension the CLI's languageByExtension maps to C/C++ (uppercase `.C` arrives
+// here lowercased by fileExtension), or importProbes falls into the non-C catch-all branch.
+const cExtensions = new Set(['.c', '.c++', '.cc', '.cp', '.cpp', '.cxx', '.h', '.hh', '.hpp', '.hxx', '.tcc']);
+
+/**
+ * TypeScript's ESM extension substitutions: a JS runtime extension in an import may name the
+ * TypeScript source that compiles to it. `.ts`-family extensions are intentionally absent (they
+ * resolve exactly), and `.mjs`/`.cjs` never remap to plain `.ts`.
+ */
+const jsImportExtensionSubstitutions = new Map<string, string[]>([
+  ['.js', ['.ts', '.tsx']],
+  ['.jsx', ['.tsx']],
+  ['.mjs', ['.mts']],
+  ['.cjs', ['.cts']],
+]);
+
 function resolveLocalImport(
   fromFile: string,
   source: string,
   fileSet: Set<string>,
-  javaFileIndex: Map<string, string[]>
+  javaFileIndex: Map<string, JavaClassLocation[]>
 ): string | undefined {
   const fromExtension = fileExtension(fromFile);
   if (!source.startsWith('.')) {
@@ -194,28 +212,6 @@ function resolveLocalImport(
   }
   return undefined;
 }
-
-const jsExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts']);
-// Must cover every extension the CLI's languageByExtension maps to C/C++ (uppercase `.C` arrives
-// here lowercased by fileExtension), or importProbes falls into the non-C catch-all branch.
-const cExtensions = new Set(['.c', '.c++', '.cc', '.cp', '.cpp', '.cxx', '.h', '.hh', '.hpp', '.hxx', '.tcc']);
-
-/** Extensions are matched lowercased so `MAIN.CPP` or `.C` files use their language's rules. */
-function fileExtension(file: string): string {
-  return path.extname(file).toLowerCase();
-}
-
-/**
- * TypeScript's ESM extension substitutions: a JS runtime extension in an import may name the
- * TypeScript source that compiles to it. `.ts`-family extensions are intentionally absent (they
- * resolve exactly), and `.mjs`/`.cjs` never remap to plain `.ts`.
- */
-const jsImportExtensionSubstitutions = new Map<string, string[]>([
-  ['.js', ['.ts', '.tsx']],
-  ['.jsx', ['.tsx']],
-  ['.mjs', ['.mts']],
-  ['.cjs', ['.cts']],
-]);
 
 /** Extension-less sources probe only extensions the importing language can actually load. */
 function importProbes(fromFile: string): { extensions: string[]; indexFiles: string[] } {
@@ -331,20 +327,32 @@ function normalizeDirectory(directory: string): string {
   return directory === '.' ? '' : directory;
 }
 
+interface JavaClassLocation {
+  file: string;
+  /** `<packagePath>/<ClassName>` from the file's declared package, when one was parsed. */
+  qualifiedPath?: string;
+}
+
 /** Indexes scanned `.java` files by class name so dotted imports resolve without scanning all files. */
-function buildJavaFileIndex(fileSet: Set<string>): Map<string, string[]> {
-  const index = new Map<string, string[]>();
-  for (const file of fileSet) {
-    if (fileExtension(file) !== '.java') {
+function buildJavaFileIndex(files: SourceFile[]): Map<string, JavaClassLocation[]> {
+  const index = new Map<string, JavaClassLocation[]>();
+  for (const { relativeFile, metrics } of files) {
+    if (fileExtension(relativeFile) !== '.java') {
       continue;
     }
-    const className = path.basename(file, path.extname(file));
-    const files = index.get(className) ?? [];
-    files.push(file);
-    index.set(className, files);
+    const className = path.basename(relativeFile, path.extname(relativeFile));
+    // Declarations carry the package as `com.alpha::ServiceThing`, giving the class's true
+    // qualified path regardless of directory layout.
+    const qualifiedName = metrics.module.declarations.find((declaration) =>
+      declaration.name.endsWith(`::${className}`)
+    )?.name;
+    const packagePath = qualifiedName?.slice(0, -(className.length + 2)).replaceAll('.', '/');
+    const locations = index.get(className) ?? [];
+    locations.push({ file: relativeFile, qualifiedPath: packagePath ? `${packagePath}/${className}` : undefined });
+    index.set(className, locations);
   }
-  for (const files of index.values()) {
-    files.sort();
+  for (const locations of index.values()) {
+    locations.sort((left, right) => left.file.localeCompare(right.file));
   }
   return index;
 }
@@ -356,7 +364,7 @@ function buildJavaFileIndex(fileSet: Set<string>): Map<string, string[]> {
  * a file, and stay unresolved. Ambiguity across source roots resolves to the lexicographically
  * first path for determinism.
  */
-function resolveJavaImport(source: string, javaFileIndex: Map<string, string[]>): string | undefined {
+function resolveJavaImport(source: string, javaFileIndex: Map<string, JavaClassLocation[]>): string | undefined {
   if (source.endsWith('.*')) {
     return undefined;
   }
@@ -369,19 +377,36 @@ function resolveJavaImport(source: string, javaFileIndex: Map<string, string[]>)
     if (!className) {
       continue;
     }
-    // Indexed paths use the platform separator (backslashes on Windows), so normalize for matching.
-    const match = (javaFileIndex.get(className) ?? []).find((file) => {
+    const relativeStem = candidateSegments.join('/');
+    const locations = javaFileIndex.get(className) ?? [];
+    // The declared package is authoritative: matching it exactly stops `import java.util.List`
+    // from binding to a project class in package `util` just because the Maven layout contains a
+    // `java/` path segment.
+    const packageMatch = locations.find((location) => location.qualifiedPath === relativeStem);
+    if (packageMatch) {
+      return packageMatch.file;
+    }
+    // Files without a parsed package fall back to path-suffix matching, tolerating source-root
+    // prefixes (`src/main/java/...`). Indexed paths use the platform separator, so normalize.
+    const suffixMatch = locations.find((location) => {
+      if (location.qualifiedPath) {
+        return false;
+      }
       // Class names stay case-sensitive; only the extension is normalized (`B.JAVA` matches `B`).
-      const normalized = file.replaceAll('\\', '/');
+      const normalized = location.file.replaceAll('\\', '/');
       const stem = normalized.slice(0, normalized.length - path.extname(normalized).length);
-      const relativeStem = candidateSegments.join('/');
       return stem === relativeStem || stem.endsWith(`/${relativeStem}`);
     });
-    if (match) {
-      return match;
+    if (suffixMatch) {
+      return suffixMatch.file;
     }
   }
   return undefined;
+}
+
+/** Extensions are matched lowercased so `MAIN.CPP` or `.C` files use their language's rules. */
+function fileExtension(file: string): string {
+  return path.extname(file).toLowerCase();
 }
 
 function localImportBases(fromFile: string, source: string): string[] {
