@@ -3080,39 +3080,48 @@ function measureMaxCallDepth(graph: Map<number, Set<number>>): number {
   const depthByIndex = new Map<number, number>();
   let maxDepth = 0;
   for (const index of graph.keys()) {
-    maxDepth = Math.max(maxDepth, measureCallDepth(index, graph, new Set(), depthByIndex));
+    maxDepth = Math.max(maxDepth, measureCallDepth(index, graph, new Set(), depthByIndex).depth);
   }
   return maxDepth;
 }
 
 /**
- * Longest-path DFS with memoization (O(V+E)); a per-path copy of the on-stack set made this
- * exponential in path count. Cycles are cut at the on-stack check, so memoized values under a
- * cycle stay conservative exactly like the per-path cutoff did.
+ * Longest-path DFS with memoization (O(V+E) on acyclic regions); a per-path copy of the on-stack
+ * set made this exponential in path count. A depth computed under an on-stack cycle cut is valid
+ * only for that path, so tainted results are NOT memoized — other entry points recompute them,
+ * keeping values identical to the per-path algorithm while acyclic regions stay memoized.
  */
 function measureCallDepth(
   index: number,
   graph: Map<number, Set<number>>,
   pathIndexes: Set<number>,
   depthByIndex: Map<number, number>
-): number {
+): { depth: number; tainted: boolean } {
   const memoized = depthByIndex.get(index);
   if (memoized !== undefined) {
-    return memoized;
+    return { depth: memoized, tainted: false };
   }
   const callees = graph.get(index);
-  if (!callees || callees.size === 0 || pathIndexes.has(index)) {
-    return 0;
+  if (!callees || callees.size === 0) {
+    return { depth: 0, tainted: false };
+  }
+  if (pathIndexes.has(index)) {
+    return { depth: 0, tainted: true };
   }
 
   pathIndexes.add(index);
   let maxDepth = 0;
+  let tainted = false;
   for (const callee of callees) {
-    maxDepth = Math.max(maxDepth, 1 + measureCallDepth(callee, graph, pathIndexes, depthByIndex));
+    const result = measureCallDepth(callee, graph, pathIndexes, depthByIndex);
+    maxDepth = Math.max(maxDepth, 1 + result.depth);
+    tainted ||= result.tainted;
   }
   pathIndexes.delete(index);
-  depthByIndex.set(index, maxDepth);
-  return maxDepth;
+  if (!tainted) {
+    depthByIndex.set(index, maxDepth);
+  }
+  return { depth: maxDepth, tainted };
 }
 
 function countIntersection(left: Set<string>, right: Set<string>): number {
