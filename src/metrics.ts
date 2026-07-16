@@ -1283,14 +1283,31 @@ function hasStorageClass(node: Parser.SyntaxNode, keyword: string): boolean {
 
 /**
  * tree-sitter-cpp has no C++20 module support, so `export module foo;` / `import bar;` misparse as
- * `declaration` nodes whose "type" is the keyword; they declare nothing and bind nothing.
+ * `declaration` nodes whose "type" is the keyword; they declare nothing and bind nothing. A file
+ * that visibly aliases the name as a type (`typedef int module;`) makes such declarations ordinary
+ * variables again — `module`/`import` are keywords only within recognized module directives.
  */
 function isMisparsedCppModuleDeclaration(node: Parser.SyntaxNode): boolean {
   const typeNode = node.childForFieldName('type');
-  return (
-    typeNode?.type === 'type_identifier' &&
-    (typeNode.text === 'import' || typeNode.text === 'export' || typeNode.text === 'module')
-  );
+  if (
+    typeNode?.type !== 'type_identifier' ||
+    (typeNode.text !== 'import' && typeNode.text !== 'export' && typeNode.text !== 'module')
+  ) {
+    return false;
+  }
+  return !hasVisibleTypeAlias(node, typeNode.text);
+}
+
+/** Whether the file typedefs/aliases `name` as a type, disambiguating module-keyword misparses. */
+function hasVisibleTypeAlias(node: Parser.SyntaxNode, name: string): boolean {
+  let root = node;
+  while (root.parent) {
+    root = root.parent;
+  }
+  return collectNodes(root, new Set(['type_definition', 'alias_declaration'])).some((definition) => {
+    const declarator = definition.childForFieldName('declarator') ?? definition.childForFieldName('name');
+    return declarator?.text === name;
+  });
 }
 
 /**
@@ -1556,6 +1573,7 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
     if (
       isImportNode(node) ||
       isRustModDeclaration(node, language) ||
+      isCppModuleImport(node, language) ||
       isDynamicImportNode(node) ||
       isRubyRequireCall(node, language)
     ) {
@@ -2591,10 +2609,20 @@ function isImportSourceNode(node: Parser.SyntaxNode, language: LanguageDefinitio
   return (
     isImportNode(node) ||
     isRustModDeclaration(node, language) ||
+    isCppModuleImport(node, language) ||
     isDynamicImportNode(node) ||
     isRubyRequireCall(node, language) ||
     (isExportNode(node) && node.childForFieldName('source') !== null)
   );
+}
+
+/** C++20 `import name;` misparses as a declaration whose "type" is the `import` keyword. */
+function isCppModuleImport(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
+  if (language.name !== 'cpp' || node.type !== 'declaration') {
+    return false;
+  }
+  const typeNode = node.childForFieldName('type');
+  return typeNode?.type === 'type_identifier' && typeNode.text === 'import' && !hasVisibleTypeAlias(node, 'import');
 }
 
 /** A bodyless `mod name;` declares an out-of-line child module loaded from `name.rs`/`name/mod.rs`. */
@@ -2647,6 +2675,12 @@ function findImportSources(
     return [isWildcard && !isStatic ? `${source}.*` : source];
   }
 
+  // The misparsed C++20 module import keeps `import <name>;` in its text; the name is the source.
+  if (isCppModuleImport(node, language)) {
+    const match = /^import\s+([\w.:<>"/]+)/u.exec(node.text);
+    return match?.[1] ? [match[1]] : [];
+  }
+
   if (isRubyRequireCall(node, language)) {
     return findRubyRequireSources(node);
   }
@@ -2675,18 +2709,29 @@ const rubyRequireMethods = new Set(['require', 'require_relative', 'load']);
 
 /** Only receiverless Kernel-style calls import; `loader.require(...)` is an ordinary method call. */
 function isRubyRequireCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  if (language.name !== 'ruby' || node.type !== 'call' || node.childForFieldName('receiver')) {
+  if (language.name !== 'ruby' || node.type !== 'call') {
     return false;
   }
 
   const methodNode = node.childForFieldName('method');
-  return methodNode?.type === 'identifier' && rubyRequireMethods.has(methodNode.text);
+  if (methodNode?.type !== 'identifier') {
+    return false;
+  }
+  // `autoload :User, './user'` registers a `require`; it may carry a module receiver
+  // (`Object.autoload ...`), unlike the receiverless Kernel-style require forms.
+  if (methodNode.text === 'autoload') {
+    const receiver = node.childForFieldName('receiver');
+    return receiver === null || receiver.type === 'constant' || receiver.type === 'scope_resolution';
+  }
+  return node.childForFieldName('receiver') === null && rubyRequireMethods.has(methodNode.text);
 }
 
 /** Resolves `require`/`require_relative`/`load` sources; `require_relative` is always file-relative. */
 function findRubyRequireSources(node: Parser.SyntaxNode): string[] {
   const argumentsNode = node.childForFieldName('arguments');
-  const firstArgument = argumentsNode?.namedChild(0);
+  // `autoload :Name, 'path'` names its source in the second argument.
+  const isAutoload = node.childForFieldName('method')?.text === 'autoload';
+  const firstArgument = argumentsNode?.namedChild(isAutoload ? 1 : 0);
   if (!firstArgument || firstArgument.type !== 'string') {
     return [];
   }
