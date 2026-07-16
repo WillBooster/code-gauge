@@ -392,6 +392,9 @@ function countParameters(node: Parser.SyntaxNode): number {
           child.type !== 'comment' &&
           child.type !== 'self_parameter' &&
           child.type !== 'receiver_parameter' &&
+          // Python's PEP 570/3102 markers (`/`, `*`) separate parameter kinds but bind nothing.
+          child.type !== 'positional_separator' &&
+          child.type !== 'keyword_separator' &&
           !blockLocalIds.has(child.id) &&
           !isVoidParameter(child)
       )
@@ -613,7 +616,7 @@ function isPatternGuard(node: Parser.SyntaxNode): boolean {
   if (!node.isNamed) {
     return false;
   }
-  if (node.type === 'guard' || node.type === 'if_guard' || node.type === 'if_clause') {
+  if (node.type === 'guard' || node.type === 'if_guard' || node.type === 'unless_guard' || node.type === 'if_clause') {
     return true;
   }
   return node.type === 'match_pattern' && node.children.some((child) => !child.isNamed && child.type === 'if');
@@ -650,15 +653,31 @@ function isDefaultSwitchBranch(node: Parser.SyntaxNode): boolean {
     return label !== undefined && label.namedChildCount === 0;
   }
 
-  // Python `case _:` and Rust `_ =>` fallback arms are unconditional like `default`; a guard on a
-  // wildcard is charged separately as a flat decision, so the arm itself still adds nothing.
+  // Python `case _:` / `case y:` and Rust `_ =>` fallback arms are unconditional like `default`
+  // (a bare Python name is always a capture); a guard is charged separately as a flat decision,
+  // so the arm itself still adds nothing. Rust bare identifiers are NOT suppressed: they can name
+  // constants or unit variants, which the grammar cannot distinguish from captures.
   if (node.type === 'case_clause' || node.type === 'match_arm') {
     const pattern = node.namedChildren.find((child) => child.type === 'case_pattern' || child.type === 'match_pattern');
+    if (!pattern) {
+      return false;
+    }
+    if (pattern.child(0)?.type === '_' && (pattern.childCount === 1 || pattern.child(1)?.type === 'if')) {
+      return true;
+    }
+    const soleChild = pattern.namedChildCount === 1 ? pattern.namedChild(0) : undefined;
     return (
-      pattern !== undefined &&
-      pattern.child(0)?.type === '_' &&
-      (pattern.childCount === 1 || pattern.child(1)?.type === 'if')
+      node.type === 'case_clause' &&
+      soleChild?.type === 'dotted_name' &&
+      soleChild.namedChildCount === 1 &&
+      soleChild.namedChild(0)?.type === 'identifier'
     );
+  }
+
+  // Ruby `in y` binds unconditionally (bare lowercase names are variable captures; constants and
+  // literals are tests).
+  if (node.type === 'in_clause') {
+    return node.namedChild(0)?.type === 'identifier';
   }
 
   return false;
@@ -1570,12 +1589,17 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
   let exportCount = 0;
 
   function visit(node: Parser.SyntaxNode): void {
+    // Go nests import_spec inside import_spec_list inside import_declaration; only the leaf spec
+    // is one import, or the block would count 2-4x.
+    const isGoImportWrapper =
+      language.name === 'go' && (node.type === 'import_declaration' || node.type === 'import_spec_list');
     if (
-      isImportNode(node) ||
-      isRustModDeclaration(node, language) ||
-      isCppModuleImport(node, language) ||
-      isDynamicImportNode(node) ||
-      isRubyRequireCall(node, language)
+      !isGoImportWrapper &&
+      (isImportNode(node) ||
+        isRustModDeclaration(node, language) ||
+        isCppModuleImport(node, language) ||
+        isDynamicImportNode(node) ||
+        isRubyRequireCall(node, language))
     ) {
       importCount += 1;
     }
@@ -2616,13 +2640,29 @@ function isImportSourceNode(node: Parser.SyntaxNode, language: LanguageDefinitio
   );
 }
 
-/** C++20 `import name;` misparses as a declaration whose "type" is the `import` keyword. */
+/**
+ * C++20 imports misparse without grammar module support: `import name;` as a declaration typed
+ * `import`, `export import name;` as one typed `export`, and partition/header-unit forms
+ * (`import :part;`, `import "h.h";`, `import <vector>;`) as labeled or expression statements.
+ */
 function isCppModuleImport(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  if (language.name !== 'cpp' || node.type !== 'declaration') {
+  if (language.name !== 'cpp') {
     return false;
   }
-  const typeNode = node.childForFieldName('type');
-  return typeNode?.type === 'type_identifier' && typeNode.text === 'import' && !hasVisibleTypeAlias(node, 'import');
+  if (node.type === 'declaration') {
+    const typeNode = node.childForFieldName('type');
+    if (typeNode?.type !== 'type_identifier') {
+      return false;
+    }
+    if (typeNode.text === 'import') {
+      return !hasVisibleTypeAlias(node, 'import');
+    }
+    return typeNode.text === 'export' && /^export\s+import\b/u.test(node.text);
+  }
+  if (node.type === 'labeled_statement' || node.type === 'expression_statement') {
+    return node.parent?.type === 'translation_unit' && /^import\s+[:"<]/u.test(node.text);
+  }
+  return false;
 }
 
 /** A bodyless `mod name;` declares an out-of-line child module loaded from `name.rs`/`name/mod.rs`. */
@@ -2675,10 +2715,15 @@ function findImportSources(
     return [isWildcard && !isStatic ? `${source}.*` : source];
   }
 
-  // The misparsed C++20 module import keeps `import <name>;` in its text; the name is the source.
+  // The misparsed C++20 module import keeps its source in the node text: a module/partition name,
+  // or a header unit, which resolves like a quoted include (file-relative).
   if (isCppModuleImport(node, language)) {
-    const match = /^import\s+([\w.:<>"/]+)/u.exec(node.text);
-    return match?.[1] ? [match[1]] : [];
+    const match = /^(?:export\s+)?import\s+([\w.:]+|"[^"]+"|<[^>]+>)/u.exec(node.text);
+    const source = match?.[1];
+    if (!source) {
+      return [];
+    }
+    return source.startsWith('"') ? [`./${unquote(source)}`] : [source];
   }
 
   if (isRubyRequireCall(node, language)) {
@@ -3032,14 +3077,29 @@ function canReach(start: number, target: number, graph: Map<number, Set<number>>
 }
 
 function measureMaxCallDepth(graph: Map<number, Set<number>>): number {
+  const depthByIndex = new Map<number, number>();
   let maxDepth = 0;
   for (const index of graph.keys()) {
-    maxDepth = Math.max(maxDepth, measureCallDepth(index, graph, new Set()));
+    maxDepth = Math.max(maxDepth, measureCallDepth(index, graph, new Set(), depthByIndex));
   }
   return maxDepth;
 }
 
-function measureCallDepth(index: number, graph: Map<number, Set<number>>, pathIndexes: Set<number>): number {
+/**
+ * Longest-path DFS with memoization (O(V+E)); a per-path copy of the on-stack set made this
+ * exponential in path count. Cycles are cut at the on-stack check, so memoized values under a
+ * cycle stay conservative exactly like the per-path cutoff did.
+ */
+function measureCallDepth(
+  index: number,
+  graph: Map<number, Set<number>>,
+  pathIndexes: Set<number>,
+  depthByIndex: Map<number, number>
+): number {
+  const memoized = depthByIndex.get(index);
+  if (memoized !== undefined) {
+    return memoized;
+  }
   const callees = graph.get(index);
   if (!callees || callees.size === 0 || pathIndexes.has(index)) {
     return 0;
@@ -3048,8 +3108,10 @@ function measureCallDepth(index: number, graph: Map<number, Set<number>>, pathIn
   pathIndexes.add(index);
   let maxDepth = 0;
   for (const callee of callees) {
-    maxDepth = Math.max(maxDepth, 1 + measureCallDepth(callee, graph, new Set(pathIndexes)));
+    maxDepth = Math.max(maxDepth, 1 + measureCallDepth(callee, graph, pathIndexes, depthByIndex));
   }
+  pathIndexes.delete(index);
+  depthByIndex.set(index, maxDepth);
   return maxDepth;
 }
 
