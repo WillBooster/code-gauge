@@ -1496,6 +1496,12 @@ function countMutableBindings(node: Parser.SyntaxNode, languageName: string): nu
     return isJavaMutableDeclaration(node) ? 1 : 0;
   }
 
+  // C++ `for (int x : xs)` binds directly in the loop's declarator field.
+  if (isC && node.type === 'for_range_loop') {
+    const declarator = node.childForFieldName('declarator');
+    return declarator && isCMutableBinding(node, declarator) ? countCBoundIdentifiers(declarator) : 0;
+  }
+
   return isMutableBindingNode(node) ? 1 : 0;
 }
 
@@ -2219,6 +2225,17 @@ function findRightmostIdentifier(node: Parser.SyntaxNode): string | undefined {
   // Explicit destructor calls (`x.~Foo()`) must keep the atomic `~Foo` to match their definition.
   if (node.type === 'destructor_name') {
     return node.text;
+  }
+
+  // Java `new Box<String>()` names the base type first; the right-to-left search below would
+  // otherwise return the type argument `String`.
+  if (node.type === 'generic_type') {
+    const baseNode = node.namedChildren.find(
+      (child) => child.type === 'type_identifier' || child.type === 'scoped_type_identifier'
+    );
+    if (baseNode) {
+      return findRightmostIdentifier(baseNode);
+    }
   }
 
   if (

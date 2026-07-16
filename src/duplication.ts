@@ -181,7 +181,11 @@ const semanticNameFieldByParentType = new Map([
 const minDuplicateTokenCount = 40;
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
 const minSequenceStatementCount = 2;
-/** Caps the window length so statement-sequence enumeration stays linear in the statement count. */
+/**
+ * Caps the window length so statement-sequence enumeration stays linear in the statement count.
+ * Heterogeneous clones longer than the cap are reported as capped windows (a deliberate
+ * conservative undercount trading completeness for bounded discovery cost).
+ */
 const maxSequenceStatementCount = 100;
 /** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
 const maxSelectionRerunCount = 20;
@@ -412,11 +416,25 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
     );
   };
 
+  // A window whose statements all share one normalized shape (sixteen `let x = 0;` declarations,
+  // a constant table) is a homogeneous preamble, not a copy-paste: requiring two distinct
+  // per-statement shapes keeps such runs out of duplicate groups and the duplication ratio.
+  const hasDistinctStatements = (window: SequenceWindow): boolean => {
+    const hashes = containerWindows[window.containerIndex]?.statementHashes ?? [];
+    const firstHash = hashes[window.start];
+    for (let index = window.start + 1; index < window.start + window.length; index += 1) {
+      if (hashes[index] !== firstHash) {
+        return true;
+      }
+    }
+    return false;
+  };
+
   const maximalWindows: SequenceWindow[] = [];
   for (const [containerIndex, windows] of containerWindows.entries()) {
     for (const [start, row] of windows.windowKeysByStart.entries()) {
       for (const [length, windowKey] of row.entries()) {
-        if (!repeats(windowKey, length)) {
+        if (!repeats(windowKey, length) || !hasDistinctStatements({ containerIndex, start, length })) {
           continue;
         }
         // Dominated windows are skipped: the one-statement extension also repeats, so a larger
@@ -461,7 +479,11 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
       for (const start of [window.start, window.start + 1]) {
         const subWindow = { containerIndex: window.containerIndex, start, length: window.length - 1 };
         const subWindowKey = containerWindows[window.containerIndex]?.windowKeysByStart[start]?.[subWindow.length];
-        if (visited.has(windowId(subWindow)) || !repeats(subWindowKey, subWindow.length)) {
+        if (
+          visited.has(windowId(subWindow)) ||
+          !repeats(subWindowKey, subWindow.length) ||
+          !hasDistinctStatements(subWindow)
+        ) {
           continue;
         }
         visited.add(windowId(subWindow));
@@ -485,6 +507,8 @@ function windowId(window: SequenceWindow): string {
 interface ContainerWindows {
   /** windowKeysByStart[start][length] is the rolling-hash key of the window, or undefined if it is below the size thresholds. */
   windowKeysByStart: (number | undefined)[][];
+  /** Per-statement fingerprint hashes, for the distinct-shape requirement on windows. */
+  statementHashes: number[];
 }
 
 function enumerateContainerWindows(tokens: Token[], statements: TokenRange[]): ContainerWindows {
@@ -513,7 +537,7 @@ function enumerateContainerWindows(tokens: Token[], statements: TokenRange[]): C
     }
     windowKeysByStart.push(row);
   }
-  return { windowKeysByStart };
+  return { windowKeysByStart, statementHashes };
 }
 
 function toCandidate(
