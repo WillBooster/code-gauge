@@ -775,10 +775,21 @@ function isCppConstruction(node: Parser.SyntaxNode, constructedTypeNames: Set<st
     }
     return constructedTypeNames.has(cppBaseTypeName(node.parent?.childForFieldName('type')) ?? '');
   }
-  // Default construction (`Widget value;`): a bare identifier declarator of a local class type.
-  if (node.type === 'identifier' && node.parent?.type === 'declaration') {
+  // Default construction (`Widget value;`, `Widget values[2];`): a bare identifier or array
+  // declarator of a local class type. `extern` declarations declare without constructing, and
+  // pointer chains construct nothing.
+  if (
+    (node.type === 'identifier' || node.type === 'array_declarator') &&
+    node.parent?.type === 'declaration' &&
+    findChildrenByFieldName(node.parent, 'declarator').some((declarator) => declarator.id === node.id) &&
+    !hasStorageClass(node.parent, 'extern')
+  ) {
+    let current: Parser.SyntaxNode | null | undefined = node;
+    while (current?.type === 'array_declarator') {
+      current = current.childForFieldName('declarator');
+    }
     return (
-      findChildrenByFieldName(node.parent, 'declarator').some((declarator) => declarator.id === node.id) &&
+      current?.type === 'identifier' &&
       constructedTypeNames.has(cppBaseTypeName(node.parent.childForFieldName('type')) ?? '')
     );
   }

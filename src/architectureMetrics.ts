@@ -340,16 +340,30 @@ function buildJavaFileIndex(files: SourceFile[]): Map<string, JavaClassLocation[
     if (fileExtension(relativeFile) !== '.java') {
       continue;
     }
-    const className = path.basename(relativeFile, path.extname(relativeFile));
-    // Declarations carry the package as `com.alpha::ServiceThing`, giving the class's true
-    // qualified path regardless of directory layout.
-    const qualifiedName = metrics.module.declarations.find((declaration) =>
-      declaration.name.endsWith(`::${className}`)
-    )?.name;
-    const packagePath = qualifiedName?.slice(0, -(className.length + 2)).replaceAll('.', '/');
-    const locations = index.get(className) ?? [];
-    locations.push({ file: relativeFile, qualifiedPath: packagePath ? `${packagePath}/${className}` : undefined });
-    index.set(className, locations);
+    const fileClassName = path.basename(relativeFile, path.extname(relativeFile));
+    const addLocation = (className: string, qualifiedPath: string | undefined): void => {
+      const locations = index.get(className) ?? [];
+      if (!locations.some((location) => location.file === relativeFile && location.qualifiedPath === qualifiedPath)) {
+        locations.push({ file: relativeFile, qualifiedPath });
+        index.set(className, locations);
+      }
+    };
+    // Declarations carry the package as `com.alpha::ServiceThing`, giving each top-level type's
+    // true qualified path regardless of directory layout — including package-private types whose
+    // names differ from the file's.
+    let sawFileClass = false;
+    for (const declaration of metrics.module.declarations) {
+      const separatorIndex = declaration.name.lastIndexOf('::');
+      const className = separatorIndex === -1 ? declaration.name : declaration.name.slice(separatorIndex + 2);
+      const packagePath =
+        separatorIndex === -1 ? undefined : declaration.name.slice(0, separatorIndex).replaceAll('.', '/');
+      addLocation(className, packagePath ? `${packagePath}/${className}` : undefined);
+      sawFileClass ||= className === fileClassName;
+    }
+    // Filename fallback for files whose public type produced no declaration.
+    if (!sawFileClass) {
+      addLocation(fileClassName, undefined);
+    }
   }
   for (const locations of index.values()) {
     locations.sort((left, right) => left.file.localeCompare(right.file));
