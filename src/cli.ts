@@ -577,11 +577,12 @@ function findRiskyFileMetrics(
     formatDuplicateBlockGroups(metrics.duplication.duplicateBlockGroups)
   );
   // Maximal-region selection deliberately compresses adjacent clones into few blocks, so severity
-  // must track line coverage, not the block count.
+  // must track line coverage, not the block count. Flooring compares like the unrounded ratio
+  // against the integer threshold (29.5% must not trigger a >= 30 threshold).
   addTrigger(
     triggers,
     'duplicated lines (%)',
-    Math.round(metrics.duplication.duplicationRatio * 100),
+    Math.floor(metrics.duplication.duplicationRatio * 100),
     thresholds.duplicationRatioPercent
   );
   if (architecture) {

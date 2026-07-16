@@ -93,6 +93,9 @@ const operatorTexts = new Set([
   'raise',
   'yield',
   'await',
+  'co_await',
+  'co_yield',
+  'co_return',
   'break',
   'continue',
 ]);
@@ -139,6 +142,7 @@ const operandNodeTypes = new Set([
   'true',
   'false',
   'null',
+  'null_literal',
   'undefined',
   'nil',
 ]);
@@ -148,7 +152,8 @@ const operandNodeTypes = new Set([
  * have no content leaf at all, and regex literals would otherwise count their `/` delimiters as
  * division operators. Interpolated regex contents are deliberately swallowed by the atom.
  */
-const atomicOperandNodeTypes = new Set(['interpreted_string_literal', 'regex']);
+// C++ user-defined literals (`42_km`) are atomic too, keeping their suffix in the operand identity.
+const atomicOperandNodeTypes = new Set(['interpreted_string_literal', 'regex', 'user_defined_literal']);
 
 interface ComplexityResult {
   cyclomaticComplexity: number;
@@ -649,9 +654,18 @@ function collectIdentifiers(root: Parser.SyntaxNode): Set<string> {
 
 /** C/C++ `struct Foo`-style type references reuse the declaration node type, so a body is required. */
 function countClasses(root: Parser.SyntaxNode, language: LanguageDefinition): number {
-  return collectNodes(root, new Set(language.classNodeTypes)).filter(
-    (node) => !node.type.endsWith('_specifier') || node.childForFieldName('body') !== null
-  ).length;
+  return collectNodes(root, new Set(language.classNodeTypes)).filter(isCountableClassNode).length;
+}
+
+/**
+ * C/C++ `struct Foo;` forward declarations define no class, and Java `new Runnable() { ... }` /
+ * enum constants define an anonymous class only when they carry a `class_body` (JLS 15.9.5).
+ */
+function isCountableClassNode(node: Parser.SyntaxNode): boolean {
+  if (node.type === 'object_creation_expression' || node.type === 'enum_constant') {
+    return node.namedChildren.some((child) => child.type === 'class_body');
+  }
+  return !node.type.endsWith('_specifier') || node.childForFieldName('body') !== null;
 }
 
 function collectNodes(root: Parser.SyntaxNode, nodeTypes: Set<string>): Parser.SyntaxNode[] {
@@ -825,21 +839,36 @@ function measureModule(root: Parser.SyntaxNode, language: LanguageDefinition): M
   visitImports(root);
 
   return {
-    declarations: collectModuleDeclarations(root),
+    declarations: collectModuleDeclarations(root, language),
     importSources: [...importSources],
   };
 }
 
-function collectModuleDeclarations(root: Parser.SyntaxNode): DeclarationMetrics[] {
+function collectModuleDeclarations(root: Parser.SyntaxNode, language: LanguageDefinition): DeclarationMetrics[] {
   const exportedNames = collectExportedNames(root);
+  const scope = language.name === 'java' ? findJavaPackageScope(root) : '';
   return root.namedChildren
-    .flatMap((child) => collectTopLevelDeclarations(child, false))
+    .flatMap((child) => collectTopLevelDeclarations(child, false, scope, language.name === 'cpp'))
     .map((declaration) => (exportedNames.has(declaration.name) ? { ...declaration, exported: true } : declaration));
 }
 
-function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean, scope = ''): DeclarationMetrics[] {
+/** Java top-level declarations are qualified by their package so simple names stay distinct. */
+function findJavaPackageScope(root: Parser.SyntaxNode): string {
+  const packageNode = root.namedChildren.find((child) => child.type === 'package_declaration');
+  const nameNode = packageNode?.namedChildren.find(
+    (child) => child.type === 'scoped_identifier' || child.type === 'identifier'
+  );
+  return nameNode ? `${nameNode.text}::` : '';
+}
+
+function collectTopLevelDeclarations(
+  node: Parser.SyntaxNode,
+  exported: boolean,
+  scope = '',
+  isCpp = false
+): DeclarationMetrics[] {
   if (isModuleExportNode(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true, scope));
+    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true, scope, isCpp));
   }
 
   // C++ namespaces qualify their contents so `Alpha::ServiceThing` and `Beta::ServiceThing` stay
@@ -852,17 +881,17 @@ function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean,
     }
     const bodyNode = node.childForFieldName('body');
     return (bodyNode?.namedChildren ?? []).flatMap((child) =>
-      collectTopLevelDeclarations(child, exported, `${scope}${name}::`)
+      collectTopLevelDeclarations(child, exported, `${scope}${name}::`, isCpp)
     );
   }
 
   if (isDeclarationContainer(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported, scope));
+    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported, scope, isCpp));
   }
 
   // C/C++ global variables live in `declaration` nodes with one or more declarators.
   if (node.type === 'declaration') {
-    return qualifyDeclarations(declarationsFromCDeclaration(node, exported), scope);
+    return qualifyDeclarations(declarationsFromCDeclaration(node, exported, isCpp), scope);
   }
 
   // C `typedef` declares alias name(s) and possibly a tagged type in one node.
@@ -923,10 +952,16 @@ function declarationsFromTypeDefinition(node: Parser.SyntaxNode, exported: boole
   // `typedef struct Foo { ... } Bar;` declares both the tag `Foo` and the alias `Bar`.
   const typeNode = node.childForFieldName('type');
   const declarations = typeNode ? declarationFromNode(typeNode, exported) : [];
+  // The opaque-type idiom `typedef struct X X;` only forward-declares a tag defined elsewhere —
+  // like a function prototype — so its alias must not collide with the tag's definition.
+  const bodylessTagName =
+    typeNode?.type.endsWith('_specifier') && !typeNode.childForFieldName('body')
+      ? typeNode.childForFieldName('name')?.text
+      : undefined;
   const seenNames = new Set(declarations.map((declaration) => declaration.name));
   for (const declarator of findChildrenByFieldName(node, 'declarator')) {
     const name = declarator.type === 'type_identifier' ? declarator.text : unwrapDeclaratorName(declarator);
-    if (name && !seenNames.has(name)) {
+    if (name && name !== bodylessTagName && !seenNames.has(name)) {
       seenNames.add(name);
       declarations.push({ exported, name, startLine: declarator.startPosition.row + 1 });
     }
@@ -959,8 +994,8 @@ function isCVariableDeclarator(node: Parser.SyntaxNode): boolean {
 }
 
 /** `storage_class_specifier` exists only in the C/C++ grammars, so this is language-safe. */
-function hasStaticStorageClass(node: Parser.SyntaxNode): boolean {
-  return node.children.some((child) => child.type === 'storage_class_specifier' && child.text === 'static');
+function hasStorageClass(node: Parser.SyntaxNode, keyword: string): boolean {
+  return node.children.some((child) => child.type === 'storage_class_specifier' && child.text === keyword);
 }
 
 /**
@@ -980,8 +1015,8 @@ function isMisparsedCppModuleDeclaration(node: Parser.SyntaxNode): boolean {
  * symbol: emitting them would pair every header prototype with its definition in another file and
  * flood cross-file duplicate-symbol groups.
  */
-function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  if (isMisparsedCppModuleDeclaration(node) || hasStaticStorageClass(node)) {
+function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean, isCpp = false): DeclarationMetrics[] {
+  if (isMisparsedCppModuleDeclaration(node) || hasStorageClass(node, 'static')) {
     return [];
   }
   // `struct Foo { int x; } value;` defines the tag `Foo` alongside the variable; body-less type
@@ -989,7 +1024,24 @@ function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean
   const typeNode = node.childForFieldName('type');
   const declarations = typeNode ? declarationFromNode(typeNode, exported) : [];
   const seenNames = new Set(declarations.map((declaration) => declaration.name));
+  const isExtern = hasStorageClass(node, 'extern');
   for (const child of node.namedChildren.filter(isCVariableDeclarator)) {
+    // A non-initializing `extern` declarator only re-declares a symbol defined elsewhere — like a
+    // prototype — and must not collide with that definition in symbol groups.
+    if (isExtern && child.type !== 'init_declarator') {
+      continue;
+    }
+    // C++ (unlike C) gives namespace-scope const variables internal linkage unless they are
+    // extern, inline, or references, so they are file-local rather than cross-file symbols.
+    if (
+      isCpp &&
+      !isExtern &&
+      !hasStorageClass(node, 'inline') &&
+      !declaratorChainContainsReference(child) &&
+      !isCMutableBinding(node, child)
+    ) {
+      continue;
+    }
     const name = unwrapDeclaratorName(child);
     if (name && !seenNames.has(name)) {
       seenNames.add(name);
@@ -997,6 +1049,18 @@ function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean
     }
   }
   return declarations;
+}
+
+function declaratorChainContainsReference(declarator: Parser.SyntaxNode): boolean {
+  let current: Parser.SyntaxNode | null | undefined =
+    declarator.type === 'init_declarator' ? (declarator.childForFieldName('declarator') ?? declarator) : declarator;
+  while (current) {
+    if (current.type === 'reference_declarator') {
+      return true;
+    }
+    current = nextDeclarator(current);
+  }
+  return false;
 }
 
 function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
@@ -1007,7 +1071,7 @@ function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): Declar
   }
 
   // C/C++ `static` gives internal linkage: the symbol is file-local, not a cross-file module symbol.
-  if (hasStaticStorageClass(node)) {
+  if (hasStorageClass(node, 'static')) {
     return [];
   }
 
@@ -1270,7 +1334,7 @@ function isAssignmentNode(node: Parser.SyntaxNode): boolean {
 }
 
 function isAwaitNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'await_expression' || node.type === 'await';
+  return node.type === 'await_expression' || node.type === 'await' || node.type === 'co_await_expression';
 }
 
 function isLoopNode(node: Parser.SyntaxNode): boolean {
@@ -1440,8 +1504,14 @@ function hasRustMutableLetBinding(node: Parser.SyntaxNode): boolean {
 
 function isReturnNode(node: Parser.SyntaxNode): boolean {
   // Ruby's named `return` node is safe here: the visitor walks named children only, so the
-  // anonymous `return` keyword leaf is never seen.
-  return node.type === 'return_statement' || node.type === 'return_expression' || node.type === 'return';
+  // anonymous `return` keyword leaf is never seen. `co_return` is the only way a C++ coroutine
+  // returns; `co_yield` suspends like a generator yield and is not a return.
+  return (
+    node.type === 'return_statement' ||
+    node.type === 'return_expression' ||
+    node.type === 'return' ||
+    node.type === 'co_return_statement'
+  );
 }
 
 function isThrowNode(node: Parser.SyntaxNode): boolean {
@@ -1459,7 +1529,13 @@ function isRubyRaiseCall(node: Parser.SyntaxNode): boolean {
 }
 
 function isTryNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'try_statement' || node.type === 'try_with_resources_statement' || isRubyRescueConstruct(node);
+  return (
+    node.type === 'try_statement' ||
+    node.type === 'try_with_resources_statement' ||
+    // Ruby's `risky_call rescue fallback` modifier protects an expression like a one-clause begin.
+    node.type === 'rescue_modifier' ||
+    isRubyRescueConstruct(node)
+  );
 }
 
 /**
@@ -2070,10 +2146,13 @@ function findImportSources(
     if (!importedPath) {
       return [];
     }
-    // The `.*` suffix is preserved so wildcard (package) imports stay unresolvable to a single file.
+    // The `.*` suffix is preserved so wildcard (package) imports stay unresolvable to a single
+    // file. A static wildcard (`import static X.Helper.*`) names one specific type (JLS 7.5.4),
+    // so it resolves like a plain import of that type.
+    const isStatic = node.children.some((child) => child.type === 'static');
     const isWildcard = node.namedChildren.some((child) => child.type === 'asterisk');
     const source = normalizeImportSource(importedPath.text);
-    return [isWildcard ? `${source}.*` : source];
+    return [isWildcard && !isStatic ? `${source}.*` : source];
   }
 
   if (isRubyRequireCall(node, language)) {

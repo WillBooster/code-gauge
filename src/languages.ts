@@ -76,6 +76,9 @@ const javaClassNodes = [
   'enum_declaration',
   'record_declaration',
   'annotation_type_declaration',
+  // Counted only when they carry a `class_body` (anonymous classes, JLS 15.9.5).
+  'object_creation_expression',
+  'enum_constant',
 ] as const;
 const javaDecisionNodes = [
   ...commonDecisionNodes,
