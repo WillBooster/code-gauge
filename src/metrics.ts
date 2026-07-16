@@ -695,7 +695,10 @@ function collectCalls(
       return;
     }
 
-    if (isCallNode(node)) {
+    // C++ casts (`int(x)`, `static_cast<int>(x)`) parse as call expressions but invoke nothing.
+    if (language.name === 'cpp' && isCppCastExpression(node)) {
+      // Not a call: fall through to children only.
+    } else if (isCallNode(node)) {
       callCount += 1;
       // C++ `new Widget()` and functional construction `Widget(1)` / `ns::Widget(1)` /
       // `Box<int>(1)` name an overloaded constructor, so — like direct construction — they count
@@ -736,6 +739,21 @@ function collectCalls(
 
   visit(root, true);
   return { callCount, callees };
+}
+
+const cppNamedCasts = new Set(['static_cast', 'dynamic_cast', 'const_cast', 'reinterpret_cast']);
+
+/** C++ casts parse as call expressions (`int(x)`, `static_cast<int>(x)`) but invoke nothing. */
+function isCppCastExpression(node: Parser.SyntaxNode): boolean {
+  if (node.type !== 'call_expression') {
+    return false;
+  }
+  const callee = node.childForFieldName('function');
+  if (callee?.type === 'primitive_type') {
+    return true;
+  }
+  const name = callee?.type === 'template_function' ? callee.childForFieldName('name')?.text : callee?.text;
+  return name !== undefined && cppNamedCasts.has(name);
 }
 
 /**
