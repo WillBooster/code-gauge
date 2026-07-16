@@ -112,7 +112,7 @@ const literalKindByType = new Map([
   ['integer_literal', '#num'],
   ['float_literal', '#num'],
   ['int_literal', '#num'],
-  ['rune_literal', '#num'],
+  ['rune_literal', '#char'],
   ['imaginary_literal', '#num'],
   ['decimal_integer_literal', '#num'],
   ['hex_integer_literal', '#num'],
@@ -168,6 +168,8 @@ const semanticNameFieldByParentType = new Map([
   ['macro_invocation', 'macro'],
   // Java names accessed fields with a plain identifier in the `field` field.
   ['field_access', 'field'],
+  // JS/TS `new Foo(...)` names the constructed API in the `constructor` field.
+  ['new_expression', 'constructor'],
 ]);
 
 /** Minimum normalized token count for a region to be considered for duplication, to skip trivial repeats. */
@@ -299,6 +301,18 @@ function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
 
   // `call` names its callee `method` in Ruby but `function` in Python; accept both fields.
   if (parent.type === 'call' && parent.childForFieldName('function')?.id === node.id) {
+    return true;
+  }
+
+  // Qualified callees (Rust `Store::new(...)`, C++ `detail::make(...)`) wrap their identifiers one
+  // level deeper; both path and name are semantic there, but only in call position, so renamed
+  // clones that merely reference scoped constants still match.
+  if (
+    (parent.type === 'scoped_identifier' || parent.type === 'qualified_identifier') &&
+    (parent.childForFieldName('name')?.id === node.id || parent.childForFieldName('path')?.id === node.id) &&
+    parent.parent?.type === 'call_expression' &&
+    parent.parent.childForFieldName('function')?.id === parent.id
+  ) {
     return true;
   }
 

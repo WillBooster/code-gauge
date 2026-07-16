@@ -79,6 +79,14 @@ const operatorTexts = new Set([
   '&^',
   '&^=',
   '&.',
+  // Member access/qualification are classical Halstead operators (floats and range/spread tokens
+  // are distinct leaves, so `.` cannot collide with them). `->` also captures Python/Rust
+  // return-type arrows, consistent with the counted `=>`.
+  '.',
+  '->',
+  '::',
+  '->*',
+  '.*',
   'sizeof',
   'alignof',
   'defined?',
@@ -618,14 +626,15 @@ function collectCalls(
       return;
     }
 
-    if (isCallNode(node) || isRubyImplicitCall(node, language)) {
+    if (isCallNode(node)) {
       callCount += 1;
       const callee = findCalleeName(node);
       if (callee) {
         callees.add(callee);
       }
-    } else if (isCppConstruction(node, constructedTypeNames)) {
-      // Constructors are overloaded by definition, so construction adds no callee edge.
+    } else if (isRubyImplicitCall(node, language) || isCppConstruction(node, constructedTypeNames)) {
+      // `yield x` invokes the block, not its argument `x`, and constructors are overloaded by
+      // definition, so neither adds a callee edge.
       callCount += 1;
     }
 
@@ -683,6 +692,9 @@ function collectConstructedTypeNames(root: Parser.SyntaxNode, language: Language
  * Ruby's bare `yield` and `super` invoke without a `call` node (only `super()` parses as `call`,
  * whose `super` child must not double-count), so they add to the call count without a callee edge.
  * Language-gated because Python `yield` and JS/Java `super` children are not extra calls.
+ * Bare receiverless zero-argument sends (`helper` alone) are deliberately NOT counted: they parse
+ * as plain identifiers, and telling them apart from local-variable reads requires Ruby's
+ * lexically-ordered binding analysis — a static-analysis boundary this measurer does not cross.
  */
 function isRubyImplicitCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
   if (language.name !== 'ruby') {
@@ -1006,10 +1018,16 @@ function declarationsFromRubyType(node: Parser.SyntaxNode, exported: boolean, sc
   return declarations;
 }
 
-/** Emits a declaration for a Ruby `CONST = ...` assignment; other assignments declare nothing. */
+/**
+ * Emits a declaration for a Ruby `CONST = ...` or qualified `A::CONST = ...` assignment; other
+ * assignments (locals, ivars, `Foo.bar =` setters) declare nothing.
+ */
 function rubyConstantDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
   const left = node.childForFieldName('left');
-  return left?.type === 'constant' ? [{ exported, name: left.text, startLine: left.startPosition.row + 1 }] : [];
+  const declaresConstant =
+    left?.type === 'constant' ||
+    (left?.type === 'scope_resolution' && left.childForFieldName('name')?.type === 'constant');
+  return left && declaresConstant ? [{ exported, name: left.text, startLine: left.startPosition.row + 1 }] : [];
 }
 
 function declarationsFromTypeDefinition(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
@@ -1446,6 +1464,11 @@ function countMutableBindings(node: Parser.SyntaxNode): number {
       return countCMutableBindings(node);
     }
     return 0;
+  }
+
+  // Java `for (String x : xs)` binds its loop variable directly on the statement node.
+  if (node.type === 'enhanced_for_statement') {
+    return isJavaMutableDeclaration(node) ? 1 : 0;
   }
 
   return isMutableBindingNode(node) ? 1 : 0;
@@ -2092,7 +2115,38 @@ function findCalleeName(node: Parser.SyntaxNode): string | undefined {
     return undefined;
   }
 
-  return findRightmostIdentifier(calleeNode);
+  // Immediately invoked anonymous callables (`(() => target)()`, `([](){ ... })()`) have no stable
+  // callee name; searching their body would fabricate an edge to whatever identifier appears last.
+  const unwrappedCallee = unwrapParenthesizedExpression(calleeNode);
+  if (anonymousCallableNodeTypes.has(unwrappedCallee.type)) {
+    return undefined;
+  }
+
+  return findRightmostIdentifier(unwrappedCallee);
+}
+
+/** Function-literal node types across supported grammars whose invocation names no callee. */
+const anonymousCallableNodeTypes = new Set([
+  'arrow_function', // JS/TS
+  'function_expression', // JS/TS
+  'function', // older JS grammars / Python-style
+  'lambda', // Python, Ruby
+  'lambda_expression', // C++, Java
+  'closure_expression', // Rust
+  'func_literal', // Go
+  'anonymous_function', // misc grammars
+]);
+
+function unwrapParenthesizedExpression(node: Parser.SyntaxNode): Parser.SyntaxNode {
+  let current = node;
+  while (current.type === 'parenthesized_expression' && current.namedChildCount === 1) {
+    const inner = current.namedChild(0);
+    if (!inner) {
+      break;
+    }
+    current = inner;
+  }
+  return current;
 }
 
 /** Ternary/conditional and Rust try parents make `?` an operator; TS optional markers do not. */
@@ -2177,10 +2231,16 @@ function isImportNode(node: Parser.SyntaxNode): boolean {
 function isImportSourceNode(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
   return (
     isImportNode(node) ||
+    isRustModDeclaration(node, language) ||
     isDynamicImportNode(node) ||
     isRubyRequireCall(node, language) ||
     (isExportNode(node) && node.childForFieldName('source') !== null)
   );
+}
+
+/** A bodyless `mod name;` declares an out-of-line child module loaded from `name.rs`/`name/mod.rs`. */
+function isRustModDeclaration(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
+  return language.name === 'rust' && node.type === 'mod_item' && !node.childForFieldName('body');
 }
 
 const rubyRequireMethods = new Set(['require', 'require_relative', 'load']);
@@ -2312,6 +2372,11 @@ function isRustLocalImportSource(source: string): boolean {
  * forms `use std::collections::HashMap;` and `use std::fmt;`.
  */
 function findRustImportSources(node: Parser.SyntaxNode): string[] {
+  // `mod b;` (no body) pulls the child module's file into the tree, like an import of `self::b`.
+  if (node.type === 'mod_item') {
+    const nameNode = node.childForFieldName('name');
+    return nameNode ? [`self::${normalizeImportSource(nameNode.text)}`] : [];
+  }
   // `extern crate serde as s;` names the crate directly; the alias is irrelevant to the source.
   if (node.type === 'extern_crate_declaration') {
     const nameNode = node.childForFieldName('name');
@@ -2334,6 +2399,12 @@ function rustImportSources(node: Parser.SyntaxNode, prefix: string): string[] {
       return listNode ? rustImportSources(listNode, nextPrefix) : withModulePrefix(nextPrefix);
     }
     case 'scoped_identifier': {
+      // In-crate paths keep the leaf: `use crate::b;` names module `b`, and the resolver probes
+      // the parent module as a fallback when the leaf turns out to be an item, not a module.
+      const fullPath = joinModulePath(prefix, normalizeImportSource(node.text));
+      if (isRustLocalImportSource(fullPath)) {
+        return withModulePrefix(fullPath);
+      }
       // Drop the leaf item: the source is the prefix plus this node's own `path` field.
       return withModulePrefix(joinModulePath(prefix, rustPathText(node.childForFieldName('path'))));
     }
@@ -2352,6 +2423,11 @@ function rustImportSources(node: Parser.SyntaxNode, prefix: string): string[] {
     case 'identifier':
     case 'crate':
     case 'super': {
+      // Inside an in-crate group (`use crate::{a, b};`) each leaf may itself be a module; keep it
+      // and let the resolver fall back to the prefix module.
+      if (node.type === 'identifier' && isRustLocalImportSource(prefix)) {
+        return withModulePrefix(joinModulePath(prefix, normalizeImportSource(node.text)));
+      }
       // A bare leaf item: at the top level (`use tokio;`) it is the module; inside a group its module is the prefix.
       return withModulePrefix(prefix === '' ? normalizeImportSource(node.text) : prefix);
     }

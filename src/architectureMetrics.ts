@@ -136,6 +136,9 @@ function resolveLocalImport(
   javaFileIndex: Map<string, string[]>
 ): string | undefined {
   if (!source.startsWith('.')) {
+    if (fromFile.endsWith('.rs') && /^(?:crate|self|super)(?:::|$)/u.test(source)) {
+      return resolveRustLocalImport(fromFile, source, fileSet);
+    }
     // Java imports are dotted class paths without a leading dot; other absolute sources are external.
     return fromFile.endsWith('.java') ? resolveJavaImport(source, javaFileIndex) : undefined;
   }
@@ -226,6 +229,77 @@ function importProbes(fromFile: string): { extensions: string[]; indexFiles: str
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.py', '.rb', '.h', '.hpp', '.hh', '.hxx', '.c', '.cpp', '.cc', '.cxx'],
     indexFiles: ['index.ts', 'index.tsx', 'index.js', '__init__.py'],
   };
+}
+
+/** Rust module owner files whose child modules live as siblings in the same directory. */
+const rustOwnerFileNames = new Set(['mod.rs', 'lib.rs', 'main.rs']);
+
+/**
+ * Resolves a Rust in-crate module path (`crate::a::b`, `self::x`, `super::x`) to a scanned file by
+ * probing `<path>.rs` and `<path>/mod.rs` against the appropriate base directories. `crate::` roots
+ * are inferred from ancestor directories containing `lib.rs`/`main.rs`, falling back to every
+ * ancestor so single-crate scans without a crate root file still resolve.
+ */
+function resolveRustLocalImport(fromFile: string, source: string, fileSet: Set<string>): string | undefined {
+  const segments = source.split('::');
+  const head = segments.shift();
+  const modulePath = segments.join('/');
+  if (!modulePath) {
+    return undefined;
+  }
+  const fromDirectory = normalizeDirectory(path.dirname(fromFile));
+  const isOwner = rustOwnerFileNames.has(path.basename(fromFile));
+  const stemDirectory = path.join(fromDirectory, path.basename(fromFile, '.rs'));
+
+  let baseDirectories: string[];
+  if (head === 'self') {
+    // Children of a mod.rs/lib.rs/main.rs module are siblings; children of `a.rs` live in `a/`.
+    baseDirectories = isOwner ? [fromDirectory] : [stemDirectory, fromDirectory];
+  } else if (head === 'super') {
+    baseDirectories = isOwner
+      ? [normalizeDirectory(path.dirname(fromDirectory)), fromDirectory]
+      : [fromDirectory, normalizeDirectory(path.dirname(fromDirectory))];
+  } else {
+    baseDirectories = rustCrateRootCandidates(fromDirectory, fileSet);
+  }
+
+  // The leaf may be an item rather than a module (`use crate::b::helper` keeps `helper`), so the
+  // parent module path is probed as a fallback for each base directory.
+  const modulePaths = [modulePath, segments.slice(0, -1).join('/')].filter(Boolean);
+  for (const base of baseDirectories) {
+    for (const candidateModulePath of modulePaths) {
+      for (const candidate of [
+        path.join(base, `${candidateModulePath}.rs`),
+        path.join(base, candidateModulePath, 'mod.rs'),
+      ]) {
+        if (candidate !== fromFile && fileSet.has(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Ancestor directories of `fromDirectory` holding a crate root file, else all ancestors (nearest first). */
+function rustCrateRootCandidates(fromDirectory: string, fileSet: Set<string>): string[] {
+  const ancestors: string[] = [];
+  let current = fromDirectory;
+  for (;;) {
+    ancestors.push(current);
+    if (current === '') {
+      break;
+    }
+    current = normalizeDirectory(path.dirname(current));
+  }
+  const withRootFile = ancestors.filter(
+    (directory) => fileSet.has(path.join(directory, 'lib.rs')) || fileSet.has(path.join(directory, 'main.rs'))
+  );
+  return withRootFile.length > 0 ? withRootFile : ancestors;
+}
+
+function normalizeDirectory(directory: string): string {
+  return directory === '.' ? '' : directory;
 }
 
 /** Indexes scanned `.java` files by class name so dotted imports resolve without scanning all files. */
