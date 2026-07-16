@@ -58,9 +58,12 @@ interface ScanResult {
 
 const languageByExtension = new Map<string, LanguageName>([
   ['.c', 'c'],
+  ['.c++', 'cpp'],
   ['.cc', 'cpp'],
   ['.cjs', 'javascript'],
+  ['.cp', 'cpp'],
   ['.cpp', 'cpp'],
+  ['.tcc', 'cpp'],
   ['.cts', 'typescript'],
   ['.cxx', 'cpp'],
   ['.go', 'go'],
@@ -1013,6 +1016,11 @@ function getLanguage(file: string, options: ResolvedOptions, explicitTarget = fa
     (testFilePattern.test(path.basename(file)) || javaTestFilePattern.test(path.basename(file)))
   ) {
     return undefined;
+  }
+
+  // GCC treats an uppercase `.C` as C++; lowercasing first would misparse it with the C grammar.
+  if (path.extname(file) === '.C') {
+    return 'cpp';
   }
 
   return languageByExtension.get(path.extname(lowerFile));

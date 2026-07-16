@@ -178,6 +178,10 @@ const semanticNameFieldByParentType = new Map([
   // Python `f(timeout=...)` and Java `@Anno(key=...)` name parameters of the callee's API.
   ['keyword_argument', 'name'],
   ['element_value_pair', 'key'],
+  // Rust turbofish and C++ template callees (`compute::<u32>(...)`); type arguments stay
+  // anonymized via their own node types.
+  ['generic_function', 'function'],
+  ['template_function', 'name'],
 ]);
 
 /** Minimum normalized token count for a region to be considered for duplication, to skip trivial repeats. */
@@ -327,16 +331,27 @@ function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
     return true;
   }
 
-  // Qualified callees (Rust `Store::new(...)`, C++ `detail::make(...)`) wrap their identifiers one
-  // level deeper; both path and name are semantic there, but only in call position, so renamed
-  // clones that merely reference scoped constants still match.
+  // Qualified callees (Rust `crate::alpha::make(...)`, C++ `detail::make(...)`) and generic
+  // callees (`compute::<u32>(...)`, `compute<int>(...)`) wrap their identifiers arbitrarily deep;
+  // every path/name segment is semantic there — but only in call position, so renamed clones that
+  // merely reference scoped constants or `use` paths still match.
   if (
     (parent.type === 'scoped_identifier' || parent.type === 'qualified_identifier') &&
-    (parent.childForFieldName('name')?.id === node.id || parent.childForFieldName('path')?.id === node.id) &&
-    parent.parent?.type === 'call_expression' &&
-    parent.parent.childForFieldName('function')?.id === parent.id
+    (parent.childForFieldName('name')?.id === node.id || parent.childForFieldName('path')?.id === node.id)
   ) {
-    return true;
+    let outer = parent;
+    while (
+      outer.parent &&
+      (outer.parent.type === 'scoped_identifier' ||
+        outer.parent.type === 'qualified_identifier' ||
+        outer.parent.type === 'generic_function' ||
+        outer.parent.type === 'template_function')
+    ) {
+      outer = outer.parent;
+    }
+    if (outer.parent?.type === 'call_expression' && outer.parent.childForFieldName('function')?.id === outer.id) {
+      return true;
+    }
   }
 
   // Go struct-literal keys (`Config{Timeout: ...}`) have no `key` field in the grammar: the key

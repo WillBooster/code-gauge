@@ -554,10 +554,14 @@ function measureComplexity(
     // `if` keyword token), so only named nodes count as decisions.
     const isDecision = current.isNamed && decisionNodes.has(current.type) && !isDefaultSwitchBranch(current);
     const isNesting = current.isNamed && nestingNodes.has(current.type) && !isDefaultSwitchBranch(current);
+    // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
+    // surcharge, and their bodies stay at the chain's nesting level (Sonar cognitive-complexity
+    // semantics); genuinely nested conditionals inside those bodies still deepen.
+    const isContinuation = isDecision && isFlatChainContinuation(current);
 
     if (isDecision) {
       cyclomaticComplexity += 1;
-      cognitiveComplexity += 1 + currentNesting;
+      cognitiveComplexity += isContinuation ? 1 : 1 + currentNesting;
     }
 
     if (isBooleanOperator(current)) {
@@ -565,7 +569,7 @@ function measureComplexity(
       cognitiveComplexity += 1;
     }
 
-    const childNesting = isNesting ? currentNesting + 1 : currentNesting;
+    const childNesting = isNesting && !isContinuation ? currentNesting + 1 : currentNesting;
     nestingDepth = Math.max(nestingDepth, childNesting);
 
     for (const child of current.children) {
@@ -578,6 +582,22 @@ function measureComplexity(
   }
 
   return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
+}
+
+/** Ruby `elsif`, Python `elif`, and `else if` (an if node in an else/alternative position). */
+function isFlatChainContinuation(node: Parser.SyntaxNode): boolean {
+  if (node.type === 'elsif' || node.type === 'elif_clause') {
+    return true;
+  }
+  if (node.type !== 'if_statement' && node.type !== 'if_expression' && node.type !== 'if') {
+    return false;
+  }
+  const parent = node.parent;
+  if (!parent) {
+    return false;
+  }
+  // JS/C/C++/Rust wrap `else if` in an else clause; Java/Go put it directly in `alternative`.
+  return parent.type === 'else_clause' || parent.childForFieldName('alternative')?.id === node.id;
 }
 
 /**
@@ -631,15 +651,14 @@ function collectCalls(
 
     if (isCallNode(node)) {
       callCount += 1;
-      // C++ `new Widget()` and functional construction `Widget(1)` name an overloaded
-      // constructor, so — like direct construction — they count as calls without a callee edge.
-      // JS `new Foo()` keeps its edge to the function.
+      // C++ `new Widget()` and functional construction `Widget(1)` / `ns::Widget(1)` /
+      // `Box<int>(1)` name an overloaded constructor, so — like direct construction — they count
+      // as calls without a callee edge. JS `new Foo()` keeps its edge to the function.
       const isCppConstructorCall =
         language.name === 'cpp' &&
         (node.type === 'new_expression' ||
           (node.type === 'call_expression' &&
-            node.childForFieldName('function')?.type === 'identifier' &&
-            constructedTypeNames.has(node.childForFieldName('function')?.text ?? '')));
+            constructedTypeNames.has(cppBaseTypeName(node.childForFieldName('function')) ?? '')));
       const callee = isCppConstructorCall ? undefined : findCalleeName(node);
       if (callee) {
         callees.add(callee);
@@ -669,18 +688,41 @@ function isCppConstruction(node: Parser.SyntaxNode, constructedTypeNames: Set<st
     return false;
   }
   if (node.type === 'compound_literal_expression') {
-    const typeNode = node.childForFieldName('type');
-    return typeNode?.type === 'type_identifier' && constructedTypeNames.has(typeNode.text);
+    return constructedTypeNames.has(cppBaseTypeName(node.childForFieldName('type')) ?? '');
   }
   if (node.type === 'init_declarator') {
     const value = node.childForFieldName('value');
     if (value?.type !== 'argument_list' && value?.type !== 'initializer_list') {
       return false;
     }
-    const typeNode = node.parent?.childForFieldName('type');
-    return typeNode?.type === 'type_identifier' && constructedTypeNames.has(typeNode.text);
+    return constructedTypeNames.has(cppBaseTypeName(node.parent?.childForFieldName('type')) ?? '');
   }
   return false;
+}
+
+/**
+ * Base name of a possibly qualified/templated C++ type or callee (`ns::Box<int>` -> `Box`).
+ * Matching by base name treats a same-named external type as local — a conservative trade
+ * accepted over tracking full namespace scopes.
+ */
+function cppBaseTypeName(node: Parser.SyntaxNode | null | undefined): string | undefined {
+  let current: Parser.SyntaxNode | null | undefined = node;
+  while (current) {
+    if (current.type === 'type_identifier' || current.type === 'identifier') {
+      return current.text;
+    }
+    if (
+      current.type === 'qualified_identifier' ||
+      current.type === 'scoped_identifier' ||
+      current.type === 'template_type' ||
+      current.type === 'template_function'
+    ) {
+      current = current.childForFieldName('name');
+      continue;
+    }
+    return undefined;
+  }
+  return undefined;
 }
 
 const cppClassSpecifierTypes = new Set(['class_specifier', 'struct_specifier', 'union_specifier']);
@@ -1002,9 +1044,14 @@ function collectTopLevelDeclarations(
 }
 
 function qualifyDeclarations(declarations: DeclarationMetrics[], scope: string): DeclarationMetrics[] {
-  return scope
-    ? declarations.map((declaration) => ({ ...declaration, name: `${scope}${declaration.name}` }))
-    : declarations;
+  if (!scope) {
+    return declarations;
+  }
+  // Ruby `class A::B` / `A::C = 1` names are already qualified; re-prefixing the enclosing module
+  // would double it (`A::A::B`).
+  return declarations.map((declaration) =>
+    declaration.name.includes('::') ? declaration : { ...declaration, name: `${scope}${declaration.name}` }
+  );
 }
 
 const rubyTypeNodeTypes = new Set(['module', 'class', 'singleton_class']);
@@ -2149,6 +2196,10 @@ function findCalleeName(node: Parser.SyntaxNode): string | undefined {
     const receiverNode = node.childForFieldName('receiver');
     if (methodNode?.text === 'call' && receiverNode?.type === 'identifier') {
       return receiverNode.text;
+    }
+    // A Ruby setter send (`self.foo = x`) invokes the method named `foo=`, matching its definition.
+    if (methodNode && node.parent?.type === 'assignment' && node.parent.childForFieldName('left')?.id === node.id) {
+      return `${methodNode.text}=`;
     }
   }
 
