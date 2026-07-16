@@ -234,7 +234,7 @@ interface DuplicateCandidate {
  * consecutive sibling statements, so a copy pasted into the middle of a longer block is still
  * found. Only maximal, non-overlapping regions are counted.
  */
-export function measureDuplication(root: Parser.SyntaxNode, totalLines: number): DuplicationMetrics {
+export function measureDuplication(root: Parser.SyntaxNode, codeLines: number): DuplicationMetrics {
   const tokens: Token[] = [];
   const blockRanges: TokenRange[] = [];
   const containerStatementRanges: TokenRange[][] = [];
@@ -245,7 +245,7 @@ export function measureDuplication(root: Parser.SyntaxNode, totalLines: number):
     ...collectSequenceCandidates(tokens, containerStatementRanges),
   ];
   const counted = selectMaximalDuplicates(candidates);
-  return summarizeDuplicates(counted, totalLines, tokens);
+  return summarizeDuplicates(counted, codeLines, tokens);
 }
 
 function collectTokens(
@@ -719,7 +719,7 @@ function overlaps(
 
 function summarizeDuplicates(
   counted: Map<string, DuplicateCandidate[]>,
-  totalLines: number,
+  codeLines: number,
   tokens: Token[]
 ): DuplicationMetrics {
   let duplicateBlockCount = 0;
@@ -752,7 +752,7 @@ function summarizeDuplicates(
     duplicateBlockGroupCount: counted.size,
     duplicateBlockGroups,
     duplicateLineCount: duplicatedLines.size,
-    duplicationRatio: totalLines === 0 ? 0 : duplicatedLines.size / totalLines,
+    duplicationRatio: codeLines === 0 ? 0 : duplicatedLines.size / codeLines,
     maxDuplicateBlockSize,
   };
 }

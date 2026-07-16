@@ -127,7 +127,11 @@ export interface DuplicationMetrics {
   duplicateBlockGroups: DuplicateBlockOccurrence[][];
   /** Number of distinct lines covered by any counted duplicate occurrence (originals included). */
   duplicateLineCount: number;
-  /** duplicateLineCount / total lines (0 when the file is empty). */
+  /**
+   * duplicateLineCount / code lines (0 when the file has no code). Code lines are the denominator
+   * because duplicated lines are counted from matched tokens, which only ever land on code lines;
+   * dividing by total lines would let comment density deflate the ratio.
+   */
   duplicationRatio: number;
   /** Normalized token count of the largest duplicated region, indicating how big the copied region is. */
   maxDuplicateBlockSize: number;

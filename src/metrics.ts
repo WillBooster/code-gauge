@@ -268,7 +268,7 @@ export class TreeMeasurer {
       cohesion: structuralMetrics.cohesion,
       syntaxFeatures: structuralMetrics.syntaxFeatures,
       typeComplexity: structuralMetrics.typeComplexity,
-      duplication: measureDuplication(root, lines.total),
+      duplication: measureDuplication(root, lines.code),
       halstead,
       maintainabilityIndex: calculateMaintainabilityIndex(
         halstead.volume,
@@ -710,6 +710,21 @@ function isCppConstruction(node: Parser.SyntaxNode, constructedTypeNames: Set<st
       return false;
     }
     return constructedTypeNames.has(cppBaseTypeName(node.parent?.childForFieldName('type')) ?? '');
+  }
+  // Default construction (`Widget value;`): a bare identifier declarator of a local class type.
+  if (node.type === 'identifier' && node.parent?.type === 'declaration') {
+    return (
+      findChildrenByFieldName(node.parent, 'declarator').some((declarator) => declarator.id === node.id) &&
+      constructedTypeNames.has(cppBaseTypeName(node.parent.childForFieldName('type')) ?? '')
+    );
+  }
+  // Base/delegating constructor initializers (`Widget() : Base(1) {}`). The grammar names both
+  // base classes and members as `field_identifier`, so they are told apart by whether the name is
+  // a locally defined class — the same base-name trade documented on cppBaseTypeName.
+  if (node.type === 'field_initializer') {
+    const nameNode = node.namedChild(0);
+    const name = nameNode?.type === 'field_identifier' ? nameNode.text : cppBaseTypeName(nameNode);
+    return constructedTypeNames.has(name ?? '');
   }
   return false;
 }
