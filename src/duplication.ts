@@ -346,6 +346,17 @@ function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
     return true;
   }
 
+  // Java static receivers (`Alpha.run(...)`) name the invoked type. The tokenizer has no symbol
+  // table, so PascalCase — Java's universal type-naming convention — is the discriminator;
+  // camelCase instance receivers stay anonymized for rename tolerance.
+  if (
+    parent.type === 'method_invocation' &&
+    parent.childForFieldName('object')?.id === node.id &&
+    /^\p{Lu}/u.test(node.text)
+  ) {
+    return true;
+  }
+
   // Qualified callees (Rust `crate::alpha::make(...)`, C++ `detail::make(...)`) and generic
   // callees (`compute::<u32>(...)`, `compute<int>(...)`) wrap their identifiers arbitrarily deep;
   // every path/name segment is semantic there — but only in call position, so renamed clones that

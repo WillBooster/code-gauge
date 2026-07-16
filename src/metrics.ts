@@ -2384,6 +2384,29 @@ function isCallNode(node: Parser.SyntaxNode): boolean {
   );
 }
 
+/** Reconstructs `operator+` / `operator int` from tree-sitter-cpp's ERROR-wrapped misparses. */
+function findCppExplicitOperatorName(node: Parser.SyntaxNode): string | undefined {
+  // `this->operator+(y)`: the operator_name lands inside an ERROR child of the call itself.
+  for (const child of node.children) {
+    if (child.type === 'ERROR') {
+      const operatorName = child.children.find((grandChild) => grandChild.type === 'operator_name');
+      if (operatorName) {
+        return operatorName.text;
+      }
+    }
+  }
+  // `x.operator int()`: the field_expression holds an ERROR `operator` before the field name.
+  const callee = node.childForFieldName('function');
+  if (callee?.type === 'field_expression') {
+    const errorIndex = callee.children.findIndex((child) => child.type === 'ERROR' && child.text === 'operator');
+    const fieldNode = errorIndex === -1 ? undefined : callee.children[errorIndex + 1];
+    if (fieldNode?.type === 'field_identifier' || fieldNode?.type === 'primitive_type') {
+      return `operator ${fieldNode.text}`;
+    }
+  }
+  return undefined;
+}
+
 /** Function-literal node types across supported grammars whose invocation names no callee. */
 const anonymousCallableNodeTypes = new Set([
   'arrow_function', // JS/TS
@@ -2414,6 +2437,20 @@ function findCalleeName(node: Parser.SyntaxNode): string | undefined {
     // A Ruby setter send (`self.foo = x`) invokes the method named `foo=`, matching its definition.
     if (methodNode && node.parent?.type === 'assignment' && node.parent.childForFieldName('left')?.id === node.id) {
       return `${methodNode.text}=`;
+    }
+    // Explicit operator sends (`self.+(other)`) name the operator method directly.
+    if (methodNode?.type === 'operator') {
+      return methodNode.text;
+    }
+  }
+
+  // tree-sitter-cpp misparses explicit operator calls with ERROR wrappers (`this->operator+(y)`,
+  // `x.operator int()`); reconstruct the definition-style name instead of dropping the callee or
+  // fabricating one from the operand type.
+  if (node.type === 'call_expression') {
+    const operatorName = findCppExplicitOperatorName(node);
+    if (operatorName) {
+      return operatorName;
     }
   }
 
