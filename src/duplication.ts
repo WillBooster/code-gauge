@@ -175,6 +175,9 @@ const semanticNameFieldByParentType = new Map([
   ['field_access', 'field'],
   // JS/TS `new Foo(...)` names the constructed API in the `constructor` field.
   ['new_expression', 'constructor'],
+  // Python `f(timeout=...)` and Java `@Anno(key=...)` name parameters of the callee's API.
+  ['keyword_argument', 'name'],
+  ['element_value_pair', 'key'],
 ]);
 
 /** Minimum normalized token count for a region to be considered for duplication, to skip trivial repeats. */
@@ -332,6 +335,16 @@ function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
     (parent.childForFieldName('name')?.id === node.id || parent.childForFieldName('path')?.id === node.id) &&
     parent.parent?.type === 'call_expression' &&
     parent.parent.childForFieldName('function')?.id === parent.id
+  ) {
+    return true;
+  }
+
+  // Go struct-literal keys (`Config{Timeout: ...}`) have no `key` field in the grammar: the key
+  // is the keyed_element's first named child, a literal_element wrapping the identifier.
+  if (
+    parent.type === 'literal_element' &&
+    parent.parent?.type === 'keyed_element' &&
+    parent.parent.namedChild(0)?.id === parent.id
   ) {
     return true;
   }

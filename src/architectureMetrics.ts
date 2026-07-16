@@ -220,7 +220,9 @@ function importProbes(fromFile: string): { extensions: string[]; indexFiles: str
     return { extensions: ['.py'], indexFiles: ['__init__.py'] };
   }
   if (cExtensions.has(fromExtension)) {
-    return { extensions: ['.h', '.hpp', '.hh', '.hxx', '.c', '.cpp', '.cc', '.cxx'], indexFiles: [] };
+    // The C preprocessor searches for the exact requested filename and never appends extensions,
+    // so `#include "config"` must not resolve to a same-stem `config.h`.
+    return { extensions: [], indexFiles: [] };
   }
   if (jsExtensions.has(fromExtension)) {
     return {
@@ -246,6 +248,13 @@ const rustOwnerFileNames = new Set(['mod.rs', 'lib.rs', 'main.rs']);
 function resolveRustLocalImport(fromFile: string, source: string, fileSet: Set<string>): string | undefined {
   const segments = source.split('::');
   const head = segments.shift();
+  // Rust allows repeated `super` segments to ascend several modules; each extra one climbs a
+  // directory before the remaining path is probed.
+  let extraSuperCount = 0;
+  while (head === 'super' && segments[0] === 'super') {
+    segments.shift();
+    extraSuperCount += 1;
+  }
   const modulePath = segments.join('/');
   if (!modulePath) {
     return undefined;
@@ -259,9 +268,11 @@ function resolveRustLocalImport(fromFile: string, source: string, fileSet: Set<s
     // Children of a mod.rs/lib.rs/main.rs module are siblings; children of `a.rs` live in `a/`.
     baseDirectories = isOwner ? [fromDirectory] : [stemDirectory, fromDirectory];
   } else if (head === 'super') {
-    baseDirectories = isOwner
-      ? [normalizeDirectory(path.dirname(fromDirectory)), fromDirectory]
-      : [fromDirectory, normalizeDirectory(path.dirname(fromDirectory))];
+    baseDirectories = (
+      isOwner
+        ? [normalizeDirectory(path.dirname(fromDirectory)), fromDirectory]
+        : [fromDirectory, normalizeDirectory(path.dirname(fromDirectory))]
+    ).map((directory) => ascendDirectory(directory, extraSuperCount));
   } else {
     baseDirectories = rustCrateRootCandidates(fromDirectory, fileSet);
   }
@@ -299,6 +310,14 @@ function rustCrateRootCandidates(fromDirectory: string, fileSet: Set<string>): s
     (directory) => fileSet.has(path.join(directory, 'lib.rs')) || fileSet.has(path.join(directory, 'main.rs'))
   );
   return withRootFile.length > 0 ? withRootFile : ancestors;
+}
+
+function ascendDirectory(directory: string, levels: number): string {
+  let current = directory;
+  for (let index = 0; index < levels && current !== ''; index += 1) {
+    current = normalizeDirectory(path.dirname(current));
+  }
+  return current;
 }
 
 function normalizeDirectory(directory: string): string {

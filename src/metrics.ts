@@ -631,10 +631,16 @@ function collectCalls(
 
     if (isCallNode(node)) {
       callCount += 1;
-      // C++ `new Widget()` names an overloaded constructor, so — like direct construction — it
-      // counts as a call without a callee edge. JS `new Foo()` keeps its edge to the function.
-      const isCppNew = language.name === 'cpp' && node.type === 'new_expression';
-      const callee = isCppNew ? undefined : findCalleeName(node);
+      // C++ `new Widget()` and functional construction `Widget(1)` name an overloaded
+      // constructor, so — like direct construction — they count as calls without a callee edge.
+      // JS `new Foo()` keeps its edge to the function.
+      const isCppConstructorCall =
+        language.name === 'cpp' &&
+        (node.type === 'new_expression' ||
+          (node.type === 'call_expression' &&
+            node.childForFieldName('function')?.type === 'identifier' &&
+            constructedTypeNames.has(node.childForFieldName('function')?.text ?? '')));
+      const callee = isCppConstructorCall ? undefined : findCalleeName(node);
       if (callee) {
         callees.add(callee);
       }
@@ -2016,10 +2022,14 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null, qualified = 
       case 'field_identifier':
       case 'type_identifier':
       case 'destructor_name':
-      case 'operator_name':
-      // A C++ conversion operator (`operator int()`) is its own declarator node.
-      case 'operator_cast': {
+      case 'operator_name': {
         return scopePrefix ? `${scopePrefix}.${current.text}` : current.text;
+      }
+      // A C++ conversion operator (`operator int()`) is its own declarator node whose text spans
+      // the parameter list and qualifiers; only `operator <type>` is the name.
+      case 'operator_cast': {
+        const name = `operator ${current.childForFieldName('type')?.text ?? ''}`.trimEnd();
+        return scopePrefix ? `${scopePrefix}.${name}` : name;
       }
       // Template specializations (`id<int>`) and qualified names both carry a `name` field.
       case 'template_function': {
