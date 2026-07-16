@@ -2116,22 +2116,30 @@ function isRubyLambdaCall(node: Parser.SyntaxNode): boolean {
 
 function findGoFuncLiteralName(node: Parser.SyntaxNode, expressionList: Parser.SyntaxNode): string | undefined {
   const holder = expressionList.parent;
-  const valueIndex = expressionList.namedChildren.findIndex((child) => child.id === node.id);
+  // Comments interleave with expressions in the list but have no matching binding target, so
+  // positions are aligned over non-comment children on both sides.
+  const values = expressionList.namedChildren.filter((child) => child.type !== 'comment');
+  const valueIndex = values.findIndex((child) => child.id === node.id);
   if (!holder || valueIndex === -1) {
     return undefined;
   }
 
   if (holder.type === 'short_var_declaration') {
-    const target = holder.childForFieldName('left')?.namedChild(valueIndex);
-    return target?.type === 'identifier' ? target.text : undefined;
+    const targets = holder.childForFieldName('left')?.namedChildren.filter((child) => child.type !== 'comment');
+    return asGoBindingName(targets?.[valueIndex]);
   }
 
   if (holder.type === 'var_spec') {
     const target = findChildrenByFieldName(holder, 'name')[valueIndex];
-    return target?.type === 'identifier' ? target.text : undefined;
+    return asGoBindingName(target);
   }
 
   return undefined;
+}
+
+/** Go's blank identifier `_` discards the value and creates no callable binding. */
+function asGoBindingName(target: Parser.SyntaxNode | undefined): string | undefined {
+  return target?.type === 'identifier' && target.text !== '_' ? target.text : undefined;
 }
 
 function findWrappedComponentName(node: Parser.SyntaxNode): string | undefined {
@@ -2450,9 +2458,16 @@ function findRubyRequireSources(node: Parser.SyntaxNode): string[] {
   }
 
   // Percent literals (`%q(foo)`) keep their delimiters in `text`; the content children are exact.
-  const contentNodes = firstArgument.namedChildren.filter((child) => child.type === 'string_content');
+  // Escape sequences interleave with content and must be decoded, not dropped.
+  const contentNodes = firstArgument.namedChildren.filter(
+    (child) => child.type === 'string_content' || child.type === 'escape_sequence'
+  );
   const source =
-    contentNodes.length > 0 ? contentNodes.map((child) => child.text).join('') : unquote(firstArgument.text);
+    contentNodes.length > 0
+      ? contentNodes
+          .map((child) => (child.type === 'escape_sequence' ? decodeRubyEscapeSequence(child.text) : child.text))
+          .join('')
+      : unquote(firstArgument.text);
   const isRelative = node.childForFieldName('method')?.text === 'require_relative';
   if (isRelative) {
     return [source.startsWith('.') ? source : `./${source}`];
@@ -2460,6 +2475,20 @@ function findRubyRequireSources(node: Parser.SyntaxNode): string[] {
   // Plain `require`/`load` resolve `./`/`../` paths against the process CWD, not the requiring
   // file, so the relative prefix is stripped to keep the source unresolvable as file-relative.
   return [source.replace(/^(?:\.\.?\/)+/u, '')];
+}
+
+const rubyEscapeCharacters = new Map([
+  ['n', '\n'],
+  ['t', '\t'],
+  ['r', '\r'],
+  ['s', ' '],
+  ['0', '\0'],
+]);
+
+/** Decodes a Ruby escape (`\\` -> `\`, `\/` -> `/`, `\n` -> newline) inside a require path. */
+function decodeRubyEscapeSequence(text: string): string {
+  const escaped = text.slice(1);
+  return rubyEscapeCharacters.get(escaped) ?? escaped;
 }
 
 function findDynamicImportSources(node: Parser.SyntaxNode): string[] {

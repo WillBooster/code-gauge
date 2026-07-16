@@ -201,6 +201,9 @@ interface Token {
   /** Normalization target: identifiers to anonymize, literal kind tags, or the raw token text. */
   kind: 'id' | 'text';
   text: string;
+  /** 0-based source rows the token occupies, so line coverage counts only matched-token lines. */
+  startRow: number;
+  endRow: number;
 }
 
 interface TokenRange {
@@ -212,6 +215,8 @@ interface TokenRange {
 interface DuplicateCandidate {
   fingerprint: string;
   tokenCount: number;
+  startTokenIndex: number;
+  endTokenIndex: number;
   startIndex: number;
   endIndex: number;
   startLine: number;
@@ -237,7 +242,7 @@ export function measureDuplication(root: Parser.SyntaxNode, totalLines: number):
     ...collectSequenceCandidates(tokens, containerStatementRanges),
   ];
   const counted = selectMaximalDuplicates(candidates);
-  return summarizeDuplicates(counted, totalLines);
+  return summarizeDuplicates(counted, totalLines, tokens);
 }
 
 function collectTokens(
@@ -248,12 +253,13 @@ function collectTokens(
 ): void {
   function visit(node: Parser.SyntaxNode): TokenRange {
     const startTokenIndex = tokens.length;
+    const atomicKind = node.childCount === 0 ? undefined : atomicLiteralKind(node);
     if (node.childCount === 0) {
       appendLeafToken(node, tokens);
-    } else if (atomicLiteralKind(node) !== undefined) {
+    } else if (atomicKind !== undefined) {
       // Interpolation-free strings collapse to their kind tag so copies differing only in quote
       // style or content still match; delimiter tokens would otherwise break the equivalence.
-      tokens.push({ kind: 'text', text: atomicLiteralKind(node) ?? '#str' });
+      tokens.push({ kind: 'text', text: atomicKind, startRow: node.startPosition.row, endRow: node.endPosition.row });
     } else if (!commentTypes.has(node.type)) {
       const statementRanges: TokenRange[] = [];
       const isContainer = node.isNamed && statementContainerTypes.has(node.type);
@@ -292,20 +298,22 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
     return;
   }
 
+  const startRow = node.startPosition.row;
+  const endRow = node.endPosition.row;
   if (node.isNamed && shorthandPropertyTypes.has(node.type)) {
-    tokens.push({ kind: 'text', text: node.text }, { kind: 'id', text: node.text });
+    tokens.push({ kind: 'text', text: node.text, startRow, endRow }, { kind: 'id', text: node.text, startRow, endRow });
     return;
   }
 
   if (node.isNamed && anonymizedIdentifierTypes.has(node.type) && !isSemanticNameLeaf(node)) {
-    tokens.push({ kind: 'id', text: node.text });
+    tokens.push({ kind: 'id', text: node.text, startRow, endRow });
     return;
   }
 
   // Anything else keeps its text: keywords, operators, punctuation, and semantic names such as
   // `property_identifier`/`type_identifier`, which must distinguish otherwise-identical structures.
   const literalKind = node.isNamed ? literalKindByType.get(node.type) : undefined;
-  tokens.push({ kind: 'text', text: literalKind ?? node.text });
+  tokens.push({ kind: 'text', text: literalKind ?? node.text, startRow, endRow });
 }
 
 function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
@@ -578,6 +586,8 @@ function toCandidate(
   return {
     fingerprint,
     tokenCount: endTokenIndex - startTokenIndex,
+    startTokenIndex,
+    endTokenIndex,
     startIndex: firstNode.startIndex,
     endIndex: lastNode.endIndex,
     startLine: firstNode.startPosition.row + 1,
@@ -704,7 +714,11 @@ function overlaps(
   return left.startIndex < right.endIndex && right.startIndex < left.endIndex;
 }
 
-function summarizeDuplicates(counted: Map<string, DuplicateCandidate[]>, totalLines: number): DuplicationMetrics {
+function summarizeDuplicates(
+  counted: Map<string, DuplicateCandidate[]>,
+  totalLines: number,
+  tokens: Token[]
+): DuplicationMetrics {
   let duplicateBlockCount = 0;
   let maxDuplicateBlockSize = 0;
   const duplicateBlockGroups: { startLine: number; endLine: number }[][] = [];
@@ -713,8 +727,13 @@ function summarizeDuplicates(counted: Map<string, DuplicateCandidate[]>, totalLi
     duplicateBlockCount += group.length - 1;
     for (const candidate of group) {
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, candidate.tokenCount);
-      for (let line = candidate.startLine; line <= candidate.endLine; line += 1) {
-        duplicatedLines.add(line);
+      // Only lines carrying matched tokens count: comments and blank gaps inside a candidate's
+      // bounding range are not duplicated content and must not inflate the ratio.
+      for (let index = candidate.startTokenIndex; index < candidate.endTokenIndex; index += 1) {
+        const token = tokens[index];
+        for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
+          duplicatedLines.add(row + 1);
+        }
       }
     }
     duplicateBlockGroups.push(

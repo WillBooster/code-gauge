@@ -121,7 +121,7 @@ function measureDependencyGraph(files: SourceFile[]): DependencyGraph {
         // Only Java needs the external-count correction: its dotted imports classify as external
         // in coupling metrics. Rust crate::/self::/super:: sources already classify as relative,
         // so counting them would double-subtract from externalImportCount.
-        if (file.relativeFile.endsWith('.java') && !source.startsWith('.')) {
+        if (fileExtension(file.relativeFile) === '.java' && !source.startsWith('.')) {
           nonRelativeLocalImportCount += 1;
         }
       }
@@ -138,15 +138,15 @@ function resolveLocalImport(
   fileSet: Set<string>,
   javaFileIndex: Map<string, string[]>
 ): string | undefined {
+  const fromExtension = fileExtension(fromFile);
   if (!source.startsWith('.')) {
-    if (fromFile.endsWith('.rs') && /^(?:crate|self|super)(?:::|$)/u.test(source)) {
+    if (fromExtension === '.rs' && /^(?:crate|self|super)(?:::|$)/u.test(source)) {
       return resolveRustLocalImport(fromFile, source, fileSet);
     }
     // Java imports are dotted class paths without a leading dot; other absolute sources are external.
-    return fromFile.endsWith('.java') ? resolveJavaImport(source, javaFileIndex) : undefined;
+    return fromExtension === '.java' ? resolveJavaImport(source, javaFileIndex) : undefined;
   }
   const bases = localImportBases(fromFile, source);
-  const fromExtension = path.extname(fromFile);
 
   // The JS-family ESM remap follows TypeScript's substitution table, which tries the TypeScript
   // source BEFORE the named JS file: `./foo.js` names `foo.ts` even when `foo.js` also exists,
@@ -196,7 +196,14 @@ function resolveLocalImport(
 }
 
 const jsExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts']);
-const cExtensions = new Set(['.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hh', '.hxx']);
+// Must cover every extension the CLI's languageByExtension maps to C/C++ (uppercase `.C` arrives
+// here lowercased by fileExtension), or importProbes falls into the non-C catch-all branch.
+const cExtensions = new Set(['.c', '.c++', '.cc', '.cp', '.cpp', '.cxx', '.h', '.hh', '.hpp', '.hxx', '.tcc']);
+
+/** Extensions are matched lowercased so `MAIN.CPP` or `.C` files use their language's rules. */
+function fileExtension(file: string): string {
+  return path.extname(file).toLowerCase();
+}
 
 /**
  * TypeScript's ESM extension substitutions: a JS runtime extension in an import may name the
@@ -212,7 +219,7 @@ const jsImportExtensionSubstitutions = new Map<string, string[]>([
 
 /** Extension-less sources probe only extensions the importing language can actually load. */
 function importProbes(fromFile: string): { extensions: string[]; indexFiles: string[] } {
-  const fromExtension = path.extname(fromFile);
+  const fromExtension = fileExtension(fromFile);
   if (fromExtension === '.rb') {
     return { extensions: ['.rb'], indexFiles: [] };
   }
@@ -328,10 +335,10 @@ function normalizeDirectory(directory: string): string {
 function buildJavaFileIndex(fileSet: Set<string>): Map<string, string[]> {
   const index = new Map<string, string[]>();
   for (const file of fileSet) {
-    if (!file.endsWith('.java')) {
+    if (fileExtension(file) !== '.java') {
       continue;
     }
-    const className = path.basename(file, '.java');
+    const className = path.basename(file, path.extname(file));
     const files = index.get(className) ?? [];
     files.push(file);
     index.set(className, files);
@@ -362,11 +369,13 @@ function resolveJavaImport(source: string, javaFileIndex: Map<string, string[]>)
     if (!className) {
       continue;
     }
-    const relativePath = `${candidateSegments.join('/')}.java`;
     // Indexed paths use the platform separator (backslashes on Windows), so normalize for matching.
     const match = (javaFileIndex.get(className) ?? []).find((file) => {
+      // Class names stay case-sensitive; only the extension is normalized (`B.JAVA` matches `B`).
       const normalized = file.replaceAll('\\', '/');
-      return normalized === relativePath || normalized.endsWith(`/${relativePath}`);
+      const stem = normalized.slice(0, normalized.length - path.extname(normalized).length);
+      const relativeStem = candidateSegments.join('/');
+      return stem === relativeStem || stem.endsWith(`/${relativeStem}`);
     });
     if (match) {
       return match;
@@ -439,9 +448,10 @@ function measureDuplicateSymbolGroups(files: SourceFile[]): DuplicateSymbolGroup
 }
 
 function isDuplicateSymbolCandidate(declaration: DeclarationMetrics): boolean {
-  // The threshold applies to the local name so qualification (`Alpha::Ab`) cannot let short
-  // names sneak past it.
-  const localName = declaration.name.split('::').at(-1) ?? declaration.name;
+  // The threshold applies to the local name so qualification cannot let short names sneak past
+  // it; the codebase emits both `::` (packages/namespaces/modules) and `.` (Go `Receiver.Method`,
+  // C++ out-of-line `Foo.process`) separators.
+  const localName = declaration.name.split(/::|\./u).at(-1) ?? declaration.name;
   return localName.length >= duplicateSymbolNameLengthThreshold;
 }
 
