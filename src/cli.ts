@@ -144,6 +144,11 @@ async function main(): Promise<void> {
       parsePositiveInteger
     )
     .option(
+      '--duplication-ratio-percent-threshold <number>',
+      'minimum percentage (1-100) of duplicated lines per file to report',
+      parsePositiveInteger
+    )
+    .option(
       '--transitive-dependency-threshold <number>',
       'minimum transitively reachable local files to report',
       parsePositiveInteger
@@ -571,6 +576,14 @@ function findRiskyFileMetrics(
     thresholds.duplicateBlock,
     formatDuplicateBlockGroups(metrics.duplication.duplicateBlockGroups)
   );
+  // Maximal-region selection deliberately compresses adjacent clones into few blocks, so severity
+  // must track line coverage, not the block count.
+  addTrigger(
+    triggers,
+    'duplicated lines (%)',
+    Math.round(metrics.duplication.duplicationRatio * 100),
+    thresholds.duplicationRatioPercent
+  );
   if (architecture) {
     const hasFileScaleRisk = metrics.lines.code >= 100 || architecture.directLocalDependencyCount >= 8;
     if (hasFileScaleRisk) {
@@ -770,7 +783,7 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     writeStdout(`${formatTypeScriptProjectMetrics(result.typeScriptProject)}\n`);
   }
   writeStdout(
-    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}\n`
+    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}, duplicated lines (%) >= ${thresholds.duplicationRatioPercent}\n`
   );
   const profileOverrides = formatProfileOverrides(options.profileThresholds);
   if (profileOverrides) {

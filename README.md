@@ -51,6 +51,7 @@ A finding is reported when a measured value is **greater than or equal to** its 
     "fanOut": 10,
     "parameter": 8,
     "duplicateBlock": 2,
+    "duplicationRatioPercent": 30,
     "transitiveDependency": 25,
     "structuralBreadth": 8,
     "structuralCoordination": 300,
@@ -69,23 +70,24 @@ A finding is reported when a measured value is **greater than or equal to** its 
 }
 ```
 
-| Threshold                | CLI flag                              | Reports when a …                                 |
-| ------------------------ | ------------------------------------- | ------------------------------------------------ |
-| `fileLoc`                | `--file-loc-threshold`                | file's code LOC is large.                        |
-| `functionLoc`            | `--function-loc-threshold`            | function's physical LOC span is large.           |
-| `componentLoc`           | `--component-loc-threshold`           | React component's physical LOC span is large.    |
-| `cognitive`              | `--cognitive-threshold`               | function's cognitive complexity is high.         |
-| `cyclomatic`             | `--cyclomatic-threshold`              | function's cyclomatic complexity is high.        |
-| `call`                   | `--call-threshold`                    | function makes many calls.                       |
-| `import`                 | `--import-threshold`                  | file has many unique import sources.             |
-| `fanOut`                 | `--fan-out-threshold`                 | function calls many other in-file functions.     |
-| `parameter`              | `--parameter-threshold`               | function declares many parameters.               |
-| `duplicateBlock`         | `--duplicate-block-threshold`         | file contains copy-pasted code blocks.           |
-| `transitiveDependency`   | `--transitive-dependency-threshold`   | file transitively reaches many local files.      |
-| `structuralBreadth`      | `--structural-breadth-threshold`      | file coordinates many structural concerns.       |
-| `structuralCoordination` | `--structural-coordination-threshold` | file's structural coordination score is high.    |
-| `stateMutation`          | `--state-mutation-threshold`          | file mutates state heavily.                      |
-| `duplicateSymbolGroup`   | `--duplicate-symbol-group-threshold`  | file shares many duplicated symbols with others. |
+| Threshold                 | CLI flag                                | Reports when a …                                  |
+| ------------------------- | --------------------------------------- | ------------------------------------------------- |
+| `fileLoc`                 | `--file-loc-threshold`                  | file's code LOC is large.                         |
+| `functionLoc`             | `--function-loc-threshold`              | function's physical LOC span is large.            |
+| `componentLoc`            | `--component-loc-threshold`             | React component's physical LOC span is large.     |
+| `cognitive`               | `--cognitive-threshold`                 | function's cognitive complexity is high.          |
+| `cyclomatic`              | `--cyclomatic-threshold`                | function's cyclomatic complexity is high.         |
+| `call`                    | `--call-threshold`                      | function makes many calls.                        |
+| `import`                  | `--import-threshold`                    | file has many unique import sources.              |
+| `fanOut`                  | `--fan-out-threshold`                   | function calls many other in-file functions.      |
+| `parameter`               | `--parameter-threshold`                 | function declares many parameters.                |
+| `duplicateBlock`          | `--duplicate-block-threshold`           | file contains copy-pasted code blocks.            |
+| `duplicationRatioPercent` | `--duplication-ratio-percent-threshold` | large percentage of a file's lines is duplicated. |
+| `transitiveDependency`    | `--transitive-dependency-threshold`     | file transitively reaches many local files.       |
+| `structuralBreadth`       | `--structural-breadth-threshold`        | file coordinates many structural concerns.        |
+| `structuralCoordination`  | `--structural-coordination-threshold`   | file's structural coordination score is high.     |
+| `stateMutation`           | `--state-mutation-threshold`            | file mutates state heavily.                       |
+| `duplicateSymbolGroup`    | `--duplicate-symbol-group-threshold`    | file shares many duplicated symbols with others.  |
 
 ### Per-language thresholds
 

@@ -13,6 +13,8 @@ export interface Thresholds {
   fanOut: number;
   parameter: number;
   duplicateBlock: number;
+  /** Percentage (1-100) of a file's lines covered by duplicated blocks. */
+  duplicationRatioPercent: number;
   transitiveDependency: number;
   structuralBreadth: number;
   structuralCoordination: number;
@@ -33,6 +35,7 @@ export const defaultThresholds: Thresholds = {
   fanOut: 10,
   parameter: 8,
   duplicateBlock: 2,
+  duplicationRatioPercent: 30,
   transitiveDependency: 25,
   structuralBreadth: 8,
   structuralCoordination: 300,
@@ -131,6 +134,7 @@ export interface CliOptions {
   fanOutThreshold?: number;
   parameterThreshold?: number;
   duplicateBlockThreshold?: number;
+  duplicationRatioPercentThreshold?: number;
   transitiveDependencyThreshold?: number;
   structuralBreadthThreshold?: number;
   structuralCoordinationThreshold?: number;
@@ -157,6 +161,7 @@ const thresholdCliKeys: Record<keyof Thresholds, keyof CliOptions> = {
   fanOut: 'fanOutThreshold',
   parameter: 'parameterThreshold',
   duplicateBlock: 'duplicateBlockThreshold',
+  duplicationRatioPercent: 'duplicationRatioPercentThreshold',
   transitiveDependency: 'transitiveDependencyThreshold',
   structuralBreadth: 'structuralBreadthThreshold',
   structuralCoordination: 'structuralCoordinationThreshold',

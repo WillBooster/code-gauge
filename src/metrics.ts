@@ -316,10 +316,20 @@ function countParameters(node: Parser.SyntaxNode): number {
     return 1;
   }
 
-  // Rust's `self` receiver is not a declared parameter, and C/C++ `f(void)` declares none.
+  // Ruby block-locals after `;` (`{ |x; memo| ... }`) occupy `locals` fields and receive no arguments.
+  const blockLocalIds = new Set(findChildrenByFieldName(parametersNode, 'locals').map((child) => child.id));
+  // Rust's `self` and Java's explicit receiver (`void f(X this)`) are not declared parameters, and
+  // C/C++ `f(void)` declares none.
   const namedCount = sum(
     parametersNode.namedChildren
-      .filter((child) => child.type !== 'comment' && child.type !== 'self_parameter' && !isVoidParameter(child))
+      .filter(
+        (child) =>
+          child.type !== 'comment' &&
+          child.type !== 'self_parameter' &&
+          child.type !== 'receiver_parameter' &&
+          !blockLocalIds.has(child.id) &&
+          !isVoidParameter(child)
+      )
       // Go declares several names per declaration (`a, b int`); each name is a parameter.
       .map((child) =>
         child.type === 'parameter_declaration' ? Math.max(1, findChildrenByFieldName(child, 'name').length) : 1
@@ -824,6 +834,12 @@ function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean)
     return declarationsFromRubyType(node, exported);
   }
 
+  // Ruby constant assignment (`FOO = 1`) is the language's only constant syntax; constants are a
+  // module's canonical public API. Other grammars never put a `constant` node on an assignment LHS.
+  if (node.type === 'assignment') {
+    return rubyConstantDeclaration(node, exported);
+  }
+
   return declarationFromNode(node, exported);
 }
 
@@ -840,9 +856,17 @@ function declarationsFromRubyType(node: Parser.SyntaxNode, exported: boolean): D
   for (const child of bodyNode?.namedChildren ?? []) {
     if (rubyTypeNodeTypes.has(child.type)) {
       declarations.push(...declarationsFromRubyType(child, exported));
+    } else if (child.type === 'assignment') {
+      declarations.push(...rubyConstantDeclaration(child, exported));
     }
   }
   return declarations;
+}
+
+/** Emits a declaration for a Ruby `CONST = ...` assignment; other assignments declare nothing. */
+function rubyConstantDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+  const left = node.childForFieldName('left');
+  return left?.type === 'constant' ? [{ exported, name: left.text, startLine: left.startPosition.row + 1 }] : [];
 }
 
 function declarationsFromTypeDefinition(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
@@ -896,15 +920,28 @@ function isMisparsedCppModuleDeclaration(node: Parser.SyntaxNode): boolean {
   );
 }
 
-/** Extracts each declared variable from a C/C++ `declaration`; prototypes declare no symbol. */
+/**
+ * Extracts each declared variable from a C/C++ `declaration`. Prototypes intentionally declare no
+ * symbol: emitting them would pair every header prototype with its definition in another file and
+ * flood cross-file duplicate-symbol groups.
+ */
 function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
   if (isMisparsedCppModuleDeclaration(node)) {
     return [];
   }
-  return node.namedChildren.filter(isCVariableDeclarator).flatMap((child) => {
+  // `struct Foo { int x; } value;` defines the tag `Foo` alongside the variable; body-less type
+  // references (`struct Foo value;`) are rejected by declarationFromNode's body check.
+  const typeNode = node.childForFieldName('type');
+  const declarations = typeNode ? declarationFromNode(typeNode, exported) : [];
+  const seenNames = new Set(declarations.map((declaration) => declaration.name));
+  for (const child of node.namedChildren.filter(isCVariableDeclarator)) {
     const name = unwrapDeclaratorName(child);
-    return name ? [{ exported, name, startLine: child.startPosition.row + 1 }] : [];
-  });
+    if (name && !seenNames.has(name)) {
+      seenNames.add(name);
+      declarations.push({ exported, name, startLine: child.startPosition.row + 1 });
+    }
+  }
+  return declarations;
 }
 
 function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
@@ -929,6 +966,11 @@ function findDeclarationName(node: Parser.SyntaxNode): string | undefined {
   // symbol group as the primary template.
   if (nameNode?.type === 'template_type') {
     nameNode = nameNode.childForFieldName('name');
+  }
+  // Ruby `class A::B` names the type via `scope_resolution`; keep the qualified `A::B` so same-named
+  // types under different namespaces stay distinct in symbol groups.
+  if (nameNode?.type === 'scope_resolution') {
+    return nameNode.text;
   }
   if (nameNode) {
     return isDeclarationNameNode(nameNode) ? nameNode.text : undefined;
@@ -1555,10 +1597,13 @@ function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics
     // as well would double-count.
     if (node.childCount === 0) {
       const text = code.slice(node.startIndex, node.endIndex);
-      if ((operatorTexts.has(text) || operatorTexts.has(node.type)) && isCountableQuestionToken(node, text)) {
-        incrementCount(operators, text || node.type);
-      } else if (operandNodeTypes.has(node.type)) {
+      // Operands win over text matches so identifiers spelled like word operators (`cache.delete(...)`,
+      // a Go parameter named `in`) stay operands; genuine keyword operators are anonymous leaves whose
+      // types are never operand types. A blanket `isNamed` guard would break JS's named `optional_chain`.
+      if (operandNodeTypes.has(node.type)) {
         incrementCount(operands, text);
+      } else if ((operatorTexts.has(text) || operatorTexts.has(node.type)) && isCountableQuestionToken(node, text)) {
+        incrementCount(operators, text || node.type);
       }
       return;
     }

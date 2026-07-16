@@ -382,11 +382,8 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
     );
   };
 
-  for (const [containerIndex, statements] of containers.entries()) {
-    const windows = containerWindows[containerIndex];
-    if (!windows) {
-      continue;
-    }
+  const maximalWindows: SequenceWindow[] = [];
+  for (const [containerIndex, windows] of containerWindows.entries()) {
     for (const [start, row] of windows.windowKeysByStart.entries()) {
       for (const [length, windowKey] of row.entries()) {
         if (!repeats(windowKey, length)) {
@@ -399,23 +396,60 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
         if (repeats(extendedRight, length + 1) || repeats(extendedLeft, length + 1)) {
           continue;
         }
-        const first = statements[start];
-        const last = statements[start + length - 1];
-        if (first && last) {
-          candidates.push(
-            toCandidate(
-              `s:${fingerprintTokens(tokens, first.startTokenIndex, last.endTokenIndex)}`,
-              first.startTokenIndex,
-              last.endTokenIndex,
-              first.node,
-              last.node
-            )
-          );
+        maximalWindows.push({ containerIndex, start, length });
+      }
+    }
+  }
+
+  // The rolling hash anonymizes identifiers per statement, so a window can look repeated coarsely
+  // while its exact (window-consistent) fingerprints differ — leaving singleton groups whose truly
+  // repeating sub-windows were all suppressed as dominated. Fingerprints still unmatched after a
+  // round therefore fall back to their one-statement-shorter sub-windows; window lengths strictly
+  // decrease, so the worklist terminates.
+  const visited = new Set(maximalWindows.map(windowId));
+  const countByFingerprint = new Map<string, number>();
+  let frontier = maximalWindows;
+  while (frontier.length > 0) {
+    const emitted: { window: SequenceWindow; fingerprint: string }[] = [];
+    for (const window of frontier) {
+      const statements = containers[window.containerIndex];
+      const first = statements?.[window.start];
+      const last = statements?.[window.start + window.length - 1];
+      if (!first || !last) {
+        continue;
+      }
+      const fingerprint = `s:${fingerprintTokens(tokens, first.startTokenIndex, last.endTokenIndex)}`;
+      candidates.push(toCandidate(fingerprint, first.startTokenIndex, last.endTokenIndex, first.node, last.node));
+      countByFingerprint.set(fingerprint, (countByFingerprint.get(fingerprint) ?? 0) + 1);
+      emitted.push({ window, fingerprint });
+    }
+    frontier = [];
+    for (const { window, fingerprint } of emitted) {
+      if ((countByFingerprint.get(fingerprint) ?? 0) >= 2) {
+        continue;
+      }
+      for (const start of [window.start, window.start + 1]) {
+        const subWindow = { containerIndex: window.containerIndex, start, length: window.length - 1 };
+        const subWindowKey = containerWindows[window.containerIndex]?.windowKeysByStart[start]?.[subWindow.length];
+        if (visited.has(windowId(subWindow)) || !repeats(subWindowKey, subWindow.length)) {
+          continue;
         }
+        visited.add(windowId(subWindow));
+        frontier.push(subWindow);
       }
     }
   }
   return candidates;
+}
+
+interface SequenceWindow {
+  containerIndex: number;
+  start: number;
+  length: number;
+}
+
+function windowId(window: SequenceWindow): string {
+  return `${window.containerIndex}:${window.start}:${window.length}`;
 }
 
 interface ContainerWindows {
@@ -496,7 +530,8 @@ function fingerprintTokens(tokens: Token[], startTokenIndex: number, endTokenInd
 function hashText(text: string): number {
   let hash = 5381;
   for (let index = 0; index < text.length; index += 1) {
-    hash = Math.imul(hash, 33) ^ (text.codePointAt(index) ?? 0);
+    // oxlint-disable-next-line unicorn/prefer-code-point -- djb2 hashes UTF-16 code units; codePointAt would hash surrogate pairs twice (full code point, then the lone low surrogate).
+    hash = Math.imul(hash, 33) ^ text.charCodeAt(index);
   }
   return hash;
 }
@@ -517,7 +552,10 @@ function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, 
     byFingerprint.set(candidate.fingerprint, group);
   }
 
-  let duplicates = [...byFingerprint.values()].filter(hasDistinctRegions).flatMap(dedupeByRegion);
+  let duplicates = [...byFingerprint.values()]
+    .map(dedupeByRegion)
+    .filter((group) => group.length >= 2)
+    .flat();
   duplicates.sort((left, right) => right.tokenCount - left.tokenCount);
 
   // Greedy selection can keep a candidate whose group ends up below two survivors; such an
@@ -547,12 +585,8 @@ function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, 
         failedTokenCount = tokenCount;
       }
     }
+    // No failed fingerprint means every counted group kept at least two survivors.
     if (failedFingerprint === undefined) {
-      for (const [fingerprint, group] of counted) {
-        if (group.length < 2) {
-          counted.delete(fingerprint);
-        }
-      }
       return counted;
     }
     if (rerun >= maxSelectionRerunCount) {
@@ -566,10 +600,6 @@ function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, 
 
     duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
   }
-}
-
-function hasDistinctRegions(group: DuplicateCandidate[]): boolean {
-  return dedupeByRegion(group).length >= 2;
 }
 
 /** Drops candidates covering the same source region (a block and the statement run spanning it). */

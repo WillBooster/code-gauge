@@ -150,9 +150,18 @@ function resolveLocalImport(
   }
 
   const { extensions, indexFiles } = importProbes(fromFile);
-  const stems = bases.map((base) => {
+  const fromExtension = path.extname(fromFile);
+  const stems = bases.flatMap((base) => {
     const extension = path.extname(base);
-    return extension ? base.slice(0, -extension.length) : base;
+    if (!extension) {
+      return [base];
+    }
+    // The un-stripped base comes first so `./user.service` prefers `user.service.ts` over `user.ts`.
+    // Stripping the supplied extension is valid only for the JS-family ESM remap (`./foo.js` -> `foo.ts`);
+    // elsewhere it would rebind explicit paths (`#include "config.inc"`) to unrelated same-stem files.
+    return jsExtensions.has(extension) && jsExtensions.has(fromExtension)
+      ? [base, base.slice(0, -extension.length)]
+      : [base];
   });
   for (const stem of stems) {
     for (const extension of extensions) {
@@ -272,7 +281,8 @@ function isPathRelativeImport(source: string): boolean {
 }
 
 function measureTransitiveDependencyCount(file: string, graph: Map<string, Set<string>>): number {
-  const visited = new Set<string>();
+  // Seed with the starting file so dependency cycles do not count it as its own dependency.
+  const visited = new Set<string>([file]);
   const pending = [...(graph.get(file) ?? [])];
   while (pending.length > 0) {
     const current = pending.pop();
@@ -282,7 +292,7 @@ function measureTransitiveDependencyCount(file: string, graph: Map<string, Set<s
     visited.add(current);
     pending.push(...(graph.get(current) ?? []));
   }
-  return visited.size;
+  return visited.size - 1;
 }
 
 function measureDuplicateSymbolGroups(files: SourceFile[]): DuplicateSymbolGroup[] {
