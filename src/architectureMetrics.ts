@@ -66,9 +66,15 @@ export function measureArchitecture(
   const duplicateSymbolGroups = measureDuplicateSymbolGroups(sourceFiles);
   const duplicateGroupCountByFile = measureDuplicateGroupCountByFile(duplicateSymbolGroups);
   const metrics = sourceFiles.map((sourceFile) => {
-    const directDependencies = dependencyGraph.get(sourceFile.relativeFile) ?? new Set<string>();
+    const directDependencies = dependencyGraph.dependenciesByFile.get(sourceFile.relativeFile) ?? new Set<string>();
+    const nonRelativeLocalImportCount =
+      dependencyGraph.nonRelativeLocalImportCountByFile.get(sourceFile.relativeFile) ?? 0;
     const structuralCoordination = measureStructuralCoordination(sourceFile.metrics);
-    const structuralFeatureGroups = measureStructuralFeatureGroups(sourceFile.metrics);
+    const structuralFeatureGroups = measureStructuralFeatureGroups(
+      sourceFile.metrics,
+      directDependencies.size,
+      nonRelativeLocalImportCount
+    );
     return {
       file: sourceFile.relativeFile,
       directLocalDependencyCount: directDependencies.size,
@@ -76,7 +82,10 @@ export function measureArchitecture(
       structuralBreadthScore: structuralFeatureGroups.length,
       structuralCoordination,
       structuralFeatureGroups,
-      transitiveLocalDependencyCount: measureTransitiveDependencyCount(sourceFile.relativeFile, dependencyGraph),
+      transitiveLocalDependencyCount: measureTransitiveDependencyCount(
+        sourceFile.relativeFile,
+        dependencyGraph.dependenciesByFile
+      ),
     };
   });
 
@@ -91,49 +100,327 @@ export function measureArchitecture(
   };
 }
 
-function measureDependencyGraph(files: SourceFile[]): Map<string, Set<string>> {
-  const fileSet = new Set(files.map((file) => file.relativeFile));
-  const graph = new Map<string, Set<string>>();
-  for (const file of files) {
-    const dependencies = new Set<string>();
-    for (const source of file.metrics.module.importSources) {
-      const resolved = resolveLocalImport(file.relativeFile, source, fileSet);
-      if (resolved) {
-        dependencies.add(resolved);
-      }
-    }
-    graph.set(file.relativeFile, dependencies);
-  }
-  return graph;
+interface DependencyGraph {
+  dependenciesByFile: Map<string, Set<string>>;
+  /** Import sources without a relative prefix (Java dotted paths) that still resolved locally. */
+  nonRelativeLocalImportCountByFile: Map<string, number>;
 }
 
-function resolveLocalImport(fromFile: string, source: string, fileSet: Set<string>): string | undefined {
+function measureDependencyGraph(files: SourceFile[]): DependencyGraph {
+  const fileSet = new Set(files.map((file) => file.relativeFile));
+  const javaFileIndex = buildJavaFileIndex(files);
+  const dependenciesByFile = new Map<string, Set<string>>();
+  const nonRelativeLocalImportCountByFile = new Map<string, number>();
+  for (const file of files) {
+    const dependencies = new Set<string>();
+    let nonRelativeLocalImportCount = 0;
+    for (const source of file.metrics.module.importSources) {
+      const resolved = resolveLocalImport(file.relativeFile, source, fileSet, javaFileIndex);
+      // A file importing itself (`import './a.js'` inside a.ts) is not a dependency.
+      if (resolved && resolved !== file.relativeFile) {
+        dependencies.add(resolved);
+        // Only Java needs the external-count correction: its dotted imports classify as external
+        // in coupling metrics. Rust crate::/self::/super:: sources already classify as relative,
+        // so counting them would double-subtract from externalImportCount.
+        if (fileExtension(file.relativeFile) === '.java' && !source.startsWith('.')) {
+          nonRelativeLocalImportCount += 1;
+        }
+      }
+    }
+    dependenciesByFile.set(file.relativeFile, dependencies);
+    nonRelativeLocalImportCountByFile.set(file.relativeFile, nonRelativeLocalImportCount);
+  }
+  return { dependenciesByFile, nonRelativeLocalImportCountByFile };
+}
+
+const jsExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts']);
+// Must cover every extension the CLI's languageByExtension maps to C/C++ (uppercase `.C` arrives
+// here lowercased by fileExtension), or importProbes falls into the non-C catch-all branch.
+const cExtensions = new Set(['.c', '.c++', '.cc', '.cp', '.cpp', '.cxx', '.h', '.hh', '.hpp', '.hxx', '.tcc']);
+
+/**
+ * TypeScript's ESM extension substitutions: a JS runtime extension in an import may name the
+ * TypeScript source that compiles to it. `.ts`-family extensions are intentionally absent (they
+ * resolve exactly), and `.mjs`/`.cjs` never remap to plain `.ts`.
+ */
+const jsImportExtensionSubstitutions = new Map<string, string[]>([
+  ['.js', ['.ts', '.tsx']],
+  ['.jsx', ['.tsx']],
+  ['.mjs', ['.mts']],
+  ['.cjs', ['.cts']],
+]);
+
+function resolveLocalImport(
+  fromFile: string,
+  source: string,
+  fileSet: Set<string>,
+  javaFileIndex: Map<string, JavaClassLocation[]>
+): string | undefined {
+  const fromExtension = fileExtension(fromFile);
   if (!source.startsWith('.')) {
-    return undefined;
+    if (fromExtension === '.rs' && /^(?:crate|self|super)(?:::|$)/u.test(source)) {
+      return resolveRustLocalImport(fromFile, source, fileSet);
+    }
+    // Java imports are dotted class paths without a leading dot; other absolute sources are external.
+    return fromExtension === '.java' ? resolveJavaImport(source, javaFileIndex) : undefined;
   }
   const bases = localImportBases(fromFile, source);
-  const stems = bases.flatMap((base) => {
-    const extension = path.extname(base);
-    return extension ? [base.slice(0, -extension.length), base] : [base];
-  });
-  for (const stem of stems) {
-    for (const candidate of [
-      `${stem}.ts`,
-      `${stem}.tsx`,
-      `${stem}.js`,
-      `${stem}.jsx`,
-      `${stem}.py`,
-      path.join(stem, 'index.ts'),
-      path.join(stem, 'index.tsx'),
-      path.join(stem, 'index.js'),
-      path.join(stem, '__init__.py'),
-    ]) {
+
+  // The JS-family ESM remap follows TypeScript's substitution table, which tries the TypeScript
+  // source BEFORE the named JS file: `./foo.js` names `foo.ts` even when `foo.js` also exists,
+  // and `./foo.mjs` may only name `foo.mts` (never an unrelated `foo.ts`), vice versa for `.cjs`.
+  // Non-JS importers never remap, so `#include "config.inc"` cannot rebind to same-stem files.
+  if (jsExtensions.has(fromExtension)) {
+    for (const base of bases) {
+      const substitutions = jsImportExtensionSubstitutions.get(path.extname(base));
+      if (!substitutions) {
+        continue;
+      }
+      const stem = base.slice(0, -path.extname(base).length);
+      for (const substitution of substitutions) {
+        if (fileSet.has(`${stem}${substitution}`)) {
+          return `${stem}${substitution}`;
+        }
+      }
+    }
+  }
+
+  // An explicit-path source (`#include "b.hpp"`, `require_relative "./b.rb"`, `./foo.js` with no
+  // TypeScript counterpart) resolves exactly before extension probing, so a sibling `b.ts` cannot
+  // shadow the named file.
+  for (const base of bases) {
+    if (fileSet.has(base)) {
+      return base;
+    }
+  }
+
+  const { extensions, indexFiles } = importProbes(fromFile);
+
+  // Extension probing keeps each base's full name, so `./user.service` prefers `user.service.ts`.
+  for (const stem of bases) {
+    for (const extension of extensions) {
+      if (fileSet.has(`${stem}${extension}`)) {
+        return `${stem}${extension}`;
+      }
+    }
+    for (const indexFile of indexFiles) {
+      const candidate = path.join(stem, indexFile);
       if (fileSet.has(candidate)) {
         return candidate;
       }
     }
   }
   return undefined;
+}
+
+/** Extension-less sources probe only extensions the importing language can actually load. */
+function importProbes(fromFile: string): { extensions: string[]; indexFiles: string[] } {
+  const fromExtension = fileExtension(fromFile);
+  if (fromExtension === '.rb') {
+    return { extensions: ['.rb'], indexFiles: [] };
+  }
+  if (fromExtension === '.py') {
+    return { extensions: ['.py'], indexFiles: ['__init__.py'] };
+  }
+  if (cExtensions.has(fromExtension)) {
+    // The C preprocessor searches for the exact requested filename and never appends extensions,
+    // so `#include "config"` must not resolve to a same-stem `config.h`.
+    return { extensions: [], indexFiles: [] };
+  }
+  if (jsExtensions.has(fromExtension)) {
+    return {
+      extensions: ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'],
+      indexFiles: ['index.ts', 'index.tsx', 'index.js'],
+    };
+  }
+  return {
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.py', '.rb', '.h', '.hpp', '.hh', '.hxx', '.c', '.cpp', '.cc', '.cxx'],
+    indexFiles: ['index.ts', 'index.tsx', 'index.js', '__init__.py'],
+  };
+}
+
+/** Rust module owner files whose child modules live as siblings in the same directory. */
+const rustOwnerFileNames = new Set(['mod.rs', 'lib.rs', 'main.rs']);
+
+/**
+ * Resolves a Rust in-crate module path (`crate::a::b`, `self::x`, `super::x`) to a scanned file by
+ * probing `<path>.rs` and `<path>/mod.rs` against the appropriate base directories. `crate::` roots
+ * are inferred from ancestor directories containing `lib.rs`/`main.rs`, falling back to every
+ * ancestor so single-crate scans without a crate root file still resolve.
+ */
+function resolveRustLocalImport(fromFile: string, source: string, fileSet: Set<string>): string | undefined {
+  const segments = source.split('::');
+  const head = segments.shift();
+  // Rust allows repeated `super` segments to ascend several modules; each extra one climbs a
+  // directory before the remaining path is probed.
+  let extraSuperCount = 0;
+  while (head === 'super' && segments[0] === 'super') {
+    segments.shift();
+    extraSuperCount += 1;
+  }
+  const modulePath = segments.join('/');
+  if (!modulePath) {
+    return undefined;
+  }
+  const fromDirectory = normalizeDirectory(path.dirname(fromFile));
+  const isOwner = rustOwnerFileNames.has(path.basename(fromFile));
+  const stemDirectory = path.join(fromDirectory, path.basename(fromFile, '.rs'));
+
+  let baseDirectories: string[];
+  if (head === 'self') {
+    // Children of a mod.rs/lib.rs/main.rs module are siblings; children of `a.rs` live in `a/`.
+    baseDirectories = isOwner ? [fromDirectory] : [stemDirectory, fromDirectory];
+  } else if (head === 'super') {
+    baseDirectories = (
+      isOwner
+        ? [normalizeDirectory(path.dirname(fromDirectory)), fromDirectory]
+        : [fromDirectory, normalizeDirectory(path.dirname(fromDirectory))]
+    ).map((directory) => ascendDirectory(directory, extraSuperCount));
+  } else {
+    baseDirectories = rustCrateRootCandidates(fromDirectory, fileSet);
+  }
+
+  // The leaf may be an item rather than a module (`use crate::b::helper` keeps `helper`), so the
+  // parent module path is probed as a fallback for each base directory.
+  const modulePaths = [modulePath, segments.slice(0, -1).join('/')].filter(Boolean);
+  for (const base of baseDirectories) {
+    for (const candidateModulePath of modulePaths) {
+      for (const candidate of [
+        path.join(base, `${candidateModulePath}.rs`),
+        path.join(base, candidateModulePath, 'mod.rs'),
+      ]) {
+        if (candidate !== fromFile && fileSet.has(candidate)) {
+          return candidate;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Ancestor directories of `fromDirectory` holding a crate root file, else all ancestors (nearest first). */
+function rustCrateRootCandidates(fromDirectory: string, fileSet: Set<string>): string[] {
+  const ancestors: string[] = [];
+  let current = fromDirectory;
+  for (;;) {
+    ancestors.push(current);
+    if (current === '') {
+      break;
+    }
+    current = normalizeDirectory(path.dirname(current));
+  }
+  const withRootFile = ancestors.filter(
+    (directory) => fileSet.has(path.join(directory, 'lib.rs')) || fileSet.has(path.join(directory, 'main.rs'))
+  );
+  return withRootFile.length > 0 ? withRootFile : ancestors;
+}
+
+function ascendDirectory(directory: string, levels: number): string {
+  let current = directory;
+  for (let index = 0; index < levels && current !== ''; index += 1) {
+    current = normalizeDirectory(path.dirname(current));
+  }
+  return current;
+}
+
+function normalizeDirectory(directory: string): string {
+  return directory === '.' ? '' : directory;
+}
+
+interface JavaClassLocation {
+  file: string;
+  /** `<packagePath>/<ClassName>` from the file's declared package, when one was parsed. */
+  qualifiedPath?: string;
+}
+
+/** Indexes scanned `.java` files by class name so dotted imports resolve without scanning all files. */
+function buildJavaFileIndex(files: SourceFile[]): Map<string, JavaClassLocation[]> {
+  const index = new Map<string, JavaClassLocation[]>();
+  for (const { relativeFile, metrics } of files) {
+    if (fileExtension(relativeFile) !== '.java') {
+      continue;
+    }
+    const fileClassName = path.basename(relativeFile, path.extname(relativeFile));
+    const addLocation = (className: string, qualifiedPath: string | undefined): void => {
+      const locations = index.get(className) ?? [];
+      if (!locations.some((location) => location.file === relativeFile && location.qualifiedPath === qualifiedPath)) {
+        locations.push({ file: relativeFile, qualifiedPath });
+        index.set(className, locations);
+      }
+    };
+    // Declarations carry the package as `com.alpha::ServiceThing`, giving each top-level type's
+    // true qualified path regardless of directory layout — including package-private types whose
+    // names differ from the file's.
+    let sawFileClass = false;
+    for (const declaration of metrics.module.declarations) {
+      const separatorIndex = declaration.name.lastIndexOf('::');
+      const className = separatorIndex === -1 ? declaration.name : declaration.name.slice(separatorIndex + 2);
+      const packagePath =
+        separatorIndex === -1 ? undefined : declaration.name.slice(0, separatorIndex).replaceAll('.', '/');
+      addLocation(className, packagePath ? `${packagePath}/${className}` : undefined);
+      sawFileClass ||= className === fileClassName;
+    }
+    // Filename fallback for files whose public type produced no declaration.
+    if (!sawFileClass) {
+      addLocation(fileClassName, undefined);
+    }
+  }
+  for (const locations of index.values()) {
+    locations.sort((left, right) => left.file.localeCompare(right.file));
+  }
+  return index;
+}
+
+/**
+ * Resolves a Java dotted import (`com.example.Helper`) to a scanned file whose path ends with the
+ * package path, tolerating source-root prefixes (`src/main/java/...`). Static imports fall back to
+ * the enclosing class once the member segment fails to match; wildcard imports name a package, not
+ * a file, and stay unresolved. Ambiguity across source roots resolves to the lexicographically
+ * first path for determinism.
+ */
+function resolveJavaImport(source: string, javaFileIndex: Map<string, JavaClassLocation[]>): string | undefined {
+  if (source.endsWith('.*')) {
+    return undefined;
+  }
+  // Trailing segments are dropped one by one so nested types and static members resolve to their
+  // enclosing top-level class file (`com.example.Outer.Inner.CONST` -> `Outer.java`).
+  const segments = source.split('.');
+  for (let end = segments.length; end >= 1; end -= 1) {
+    const candidateSegments = segments.slice(0, end);
+    const className = candidateSegments.at(-1);
+    if (!className) {
+      continue;
+    }
+    const relativeStem = candidateSegments.join('/');
+    const locations = javaFileIndex.get(className) ?? [];
+    // The declared package is authoritative: matching it exactly stops `import java.util.List`
+    // from binding to a project class in package `util` just because the Maven layout contains a
+    // `java/` path segment.
+    const packageMatch = locations.find((location) => location.qualifiedPath === relativeStem);
+    if (packageMatch) {
+      return packageMatch.file;
+    }
+    // Files without a parsed package fall back to path-suffix matching, tolerating source-root
+    // prefixes (`src/main/java/...`). Indexed paths use the platform separator, so normalize.
+    const suffixMatch = locations.find((location) => {
+      if (location.qualifiedPath) {
+        return false;
+      }
+      // Class names stay case-sensitive; only the extension is normalized (`B.JAVA` matches `B`).
+      const normalized = location.file.replaceAll('\\', '/');
+      const stem = normalized.slice(0, normalized.length - path.extname(normalized).length);
+      return stem === relativeStem || stem.endsWith(`/${relativeStem}`);
+    });
+    if (suffixMatch) {
+      return suffixMatch.file;
+    }
+  }
+  return undefined;
+}
+
+/** Extensions are matched lowercased so `MAIN.CPP` or `.C` files use their language's rules. */
+function fileExtension(file: string): string {
+  return path.extname(file).toLowerCase();
 }
 
 function localImportBases(fromFile: string, source: string): string[] {
@@ -163,7 +450,8 @@ function isPathRelativeImport(source: string): boolean {
 }
 
 function measureTransitiveDependencyCount(file: string, graph: Map<string, Set<string>>): number {
-  const visited = new Set<string>();
+  // Seed with the starting file so dependency cycles do not count it as its own dependency.
+  const visited = new Set<string>([file]);
   const pending = [...(graph.get(file) ?? [])];
   while (pending.length > 0) {
     const current = pending.pop();
@@ -173,7 +461,7 @@ function measureTransitiveDependencyCount(file: string, graph: Map<string, Set<s
     visited.add(current);
     pending.push(...(graph.get(current) ?? []));
   }
-  return visited.size;
+  return visited.size - 1;
 }
 
 function measureDuplicateSymbolGroups(files: SourceFile[]): DuplicateSymbolGroup[] {
@@ -199,7 +487,11 @@ function measureDuplicateSymbolGroups(files: SourceFile[]): DuplicateSymbolGroup
 }
 
 function isDuplicateSymbolCandidate(declaration: DeclarationMetrics): boolean {
-  return declaration.name.length >= duplicateSymbolNameLengthThreshold;
+  // The threshold applies to the local name so qualification cannot let short names sneak past
+  // it; the codebase emits both `::` (packages/namespaces/modules, C++ out-of-line names) and `.`
+  // (Go `Receiver.Method`) separators.
+  const localName = declaration.name.split(/::|\./u).at(-1) ?? declaration.name;
+  return localName.length >= duplicateSymbolNameLengthThreshold;
 }
 
 function toDuplicateSymbolDeclaration(file: string, declaration: DeclarationMetrics): DuplicateSymbolDeclaration {
@@ -246,13 +538,21 @@ function measureStructuralCoordination(metrics: CodeMetrics): StructuralCoordina
   };
 }
 
-function measureStructuralFeatureGroups(metrics: CodeMetrics): string[] {
+/**
+ * Java imports are dotted package paths, so per-file coupling classifies them as external even
+ * when they resolve inside the scanned project; the dependency graph corrects both feature tags.
+ */
+function measureStructuralFeatureGroups(
+  metrics: CodeMetrics,
+  directLocalDependencyCount: number,
+  nonRelativeLocalImportCount: number
+): string[] {
   const groups = new Set<string>();
   addGroup(groups, 'class-shapes', metrics.classCount > 0);
   addGroup(groups, 'control-flow', metrics.cognitiveComplexity > 0);
-  addGroup(groups, 'external-dependencies', metrics.coupling.externalImportCount > 0);
+  addGroup(groups, 'external-dependencies', metrics.coupling.externalImportCount - nonRelativeLocalImportCount > 0);
   addGroup(groups, 'functions', metrics.functionCount > 0);
-  addGroup(groups, 'local-dependencies', metrics.coupling.relativeImportCount > 0);
+  addGroup(groups, 'local-dependencies', metrics.coupling.relativeImportCount > 0 || directLocalDependencyCount > 0);
   addGroup(groups, 'module-api', metrics.coupling.exportCount > 0 || metrics.module.declarations.length > 0);
   addGroup(
     groups,

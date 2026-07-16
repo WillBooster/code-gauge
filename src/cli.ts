@@ -57,14 +57,28 @@ interface ScanResult {
 }
 
 const languageByExtension = new Map<string, LanguageName>([
+  ['.c', 'c'],
+  ['.c++', 'cpp'],
+  ['.cc', 'cpp'],
   ['.cjs', 'javascript'],
+  ['.cp', 'cpp'],
+  ['.cpp', 'cpp'],
+  ['.tcc', 'cpp'],
   ['.cts', 'typescript'],
+  ['.cxx', 'cpp'],
   ['.go', 'go'],
+  // Headers may be C or C++; the C++ grammar parses both.
+  ['.h', 'cpp'],
+  ['.hh', 'cpp'],
+  ['.hpp', 'cpp'],
+  ['.hxx', 'cpp'],
+  ['.java', 'java'],
   ['.js', 'javascript'],
   ['.jsx', 'jsx'],
   ['.mjs', 'javascript'],
   ['.mts', 'typescript'],
   ['.py', 'python'],
+  ['.rb', 'ruby'],
   ['.rs', 'rust'],
   ['.ts', 'typescript'],
   ['.tsx', 'tsx'],
@@ -99,8 +113,11 @@ const ignoredDirectoryNames = new Set([
 /** Caps the `Duplicate symbols` section so large repositories do not flood the report. */
 const maxDuplicateSymbolGroupLines = 10;
 
-const testDirectoryNames = new Set(['__tests__', 'test', 'tests']);
-const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-]test)\.[^.]+$/iu;
+const testDirectoryNames = new Set(['__tests__', 'test', 'tests', 'spec']);
+const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-](?:test|spec))\.[^.]+$/iu;
+// JUnit tests use a case-sensitive `Test.java` suffix; case-insensitive matching would catch
+// production files like `contest.java`.
+const javaTestFilePattern = /Test\.java$/u;
 
 // oxlint-disable-next-line unicorn/prefer-top-level-await -- CommonJS build output cannot preserve top-level await.
 void main().catch((error: unknown) => {
@@ -131,6 +148,11 @@ async function main(): Promise<void> {
       '--duplicate-block-threshold <number>',
       'minimum count of duplicated code blocks per file to report',
       parsePositiveInteger
+    )
+    .option(
+      '--duplication-ratio-percent-threshold <number>',
+      'minimum percentage (1-100) of duplicated lines per file to report',
+      parsePercentInteger
     )
     .option(
       '--transitive-dependency-threshold <number>',
@@ -553,12 +575,25 @@ function findRiskyFileMetrics(
   const formattedFile = formatPath(file, displayRoot);
   addTrigger(triggers, 'file LOC', metrics.lines.code, thresholds.fileLoc);
   addTrigger(triggers, 'import sources', metrics.coupling.importSourceCount, thresholds.import);
+  const duplicateBlockDetail = formatDuplicateBlockGroups(metrics.duplication.duplicateBlockGroups);
   addTrigger(
     triggers,
     'duplicated blocks',
     metrics.duplication.duplicateBlockCount,
     thresholds.duplicateBlock,
-    formatDuplicateBlockGroups(metrics.duplication.duplicateBlockGroups)
+    duplicateBlockDetail
+  );
+  // Maximal-region selection deliberately compresses adjacent clones into few blocks, so severity
+  // must track line coverage, not the block count. Flooring compares like the unrounded ratio
+  // against the integer threshold (29.5% must not trigger a >= 30 threshold). The block ranges are
+  // repeated as detail because this trigger can fire alone, and a percentage without locations is
+  // not actionable.
+  addTrigger(
+    triggers,
+    'duplicated lines (%)',
+    Math.floor(metrics.duplication.duplicationRatio * 100),
+    thresholds.duplicationRatioPercent,
+    duplicateBlockDetail
   );
   if (architecture) {
     const hasFileScaleRisk = metrics.lines.code >= 100 || architecture.directLocalDependencyCount >= 8;
@@ -759,7 +794,7 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     writeStdout(`${formatTypeScriptProjectMetrics(result.typeScriptProject)}\n`);
   }
   writeStdout(
-    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}\n`
+    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}, duplicated lines (%) >= ${thresholds.duplicationRatioPercent}\n`
   );
   const profileOverrides = formatProfileOverrides(options.profileThresholds);
   if (profileOverrides) {
@@ -975,11 +1010,28 @@ function getLanguage(file: string, options: ResolvedOptions, explicitTarget = fa
     return undefined;
   }
 
-  if (!explicitTarget && !options.includeTests && testFilePattern.test(path.basename(file))) {
+  if (
+    !explicitTarget &&
+    !options.includeTests &&
+    (testFilePattern.test(path.basename(file)) || javaTestFilePattern.test(path.basename(file)))
+  ) {
     return undefined;
   }
 
+  // GCC treats an uppercase `.C` as C++; lowercasing first would misparse it with the C grammar.
+  if (path.extname(file) === '.C') {
+    return 'cpp';
+  }
+
   return languageByExtension.get(path.extname(lowerFile));
+}
+
+function parsePercentInteger(value: string): number {
+  const parsed = parsePositiveInteger(value);
+  if (parsed > 100) {
+    throw new InvalidArgumentError('Expected an integer between 1 and 100.');
+  }
+  return parsed;
 }
 
 function parsePositiveInteger(value: string): number {

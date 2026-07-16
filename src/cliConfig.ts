@@ -13,6 +13,8 @@ export interface Thresholds {
   fanOut: number;
   parameter: number;
   duplicateBlock: number;
+  /** Percentage (1-100) of a file's code lines (comments/blanks excluded) covered by duplicates. */
+  duplicationRatioPercent: number;
   transitiveDependency: number;
   structuralBreadth: number;
   structuralCoordination: number;
@@ -33,6 +35,7 @@ export const defaultThresholds: Thresholds = {
   fanOut: 10,
   parameter: 8,
   duplicateBlock: 2,
+  duplicationRatioPercent: 30,
   transitiveDependency: 25,
   structuralBreadth: 8,
   structuralCoordination: 300,
@@ -47,7 +50,20 @@ export const configFileName = 'code-gauge.config.json';
  * Profile keys for per-language and React-specific threshold overrides. A file resolves its
  * thresholds as base → its language profile → the `react` profile (when it contains a component).
  */
-export const profileKeys = ['javascript', 'jsx', 'typescript', 'tsx', 'python', 'go', 'rust', 'react'] as const;
+export const profileKeys = [
+  'javascript',
+  'jsx',
+  'typescript',
+  'tsx',
+  'python',
+  'go',
+  'rust',
+  'java',
+  'ruby',
+  'c',
+  'cpp',
+  'react',
+] as const;
 export type ProfileKey = (typeof profileKeys)[number];
 
 /**
@@ -57,6 +73,8 @@ export type ProfileKey = (typeof profileKeys)[number];
  */
 export const defaultProfileThresholds: Partial<Record<ProfileKey, Partial<Thresholds>>> = {
   python: { stateMutation: 90, structuralCoordination: 350 },
+  // Ruby scores state mutation via assignments like Python (bindings are assignments).
+  ruby: { stateMutation: 90, structuralCoordination: 350 },
   react: { import: 30 },
 };
 
@@ -116,6 +134,7 @@ export interface CliOptions {
   fanOutThreshold?: number;
   parameterThreshold?: number;
   duplicateBlockThreshold?: number;
+  duplicationRatioPercentThreshold?: number;
   transitiveDependencyThreshold?: number;
   structuralBreadthThreshold?: number;
   structuralCoordinationThreshold?: number;
@@ -142,6 +161,7 @@ const thresholdCliKeys: Record<keyof Thresholds, keyof CliOptions> = {
   fanOut: 'fanOutThreshold',
   parameter: 'parameterThreshold',
   duplicateBlock: 'duplicateBlockThreshold',
+  duplicationRatioPercent: 'duplicationRatioPercentThreshold',
   transitiveDependency: 'transitiveDependencyThreshold',
   structuralBreadth: 'structuralBreadthThreshold',
   structuralCoordination: 'structuralCoordinationThreshold',
@@ -305,7 +325,11 @@ function validateThresholdObject(value: unknown, label: string, configFile: stri
     if (!(key in defaultThresholds)) {
       throw new Error(`Config file "${configFile}": unknown threshold "${key}" in "${label}".`);
     }
-    thresholds[key as keyof Thresholds] = requirePositiveInteger(threshold, `${label}.${key}`, configFile);
+    const parsed = requirePositiveInteger(threshold, `${label}.${key}`, configFile);
+    if (key === 'duplicationRatioPercent' && parsed > 100) {
+      throw new Error(`Config file "${configFile}": "${label}.${key}" must be between 1 and 100.`);
+    }
+    thresholds[key as keyof Thresholds] = parsed;
   }
   return thresholds;
 }

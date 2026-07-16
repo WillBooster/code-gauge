@@ -16,7 +16,7 @@ npm install -g code-gauge
 code-gauge path/to/project
 ```
 
-The CLI scans JavaScript, JSX, TypeScript, TSX, Python, Go, and Rust files. By default it skips generated, vendor, test, and tool directories, prints a summary, and lists the highest-risk findings. TypeScript project metrics and React component classification turn on automatically when a `tsconfig.json` is found.
+The CLI scans JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++ files. By default it skips generated, vendor, test, and tool directories, prints a summary, and lists the highest-risk findings. TypeScript project metrics and React component classification turn on automatically when a `tsconfig.json` is found.
 
 ## Options
 
@@ -51,6 +51,7 @@ A finding is reported when a measured value is **greater than or equal to** its 
     "fanOut": 10,
     "parameter": 8,
     "duplicateBlock": 2,
+    "duplicationRatioPercent": 30,
     "transitiveDependency": 25,
     "structuralBreadth": 8,
     "structuralCoordination": 300,
@@ -59,6 +60,7 @@ A finding is reported when a measured value is **greater than or equal to** its 
   },
   "languageThresholds": {
     "python": { "stateMutation": 90, "structuralCoordination": 350 },
+    "ruby": { "stateMutation": 90, "structuralCoordination": 350 },
     "react": { "import": 30 }
   },
   "maxFindings": 20,
@@ -68,23 +70,24 @@ A finding is reported when a measured value is **greater than or equal to** its 
 }
 ```
 
-| Threshold                | CLI flag                              | Reports when a …                                 |
-| ------------------------ | ------------------------------------- | ------------------------------------------------ |
-| `fileLoc`                | `--file-loc-threshold`                | file's code LOC is large.                        |
-| `functionLoc`            | `--function-loc-threshold`            | function's physical LOC span is large.           |
-| `componentLoc`           | `--component-loc-threshold`           | React component's physical LOC span is large.    |
-| `cognitive`              | `--cognitive-threshold`               | function's cognitive complexity is high.         |
-| `cyclomatic`             | `--cyclomatic-threshold`              | function's cyclomatic complexity is high.        |
-| `call`                   | `--call-threshold`                    | function makes many calls.                       |
-| `import`                 | `--import-threshold`                  | file has many unique import sources.             |
-| `fanOut`                 | `--fan-out-threshold`                 | function calls many other in-file functions.     |
-| `parameter`              | `--parameter-threshold`               | function declares many parameters.               |
-| `duplicateBlock`         | `--duplicate-block-threshold`         | file contains copy-pasted code blocks.           |
-| `transitiveDependency`   | `--transitive-dependency-threshold`   | file transitively reaches many local files.      |
-| `structuralBreadth`      | `--structural-breadth-threshold`      | file coordinates many structural concerns.       |
-| `structuralCoordination` | `--structural-coordination-threshold` | file's structural coordination score is high.    |
-| `stateMutation`          | `--state-mutation-threshold`          | file mutates state heavily.                      |
-| `duplicateSymbolGroup`   | `--duplicate-symbol-group-threshold`  | file shares many duplicated symbols with others. |
+| Threshold                 | CLI flag                                | Reports when a …                                       |
+| ------------------------- | --------------------------------------- | ------------------------------------------------------ |
+| `fileLoc`                 | `--file-loc-threshold`                  | file's code LOC is large.                              |
+| `functionLoc`             | `--function-loc-threshold`              | function's physical LOC span is large.                 |
+| `componentLoc`            | `--component-loc-threshold`             | React component's physical LOC span is large.          |
+| `cognitive`               | `--cognitive-threshold`                 | function's cognitive complexity is high.               |
+| `cyclomatic`              | `--cyclomatic-threshold`                | function's cyclomatic complexity is high.              |
+| `call`                    | `--call-threshold`                      | function makes many calls.                             |
+| `import`                  | `--import-threshold`                    | file has many unique import sources.                   |
+| `fanOut`                  | `--fan-out-threshold`                   | function calls many other in-file functions.           |
+| `parameter`               | `--parameter-threshold`                 | function declares many parameters.                     |
+| `duplicateBlock`          | `--duplicate-block-threshold`           | file contains copy-pasted code blocks.                 |
+| `duplicationRatioPercent` | `--duplication-ratio-percent-threshold` | large percentage of a file's code lines is duplicated. |
+| `transitiveDependency`    | `--transitive-dependency-threshold`     | file transitively reaches many local files.            |
+| `structuralBreadth`       | `--structural-breadth-threshold`        | file coordinates many structural concerns.             |
+| `structuralCoordination`  | `--structural-coordination-threshold`   | file's structural coordination score is high.          |
+| `stateMutation`           | `--state-mutation-threshold`            | file mutates state heavily.                            |
+| `duplicateSymbolGroup`    | `--duplicate-symbol-group-threshold`    | file shares many duplicated symbols with others.       |
 
 ### Per-language thresholds
 
@@ -93,9 +96,11 @@ over-flags one language or under-flags another. `languageThresholds` overrides i
 profile without repeating the whole set. Each file resolves its thresholds as **base → its language profile →
 the `react` profile** (the last applies when the file contains a React component), so later profiles win.
 
-Valid profile keys are `javascript`, `jsx`, `typescript`, `tsx`, `python`, `go`, `rust`, and `react`. Built-in
-overrides raise `stateMutation` and `structuralCoordination` for Python (every binding is an assignment, so
-these run far higher than in TypeScript) and raise `import` for React files (which pull in many components).
+Valid profile keys are `javascript`, `jsx`, `typescript`, `tsx`, `python`, `go`, `rust`, `java`, `ruby`, `c`,
+`cpp`, and `react`. Built-in
+overrides raise `stateMutation` and `structuralCoordination` for Python and Ruby (every binding is an
+assignment, so these run far higher than in TypeScript) and raise `import` for React files (which pull in
+many components).
 Anything you specify is merged on top of the built-in overrides, so `{ "python": { "stateMutation": 8 } }`
 restores the global value for Python while keeping the other built-in adjustments.
 
@@ -117,7 +122,7 @@ Command-line `--<metric>-threshold` flags set the global base only; use the conf
 - Cyclomatic and cognitive complexity (per function and maximum)
 - Nesting depth
 - Intra-file call graph metrics: call counts, fan-in/fan-out, recursion, call depth, and parameter counts
-- Within-file structural duplication: copy-pasted code blocks (distinct from cross-file duplicate symbol names)
+- Within-file duplication: copy-pasted blocks and statement runs matched on normalized tokens (identifiers anonymized consistently, literals by kind), plus duplicated line count and ratio (distinct from cross-file duplicate symbol names)
 - File coupling (imports/exports) and cohesion (shared function identifiers)
 - Architecture metrics: transitive local dependencies, structural coordination and breadth, state mutation, and cross-file duplicate symbols
 - TypeScript type-shape metrics: annotations, aliases, interfaces, generics, unions, intersections, assertions, and conditional types
@@ -125,7 +130,7 @@ Command-line `--<metric>-threshold` flags set the global base only; use the conf
 
 ## Supported languages
 
-Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, and Rust. Additional tree-sitter grammars can be registered with `TreeMeasurer.registerLanguage`.
+Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++. Additional tree-sitter grammars can be registered with `TreeMeasurer.registerLanguage`.
 
 ## Programmatic API
 

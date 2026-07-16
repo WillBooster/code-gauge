@@ -1,4 +1,15 @@
-export type SupportedLanguage = 'go' | 'javascript' | 'jsx' | 'python' | 'rust' | 'typescript' | 'tsx';
+export type SupportedLanguage =
+  | 'c'
+  | 'cpp'
+  | 'go'
+  | 'java'
+  | 'javascript'
+  | 'jsx'
+  | 'python'
+  | 'ruby'
+  | 'rust'
+  | 'typescript'
+  | 'tsx';
 
 export type LanguageName = SupportedLanguage | (string & {});
 export type ParserLanguage = unknown;
@@ -47,6 +58,7 @@ export interface FunctionMetrics {
   returnsJsx: boolean;
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
+  nestingDepth: number;
   callCount: number;
   uniqueCalleeCount: number;
   fanIn: number;
@@ -102,17 +114,26 @@ export interface SyntaxFeatureMetrics {
 }
 
 /**
- * Within-file structural duplication: copy-pasted code blocks whose syntax shape (node types,
- * ignoring identifiers and literals) repeats. Distinct from cross-file duplicate symbol names.
+ * Within-file structural duplication: copy-pasted regions whose normalized token sequence repeats.
+ * Identifiers are anonymized consistently by first-occurrence order and literals by kind, so
+ * consistently renamed copies match. Distinct from cross-file duplicate symbol names.
  */
 export interface DuplicationMetrics {
-  /** Number of redundant (extra) copies of duplicated blocks, i.e. sum of (groupSize - 1). */
+  /** Number of redundant (extra) copies of duplicated regions, i.e. sum of (groupSize - 1). */
   duplicateBlockCount: number;
-  /** Number of distinct shapes that appear more than once. */
+  /** Number of distinct normalized token sequences that appear more than once. */
   duplicateBlockGroupCount: number;
-  /** 1-based line ranges of every counted copy, grouped by shared shape. */
+  /** 1-based line ranges of every counted copy, grouped by shared normalized token sequence. */
   duplicateBlockGroups: DuplicateBlockOccurrence[][];
-  /** Node count of the largest duplicated block, indicating how big the copied region is. */
+  /** Number of distinct lines covered by any counted duplicate occurrence (originals included). */
+  duplicateLineCount: number;
+  /**
+   * duplicateLineCount / code lines (0 when the file has no code). Code lines are the denominator
+   * because duplicated lines are counted from matched tokens, which only ever land on code lines;
+   * dividing by total lines would let comment density deflate the ratio.
+   */
+  duplicationRatio: number;
+  /** Normalized token count of the largest duplicated region, indicating how big the copied region is. */
   maxDuplicateBlockSize: number;
 }
 
