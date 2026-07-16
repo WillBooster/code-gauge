@@ -73,6 +73,12 @@ const operatorTexts = new Set([
   '..',
   '...',
   '..=',
+  '&&',
+  '||',
+  '!~',
+  'sizeof',
+  'alignof',
+  'defined?',
   'and',
   'or',
   'not',
@@ -120,6 +126,8 @@ const operandNodeTypes = new Set([
   'hex_floating_point_literal',
   'string',
   'string_literal',
+  // Go raw strings are leaves with no content child, unlike Rust/C++ `raw_string_literal`s.
+  'raw_string_literal',
   'string_fragment',
   'multiline_string_fragment',
   'string_content',
@@ -134,6 +142,13 @@ const operandNodeTypes = new Set([
   'undefined',
   'nil',
 ]);
+
+/**
+ * Non-leaf literals counted as one Halstead operand without descending: Go interpreted strings
+ * have no content leaf at all, and regex literals would otherwise count their `/` delimiters as
+ * division operators. Interpolated regex contents are deliberately swallowed by the atom.
+ */
+const atomicOperandNodeTypes = new Set(['interpreted_string_literal', 'regex']);
 
 interface ComplexityResult {
   cyclomaticComplexity: number;
@@ -578,7 +593,7 @@ function collectCalls(
       return;
     }
 
-    if (isCallNode(node)) {
+    if (isCallNode(node) || isRubyImplicitCall(node, language)) {
       callCount += 1;
       const callee = findCalleeName(node);
       if (callee) {
@@ -593,6 +608,18 @@ function collectCalls(
 
   visit(root, true);
   return { callCount, callees };
+}
+
+/**
+ * Ruby's bare `yield` and `super` invoke without a `call` node (only `super()` parses as `call`,
+ * whose `super` child must not double-count), so they add to the call count without a callee edge.
+ * Language-gated because Python `yield` and JS/Java `super` children are not extra calls.
+ */
+function isRubyImplicitCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
+  if (language.name !== 'ruby') {
+    return false;
+  }
+  return node.type === 'yield' || (node.type === 'super' && node.parent?.type !== 'call');
 }
 
 function collectIdentifiers(root: Parser.SyntaxNode): Set<string> {
@@ -810,37 +837,57 @@ function collectModuleDeclarations(root: Parser.SyntaxNode): DeclarationMetrics[
     .map((declaration) => (exportedNames.has(declaration.name) ? { ...declaration, exported: true } : declaration));
 }
 
-function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+function collectTopLevelDeclarations(node: Parser.SyntaxNode, exported: boolean, scope = ''): DeclarationMetrics[] {
   if (isModuleExportNode(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true));
+    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true, scope));
+  }
+
+  // C++ namespaces qualify their contents so `Alpha::ServiceThing` and `Beta::ServiceThing` stay
+  // distinct in cross-file symbol groups; anonymous namespaces give internal linkage and declare
+  // no cross-file symbols at all.
+  if (node.type === 'namespace_definition') {
+    const name = node.childForFieldName('name')?.text;
+    if (!name) {
+      return [];
+    }
+    const bodyNode = node.childForFieldName('body');
+    return (bodyNode?.namedChildren ?? []).flatMap((child) =>
+      collectTopLevelDeclarations(child, exported, `${scope}${name}::`)
+    );
   }
 
   if (isDeclarationContainer(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported));
+    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported, scope));
   }
 
   // C/C++ global variables live in `declaration` nodes with one or more declarators.
   if (node.type === 'declaration') {
-    return declarationsFromCDeclaration(node, exported);
+    return qualifyDeclarations(declarationsFromCDeclaration(node, exported), scope);
   }
 
   // C `typedef` declares alias name(s) and possibly a tagged type in one node.
   if (node.type === 'type_definition') {
-    return declarationsFromTypeDefinition(node, exported);
+    return qualifyDeclarations(declarationsFromTypeDefinition(node, exported), scope);
   }
 
   // Ruby modules/classes nest further types in their body, like C++ namespaces.
   if (rubyTypeNodeTypes.has(node.type)) {
-    return declarationsFromRubyType(node, exported);
+    return declarationsFromRubyType(node, exported, scope);
   }
 
   // Ruby constant assignment (`FOO = 1`) is the language's only constant syntax; constants are a
   // module's canonical public API. Other grammars never put a `constant` node on an assignment LHS.
   if (node.type === 'assignment') {
-    return rubyConstantDeclaration(node, exported);
+    return qualifyDeclarations(rubyConstantDeclaration(node, exported), scope);
   }
 
-  return declarationFromNode(node, exported);
+  return qualifyDeclarations(declarationFromNode(node, exported), scope);
+}
+
+function qualifyDeclarations(declarations: DeclarationMetrics[], scope: string): DeclarationMetrics[] {
+  return scope
+    ? declarations.map((declaration) => ({ ...declaration, name: `${scope}${declaration.name}` }))
+    : declarations;
 }
 
 const rubyTypeNodeTypes = new Set(['module', 'class', 'singleton_class']);
@@ -850,14 +897,17 @@ const rubyTypeNodeTypes = new Set(['module', 'class', 'singleton_class']);
  * declarations: names like `initialize` repeat everywhere and would flood cross-file
  * duplicate-symbol groups.
  */
-function declarationsFromRubyType(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  const declarations = declarationFromNode(node, exported);
+function declarationsFromRubyType(node: Parser.SyntaxNode, exported: boolean, scope = ''): DeclarationMetrics[] {
+  const declarations = qualifyDeclarations(declarationFromNode(node, exported), scope);
+  // Nested types and constants are qualified by their enclosing module path (`Alpha::LIMIT`) so
+  // same-named symbols under different modules stay distinct in cross-file symbol groups.
+  const childScope = declarations[0] ? `${declarations[0].name}::` : scope;
   const bodyNode = node.childForFieldName('body');
   for (const child of bodyNode?.namedChildren ?? []) {
     if (rubyTypeNodeTypes.has(child.type)) {
-      declarations.push(...declarationsFromRubyType(child, exported));
+      declarations.push(...declarationsFromRubyType(child, exported, childScope));
     } else if (child.type === 'assignment') {
-      declarations.push(...rubyConstantDeclaration(child, exported));
+      declarations.push(...qualifyDeclarations(rubyConstantDeclaration(child, exported), childScope));
     }
   }
   return declarations;
@@ -908,6 +958,11 @@ function isCVariableDeclarator(node: Parser.SyntaxNode): boolean {
   );
 }
 
+/** `storage_class_specifier` exists only in the C/C++ grammars, so this is language-safe. */
+function hasStaticStorageClass(node: Parser.SyntaxNode): boolean {
+  return node.children.some((child) => child.type === 'storage_class_specifier' && child.text === 'static');
+}
+
 /**
  * tree-sitter-cpp has no C++20 module support, so `export module foo;` / `import bar;` misparse as
  * `declaration` nodes whose "type" is the keyword; they declare nothing and bind nothing.
@@ -926,7 +981,7 @@ function isMisparsedCppModuleDeclaration(node: Parser.SyntaxNode): boolean {
  * flood cross-file duplicate-symbol groups.
  */
 function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  if (isMisparsedCppModuleDeclaration(node)) {
+  if (isMisparsedCppModuleDeclaration(node) || hasStaticStorageClass(node)) {
     return [];
   }
   // `struct Foo { int x; } value;` defines the tag `Foo` alongside the variable; body-less type
@@ -948,6 +1003,11 @@ function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): Declar
   // C/C++ `struct Foo;`-style forward declarations reuse the declaration node type; only
   // definitions with a body declare a module-level symbol.
   if (!isTopLevelDeclarationNode(node) || (node.type.endsWith('_specifier') && !node.childForFieldName('body'))) {
+    return [];
+  }
+
+  // C/C++ `static` gives internal linkage: the symbol is file-local, not a cross-file module symbol.
+  if (hasStaticStorageClass(node)) {
     return [];
   }
 
@@ -999,9 +1059,9 @@ function isDeclarationContainer(node: Parser.SyntaxNode): boolean {
     node.type === 'const_declaration' ||
     node.type === 'var_declaration' ||
     node.type === 'var_spec_list' ||
-    // C/C++ wrappers around top-level symbols; declarations in inactive preprocessor arms are
-    // still collected, which is the norm for un-preprocessed analysis.
-    node.type === 'namespace_definition' ||
+    // C/C++ wrappers around top-level symbols (namespaces are handled separately to thread their
+    // scope); declarations in inactive preprocessor arms are still collected, which is the norm
+    // for un-preprocessed analysis.
     node.type === 'linkage_specification' ||
     node.type === 'template_declaration' ||
     node.type === 'declaration_list' ||
@@ -1201,7 +1261,11 @@ function isAssignmentNode(node: Parser.SyntaxNode): boolean {
     node.type === 'augmented_assignment' ||
     node.type === 'operator_assignment' ||
     node.type === 'short_var_declaration' ||
-    node.type === 'compound_assignment_expr'
+    node.type === 'compound_assignment_expr' ||
+    // Increment/decrement mutate their operand: JS/TS/Java/C/C++ `i++`, Go `i++`/`i--` statements.
+    node.type === 'update_expression' ||
+    node.type === 'inc_statement' ||
+    node.type === 'dec_statement'
   );
 }
 
@@ -1263,7 +1327,21 @@ function countCMutableBindings(node: Parser.SyntaxNode): number {
   if (isMisparsedCppModuleDeclaration(node)) {
     return 0;
   }
-  return node.namedChildren.filter((child) => isCVariableDeclarator(child) && isCMutableBinding(node, child)).length;
+  return sum(
+    node.namedChildren
+      .filter((child) => isCVariableDeclarator(child) && isCMutableBinding(node, child))
+      .map(countCBoundIdentifiers)
+  );
+}
+
+/** A C++ structured binding (`auto [a, b] = ...`) introduces one binding per bound identifier. */
+function countCBoundIdentifiers(declarator: Parser.SyntaxNode): number {
+  const inner =
+    declarator.type === 'init_declarator' ? (declarator.childForFieldName('declarator') ?? declarator) : declarator;
+  if (inner.type === 'structured_binding_declarator') {
+    return Math.max(1, inner.namedChildren.filter((child) => child.type === 'identifier').length);
+  }
+  return 1;
 }
 
 function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
@@ -1589,6 +1667,11 @@ function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics
 
   function visit(node: Parser.SyntaxNode): void {
     if (node.type === 'comment' || node.type === 'line_comment' || node.type === 'block_comment') {
+      return;
+    }
+
+    if (atomicOperandNodeTypes.has(node.type)) {
+      incrementCount(operands, code.slice(node.startIndex, node.endIndex));
       return;
     }
 

@@ -325,7 +325,11 @@ function validateThresholdObject(value: unknown, label: string, configFile: stri
     if (!(key in defaultThresholds)) {
       throw new Error(`Config file "${configFile}": unknown threshold "${key}" in "${label}".`);
     }
-    thresholds[key as keyof Thresholds] = requirePositiveInteger(threshold, `${label}.${key}`, configFile);
+    const parsed = requirePositiveInteger(threshold, `${label}.${key}`, configFile);
+    if (key === 'duplicationRatioPercent' && parsed > 100) {
+      throw new Error(`Config file "${configFile}": "${label}.${key}" must be between 1 and 100.`);
+    }
+    thresholds[key as keyof Thresholds] = parsed;
   }
   return thresholds;
 }

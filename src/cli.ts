@@ -146,7 +146,7 @@ async function main(): Promise<void> {
     .option(
       '--duplication-ratio-percent-threshold <number>',
       'minimum percentage (1-100) of duplicated lines per file to report',
-      parsePositiveInteger
+      parsePercentInteger
     )
     .option(
       '--transitive-dependency-threshold <number>',
@@ -1004,6 +1004,14 @@ function getLanguage(file: string, options: ResolvedOptions, explicitTarget = fa
   }
 
   return languageByExtension.get(path.extname(lowerFile));
+}
+
+function parsePercentInteger(value: string): number {
+  const parsed = parsePositiveInteger(value);
+  if (parsed > 100) {
+    throw new InvalidArgumentError('Expected an integer between 1 and 100.');
+  }
+  return parsed;
 }
 
 function parsePositiveInteger(value: string): number {

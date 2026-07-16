@@ -151,19 +151,29 @@ function resolveLocalImport(
 
   const { extensions, indexFiles } = importProbes(fromFile);
   const fromExtension = path.extname(fromFile);
-  const stems = bases.flatMap((base) => {
-    const extension = path.extname(base);
-    if (!extension) {
-      return [base];
+
+  // The JS-family ESM remap follows TypeScript's substitution table: `./foo.js` may name `foo.ts`,
+  // but `./foo.mjs` may only name `foo.mts` (never an unrelated `foo.ts`), and vice versa for
+  // `.cjs`. Explicit `.ts`-family extensions have no substitutions (the exact match above covers
+  // them), and non-JS importers never remap, so `#include "config.inc"` cannot rebind to
+  // unrelated same-stem files.
+  if (jsExtensions.has(fromExtension)) {
+    for (const base of bases) {
+      const substitutions = jsImportExtensionSubstitutions.get(path.extname(base));
+      if (!substitutions) {
+        continue;
+      }
+      const stem = base.slice(0, -path.extname(base).length);
+      for (const substitution of substitutions) {
+        if (fileSet.has(`${stem}${substitution}`)) {
+          return `${stem}${substitution}`;
+        }
+      }
     }
-    // The un-stripped base comes first so `./user.service` prefers `user.service.ts` over `user.ts`.
-    // Stripping the supplied extension is valid only for the JS-family ESM remap (`./foo.js` -> `foo.ts`);
-    // elsewhere it would rebind explicit paths (`#include "config.inc"`) to unrelated same-stem files.
-    return jsExtensions.has(extension) && jsExtensions.has(fromExtension)
-      ? [base, base.slice(0, -extension.length)]
-      : [base];
-  });
-  for (const stem of stems) {
+  }
+
+  // Extension probing keeps each base's full name, so `./user.service` prefers `user.service.ts`.
+  for (const stem of bases) {
     for (const extension of extensions) {
       if (fileSet.has(`${stem}${extension}`)) {
         return `${stem}${extension}`;
@@ -182,6 +192,18 @@ function resolveLocalImport(
 const jsExtensions = new Set(['.js', '.jsx', '.ts', '.tsx', '.mjs', '.cjs', '.mts', '.cts']);
 const cExtensions = new Set(['.c', '.cpp', '.cc', '.cxx', '.h', '.hpp', '.hh', '.hxx']);
 
+/**
+ * TypeScript's ESM extension substitutions: a JS runtime extension in an import may name the
+ * TypeScript source that compiles to it. `.ts`-family extensions are intentionally absent (they
+ * resolve exactly), and `.mjs`/`.cjs` never remap to plain `.ts`.
+ */
+const jsImportExtensionSubstitutions = new Map<string, string[]>([
+  ['.js', ['.ts', '.tsx']],
+  ['.jsx', ['.tsx']],
+  ['.mjs', ['.mts']],
+  ['.cjs', ['.cts']],
+]);
+
 /** Extension-less sources probe only extensions the importing language can actually load. */
 function importProbes(fromFile: string): { extensions: string[]; indexFiles: string[] } {
   const fromExtension = path.extname(fromFile);
@@ -195,7 +217,10 @@ function importProbes(fromFile: string): { extensions: string[]; indexFiles: str
     return { extensions: ['.h', '.hpp', '.hh', '.hxx', '.c', '.cpp', '.cc', '.cxx'], indexFiles: [] };
   }
   if (jsExtensions.has(fromExtension)) {
-    return { extensions: ['.ts', '.tsx', '.js', '.jsx'], indexFiles: ['index.ts', 'index.tsx', 'index.js'] };
+    return {
+      extensions: ['.ts', '.tsx', '.js', '.jsx', '.mts', '.cts', '.mjs', '.cjs'],
+      indexFiles: ['index.ts', 'index.tsx', 'index.js'],
+    };
   }
   return {
     extensions: ['.ts', '.tsx', '.js', '.jsx', '.py', '.rb', '.h', '.hpp', '.hh', '.hxx', '.c', '.cpp', '.cc', '.cxx'],
@@ -318,7 +343,10 @@ function measureDuplicateSymbolGroups(files: SourceFile[]): DuplicateSymbolGroup
 }
 
 function isDuplicateSymbolCandidate(declaration: DeclarationMetrics): boolean {
-  return declaration.name.length >= duplicateSymbolNameLengthThreshold;
+  // The threshold applies to the local name so qualification (`Alpha::Ab`) cannot let short
+  // names sneak past it.
+  const localName = declaration.name.split('::').at(-1) ?? declaration.name;
+  return localName.length >= duplicateSymbolNameLengthThreshold;
 }
 
 function toDuplicateSymbolDeclaration(file: string, declaration: DeclarationMetrics): DuplicateSymbolDeclaration {
