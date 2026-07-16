@@ -76,9 +76,22 @@ const operatorTexts = new Set([
   '&&',
   '||',
   '!~',
+  '&^',
+  '&^=',
+  '&.',
   'sizeof',
   'alignof',
   'defined?',
+  'as',
+  // C++ alternative operator tokens parse as anonymous leaves like their symbolic forms.
+  'bitand',
+  'bitor',
+  'xor',
+  'compl',
+  'and_eq',
+  'or_eq',
+  'xor_eq',
+  'not_eq',
   'and',
   'or',
   'not',
@@ -269,7 +282,8 @@ function measureStructuralMetrics(
   functions: Parser.SyntaxNode[],
   language: LanguageDefinition
 ): StructuralMetrics {
-  const analyses = functions.map((node, index) => analyzeFunction(node, language, index));
+  const constructedTypeNames = collectConstructedTypeNames(root, language);
+  const analyses = functions.map((node, index) => analyzeFunction(node, language, index, constructedTypeNames));
   const callGraph = measureCallGraph(analyses);
   const functionsWithGraph = analyses.map((analysis) => ({
     name: analysis.name,
@@ -299,9 +313,14 @@ function measureStructuralMetrics(
   };
 }
 
-function analyzeFunction(node: Parser.SyntaxNode, language: LanguageDefinition, index: number): FunctionAnalysis {
+function analyzeFunction(
+  node: Parser.SyntaxNode,
+  language: LanguageDefinition,
+  index: number,
+  constructedTypeNames: Set<string>
+): FunctionAnalysis {
   const complexity = measureComplexity(node, language, 0, true);
-  const calls = collectCalls(node, language);
+  const calls = collectCalls(node, language, constructedTypeNames);
   return {
     index,
     name: findFunctionName(node),
@@ -587,7 +606,8 @@ function isBooleanOperator(node: Parser.SyntaxNode): boolean {
 
 function collectCalls(
   root: Parser.SyntaxNode,
-  language: LanguageDefinition
+  language: LanguageDefinition,
+  constructedTypeNames: Set<string> = new Set()
 ): { callCount: number; callees: Set<string> } {
   const callees = new Set<string>();
   const functionNodeTypes = new Set(language.functionNodeTypes);
@@ -604,6 +624,9 @@ function collectCalls(
       if (callee) {
         callees.add(callee);
       }
+    } else if (isCppConstruction(node, constructedTypeNames)) {
+      // Constructors are overloaded by definition, so construction adds no callee edge.
+      callCount += 1;
     }
 
     for (const child of node.namedChildren) {
@@ -613,6 +636,47 @@ function collectCalls(
 
   visit(root, true);
   return { callCount, callees };
+}
+
+/**
+ * C++ direct and list construction (`Foo a(1)`, `Foo b{2}`, `Foo{3}`) invoke a constructor without
+ * a call node. Only types defined in the measured tree count, so scalar initialization
+ * (`int a(1)`) and external types stay excluded.
+ */
+function isCppConstruction(node: Parser.SyntaxNode, constructedTypeNames: Set<string>): boolean {
+  if (constructedTypeNames.size === 0) {
+    return false;
+  }
+  if (node.type === 'compound_literal_expression') {
+    const typeNode = node.childForFieldName('type');
+    return typeNode?.type === 'type_identifier' && constructedTypeNames.has(typeNode.text);
+  }
+  if (node.type === 'init_declarator') {
+    const value = node.childForFieldName('value');
+    if (value?.type !== 'argument_list' && value?.type !== 'initializer_list') {
+      return false;
+    }
+    const typeNode = node.parent?.childForFieldName('type');
+    return typeNode?.type === 'type_identifier' && constructedTypeNames.has(typeNode.text);
+  }
+  return false;
+}
+
+const cppClassSpecifierTypes = new Set(['class_specifier', 'struct_specifier', 'union_specifier']);
+
+/** Names of C++ class-like types defined (with a body) in this tree, for construction counting. */
+function collectConstructedTypeNames(root: Parser.SyntaxNode, language: LanguageDefinition): Set<string> {
+  const names = new Set<string>();
+  if (language.name !== 'cpp') {
+    return names;
+  }
+  for (const node of collectNodes(root, cppClassSpecifierTypes)) {
+    const name = node.childForFieldName('name')?.text;
+    if (name && node.childForFieldName('body')) {
+      names.add(name);
+    }
+  }
+  return names;
 }
 
 /**
@@ -2048,6 +2112,21 @@ function isCountableQuestionToken(node: Parser.SyntaxNode, text: string): boolea
 }
 
 function findRightmostIdentifier(node: Parser.SyntaxNode): string | undefined {
+  // Generic-call wrappers (Rust `helper::<T>()`, C++ `helper<T>()`/`obj.get<T>()`) put type
+  // arguments after the callee, so the right-to-left search below would return the type argument;
+  // the callee lives in the `function`/`name` field.
+  if (node.type === 'generic_function' || node.type === 'template_function' || node.type === 'template_method') {
+    const calleeNode = node.childForFieldName('function') ?? node.childForFieldName('name');
+    if (calleeNode) {
+      return findRightmostIdentifier(calleeNode);
+    }
+  }
+
+  // Explicit destructor calls (`x.~Foo()`) must keep the atomic `~Foo` to match their definition.
+  if (node.type === 'destructor_name') {
+    return node.text;
+  }
+
   if (
     node.type === 'identifier' ||
     node.type === 'property_identifier' ||
@@ -2197,7 +2276,12 @@ function findRubyRequireSources(node: Parser.SyntaxNode): string[] {
   const source =
     contentNodes.length > 0 ? contentNodes.map((child) => child.text).join('') : unquote(firstArgument.text);
   const isRelative = node.childForFieldName('method')?.text === 'require_relative';
-  return [isRelative && !source.startsWith('.') ? `./${source}` : source];
+  if (isRelative) {
+    return [source.startsWith('.') ? source : `./${source}`];
+  }
+  // Plain `require`/`load` resolve `./`/`../` paths against the process CWD, not the requiring
+  // file, so the relative prefix is stripped to keep the source unresolvable as file-relative.
+  return [source.replace(/^(?:\.\.?\/)+/u, '')];
 }
 
 function findDynamicImportSources(node: Parser.SyntaxNode): string[] {
