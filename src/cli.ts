@@ -110,8 +110,11 @@ const ignoredDirectoryNames = new Set([
 /** Caps the `Duplicate symbols` section so large repositories do not flood the report. */
 const maxDuplicateSymbolGroupLines = 10;
 
-const testDirectoryNames = new Set(['__tests__', 'test', 'tests']);
-const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-]test)\.[^.]+$/iu;
+const testDirectoryNames = new Set(['__tests__', 'test', 'tests', 'spec']);
+const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-](?:test|spec))\.[^.]+$/iu;
+// JUnit tests use a case-sensitive `Test.java` suffix; case-insensitive matching would catch
+// production files like `contest.java`.
+const javaTestFilePattern = /Test\.java$/u;
 
 // oxlint-disable-next-line unicorn/prefer-top-level-await -- CommonJS build output cannot preserve top-level await.
 void main().catch((error: unknown) => {
@@ -569,21 +572,25 @@ function findRiskyFileMetrics(
   const formattedFile = formatPath(file, displayRoot);
   addTrigger(triggers, 'file LOC', metrics.lines.code, thresholds.fileLoc);
   addTrigger(triggers, 'import sources', metrics.coupling.importSourceCount, thresholds.import);
+  const duplicateBlockDetail = formatDuplicateBlockGroups(metrics.duplication.duplicateBlockGroups);
   addTrigger(
     triggers,
     'duplicated blocks',
     metrics.duplication.duplicateBlockCount,
     thresholds.duplicateBlock,
-    formatDuplicateBlockGroups(metrics.duplication.duplicateBlockGroups)
+    duplicateBlockDetail
   );
   // Maximal-region selection deliberately compresses adjacent clones into few blocks, so severity
   // must track line coverage, not the block count. Flooring compares like the unrounded ratio
-  // against the integer threshold (29.5% must not trigger a >= 30 threshold).
+  // against the integer threshold (29.5% must not trigger a >= 30 threshold). The block ranges are
+  // repeated as detail because this trigger can fire alone, and a percentage without locations is
+  // not actionable.
   addTrigger(
     triggers,
     'duplicated lines (%)',
     Math.floor(metrics.duplication.duplicationRatio * 100),
-    thresholds.duplicationRatioPercent
+    thresholds.duplicationRatioPercent,
+    duplicateBlockDetail
   );
   if (architecture) {
     const hasFileScaleRisk = metrics.lines.code >= 100 || architecture.directLocalDependencyCount >= 8;
@@ -1000,7 +1007,11 @@ function getLanguage(file: string, options: ResolvedOptions, explicitTarget = fa
     return undefined;
   }
 
-  if (!explicitTarget && !options.includeTests && testFilePattern.test(path.basename(file))) {
+  if (
+    !explicitTarget &&
+    !options.includeTests &&
+    (testFilePattern.test(path.basename(file)) || javaTestFilePattern.test(path.basename(file)))
+  ) {
     return undefined;
   }
 

@@ -65,6 +65,7 @@ const operatorTexts = new Set([
   '?',
   '//',
   '//=',
+  '@',
   '@=',
   ':=',
   '<-',
@@ -504,6 +505,8 @@ const bodyRequiredFunctionTypes = new Set([
   'method_declaration',
   'constructor_declaration',
   'compact_constructor_declaration',
+  // Rust trait method signatures (`fn required(&self);`) never carry a body.
+  'function_signature_item',
 ]);
 
 function isImplementedFunction(node: Parser.SyntaxNode): boolean {
@@ -628,7 +631,10 @@ function collectCalls(
 
     if (isCallNode(node)) {
       callCount += 1;
-      const callee = findCalleeName(node);
+      // C++ `new Widget()` names an overloaded constructor, so — like direct construction — it
+      // counts as a call without a callee edge. JS `new Foo()` keeps its edge to the function.
+      const isCppNew = language.name === 'cpp' && node.type === 'new_expression';
+      const callee = isCppNew ? undefined : findCalleeName(node);
       if (callee) {
         callees.add(callee);
       }
@@ -1425,6 +1431,8 @@ function isAssignmentNode(node: Parser.SyntaxNode): boolean {
     node.type === 'operator_assignment' ||
     node.type === 'short_var_declaration' ||
     node.type === 'compound_assignment_expr' ||
+    // Python's walrus (`if (n := len(xs)):`) binds like an assignment.
+    node.type === 'named_expression' ||
     // Increment/decrement mutate their operand: JS/TS/Java/C/C++ `i++`, Go `i++`/`i--` statements.
     node.type === 'update_expression' ||
     node.type === 'inc_statement' ||
@@ -1873,7 +1881,7 @@ function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics
       // types are never operand types. A blanket `isNamed` guard would break JS's named `optional_chain`.
       if (operandNodeTypes.has(node.type)) {
         incrementCount(operands, text);
-      } else if ((operatorTexts.has(text) || operatorTexts.has(node.type)) && isCountableQuestionToken(node, text)) {
+      } else if ((operatorTexts.has(text) || operatorTexts.has(node.type)) && isCountableContextualToken(node, text)) {
         incrementCount(operators, text || node.type);
       }
       return;
@@ -2180,9 +2188,16 @@ const questionOperatorParentTypes = new Set([
   'conditional_expression',
   'conditional',
   'try_expression',
+  // TypeScript conditional types (`T extends U ? X : Y`) select like a ternary.
+  'conditional_type',
 ]);
 
-function isCountableQuestionToken(node: Parser.SyntaxNode, text: string): boolean {
+function isCountableContextualToken(node: Parser.SyntaxNode, text: string): boolean {
+  if (text === '@') {
+    // Python matrix multiplication only; decorator/annotation `@` marks are not operators.
+    const parentType = node.parent?.type;
+    return parentType === 'binary_operator' || parentType === 'augmented_assignment';
+  }
   if (text !== '?') {
     return true;
   }
