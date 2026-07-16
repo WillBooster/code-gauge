@@ -118,7 +118,10 @@ function measureDependencyGraph(files: SourceFile[]): DependencyGraph {
       const resolved = resolveLocalImport(file.relativeFile, source, fileSet, javaFileIndex);
       if (resolved) {
         dependencies.add(resolved);
-        if (!source.startsWith('.')) {
+        // Only Java needs the external-count correction: its dotted imports classify as external
+        // in coupling metrics. Rust crate::/self::/super:: sources already classify as relative,
+        // so counting them would double-subtract from externalImportCount.
+        if (file.relativeFile.endsWith('.java') && !source.startsWith('.')) {
           nonRelativeLocalImportCount += 1;
         }
       }
@@ -143,23 +146,12 @@ function resolveLocalImport(
     return fromFile.endsWith('.java') ? resolveJavaImport(source, javaFileIndex) : undefined;
   }
   const bases = localImportBases(fromFile, source);
-
-  // An explicit-path source (`#include "b.hpp"`, `require_relative "./b.rb"`) resolves exactly
-  // before any extension probing, so a sibling `b.ts` cannot shadow the named file.
-  for (const base of bases) {
-    if (fileSet.has(base)) {
-      return base;
-    }
-  }
-
-  const { extensions, indexFiles } = importProbes(fromFile);
   const fromExtension = path.extname(fromFile);
 
-  // The JS-family ESM remap follows TypeScript's substitution table: `./foo.js` may name `foo.ts`,
-  // but `./foo.mjs` may only name `foo.mts` (never an unrelated `foo.ts`), and vice versa for
-  // `.cjs`. Explicit `.ts`-family extensions have no substitutions (the exact match above covers
-  // them), and non-JS importers never remap, so `#include "config.inc"` cannot rebind to
-  // unrelated same-stem files.
+  // The JS-family ESM remap follows TypeScript's substitution table, which tries the TypeScript
+  // source BEFORE the named JS file: `./foo.js` names `foo.ts` even when `foo.js` also exists,
+  // and `./foo.mjs` may only name `foo.mts` (never an unrelated `foo.ts`), vice versa for `.cjs`.
+  // Non-JS importers never remap, so `#include "config.inc"` cannot rebind to same-stem files.
   if (jsExtensions.has(fromExtension)) {
     for (const base of bases) {
       const substitutions = jsImportExtensionSubstitutions.get(path.extname(base));
@@ -174,6 +166,17 @@ function resolveLocalImport(
       }
     }
   }
+
+  // An explicit-path source (`#include "b.hpp"`, `require_relative "./b.rb"`, `./foo.js` with no
+  // TypeScript counterpart) resolves exactly before extension probing, so a sibling `b.ts` cannot
+  // shadow the named file.
+  for (const base of bases) {
+    if (fileSet.has(base)) {
+      return base;
+    }
+  }
+
+  const { extensions, indexFiles } = importProbes(fromFile);
 
   // Extension probing keeps each base's full name, so `./user.service` prefers `user.service.ts`.
   for (const stem of bases) {

@@ -95,13 +95,18 @@ const statementContainerTypes = new Set([
  */
 const anonymizedIdentifierTypes = new Set([
   'identifier',
-  'shorthand_property_identifier',
-  'shorthand_property_identifier_pattern',
   'constant',
   'instance_variable',
   'class_variable',
   'global_variable',
 ]);
+
+/**
+ * JS shorthand properties (`{ alpha }`) both emit the property name (semantic output shape) and
+ * reference the binding, so they tokenize as the desugared `name: binding` — one verbatim text
+ * token plus one anonymized id token — matching how the explicit form is tokenized.
+ */
+const shorthandPropertyTypes = new Set(['shorthand_property_identifier', 'shorthand_property_identifier_pattern']);
 
 /** Literal leaves normalized to a kind tag so copies differing only in literal values still match. */
 const literalKindByType = new Map([
@@ -276,6 +281,11 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
     return;
   }
 
+  if (node.isNamed && shorthandPropertyTypes.has(node.type)) {
+    tokens.push({ kind: 'text', text: node.text }, { kind: 'id', text: node.text });
+    return;
+  }
+
   if (node.isNamed && anonymizedIdentifierTypes.has(node.type) && !isSemanticNameLeaf(node)) {
     tokens.push({ kind: 'id', text: node.text });
     return;
@@ -301,6 +311,12 @@ function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
 
   // `call` names its callee `method` in Ruby but `function` in Python; accept both fields.
   if (parent.type === 'call' && parent.childForFieldName('function')?.id === node.id) {
+    return true;
+  }
+
+  // A Ruby constant receiving a call (`Alpha.new(...)`) names the invoked API; constants used as
+  // plain values stay anonymized so renamed clones referencing constants still match.
+  if (node.type === 'constant' && parent.type === 'call' && parent.childForFieldName('receiver')?.id === node.id) {
     return true;
   }
 

@@ -316,7 +316,7 @@ function measureStructuralMetrics(
     coupling: measureCoupling(root, language),
     module: measureModule(root, language),
     cohesion: measureCohesion(analyses),
-    syntaxFeatures: measureSyntaxFeatures(root),
+    syntaxFeatures: measureSyntaxFeatures(root, language.name),
     typeComplexity: measureTypeComplexity(root),
   };
 }
@@ -1063,9 +1063,26 @@ const cVariableDeclaratorTypes = new Set([
 
 /**
  * A bare `function_declarator` (`int f(int);`) is a prototype, but one whose name is parenthesized
- * (`int (*fp)(int);`) declares a function-pointer variable.
+ * (`int (*fp)(int);`) declares a function-pointer variable. Pointer/reference-returning prototypes
+ * (`int *f(void);`) wrap the function declarator and are prototypes all the same.
  */
 function isCVariableDeclarator(node: Parser.SyntaxNode): boolean {
+  if (node.type === 'pointer_declarator' || node.type === 'reference_declarator') {
+    let current: Parser.SyntaxNode | null | undefined = node;
+    while (
+      current &&
+      (current.type === 'pointer_declarator' ||
+        current.type === 'reference_declarator' ||
+        current.type === 'array_declarator')
+    ) {
+      current = nextDeclarator(current);
+    }
+    if (current?.type === 'function_declarator') {
+      return current.childForFieldName('declarator')?.type === 'parenthesized_declarator';
+    }
+    return true;
+  }
+
   if (cVariableDeclaratorTypes.has(node.type)) {
     return true;
   }
@@ -1098,7 +1115,7 @@ function isMisparsedCppModuleDeclaration(node: Parser.SyntaxNode): boolean {
  * flood cross-file duplicate-symbol groups.
  */
 function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean, isCpp = false): DeclarationMetrics[] {
-  if (isMisparsedCppModuleDeclaration(node) || hasStorageClass(node, 'static')) {
+  if ((isCpp && isMisparsedCppModuleDeclaration(node)) || hasStorageClass(node, 'static')) {
     return [];
   }
   // `struct Foo { int x; } value;` defines the tag `Foo` alongside the variable; body-less type
@@ -1357,7 +1374,7 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
   };
 }
 
-function measureSyntaxFeatures(root: Parser.SyntaxNode): SyntaxFeatureMetrics {
+function measureSyntaxFeatures(root: Parser.SyntaxNode, languageName: string): SyntaxFeatureMetrics {
   const metrics: SyntaxFeatureMetrics = {
     assignmentCount: 0,
     awaitExpressionCount: 0,
@@ -1378,7 +1395,7 @@ function measureSyntaxFeatures(root: Parser.SyntaxNode): SyntaxFeatureMetrics {
     if (isLoopNode(node)) {
       metrics.loopStatementCount += 1;
     }
-    metrics.mutableBindingCount += countMutableBindings(node);
+    metrics.mutableBindingCount += countMutableBindings(node, languageName);
     if (isReturnNode(node)) {
       metrics.returnStatementCount += 1;
     }
@@ -1439,29 +1456,29 @@ function isLoopNode(node: Parser.SyntaxNode): boolean {
   );
 }
 
-/** Java and C/C++ declare several bindings per statement, so each mutable declarator counts. */
-function countMutableBindings(node: Parser.SyntaxNode): number {
-  // Java (`variable_declarator` children) and C/C++ (declarator children) both use
-  // `field_declaration` for members, so the two are told apart by shape, not node type.
-  if (node.type === 'local_variable_declaration' || node.type === 'field_declaration') {
+/**
+ * Java and C/C++ declare several bindings per statement, so each mutable declarator counts. The
+ * C/C++ branches are language-gated because `field_declaration` is a shared node type: Go and
+ * Rust struct fields would otherwise count as mutable bindings.
+ */
+function countMutableBindings(node: Parser.SyntaxNode, languageName: string): number {
+  const isC = languageName === 'c' || languageName === 'cpp';
+  if (node.type === 'local_variable_declaration' || (node.type === 'field_declaration' && languageName === 'java')) {
     const javaDeclarators = node.namedChildren.filter((child) => child.type === 'variable_declarator');
-    if (javaDeclarators.length > 0) {
-      return isJavaMutableDeclaration(node) ? javaDeclarators.length : 0;
-    }
-    return countCMutableBindings(node);
+    return isJavaMutableDeclaration(node) ? javaDeclarators.length : 0;
   }
 
-  if (node.type === 'declaration') {
-    return countCMutableBindings(node);
+  if (isC && (node.type === 'declaration' || node.type === 'field_declaration')) {
+    return countCMutableBindings(node, languageName === 'cpp');
   }
 
   // tree-sitter-cpp parses the in-class `int count = 0;` member as a pure-virtual-like
   // `function_definition` whose declarator is a bare field name; real functions have a
   // `function_declarator` and stay excluded.
-  if (node.type === 'function_definition') {
+  if (isC && node.type === 'function_definition') {
     const declarator = node.childForFieldName('declarator');
     if (declarator?.type === 'field_identifier' || declarator?.type === 'identifier') {
-      return countCMutableBindings(node);
+      return countCMutableBindings(node, languageName === 'cpp');
     }
     return 0;
   }
@@ -1474,8 +1491,9 @@ function countMutableBindings(node: Parser.SyntaxNode): number {
   return isMutableBindingNode(node) ? 1 : 0;
 }
 
-function countCMutableBindings(node: Parser.SyntaxNode): number {
-  if (isMisparsedCppModuleDeclaration(node)) {
+function countCMutableBindings(node: Parser.SyntaxNode, isCpp: boolean): number {
+  // The module-syntax misparse only exists in the C++ grammar; in C, `module` is an identifier.
+  if (isCpp && isMisparsedCppModuleDeclaration(node)) {
     return 0;
   }
   return sum(
@@ -1818,10 +1836,17 @@ function isCommentOnlyLine(line: string, lineIndex: number, spans: CommentSpan[]
     return false;
   }
 
-  const firstContentColumn = line.search(/\S/);
-  const lastContentColumn = line.trimEnd().length;
-
-  return relevantSpans.some((span) => span.startColumn <= firstContentColumn && span.endColumn >= lastContentColumn);
+  // A line may hold several comments (`/* one */ /* two */`), so every non-whitespace column must
+  // be covered by the UNION of spans, not by a single span.
+  for (let column = 0; column < line.length; column += 1) {
+    if (/\s/u.test(line[column] ?? ' ')) {
+      continue;
+    }
+    if (!relevantSpans.some((span) => span.startColumn <= column && column < span.endColumn)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics {
