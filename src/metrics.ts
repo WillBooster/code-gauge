@@ -268,7 +268,7 @@ export class TreeMeasurer {
       cohesion: structuralMetrics.cohesion,
       syntaxFeatures: structuralMetrics.syntaxFeatures,
       typeComplexity: structuralMetrics.typeComplexity,
-      duplication: measureDuplication(root, lines.code),
+      duplication: measureDuplication(root, collectCodeLineNumbers(code, root)),
       halstead,
       maintainabilityIndex: calculateMaintainabilityIndex(
         halstead.volume,
@@ -1283,8 +1283,37 @@ function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): Declar
     return [];
   }
 
+  // C/C++ enumerators are constants declared in the surrounding scope; scoped-enum (`enum class`)
+  // members are qualified by the enum name instead.
+  if (node.type === 'enum_specifier') {
+    return declarationsFromEnumSpecifier(node, exported);
+  }
+
   const name = findDeclarationName(node);
   return name ? [{ exported, name, startLine: node.startPosition.row + 1 }] : [];
+}
+
+function declarationsFromEnumSpecifier(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+  const declarations: DeclarationMetrics[] = [];
+  const tagName = node.childForFieldName('name')?.text;
+  if (tagName) {
+    declarations.push({ exported, name: tagName, startLine: node.startPosition.row + 1 });
+  }
+  const isScoped = node.children.some((child) => !child.isNamed && (child.text === 'class' || child.text === 'struct'));
+  for (const enumerator of node.childForFieldName('body')?.namedChildren ?? []) {
+    if (enumerator.type !== 'enumerator') {
+      continue;
+    }
+    const name = enumerator.childForFieldName('name')?.text;
+    if (name) {
+      declarations.push({
+        exported,
+        name: isScoped && tagName ? `${tagName}::${name}` : name,
+        startLine: enumerator.startPosition.row + 1,
+      });
+    }
+  }
+  return declarations;
 }
 
 function findDeclarationName(node: Parser.SyntaxNode): string | undefined {
@@ -1604,6 +1633,21 @@ function countMutableBindings(node: Parser.SyntaxNode, languageName: string): nu
     return isJavaMutableDeclaration(node) ? 1 : 0;
   }
 
+  // Java pattern variables (`o instanceof String s`, `case String s ->`, record-pattern
+  // components) are reassignable local variables unless final (JLS 4.12.4). `final` appears as an
+  // anonymous keyword leaf on the pattern, not inside a `modifiers` node.
+  if (
+    languageName === 'java' &&
+    (node.type === 'instanceof_expression' || node.type === 'type_pattern' || node.type === 'record_pattern_component')
+  ) {
+    const bindsName =
+      node.type === 'instanceof_expression'
+        ? node.childForFieldName('name') !== null
+        : node.namedChildren.some((child) => child.type === 'identifier');
+    const isFinal = node.children.some((child) => !child.isNamed && child.text === 'final');
+    return bindsName && !isFinal ? 1 : 0;
+  }
+
   // C++ `for (int x : xs)` binds directly in the loop's declarator field.
   if (isC && node.type === 'for_range_loop') {
     const declarator = node.childForFieldName('declarator');
@@ -1903,6 +1947,22 @@ function measureTypeComplexity(root: Parser.SyntaxNode): TypeComplexityMetrics {
 
   visit(root);
   return metrics;
+}
+
+/**
+ * 1-based numbers of lines that are neither blank nor comment-only, matching measureLines'
+ * classification so duplication line coverage and its code-line denominator agree.
+ */
+function collectCodeLineNumbers(code: string, root: Parser.SyntaxNode): Set<number> {
+  const sourceLines = code.length === 0 ? [] : code.split(/\r\n|\n|\r/);
+  const commentSpans = collectCommentSpans(root);
+  const codeLineNumbers = new Set<number>();
+  for (const [index, line] of sourceLines.entries()) {
+    if (line.trim() !== '' && !isCommentOnlyLine(line, index, commentSpans)) {
+      codeLineNumbers.add(index + 1);
+    }
+  }
+  return codeLineNumbers;
 }
 
 function measureLines(code: string, root: Parser.SyntaxNode): CodeMetrics['lines'] {

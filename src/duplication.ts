@@ -234,7 +234,7 @@ interface DuplicateCandidate {
  * consecutive sibling statements, so a copy pasted into the middle of a longer block is still
  * found. Only maximal, non-overlapping regions are counted.
  */
-export function measureDuplication(root: Parser.SyntaxNode, codeLines: number): DuplicationMetrics {
+export function measureDuplication(root: Parser.SyntaxNode, codeLineNumbers: Set<number>): DuplicationMetrics {
   const tokens: Token[] = [];
   const blockRanges: TokenRange[] = [];
   const containerStatementRanges: TokenRange[][] = [];
@@ -245,7 +245,7 @@ export function measureDuplication(root: Parser.SyntaxNode, codeLines: number): 
     ...collectSequenceCandidates(tokens, containerStatementRanges),
   ];
   const counted = selectMaximalDuplicates(candidates);
-  return summarizeDuplicates(counted, codeLines, tokens);
+  return summarizeDuplicates(counted, codeLineNumbers, tokens);
 }
 
 function collectTokens(
@@ -719,7 +719,7 @@ function overlaps(
 
 function summarizeDuplicates(
   counted: Map<string, DuplicateCandidate[]>,
-  codeLines: number,
+  codeLineNumbers: Set<number>,
   tokens: Token[]
 ): DuplicationMetrics {
   let duplicateBlockCount = 0;
@@ -730,12 +730,15 @@ function summarizeDuplicates(
     duplicateBlockCount += group.length - 1;
     for (const candidate of group) {
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, candidate.tokenCount);
-      // Only lines carrying matched tokens count: comments and blank gaps inside a candidate's
-      // bounding range are not duplicated content and must not inflate the ratio.
+      // Only CODE lines carrying matched tokens count: comments and blank gaps inside a
+      // candidate's bounding range — and blank rows inside a multi-row token (heredocs, template
+      // literals) — are not duplicated content and would push the ratio past 1.
       for (let index = candidate.startTokenIndex; index < candidate.endTokenIndex; index += 1) {
         const token = tokens[index];
         for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
-          duplicatedLines.add(row + 1);
+          if (codeLineNumbers.has(row + 1)) {
+            duplicatedLines.add(row + 1);
+          }
         }
       }
     }
@@ -752,7 +755,7 @@ function summarizeDuplicates(
     duplicateBlockGroupCount: counted.size,
     duplicateBlockGroups,
     duplicateLineCount: duplicatedLines.size,
-    duplicationRatio: codeLines === 0 ? 0 : duplicatedLines.size / codeLines,
+    duplicationRatio: codeLineNumbers.size === 0 ? 0 : duplicatedLines.size / codeLineNumbers.size,
     maxDuplicateBlockSize,
   };
 }
