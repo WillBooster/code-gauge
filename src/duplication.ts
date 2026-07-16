@@ -130,6 +130,9 @@ const literalKindByType = new Map([
   ['string_content', '#str'],
   ['raw_string_content', '#str'],
   ['heredoc_content', '#str'],
+  // Heredoc marker names (`<<~SQL` vs `<<~QUERY`) have no string-value significance.
+  ['heredoc_beginning', '#heredoc'],
+  ['heredoc_end', '#heredoc'],
   // Strings are leaves in some grammars (Go/Rust) and fragment containers in others.
   ['string', '#str'],
   ['template_string', '#str'],

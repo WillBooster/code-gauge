@@ -663,6 +663,20 @@ function collectCalls(
       if (callee) {
         callees.add(callee);
       }
+      // Ruby abbreviated assignment on a receiver (`self.foo += 1`, `self.foo ||= x`) invokes the
+      // getter (the call node itself) AND the setter, so the setter is one extra call.
+      if (
+        language.name === 'ruby' &&
+        node.type === 'call' &&
+        node.parent?.type === 'operator_assignment' &&
+        node.parent.childForFieldName('left')?.id === node.id
+      ) {
+        callCount += 1;
+        const setterMethod = node.childForFieldName('method');
+        if (setterMethod) {
+          callees.add(`${setterMethod.text}=`);
+        }
+      }
     } else if (isRubyImplicitCall(node, language) || isCppConstruction(node, constructedTypeNames)) {
       // `yield x` invokes the block, not its argument `x`, and constructors are overloaded by
       // definition, so neither adds a callee edge.
@@ -1034,23 +1048,33 @@ function collectTopLevelDeclarations(
     return declarationsFromRubyType(node, exported, scope);
   }
 
-  // Ruby constant assignment (`FOO = 1`) is the language's only constant syntax; constants are a
-  // module's canonical public API. Other grammars never put a `constant` node on an assignment LHS.
-  if (node.type === 'assignment') {
-    return qualifyDeclarations(rubyConstantDeclaration(node, exported), scope);
+  // Ruby constant assignment (`FOO = 1`, `MIN, MAX = 1, 10`, `LIMIT ||= 10`) is the language's
+  // only constant syntax; constants are a module's canonical public API. Other grammars never
+  // put a `constant` node on an assignment LHS.
+  if (node.type === 'assignment' || node.type === 'operator_assignment') {
+    return qualifyDeclarations(rubyConstantDeclarations(node, exported), scope, true);
   }
 
   return qualifyDeclarations(declarationFromNode(node, exported), scope);
 }
 
-function qualifyDeclarations(declarations: DeclarationMetrics[], scope: string): DeclarationMetrics[] {
+/**
+ * Prefixes declarations with the enclosing scope. Ruby callers pass `skipQualified` because
+ * `class A::B` / `A::C = 1` names are already qualified and re-prefixing would double them
+ * (`A::A::B`); C++ out-of-line names (`Widget::process`) must still gain their namespace prefix.
+ */
+function qualifyDeclarations(
+  declarations: DeclarationMetrics[],
+  scope: string,
+  skipQualified = false
+): DeclarationMetrics[] {
   if (!scope) {
     return declarations;
   }
-  // Ruby `class A::B` / `A::C = 1` names are already qualified; re-prefixing the enclosing module
-  // would double it (`A::A::B`).
   return declarations.map((declaration) =>
-    declaration.name.includes('::') ? declaration : { ...declaration, name: `${scope}${declaration.name}` }
+    skipQualified && declaration.name.includes('::')
+      ? declaration
+      : { ...declaration, name: `${scope}${declaration.name}` }
   );
 }
 
@@ -1062,7 +1086,7 @@ const rubyTypeNodeTypes = new Set(['module', 'class', 'singleton_class']);
  * duplicate-symbol groups.
  */
 function declarationsFromRubyType(node: Parser.SyntaxNode, exported: boolean, scope = ''): DeclarationMetrics[] {
-  const declarations = qualifyDeclarations(declarationFromNode(node, exported), scope);
+  const declarations = qualifyDeclarations(declarationFromNode(node, exported), scope, true);
   // Nested types and constants are qualified by their enclosing module path (`Alpha::LIMIT`) so
   // same-named symbols under different modules stay distinct in cross-file symbol groups.
   const childScope = declarations[0] ? `${declarations[0].name}::` : scope;
@@ -1070,23 +1094,34 @@ function declarationsFromRubyType(node: Parser.SyntaxNode, exported: boolean, sc
   for (const child of bodyNode?.namedChildren ?? []) {
     if (rubyTypeNodeTypes.has(child.type)) {
       declarations.push(...declarationsFromRubyType(child, exported, childScope));
-    } else if (child.type === 'assignment') {
-      declarations.push(...qualifyDeclarations(rubyConstantDeclaration(child, exported), childScope));
+    } else if (child.type === 'assignment' || child.type === 'operator_assignment') {
+      declarations.push(...qualifyDeclarations(rubyConstantDeclarations(child, exported), childScope, true));
     }
   }
   return declarations;
 }
 
 /**
- * Emits a declaration for a Ruby `CONST = ...` or qualified `A::CONST = ...` assignment; other
- * assignments (locals, ivars, `Foo.bar =` setters) declare nothing.
+ * Emits declarations for Ruby constant assignments: `CONST = ...`, qualified `A::CONST = ...`,
+ * multiple `MIN, MAX = ...`, and `CONST ||= ...` (the only operator assignment that can define an
+ * unset constant); other assignments (locals, ivars, `Foo.bar =` setters) declare nothing.
  */
-function rubyConstantDeclaration(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+function rubyConstantDeclarations(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
+  if (node.type === 'operator_assignment' && !node.children.some((child) => !child.isNamed && child.text === '||=')) {
+    return [];
+  }
   const left = node.childForFieldName('left');
-  const declaresConstant =
-    left?.type === 'constant' ||
-    (left?.type === 'scope_resolution' && left.childForFieldName('name')?.type === 'constant');
-  return left && declaresConstant ? [{ exported, name: left.text, startLine: left.startPosition.row + 1 }] : [];
+  if (!left) {
+    return [];
+  }
+  const targets = left.type === 'left_assignment_list' ? left.namedChildren : [left];
+  return targets
+    .filter(
+      (target) =>
+        target.type === 'constant' ||
+        (target.type === 'scope_resolution' && target.childForFieldName('name')?.type === 'constant')
+    )
+    .map((target) => ({ exported, name: target.text, startLine: target.startPosition.row + 1 }));
 }
 
 function declarationsFromTypeDefinition(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
@@ -1399,7 +1434,12 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
   let exportCount = 0;
 
   function visit(node: Parser.SyntaxNode): void {
-    if (isImportNode(node) || isDynamicImportNode(node) || isRubyRequireCall(node, language)) {
+    if (
+      isImportNode(node) ||
+      isRustModDeclaration(node, language) ||
+      isDynamicImportNode(node) ||
+      isRubyRequireCall(node, language)
+    ) {
       importCount += 1;
     }
 
@@ -1716,9 +1756,10 @@ function isTryNode(node: Parser.SyntaxNode): boolean {
  * counting in other languages.
  */
 function isRubyRescueConstruct(node: Parser.SyntaxNode): boolean {
+  // `ensure`-only constructs (`begin ... ensure ... end`) handle exceptions like try/finally.
   return (
     (node.type === 'begin' || node.type === 'body_statement') &&
-    node.namedChildren.some((child) => child.type === 'rescue')
+    node.namedChildren.some((child) => child.type === 'rescue' || child.type === 'ensure')
   );
 }
 
@@ -2056,7 +2097,8 @@ function nextDeclarator(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined 
  * Unwraps a C/C++ declarator chain to the declared name, handling parenthesized declarators
  * (function pointers), qualified names, destructors, and operator overloads explicitly; a
  * rightmost-identifier fallback would pick up parameter names from nested `function_declarator`s.
- * With `qualified`, out-of-line scopes are kept (`Foo::process` -> `Foo.process`, mirroring Go's
+ * With `qualified`, out-of-line scopes are kept with `::` (`Foo::process` stays `Foo::process`,
+ * matching namespace qualification so both spellings of a symbol group together; unlike Go's
  * `Receiver.Method` declarations) so same-named methods of different types do not collide in
  * cross-file duplicate-symbol groups; call-graph names stay unqualified so callee matching works.
  */
@@ -2070,13 +2112,13 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null, qualified = 
       case 'type_identifier':
       case 'destructor_name':
       case 'operator_name': {
-        return scopePrefix ? `${scopePrefix}.${current.text}` : current.text;
+        return scopePrefix ? `${scopePrefix}::${current.text}` : current.text;
       }
       // A C++ conversion operator (`operator int()`) is its own declarator node whose text spans
       // the parameter list and qualifiers; only `operator <type>` is the name.
       case 'operator_cast': {
         const name = `operator ${current.childForFieldName('type')?.text ?? ''}`.trimEnd();
-        return scopePrefix ? `${scopePrefix}.${name}` : name;
+        return scopePrefix ? `${scopePrefix}::${name}` : name;
       }
       // Template specializations (`id<int>`) and qualified names both carry a `name` field.
       case 'template_function': {
@@ -2087,7 +2129,7 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null, qualified = 
         if (qualified) {
           const scope = current.childForFieldName('scope')?.text.replaceAll(/\s+/gu, '');
           if (scope) {
-            scopePrefix = scopePrefix ? `${scopePrefix}.${scope}` : scope;
+            scopePrefix = scopePrefix ? `${scopePrefix}::${scope}` : scope;
           }
         }
         current = current.childForFieldName('name');
@@ -2350,6 +2392,8 @@ function isImportNode(node: Parser.SyntaxNode): boolean {
     node.type === 'import_spec_list' ||
     node.type === 'use_declaration' ||
     node.type === 'extern_crate_declaration' ||
+    // JPMS `requires` directives in module-info.java declare module dependences (JLS 7.7.1).
+    node.type === 'requires_module_directive' ||
     node.type === 'preproc_include'
   );
 }
@@ -2404,6 +2448,12 @@ function findImportSources(
 
   if (language.name === 'rust') {
     return findRustImportSources(node);
+  }
+
+  // JPMS `requires [transitive|static] module.name;` names the depended-on module.
+  if (language.name === 'java' && node.type === 'requires_module_directive') {
+    const moduleNode = node.childForFieldName('module');
+    return moduleNode ? [normalizeImportSource(moduleNode.text)] : [];
   }
 
   if (language.name === 'java' && node.type === 'import_declaration') {

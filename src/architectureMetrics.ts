@@ -449,8 +449,8 @@ function measureDuplicateSymbolGroups(files: SourceFile[]): DuplicateSymbolGroup
 
 function isDuplicateSymbolCandidate(declaration: DeclarationMetrics): boolean {
   // The threshold applies to the local name so qualification cannot let short names sneak past
-  // it; the codebase emits both `::` (packages/namespaces/modules) and `.` (Go `Receiver.Method`,
-  // C++ out-of-line `Foo.process`) separators.
+  // it; the codebase emits both `::` (packages/namespaces/modules, C++ out-of-line names) and `.`
+  // (Go `Receiver.Method`) separators.
   const localName = declaration.name.split(/::|\./u).at(-1) ?? declaration.name;
   return localName.length >= duplicateSymbolNameLengthThreshold;
 }
