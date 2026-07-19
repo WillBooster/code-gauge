@@ -239,7 +239,9 @@ describe('measureCode: line, complexity, and Halstead metrics', () => {
 
 describe('measureCode: cognitive complexity and nesting', () => {
   // classify(): for (+1) → if with `&&` (+2 nesting, +1 logical) → nested if/else (+3). Cyclomatic
-  // complexity is 5 (base 1 + for + outer if + `&&` + inner if), which matches lizard 1.23.0.
+  // complexity is 5 (base 1 + for + outer if + `&&` + inner if), which matches lizard 1.23.0. The
+  // trailing plain `else` adds nothing today, so cognitive complexity is 7; under the strict
+  // SonarSource model it would be 8 (see issue #22). This expectation pins current behavior.
   it('rewards nesting in cognitive complexity beyond cyclomatic complexity', () => {
     const metrics = measureCode(readFixture('cognitiveNesting.js'), { language: 'javascript' });
 
@@ -267,6 +269,8 @@ describe('measureCode: call graph', () => {
     expect(byName.get('build')).toMatchObject({ recursive: false, fanOut: 2, callCount: 3, uniqueCalleeCount: 2 });
     expect(byName.get('combine')).toMatchObject({ fanIn: 1, fanOut: 0 });
 
+    // internalCallCount currently equals internalEdgeCount (unique caller→callee edges); it does not
+    // count call occurrences (which would be 4 here). This pins current behavior; see issue #22.
     expect(metrics.callGraph).toMatchObject({
       callCount: 4,
       internalCallCount: 3,

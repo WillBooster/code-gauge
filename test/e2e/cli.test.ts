@@ -19,10 +19,17 @@ interface CliResult {
 }
 
 function runCli(args: string[]): CliResult {
+  // A `timeout` bounds each subprocess: `spawnSync` blocks the event loop, so Vitest's own per-test
+  // timeout cannot interrupt a hung CLI. `result.error` (a spawn failure or the timeout itself) is
+  // surfaced as a thrown error rather than being silently reported as a normal non-zero exit.
   const result = spawnSync(process.execPath, [cliPath, ...args], {
     cwd: repoRoot,
     encoding: 'utf8',
+    timeout: 30_000,
   });
+  if (result.error) {
+    throw new Error(`Failed to run the CLI (${args.join(' ')}): ${result.error.message}`);
+  }
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
@@ -47,9 +54,17 @@ const riskyFile = `export function evaluate(kind: string, value: number): number
 let projectDir: string;
 
 beforeAll(() => {
-  const build = spawnSync('yarn', ['build'], { cwd: repoRoot, encoding: 'utf8' });
+  // On Windows, `yarn` is `yarn.cmd`, which Node 24 refuses to launch through `spawn` without a
+  // shell; passing the command as a single shell string avoids that and the DEP0190 args-with-shell
+  // warning. Elsewhere, resolve `yarn` on PATH directly (no shell).
+  const isWindows = process.platform === 'win32';
+  const build = isWindows
+    ? spawnSync('yarn build', { cwd: repoRoot, encoding: 'utf8', shell: true, timeout: 100_000 })
+    : spawnSync('yarn', ['build'], { cwd: repoRoot, encoding: 'utf8', timeout: 100_000 });
   if (build.status !== 0) {
-    throw new Error(`Failed to build the CLI before running E2E tests:\n${build.stdout}\n${build.stderr}`);
+    throw new Error(
+      `Failed to build the CLI before running E2E tests:\n${build.error?.message ?? ''}\n${build.stdout}\n${build.stderr}`
+    );
   }
 
   projectDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-cli-'));
@@ -57,6 +72,10 @@ beforeAll(() => {
   mkdirSync(path.join(projectDir, 'node_modules', 'pkg'), { recursive: true });
   mkdirSync(path.join(projectDir, 'test'), { recursive: true });
 
+  // The CLI searches ancestor directories for code-gauge.config.json and stops at the first hit, so
+  // an empty config at the project root bounds the search: an ambient config above the OS temp
+  // directory can no longer change thresholds and break these assertions.
+  writeFileSync(path.join(projectDir, 'code-gauge.config.json'), '{}\n');
   writeFileSync(path.join(projectDir, 'src', 'risky.ts'), riskyFile);
   // Two files declaring `helper` exercise cross-file duplicate-symbol detection.
   writeFileSync(
@@ -94,7 +113,8 @@ describe('cli: text report', () => {
     const { stdout } = runCli([projectDir]);
 
     expect(stdout).toContain('Duplicate symbols (top 1):');
-    expect(stdout).toMatch(/helper: src\/a\.ts:1, src\/b\.ts:1/);
+    // The CLI prints `path.relative()` output, which uses `\` on Windows and `/` elsewhere.
+    expect(stdout).toMatch(/helper: src[\\/]a\.ts:1, src[\\/]b\.ts:1/);
   });
 
   it('includes test files with --include-tests', () => {
@@ -107,7 +127,7 @@ describe('cli: text report', () => {
     const { stdout } = runCli([projectDir, '--largest-files', '2']);
 
     expect(stdout).toContain('Largest files by code LOC (top 2):');
-    expect(stdout).toMatch(/src\/risky\.ts \(code LOC \d+\)/);
+    expect(stdout).toMatch(/src[\\/]risky\.ts \(code LOC \d+\)/);
   });
 });
 
