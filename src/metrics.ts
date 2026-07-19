@@ -1,6 +1,7 @@
 import Parser from 'tree-sitter';
 import { measureDuplication } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
+import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
 import type {
   CallGraphMetrics,
   CodeMetrics,
@@ -252,6 +253,11 @@ export class TreeMeasurer {
       throw new Error(`Unsupported language: ${options.language}`);
     }
 
+    const nativePayload = measureWithNativeBackend(code, language, options.includeSyntaxTree ?? false);
+    if (nativePayload) {
+      return assembleNativeMetrics(nativePayload, options.includeSyntaxTree ?? false);
+    }
+
     const parser = new Parser();
     parser.setLanguage(language.parserLanguage);
     const tree = parser.parse(code, undefined, {
@@ -301,6 +307,57 @@ export const defaultMeasurer = new TreeMeasurer();
 
 export function measureCode(code: string, options: MeasureOptions): CodeMetrics {
   return defaultMeasurer.measure(code, options);
+}
+
+/**
+ * Completes a native measurement into CodeMetrics. The object is rebuilt field by field (rather
+ * than spread from the parsed JSON) so the result has exactly the shape the TypeScript backend
+ * produces, including explicitly-undefined optional keys.
+ */
+function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree: boolean): CodeMetrics {
+  const halstead = deriveHalsteadMetrics(payload.halsteadCounts);
+  return {
+    language: payload.language,
+    bytes: payload.bytes,
+    lines: payload.lines,
+    functions: payload.functions.map((fn) => ({
+      name: fn.name,
+      startLine: fn.startLine,
+      startColumn: fn.startColumn,
+      endLine: fn.endLine,
+      returnsJsx: fn.returnsJsx,
+      cyclomaticComplexity: fn.cyclomaticComplexity,
+      cognitiveComplexity: fn.cognitiveComplexity,
+      nestingDepth: fn.nestingDepth,
+      callCount: fn.callCount,
+      uniqueCalleeCount: fn.uniqueCalleeCount,
+      fanIn: fn.fanIn,
+      fanOut: fn.fanOut,
+      parameterCount: fn.parameterCount,
+      recursive: fn.recursive,
+    })),
+    classCount: payload.classCount,
+    functionCount: payload.functionCount,
+    cyclomaticComplexity: payload.cyclomaticComplexity,
+    maxCyclomaticComplexity: payload.maxCyclomaticComplexity,
+    cognitiveComplexity: payload.cognitiveComplexity,
+    maxCognitiveComplexity: payload.maxCognitiveComplexity,
+    nestingDepth: payload.nestingDepth,
+    callGraph: payload.callGraph,
+    coupling: payload.coupling,
+    module: payload.module,
+    cohesion: payload.cohesion,
+    syntaxFeatures: payload.syntaxFeatures,
+    typeComplexity: payload.typeComplexity,
+    duplication: payload.duplication,
+    halstead,
+    maintainabilityIndex: calculateMaintainabilityIndex(
+      halstead.volume,
+      payload.cyclomaticComplexity,
+      payload.lines.code
+    ),
+    syntaxTree: includeSyntaxTree ? payload.syntaxTree : undefined,
+  };
 }
 
 function measureStructuralMetrics(
@@ -950,9 +1007,12 @@ function returnsJsx(root: Parser.SyntaxNode, language: LanguageDefinition): bool
       return containsJsxExpression(node, functionNodeTypes) || containsReactCreateElementCall(node, functionNodeTypes);
     }
 
+    // Node identity must be compared by id: node-tree-sitter's per-tree wrapper cache does not
+    // survive garbage collection, so `===` between wrappers obtained through different accessors
+    // intermittently fails under memory pressure (observed as flaky returnsJsx=false in fuzzing).
     if (
       root.type === 'arrow_function' &&
-      node === getArrowFunctionBody(root) &&
+      node.id === getArrowFunctionBody(root)?.id &&
       node.type !== 'statement_block' &&
       !functionNodeTypes.has(node.type)
     ) {
@@ -2188,10 +2248,17 @@ function measureHalstead(root: Parser.SyntaxNode, code: string): HalsteadMetrics
 
   visit(root);
 
-  const distinctOperators = operators.size;
-  const distinctOperands = operands.size;
-  const totalOperators = sum(operators.values());
-  const totalOperands = sum(operands.values());
+  return deriveHalsteadMetrics({
+    distinctOperators: operators.size,
+    distinctOperands: operands.size,
+    totalOperators: sum(operators.values()),
+    totalOperands: sum(operands.values()),
+  });
+}
+
+/** Derives the full Halstead metrics from the four base counts (shared with the native backend). */
+function deriveHalsteadMetrics(counts: NativeHalsteadCounts): HalsteadMetrics {
+  const { distinctOperators, distinctOperands, totalOperators, totalOperands } = counts;
   const vocabulary = distinctOperators + distinctOperands;
   const length = totalOperators + totalOperands;
   const volume = vocabulary === 0 ? 0 : length * Math.log2(vocabulary);

@@ -132,6 +132,16 @@ Command-line `--<metric>-threshold` flags set the global base only; use the conf
 
 Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++. Additional tree-sitter grammars can be registered with `TreeMeasurer.registerLanguage`.
 
+## Native (Rust) backend
+
+Measurement is also implemented as a Rust addon that produces bit-identical metrics roughly 13x faster than the TypeScript backend (the tree-sitter grammar crates are pinned to the same versions as the npm grammar packages). With a [Rust toolchain](https://rustup.rs) installed, build it once:
+
+```sh
+yarn build-native
+```
+
+`measureCode` and the CLI pick up `native/code-gauge.node` automatically and fall back to the TypeScript implementation when the addon is missing (for example, on npm installs) or when a custom language has been registered. Set `CODE_GAUGE_NATIVE=0` to force the TypeScript backend, and compare both with `yarn benchmark` (requires `yarn build` first). `isNativeBackendAvailable()` reports which backend is in use.
+
 ## Programmatic API
 
 ```ts

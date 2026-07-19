@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -231,6 +231,33 @@ describe('cli: configuration', () => {
     ]);
 
     expect(stdout).toMatch(/cyclomatic >= 5/);
+  });
+});
+
+describe('cli: polyglot project scan', () => {
+  it('measures every supported language end-to-end and reports a consistent JSON summary', () => {
+    // The fixture directory itself is skipped by the scanner (`fixtures` is an ignored directory
+    // name), so the corpus is copied into a plain src/ layout inside a temp project.
+    const polyglotDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-polyglot-'));
+    try {
+      writeFileSync(path.join(polyglotDir, 'code-gauge.config.json'), '{}\n');
+      mkdirSync(path.join(polyglotDir, 'src'), { recursive: true });
+      const richDir = path.join(repoRoot, 'test', 'fixtures', 'rich');
+      for (const file of readdirSync(richDir)) {
+        copyFileSync(path.join(richDir, file), path.join(polyglotDir, 'src', file));
+      }
+
+      const { status, stdout } = runCli([polyglotDir, '--json']);
+      const report = JSON.parse(stdout);
+
+      expect(status).toBe(0);
+      expect(report.summary.fileCount).toBe(11);
+      expect(report.summary.functionCount).toBeGreaterThan(50);
+      expect(report.summary.linesOfCode).toBeGreaterThan(500);
+      expect(report.errors).toEqual([]);
+    } finally {
+      rmSync(polyglotDir, { recursive: true, force: true });
+    }
   });
 });
 

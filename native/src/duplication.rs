@@ -1,0 +1,945 @@
+use indexmap::IndexMap;
+use std::borrow::Cow;
+use std::collections::{HashMap, HashSet};
+use std::sync::OnceLock;
+use tree_sitter::Node;
+
+use crate::types::{DuplicateBlockOccurrence, DuplicationMetrics};
+use crate::util::{all_children, named_children, node_text, to_int32, Source};
+
+/// Block-like nodes considered as whole-subtree duplicate candidates; see duplication.ts.
+const DUPLICATE_BLOCK_TYPES: &[&str] = &[
+    "statement_block",
+    "block",
+    "compound_statement",
+    "body_statement",
+    "constructor_body",
+    "do_block",
+    "if_statement",
+    "for_statement",
+    "for_in_statement",
+    "enhanced_for_statement",
+    "for_range_loop",
+    "while_statement",
+    "do_statement",
+    "try_statement",
+    "try_with_resources_statement",
+    "with_statement",
+    "switch_statement",
+    "switch_expression",
+    "switch_case",
+    "switch_block_statement_group",
+    "switch_rule",
+    "case_clause",
+    "case_statement",
+    "match_statement",
+    "match_arm",
+    "except_clause",
+    "catch_clause",
+    "finally_clause",
+    "elif_clause",
+    "ensure",
+    "expression_statement",
+    "return_statement",
+    "return_expression",
+    "if_expression",
+    "for_expression",
+    "while_expression",
+    "loop_expression",
+    "match_expression",
+    "jsx_element",
+    "jsx_self_closing_element",
+    "if",
+    "unless",
+    "case",
+    "case_match",
+    "while",
+    "until",
+    "for",
+    "begin",
+    "when",
+];
+
+/// Nodes whose direct named children form statement sequences scanned for copy-pasted runs.
+const STATEMENT_CONTAINER_TYPES: &[&str] = &[
+    "program",
+    "source_file",
+    "translation_unit",
+    "module",
+    "statement_block",
+    "block",
+    "compound_statement",
+    "body_statement",
+    "constructor_body",
+    "class_body",
+    "block_body",
+    "do_block",
+    "do",
+    "ensure",
+    "then",
+    "else",
+    "case_statement",
+    "switch_block_statement_group",
+    "switch_rule",
+    "expression_case",
+    "type_case",
+    "communication_case",
+    "default_case",
+];
+
+/// Identifier leaves anonymized by occurrence order so consistently renamed copies still match.
+const ANONYMIZED_IDENTIFIER_TYPES: &[&str] = &[
+    "identifier",
+    "constant",
+    "instance_variable",
+    "class_variable",
+    "global_variable",
+];
+
+const SHORTHAND_PROPERTY_TYPES: &[&str] = &[
+    "shorthand_property_identifier",
+    "shorthand_property_identifier_pattern",
+];
+
+/// Literal leaves normalized to a kind tag so copies differing only in literal values still match.
+const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
+    ("number", "#num"),
+    ("number_literal", "#num"),
+    ("integer", "#num"),
+    ("float", "#num"),
+    ("integer_literal", "#num"),
+    ("float_literal", "#num"),
+    ("int_literal", "#num"),
+    ("rune_literal", "#char"),
+    ("imaginary_literal", "#num"),
+    ("decimal_integer_literal", "#num"),
+    ("hex_integer_literal", "#num"),
+    ("octal_integer_literal", "#num"),
+    ("binary_integer_literal", "#num"),
+    ("decimal_floating_point_literal", "#num"),
+    ("hex_floating_point_literal", "#num"),
+    ("string_fragment", "#str"),
+    ("multiline_string_fragment", "#str"),
+    ("string_content", "#str"),
+    ("raw_string_content", "#str"),
+    ("heredoc_content", "#str"),
+    ("heredoc_beginning", "#heredoc"),
+    ("heredoc_end", "#heredoc"),
+    ("string", "#str"),
+    ("template_string", "#str"),
+    ("string_literal", "#str"),
+    ("interpreted_string_literal", "#str"),
+    ("raw_string_literal", "#str"),
+    ("raw_string", "#str"),
+    ("escape_sequence", "#str"),
+    ("char_literal", "#char"),
+    ("character_literal", "#char"),
+    ("character", "#char"),
+    ("regex_pattern", "#regex"),
+];
+
+const COMMENT_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
+
+/// Children of a string node that carry only literal content; anything else is interpolation.
+const STRING_FRAGMENT_TYPES: &[&str] = &[
+    "string_fragment",
+    "multiline_string_fragment",
+    "string_content",
+    "raw_string_content",
+    "escape_sequence",
+    "heredoc_content",
+    "string_start",
+    "string_end",
+];
+
+/// Grammar fields whose plain-`identifier` leaves are semantic API names, kept verbatim.
+const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
+    ("call_expression", "function"),
+    ("method_invocation", "name"),
+    ("call", "method"),
+    ("attribute", "attribute"),
+    ("macro_invocation", "macro"),
+    ("field_access", "field"),
+    ("new_expression", "constructor"),
+    ("keyword_argument", "name"),
+    ("element_value_pair", "key"),
+    ("generic_function", "function"),
+    ("template_function", "name"),
+];
+
+const MIN_DUPLICATE_TOKEN_COUNT: usize = 40;
+const MIN_SEQUENCE_STATEMENT_COUNT: usize = 2;
+const MAX_SEQUENCE_STATEMENT_COUNT: usize = 100;
+const MAX_SELECTION_RERUN_COUNT: usize = 20;
+
+fn literal_kind_by_type() -> &'static HashMap<&'static str, &'static str> {
+    static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    MAP.get_or_init(|| LITERAL_KIND_BY_TYPE.iter().copied().collect())
+}
+
+fn semantic_name_field_by_parent_type() -> &'static HashMap<&'static str, &'static str> {
+    static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+    MAP.get_or_init(|| SEMANTIC_NAME_FIELD_BY_PARENT_TYPE.iter().copied().collect())
+}
+
+fn pascal_case_regex() -> &'static regex::Regex {
+    static REGEX: OnceLock<regex::Regex> = OnceLock::new();
+    REGEX.get_or_init(|| regex::Regex::new(r"^\p{Lu}").unwrap())
+}
+
+struct Token<'a> {
+    is_id: bool,
+    text: Cow<'a, str>,
+    start_row: usize,
+    end_row: usize,
+}
+
+struct TokenRange {
+    start_token_index: usize,
+    end_token_index: usize,
+    start_index: usize,
+    end_index: usize,
+    start_line: usize,
+    end_line: usize,
+}
+
+#[derive(Clone)]
+struct DuplicateCandidate {
+    fingerprint: std::rc::Rc<str>,
+    token_count: usize,
+    start_token_index: usize,
+    end_token_index: usize,
+    start_index: usize,
+    end_index: usize,
+    start_line: usize,
+    end_line: usize,
+}
+
+/// Detects copy-pasted regions within a file; a faithful port of measureDuplication in
+/// duplication.ts, including its JavaScript int32 hash arithmetic and insertion-order maps.
+pub fn measure_duplication(
+    root: Node<'_>,
+    code_line_numbers: &HashSet<usize>,
+    code: &Source<'_>,
+) -> DuplicationMetrics {
+    let mut tokens: Vec<Token<'_>> = Vec::new();
+    let mut block_ranges: Vec<TokenRange> = Vec::new();
+    let mut container_statement_ranges: Vec<Vec<TokenRange>> = Vec::new();
+    collect_tokens(
+        root,
+        code,
+        &mut tokens,
+        &mut block_ranges,
+        &mut container_statement_ranges,
+    );
+
+    let mut candidates = collect_block_candidates(&tokens, &block_ranges);
+    candidates.extend(collect_sequence_candidates(
+        &tokens,
+        &container_statement_ranges,
+    ));
+    let counted = select_maximal_duplicates(candidates);
+    summarize_duplicates(&counted, code_line_numbers, &tokens)
+}
+
+fn collect_tokens<'a>(
+    root: Node<'_>,
+    code: &Source<'a>,
+    tokens: &mut Vec<Token<'a>>,
+    block_ranges: &mut Vec<TokenRange>,
+    container_statement_ranges: &mut Vec<Vec<TokenRange>>,
+) {
+    fn visit<'a>(
+        node: Node<'_>,
+        code: &Source<'a>,
+        tokens: &mut Vec<Token<'a>>,
+        block_ranges: &mut Vec<TokenRange>,
+        container_statement_ranges: &mut Vec<Vec<TokenRange>>,
+    ) -> TokenRange {
+        let start_token_index = tokens.len();
+        let atomic_kind = if node.child_count() == 0 {
+            None
+        } else {
+            atomic_literal_kind(node)
+        };
+        if node.child_count() == 0 {
+            append_leaf_token(node, code, tokens);
+        } else if let Some(atomic_kind) = atomic_kind {
+            // Interpolation-free strings collapse to their kind tag so copies differing only in
+            // quote style or content still match.
+            tokens.push(Token {
+                is_id: false,
+                text: Cow::Borrowed(atomic_kind),
+                start_row: node.start_position().row,
+                end_row: node.end_position().row,
+            });
+        } else if !COMMENT_TYPES.contains(&node.kind()) {
+            let mut statement_ranges: Vec<TokenRange> = Vec::new();
+            let is_container = node.is_named() && STATEMENT_CONTAINER_TYPES.contains(&node.kind());
+            for child in all_children(node) {
+                let child_range = visit(
+                    child,
+                    code,
+                    tokens,
+                    block_ranges,
+                    container_statement_ranges,
+                );
+                if is_container && child.is_named() && !COMMENT_TYPES.contains(&child.kind()) {
+                    statement_ranges.push(child_range);
+                }
+            }
+            if is_container && statement_ranges.len() >= MIN_SEQUENCE_STATEMENT_COUNT {
+                container_statement_ranges.push(statement_ranges);
+            }
+        }
+
+        let range = TokenRange {
+            start_token_index,
+            end_token_index: tokens.len(),
+            start_index: node.start_byte(),
+            end_index: node.end_byte(),
+            start_line: node.start_position().row + 1,
+            end_line: node.end_position().row + 1,
+        };
+        if node.is_named() && DUPLICATE_BLOCK_TYPES.contains(&node.kind()) {
+            block_ranges.push(TokenRange { ..range });
+        }
+        range
+    }
+
+    visit(root, code, tokens, block_ranges, container_statement_ranges);
+}
+
+/// The kind tag of a string-like node with no interpolation, or None to descend normally.
+fn atomic_literal_kind(node: Node<'_>) -> Option<&'static str> {
+    let kind = if node.is_named() {
+        literal_kind_by_type().get(node.kind()).copied()
+    } else {
+        None
+    };
+    let kind = kind?;
+    if named_children(node)
+        .iter()
+        .all(|child| STRING_FRAGMENT_TYPES.contains(&child.kind()))
+    {
+        Some(kind)
+    } else {
+        None
+    }
+}
+
+fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Token<'a>>) {
+    if COMMENT_TYPES.contains(&node.kind()) {
+        return;
+    }
+
+    let start_row = node.start_position().row;
+    let end_row = node.end_position().row;
+    if node.is_named() && SHORTHAND_PROPERTY_TYPES.contains(&node.kind()) {
+        let text = node_text(node, code);
+        tokens.push(Token {
+            is_id: false,
+            text: Cow::Borrowed(text),
+            start_row,
+            end_row,
+        });
+        tokens.push(Token {
+            is_id: false,
+            text: Cow::Borrowed(":"),
+            start_row,
+            end_row,
+        });
+        tokens.push(Token {
+            is_id: true,
+            text: Cow::Borrowed(text),
+            start_row,
+            end_row,
+        });
+        return;
+    }
+
+    if node.is_named()
+        && ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind())
+        && !is_semantic_name_leaf(node, code)
+    {
+        tokens.push(Token {
+            is_id: true,
+            text: Cow::Borrowed(node_text(node, code)),
+            start_row,
+            end_row,
+        });
+        return;
+    }
+
+    // Anything else keeps its text: keywords, operators, punctuation, and semantic names.
+    let literal_kind = if node.is_named() {
+        literal_kind_by_type().get(node.kind()).copied()
+    } else {
+        None
+    };
+    tokens.push(Token {
+        is_id: false,
+        text: match literal_kind {
+            Some(kind) => Cow::Borrowed(kind),
+            None => Cow::Borrowed(node_text(node, code)),
+        },
+        start_row,
+        end_row,
+    });
+}
+
+fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+
+    // Java method references (`Foo::bar`) name their identifiers without grammar fields.
+    if parent.kind() == "method_reference" {
+        return true;
+    }
+
+    // `call` names its callee `method` in Ruby but `function` in Python; accept both fields.
+    if parent.kind() == "call"
+        && parent
+            .child_by_field_name("function")
+            .is_some_and(|function| function.id() == node.id())
+    {
+        return true;
+    }
+
+    // A Ruby constant receiving a call (`Alpha.new(...)`) names the invoked API.
+    if node.kind() == "constant"
+        && parent.kind() == "call"
+        && parent
+            .child_by_field_name("receiver")
+            .is_some_and(|receiver| receiver.id() == node.id())
+    {
+        return true;
+    }
+
+    // Java static receivers (`Alpha.run(...)`) name the invoked type; PascalCase is the
+    // discriminator because the tokenizer has no symbol table.
+    if parent.kind() == "method_invocation"
+        && parent
+            .child_by_field_name("object")
+            .is_some_and(|object| object.id() == node.id())
+        && pascal_case_regex().is_match(node_text(node, code))
+    {
+        return true;
+    }
+
+    // Qualified/generic callees are semantic in call position only.
+    if (parent.kind() == "scoped_identifier" || parent.kind() == "qualified_identifier")
+        && (parent
+            .child_by_field_name("name")
+            .is_some_and(|name| name.id() == node.id())
+            || parent
+                .child_by_field_name("path")
+                .is_some_and(|path| path.id() == node.id()))
+    {
+        let mut outer = parent;
+        while let Some(outer_parent) = outer.parent() {
+            if matches!(
+                outer_parent.kind(),
+                "scoped_identifier"
+                    | "qualified_identifier"
+                    | "generic_function"
+                    | "template_function"
+            ) {
+                outer = outer_parent;
+            } else {
+                break;
+            }
+        }
+        if outer.parent().is_some_and(|call| {
+            call.kind() == "call_expression"
+                && call
+                    .child_by_field_name("function")
+                    .is_some_and(|function| function.id() == outer.id())
+        }) {
+            return true;
+        }
+    }
+
+    // Go struct-literal keys (`Config{Timeout: ...}`) have no `key` field in the grammar.
+    if parent.kind() == "literal_element"
+        && parent.parent().is_some_and(|grandparent| {
+            grandparent.kind() == "keyed_element"
+                && grandparent
+                    .named_child(0)
+                    .is_some_and(|first| first.id() == parent.id())
+        })
+    {
+        return true;
+    }
+
+    semantic_name_field_by_parent_type()
+        .get(parent.kind())
+        .is_some_and(|field| {
+            parent
+                .child_by_field_name(*field)
+                .is_some_and(|child| child.id() == node.id())
+        })
+}
+
+fn collect_block_candidates(
+    tokens: &[Token<'_>],
+    block_ranges: &[TokenRange],
+) -> Vec<DuplicateCandidate> {
+    let mut candidates = Vec::new();
+    for range in block_ranges {
+        let token_count = range.end_token_index - range.start_token_index;
+        if token_count < MIN_DUPLICATE_TOKEN_COUNT {
+            continue;
+        }
+        let fingerprint = format!(
+            "b:{}",
+            fingerprint_tokens(tokens, range.start_token_index, range.end_token_index)
+        );
+        candidates.push(to_candidate(
+            fingerprint,
+            range.start_token_index,
+            range.end_token_index,
+            range,
+            range,
+        ));
+    }
+    candidates
+}
+
+struct WindowOccurrences {
+    count: usize,
+    /// usize::MAX once occurrences span more than one container (the TS port uses -1).
+    container_index: usize,
+    min_start: usize,
+    max_start: usize,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct SequenceWindow {
+    container_index: usize,
+    start: usize,
+    length: usize,
+}
+
+struct ContainerWindows {
+    /// window_keys_by_start[start][length] is the rolling-hash key, None below the size thresholds.
+    window_keys_by_start: Vec<Vec<Option<i64>>>,
+    /// Per-statement fingerprint hashes, for the distinct-shape requirement on windows.
+    statement_hashes: Vec<i32>,
+}
+
+/// Enumerates runs of consecutive sibling statements; see collectSequenceCandidates in
+/// duplication.ts for the maximality and sub-window rules replicated here.
+fn collect_sequence_candidates(
+    tokens: &[Token<'_>],
+    containers: &[Vec<TokenRange>],
+) -> Vec<DuplicateCandidate> {
+    let mut candidates = Vec::new();
+    let mut occurrences_by_window_key: HashMap<i64, WindowOccurrences> = HashMap::new();
+    let container_windows: Vec<ContainerWindows> = containers
+        .iter()
+        .map(|statements| enumerate_container_windows(tokens, statements))
+        .collect();
+    for (container_index, windows) in container_windows.iter().enumerate() {
+        for (start, row) in windows.window_keys_by_start.iter().enumerate() {
+            for window_key in row.iter().flatten() {
+                match occurrences_by_window_key.get_mut(window_key) {
+                    Some(occurrences) => {
+                        occurrences.count += 1;
+                        if occurrences.container_index != container_index {
+                            occurrences.container_index = usize::MAX;
+                        }
+                        occurrences.min_start = occurrences.min_start.min(start);
+                        occurrences.max_start = occurrences.max_start.max(start);
+                    }
+                    None => {
+                        occurrences_by_window_key.insert(
+                            *window_key,
+                            WindowOccurrences {
+                                count: 1,
+                                container_index,
+                                min_start: start,
+                                max_start: start,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    // A window only "repeats" when two of its occurrences can coexist without overlapping.
+    let repeats = |window_key: Option<i64>, length: usize| -> bool {
+        let Some(window_key) = window_key else {
+            return false;
+        };
+        occurrences_by_window_key
+            .get(&window_key)
+            .is_some_and(|occurrences| {
+                occurrences.count >= 2
+                    && (occurrences.container_index == usize::MAX
+                        || occurrences.max_start - occurrences.min_start >= length)
+            })
+    };
+
+    // A window whose statements all share one normalized shape is a homogeneous preamble, not a
+    // copy-paste: two distinct per-statement shapes are required.
+    let has_distinct_statements = |window: SequenceWindow| -> bool {
+        let hashes = container_windows
+            .get(window.container_index)
+            .map(|windows| windows.statement_hashes.as_slice())
+            .unwrap_or(&[]);
+        let first_hash = hashes.get(window.start);
+        for index in window.start + 1..window.start + window.length {
+            if hashes.get(index) != first_hash {
+                return true;
+            }
+        }
+        false
+    };
+
+    let window_key_at =
+        |container_index: usize, start: Option<usize>, length: usize| -> Option<i64> {
+            let start = start?;
+            container_windows
+                .get(container_index)?
+                .window_keys_by_start
+                .get(start)?
+                .get(length)
+                .copied()
+                .flatten()
+        };
+
+    let mut maximal_windows: Vec<SequenceWindow> = Vec::new();
+    for (container_index, windows) in container_windows.iter().enumerate() {
+        for (start, row) in windows.window_keys_by_start.iter().enumerate() {
+            for (length, window_key) in row.iter().enumerate() {
+                if !repeats(*window_key, length)
+                    || !has_distinct_statements(SequenceWindow {
+                        container_index,
+                        start,
+                        length,
+                    })
+                {
+                    continue;
+                }
+                // Dominated windows are skipped: the one-statement extension also repeats.
+                let extended_right = window_key_at(container_index, Some(start), length + 1);
+                let extended_left =
+                    window_key_at(container_index, start.checked_sub(1), length + 1);
+                if repeats(extended_right, length + 1) || repeats(extended_left, length + 1) {
+                    continue;
+                }
+                maximal_windows.push(SequenceWindow {
+                    container_index,
+                    start,
+                    length,
+                });
+            }
+        }
+    }
+
+    // Every emitted window exposes its repeating, unvisited sub-windows; lengths strictly
+    // decrease, so the worklist terminates.
+    let mut visited: HashSet<SequenceWindow> = maximal_windows.iter().copied().collect();
+    let mut frontier = maximal_windows;
+    while !frontier.is_empty() {
+        let mut emitted: Vec<SequenceWindow> = Vec::new();
+        for window in &frontier {
+            let statements = containers.get(window.container_index);
+            let first = statements.and_then(|statements| statements.get(window.start));
+            let last =
+                statements.and_then(|statements| statements.get(window.start + window.length - 1));
+            let (Some(first), Some(last)) = (first, last) else {
+                continue;
+            };
+            let fingerprint = format!(
+                "s:{}",
+                fingerprint_tokens(tokens, first.start_token_index, last.end_token_index)
+            );
+            candidates.push(to_candidate(
+                fingerprint,
+                first.start_token_index,
+                last.end_token_index,
+                first,
+                last,
+            ));
+            emitted.push(*window);
+        }
+        frontier = Vec::new();
+        for window in emitted {
+            for start in [window.start, window.start + 1] {
+                let sub_window = SequenceWindow {
+                    container_index: window.container_index,
+                    start,
+                    length: window.length - 1,
+                };
+                let sub_window_key =
+                    window_key_at(window.container_index, Some(start), sub_window.length);
+                if visited.contains(&sub_window)
+                    || !repeats(sub_window_key, sub_window.length)
+                    || !has_distinct_statements(sub_window)
+                {
+                    continue;
+                }
+                visited.insert(sub_window);
+                frontier.push(sub_window);
+            }
+        }
+    }
+    candidates
+}
+
+fn enumerate_container_windows(
+    tokens: &[Token<'_>],
+    statements: &[TokenRange],
+) -> ContainerWindows {
+    let statement_hashes: Vec<i32> = statements
+        .iter()
+        .map(|statement| {
+            hash_text(&fingerprint_tokens(
+                tokens,
+                statement.start_token_index,
+                statement.end_token_index,
+            ))
+        })
+        .collect();
+    let mut window_keys_by_start: Vec<Vec<Option<i64>>> = Vec::new();
+    for start in 0..statements.len() {
+        let mut row: Vec<Option<i64>> = Vec::new();
+        let mut hash: i64 = 5381;
+        let mut token_count: usize = 0;
+        let max_end = statements.len().min(start + MAX_SEQUENCE_STATEMENT_COUNT);
+        for end in start..max_end {
+            let statement = &statements[end];
+            let statement_hash = statement_hashes[end];
+            hash = combine_hashes(hash, statement_hash as i64);
+            token_count += statement.end_token_index - statement.start_token_index;
+            let statement_count = end - start + 1;
+            let key = if statement_count >= MIN_SEQUENCE_STATEMENT_COUNT
+                && token_count >= MIN_DUPLICATE_TOKEN_COUNT
+            {
+                Some(combine_hashes(hash, statement_count as i64))
+            } else {
+                None
+            };
+            if row.len() <= statement_count {
+                row.resize(statement_count + 1, None);
+            }
+            row[statement_count] = key;
+        }
+        window_keys_by_start.push(row);
+    }
+    ContainerWindows {
+        window_keys_by_start,
+        statement_hashes,
+    }
+}
+
+fn to_candidate(
+    fingerprint: String,
+    start_token_index: usize,
+    end_token_index: usize,
+    first: &TokenRange,
+    last: &TokenRange,
+) -> DuplicateCandidate {
+    DuplicateCandidate {
+        fingerprint: fingerprint.into(),
+        token_count: end_token_index - start_token_index,
+        start_token_index,
+        end_token_index,
+        start_index: first.start_index,
+        end_index: last.end_index,
+        start_line: first.start_line,
+        end_line: last.end_line,
+    }
+}
+
+/// Serializes a token range with identifiers anonymized consistently by first-occurrence order.
+fn fingerprint_tokens(
+    tokens: &[Token<'_>],
+    start_token_index: usize,
+    end_token_index: usize,
+) -> String {
+    let mut index_by_identifier: HashMap<&str, usize> = HashMap::new();
+    let mut parts: Vec<Cow<'_, str>> = Vec::new();
+    for token in &tokens[start_token_index..end_token_index.min(tokens.len())] {
+        if token.is_id {
+            let next_index = index_by_identifier.len();
+            let identifier_index = *index_by_identifier
+                .entry(token.text.as_ref())
+                .or_insert(next_index);
+            parts.push(Cow::Owned(format!("${identifier_index}")));
+        } else {
+            parts.push(Cow::Borrowed(token.text.as_ref()));
+        }
+    }
+    parts.join(" ")
+}
+
+/// djb2-style hash over UTF-16 code units, matching hashText in duplication.ts exactly.
+fn hash_text(text: &str) -> i32 {
+    let mut hash: i32 = 5381;
+    for unit in text.encode_utf16() {
+        hash = hash.wrapping_mul(33) ^ (unit as i32);
+    }
+    hash
+}
+
+/// `Math.imul(hash, 31) + value`: the sum is NOT wrapped to int32 in JS, so it stays i64 here.
+fn combine_hashes(hash: i64, value: i64) -> i64 {
+    (to_int32(hash).wrapping_mul(31)) as i64 + value
+}
+
+/// Keeps only maximal, non-overlapping duplicates; see selectMaximalDuplicates in duplication.ts.
+fn select_maximal_duplicates(
+    candidates: Vec<DuplicateCandidate>,
+) -> IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> {
+    let mut by_fingerprint: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> = IndexMap::new();
+    for candidate in candidates {
+        by_fingerprint
+            .entry(candidate.fingerprint.clone())
+            .or_default()
+            .push(candidate);
+    }
+
+    let groups: Vec<Vec<DuplicateCandidate>> = by_fingerprint
+        .into_values()
+        .map(dedupe_by_region)
+        .filter(|group| group.len() >= 2)
+        .collect();
+    // Greedy order ranks by total coverage (region size × copies).
+    let group_size_by_fingerprint: HashMap<std::rc::Rc<str>, usize> = groups
+        .iter()
+        .map(|group| {
+            (
+                group
+                    .first()
+                    .map(|first| first.fingerprint.clone())
+                    .unwrap_or_else(|| std::rc::Rc::from("")),
+                group.len(),
+            )
+        })
+        .collect();
+    let coverage = |candidate: &DuplicateCandidate| -> usize {
+        candidate.token_count
+            * group_size_by_fingerprint
+                .get(&candidate.fingerprint)
+                .copied()
+                .unwrap_or(1)
+    };
+    let mut duplicates: Vec<DuplicateCandidate> = groups.into_iter().flatten().collect();
+    duplicates.sort_by_key(|candidate| std::cmp::Reverse(coverage(candidate)));
+
+    // Greedy selection can keep a candidate whose group ends up below two survivors; the largest
+    // failed group is removed and the selection reruns, one group at a time.
+    let mut rerun = 0;
+    loop {
+        let mut kept_regions: Vec<(usize, usize)> = Vec::new();
+        let mut counted: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> = IndexMap::new();
+        for candidate in &duplicates {
+            if kept_regions
+                .iter()
+                .any(|region| region.0 < candidate.end_index && candidate.start_index < region.1)
+            {
+                continue;
+            }
+            kept_regions.push((candidate.start_index, candidate.end_index));
+            counted
+                .entry(candidate.fingerprint.clone())
+                .or_default()
+                .push(candidate.clone());
+        }
+
+        let mut failed_fingerprint: Option<std::rc::Rc<str>> = None;
+        let mut failed_token_count: i64 = -1;
+        for (fingerprint, group) in &counted {
+            let token_count = group
+                .first()
+                .map(|first| first.token_count as i64)
+                .unwrap_or(0);
+            if group.len() < 2 && token_count > failed_token_count {
+                failed_fingerprint = Some(fingerprint.clone());
+                failed_token_count = token_count;
+            }
+        }
+        // No failed fingerprint means every counted group kept at least two survivors.
+        let Some(failed_fingerprint) = failed_fingerprint else {
+            return counted;
+        };
+        if rerun >= MAX_SELECTION_RERUN_COUNT {
+            counted.retain(|_, group| group.len() >= 2);
+            return counted;
+        }
+
+        duplicates.retain(|candidate| candidate.fingerprint != failed_fingerprint);
+        rerun += 1;
+    }
+}
+
+/// Drops candidates covering the same source region (a block and the statement run spanning it).
+fn dedupe_by_region(group: Vec<DuplicateCandidate>) -> Vec<DuplicateCandidate> {
+    let mut by_region: IndexMap<(usize, usize), DuplicateCandidate> = IndexMap::new();
+    for candidate in group {
+        let key = (candidate.start_index, candidate.end_index);
+        match by_region.get(&key) {
+            Some(existing) if candidate.token_count <= existing.token_count => {}
+            _ => {
+                by_region.insert(key, candidate);
+            }
+        }
+    }
+    by_region.into_values().collect()
+}
+
+fn summarize_duplicates(
+    counted: &IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
+    code_line_numbers: &HashSet<usize>,
+    tokens: &[Token<'_>],
+) -> DuplicationMetrics {
+    let mut duplicate_block_count = 0;
+    let mut max_duplicate_block_size = 0;
+    let mut duplicate_block_groups: Vec<Vec<DuplicateBlockOccurrence>> = Vec::new();
+    let mut duplicated_lines: HashSet<usize> = HashSet::new();
+    for group in counted.values() {
+        duplicate_block_count += group.len() - 1;
+        for candidate in group {
+            max_duplicate_block_size = max_duplicate_block_size.max(candidate.token_count);
+            // Only CODE lines carrying matched tokens count.
+            for token in
+                &tokens[candidate.start_token_index..candidate.end_token_index.min(tokens.len())]
+            {
+                for row in token.start_row..=token.end_row {
+                    if code_line_numbers.contains(&(row + 1)) {
+                        duplicated_lines.insert(row + 1);
+                    }
+                }
+            }
+        }
+        let mut occurrences: Vec<DuplicateBlockOccurrence> = group
+            .iter()
+            .map(|candidate| DuplicateBlockOccurrence {
+                start_line: candidate.start_line,
+                end_line: candidate.end_line,
+            })
+            .collect();
+        occurrences.sort_by_key(|occurrence| occurrence.start_line);
+        duplicate_block_groups.push(occurrences);
+    }
+    duplicate_block_groups
+        .sort_by_key(|group| group.first().map(|first| first.start_line).unwrap_or(0));
+
+    DuplicationMetrics {
+        duplicate_block_count,
+        duplicate_block_group_count: counted.len(),
+        duplicate_block_groups,
+        duplicate_line_count: duplicated_lines.len(),
+        duplication_ratio: if code_line_numbers.is_empty() {
+            0.0
+        } else {
+            duplicated_lines.len() as f64 / code_line_numbers.len() as f64
+        },
+        max_duplicate_block_size,
+    }
+}
