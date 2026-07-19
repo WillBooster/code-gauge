@@ -10,6 +10,7 @@ use crate::functions::{
 use crate::types::{CouplingMetrics, DeclarationMetrics, ModuleMetrics};
 use crate::util::{
     all_children, find_children_by_field_name, named_children, node_text, strip_js_whitespace,
+    Source,
 };
 
 /// JavaScript's `\s` for the regex ports below (regex crate `\s` differs on U+FEFF).
@@ -35,7 +36,7 @@ fn import_source_regex() -> &'static regex::Regex {
     })
 }
 
-pub fn measure_coupling(root: Node<'_>, sets: &LanguageSets, code: &str) -> CouplingMetrics {
+pub fn measure_coupling(root: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> CouplingMetrics {
     let mut import_sources: IndexSet<String> = IndexSet::new();
     let mut import_count: u64 = 0;
     let mut export_count: u64 = 0;
@@ -43,7 +44,7 @@ pub fn measure_coupling(root: Node<'_>, sets: &LanguageSets, code: &str) -> Coup
     fn visit(
         node: Node<'_>,
         sets: &LanguageSets,
-        code: &str,
+        code: &Source<'_>,
         import_sources: &mut IndexSet<String>,
         import_count: &mut u64,
         export_count: &mut u64,
@@ -107,13 +108,13 @@ pub fn measure_coupling(root: Node<'_>, sets: &LanguageSets, code: &str) -> Coup
     }
 }
 
-pub fn measure_module(root: Node<'_>, sets: &LanguageSets, code: &str) -> ModuleMetrics {
+pub fn measure_module(root: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> ModuleMetrics {
     let mut import_sources: IndexSet<String> = IndexSet::new();
 
     fn visit_imports(
         node: Node<'_>,
         sets: &LanguageSets,
-        code: &str,
+        code: &Source<'_>,
         import_sources: &mut IndexSet<String>,
     ) {
         if is_import_source_node(node, sets, code) {
@@ -138,7 +139,7 @@ pub fn measure_module(root: Node<'_>, sets: &LanguageSets, code: &str) -> Module
 fn collect_module_declarations(
     root: Node<'_>,
     sets: &LanguageSets,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<DeclarationMetrics> {
     let exported_names = collect_exported_names(root, code);
     let scope = if sets.name == "java" {
@@ -165,7 +166,7 @@ fn collect_module_declarations(
 }
 
 /// Java top-level declarations are qualified by their package so simple names stay distinct.
-fn find_java_package_scope(root: Node<'_>, code: &str) -> String {
+fn find_java_package_scope(root: Node<'_>, code: &Source<'_>) -> String {
     let package_node = named_children(root)
         .into_iter()
         .find(|child| child.kind() == "package_declaration");
@@ -187,7 +188,7 @@ fn collect_top_level_declarations(
     exported: bool,
     scope: &str,
     is_cpp: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<DeclarationMetrics> {
     if is_module_export_node(node) {
         return named_children(node)
@@ -291,7 +292,7 @@ fn declarations_from_ruby_type(
     node: Node<'_>,
     exported: bool,
     scope: &str,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<DeclarationMetrics> {
     let mut declarations =
         qualify_declarations(declaration_from_node(node, exported, code), scope, true);
@@ -326,7 +327,7 @@ fn declarations_from_ruby_type(
 fn ruby_constant_declarations(
     node: Node<'_>,
     exported: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<DeclarationMetrics> {
     if node.kind() == "operator_assignment"
         && !all_children(node)
@@ -363,7 +364,7 @@ fn ruby_constant_declarations(
 fn declarations_from_type_definition(
     node: Node<'_>,
     exported: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<DeclarationMetrics> {
     // `typedef struct Foo { ... } Bar;` declares both the tag `Foo` and the alias `Bar`.
     let type_node = node.child_by_field_name("type");
@@ -393,7 +394,7 @@ fn declarations_from_type_definition(
         } else {
             unwrap_declarator_name(Some(declarator), false, code)
         };
-        if let Some(name) = name {
+        if let Some(name) = name.filter(|name| !name.is_empty()) {
             if bodyless_tag_name.as_deref() != Some(name.as_str()) && !seen_names.contains(&name) {
                 seen_names.insert(name.clone());
                 declarations.push(DeclarationMetrics {
@@ -449,7 +450,7 @@ pub fn is_c_variable_declarator(node: Node<'_>) -> bool {
 
 /// tree-sitter-cpp has no C++20 module support, so `export module foo;` / `import bar;` misparse
 /// as `declaration` nodes whose "type" is the keyword.
-pub fn is_misparsed_cpp_module_declaration(node: Node<'_>, code: &str) -> bool {
+pub fn is_misparsed_cpp_module_declaration(node: Node<'_>, code: &Source<'_>) -> bool {
     let Some(type_node) = node.child_by_field_name("type") else {
         return false;
     };
@@ -464,7 +465,7 @@ pub fn is_misparsed_cpp_module_declaration(node: Node<'_>, code: &str) -> bool {
 }
 
 /// Whether the file typedefs/aliases `name` as a type, disambiguating module-keyword misparses.
-fn has_visible_type_alias(node: Node<'_>, name: &str, code: &str) -> bool {
+fn has_visible_type_alias(node: Node<'_>, name: &str, code: &Source<'_>) -> bool {
     let mut root = node;
     while let Some(parent) = root.parent() {
         root = parent;
@@ -487,7 +488,7 @@ fn declarations_from_c_declaration(
     node: Node<'_>,
     exported: bool,
     is_cpp: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<DeclarationMetrics> {
     if (is_cpp && is_misparsed_cpp_module_declaration(node, code))
         || has_storage_class(node, "static", code)
@@ -522,7 +523,9 @@ fn declarations_from_c_declaration(
         {
             continue;
         }
-        if let Some(name) = unwrap_declarator_name(Some(child), false, code) {
+        if let Some(name) =
+            unwrap_declarator_name(Some(child), false, code).filter(|name| !name.is_empty())
+        {
             if !seen_names.contains(&name) {
                 seen_names.insert(name.clone());
                 declarations.push(DeclarationMetrics {
@@ -555,7 +558,11 @@ fn declarator_chain_contains_reference(declarator: Node<'_>) -> bool {
     false
 }
 
-fn declaration_from_node(node: Node<'_>, exported: bool, code: &str) -> Vec<DeclarationMetrics> {
+fn declaration_from_node(
+    node: Node<'_>,
+    exported: bool,
+    code: &Source<'_>,
+) -> Vec<DeclarationMetrics> {
     // C/C++ `struct Foo;`-style forward declarations reuse the declaration node type; only
     // definitions with a body declare a module-level symbol.
     if !is_top_level_declaration_node(node)
@@ -574,7 +581,7 @@ fn declaration_from_node(node: Node<'_>, exported: bool, code: &str) -> Vec<Decl
         return declarations_from_enum_specifier(node, exported, code);
     }
 
-    match find_declaration_name(node, code) {
+    match find_declaration_name(node, code).filter(|name| !name.is_empty()) {
         Some(name) => vec![DeclarationMetrics {
             exported,
             name,
@@ -587,12 +594,13 @@ fn declaration_from_node(node: Node<'_>, exported: bool, code: &str) -> Vec<Decl
 fn declarations_from_enum_specifier(
     node: Node<'_>,
     exported: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<DeclarationMetrics> {
     let mut declarations = Vec::new();
     let tag_name = node
         .child_by_field_name("name")
-        .map(|name| node_text(name, code).to_string());
+        .map(|name| node_text(name, code).to_string())
+        .filter(|name| !name.is_empty());
     if let Some(tag_name) = &tag_name {
         declarations.push(DeclarationMetrics {
             exported,
@@ -614,6 +622,9 @@ fn declarations_from_enum_specifier(
         }
         if let Some(name_node) = enumerator.child_by_field_name("name") {
             let name = node_text(name_node, code);
+            if name.is_empty() {
+                continue;
+            }
             declarations.push(DeclarationMetrics {
                 exported,
                 name: match (&tag_name, is_scoped) {
@@ -627,7 +638,7 @@ fn declarations_from_enum_specifier(
     declarations
 }
 
-fn find_declaration_name(node: Node<'_>, code: &str) -> Option<String> {
+fn find_declaration_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     if node.kind() == "method_declaration" && node.child_by_field_name("receiver").is_some() {
         return find_go_method_declaration_name(node, code);
     }
@@ -651,8 +662,10 @@ fn find_declaration_name(node: Node<'_>, code: &str) -> Option<String> {
 
     // C/C++ function definitions name the function inside the declarator chain; this must run
     // before the generic fallback, which would otherwise pick up the return type's identifier.
+    // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
     if let Some(declarator_name) =
         unwrap_declarator_name(node.child_by_field_name("declarator"), true, code)
+            .filter(|name| !name.is_empty())
     {
         return Some(declarator_name);
     }
@@ -733,17 +746,17 @@ fn is_declaration_name_node(node: Node<'_>) -> bool {
     )
 }
 
-fn collect_exported_names(root: Node<'_>, code: &str) -> HashSet<String> {
+fn collect_exported_names(root: Node<'_>, code: &Source<'_>) -> HashSet<String> {
     let mut exported_names = HashSet::new();
 
     fn visit(
         node: Node<'_>,
         inside_sourced_export: bool,
-        code: &str,
+        code: &Source<'_>,
         exported_names: &mut HashSet<String>,
     ) {
         if !inside_sourced_export && is_export_specifier_node(node) {
-            if let Some(name) = find_exported_name(node, code) {
+            if let Some(name) = find_exported_name(node, code).filter(|name| !name.is_empty()) {
                 exported_names.insert(name);
             }
         }
@@ -763,7 +776,7 @@ fn is_export_specifier_node(node: Node<'_>) -> bool {
     node.kind() == "export_specifier" || node.kind() == "namespace_export"
 }
 
-fn find_exported_name(node: Node<'_>, code: &str) -> Option<String> {
+fn find_exported_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     let name_node = node
         .child_by_field_name("name")
         .or_else(|| node.child_by_field_name("alias"))
@@ -779,7 +792,7 @@ fn find_exported_name(node: Node<'_>, code: &str) -> Option<String> {
     }
 }
 
-fn find_go_method_declaration_name(node: Node<'_>, code: &str) -> Option<String> {
+fn find_go_method_declaration_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     let name_node = node.child_by_field_name("name");
     let receiver_type_node = node
         .child_by_field_name("receiver")
@@ -818,7 +831,7 @@ fn is_import_node(node: Node<'_>) -> bool {
     )
 }
 
-fn is_import_source_node(node: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+fn is_import_source_node(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     is_import_node(node)
         || is_rust_mod_declaration(node, sets)
         || is_cpp_module_import(node, sets, code)
@@ -828,7 +841,7 @@ fn is_import_source_node(node: Node<'_>, sets: &LanguageSets, code: &str) -> boo
 }
 
 /// C++20 imports misparse without grammar module support; see isCppModuleImport in metrics.ts.
-fn is_cpp_module_import(node: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+fn is_cpp_module_import(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     if sets.name != "cpp" {
         return false;
     }
@@ -859,7 +872,7 @@ fn is_rust_mod_declaration(node: Node<'_>, sets: &LanguageSets) -> bool {
     sets.name == "rust" && node.kind() == "mod_item" && node.child_by_field_name("body").is_none()
 }
 
-fn is_dynamic_import_node(node: Node<'_>, code: &str) -> bool {
+fn is_dynamic_import_node(node: Node<'_>, code: &Source<'_>) -> bool {
     if !is_call_node(node) {
         return false;
     }
@@ -874,7 +887,7 @@ fn find_import_sources(
     node: Node<'_>,
     sets: &LanguageSets,
     expand_python_submodules: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<String> {
     if sets.name == "python" {
         let python_sources = find_python_import_sources(node, expand_python_submodules, code);
@@ -968,7 +981,7 @@ fn find_import_sources(
 const RUBY_REQUIRE_METHODS: &[&str] = &["require", "require_relative", "load"];
 
 /// Only receiverless Kernel-style calls import; `loader.require(...)` is an ordinary method call.
-fn is_ruby_require_call(node: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+fn is_ruby_require_call(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     if sets.name != "ruby" || node.kind() != "call" {
         return false;
     }
@@ -993,7 +1006,7 @@ fn is_ruby_require_call(node: Node<'_>, sets: &LanguageSets, code: &str) -> bool
 }
 
 /// Resolves `require`/`require_relative`/`load` sources; `require_relative` is always file-relative.
-fn find_ruby_require_sources(node: Node<'_>, code: &str) -> Vec<String> {
+fn find_ruby_require_sources(node: Node<'_>, code: &Source<'_>) -> Vec<String> {
     let arguments_node = node.child_by_field_name("arguments");
     // `autoload :Name, 'path'` names its source in the second argument.
     let is_autoload = node
@@ -1077,7 +1090,7 @@ fn decode_ruby_escape_sequence(text: &str) -> String {
     }
 }
 
-fn find_dynamic_import_sources(node: Node<'_>, code: &str) -> Vec<String> {
+fn find_dynamic_import_sources(node: Node<'_>, code: &Source<'_>) -> Vec<String> {
     let first_argument = node
         .child_by_field_name("arguments")
         .and_then(|arguments| arguments.named_child(0));
@@ -1109,7 +1122,7 @@ fn is_rust_local_import_source(source: &str) -> bool {
 }
 
 /// Extracts the module path(s) a Rust `use` declaration reaches into; see findRustImportSources.
-fn find_rust_import_sources(node: Node<'_>, code: &str) -> Vec<String> {
+fn find_rust_import_sources(node: Node<'_>, code: &Source<'_>) -> Vec<String> {
     // `mod b;` (no body) pulls the child module's file into the tree, like an import of `self::b`.
     if node.kind() == "mod_item" {
         return match node.child_by_field_name("name") {
@@ -1135,7 +1148,7 @@ fn find_rust_import_sources(node: Node<'_>, code: &str) -> Vec<String> {
 }
 
 /// Resolves the module source(s) of a `use` tree node, given the accumulated module `prefix`.
-fn rust_import_sources(node: Node<'_>, prefix: &str, code: &str) -> Vec<String> {
+fn rust_import_sources(node: Node<'_>, prefix: &str, code: &Source<'_>) -> Vec<String> {
     match node.kind() {
         "use_list" => named_children(node)
             .into_iter()
@@ -1197,7 +1210,7 @@ fn rust_import_sources(node: Node<'_>, prefix: &str, code: &str) -> Vec<String> 
     }
 }
 
-fn rust_path_text(node: Option<Node<'_>>, code: &str) -> String {
+fn rust_path_text(node: Option<Node<'_>>, code: &Source<'_>) -> String {
     match node {
         Some(node) => normalize_import_source(node_text(node, code)),
         None => String::new(),
@@ -1226,7 +1239,7 @@ fn with_module_prefix(source: &str) -> Vec<String> {
 fn find_python_import_sources(
     node: Node<'_>,
     expand_python_submodules: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> Vec<String> {
     if node.kind() == "import_from_statement" {
         let Some(module_node) = node.child_by_field_name("module_name") else {
@@ -1271,7 +1284,7 @@ fn find_python_import_sources(
         .collect()
 }
 
-fn find_python_import_names(node: Node<'_>, code: &str) -> Vec<String> {
+fn find_python_import_names(node: Node<'_>, code: &Source<'_>) -> Vec<String> {
     if node.kind() == "aliased_import" {
         return match node.child_by_field_name("name") {
             Some(name_node) => find_python_import_names(name_node, code),
@@ -1293,7 +1306,7 @@ fn find_python_import_names(node: Node<'_>, code: &str) -> Vec<String> {
         .collect()
 }
 
-fn find_python_imported_module_name(node: Node<'_>, code: &str) -> Option<String> {
+fn find_python_imported_module_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     if node.kind() == "dotted_name" || node.kind() == "relative_import" {
         return Some(normalize_import_source(node_text(node, code)));
     }
@@ -1358,7 +1371,11 @@ pub fn is_export_node(node: Node<'_>) -> bool {
 }
 
 /// A base-type `const` freezes a plain binding but not a pointer binding; see isCMutableBinding.
-pub fn is_c_mutable_binding(declaration: Node<'_>, declarator: Node<'_>, code: &str) -> bool {
+pub fn is_c_mutable_binding(
+    declaration: Node<'_>,
+    declarator: Node<'_>,
+    code: &Source<'_>,
+) -> bool {
     let mut current = if declarator.kind() == "init_declarator" {
         declarator
             .child_by_field_name("declarator")
@@ -1406,7 +1423,7 @@ fn declarator_chain_contains_pointer(declarator: Node<'_>) -> bool {
     false
 }
 
-fn has_const_qualifier(node: Node<'_>, code: &str) -> bool {
+fn has_const_qualifier(node: Node<'_>, code: &Source<'_>) -> bool {
     named_children(node).iter().any(|child| {
         child.kind() == "type_qualifier"
             && (node_text(*child, code) == "const" || node_text(*child, code) == "constexpr")

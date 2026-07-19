@@ -39,8 +39,11 @@ pub fn parse_sexp(code: String, language: String) -> Result<String> {
     parser
         .set_language(&definition.grammar())
         .map_err(|error| Error::from_reason(error.to_string()))?;
+    // UTF-16, like measure(): node-tree-sitter parses JavaScript strings as UTF-16 and tree-sitter
+    // error recovery differs between encodings for malformed non-ASCII source.
+    let utf16: Vec<u16> = code.encode_utf16().collect();
     let tree = parser
-        .parse(&code, None)
+        .parse_utf16(&utf16, None)
         .ok_or_else(|| Error::from_reason("parse failed".to_string()))?;
     Ok(tree.root_node().to_sexp())
 }

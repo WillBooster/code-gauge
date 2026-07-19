@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use tree_sitter::Node;
 
-use crate::util::{all_children, node_text};
+use crate::util::{all_children, node_text, Source};
 
 pub struct ComplexityResult {
     pub cyclomatic_complexity: u64,
@@ -51,7 +51,7 @@ pub fn measure_complexity(
     sets: &LanguageSets,
     nesting: u64,
     stop_at_nested_functions: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> ComplexityResult {
     let mut result = ComplexityResult {
         cyclomatic_complexity: 1,
@@ -64,7 +64,7 @@ pub fn measure_complexity(
         current_nesting: u64,
         sets: &LanguageSets,
         stop_at_nested_functions: bool,
-        code: &str,
+        code: &Source<'_>,
         result: &mut ComplexityResult,
     ) {
         if stop_at_nested_functions && is_function_boundary(current, &sets.function_nodes) {
@@ -225,7 +225,7 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
 
 /// The parent guard is required because the same tokens appear in non-boolean syntax (C++ `int&&`,
 /// `operator&&`, Rust's empty closure parameter list `|| 5`).
-fn is_boolean_operator(node: Node<'_>, code: &str) -> bool {
+fn is_boolean_operator(node: Node<'_>, code: &Source<'_>) -> bool {
     if node.is_named() || !BOOLEAN_OPERATORS.contains(&node_text(node, code)) {
         return false;
     }

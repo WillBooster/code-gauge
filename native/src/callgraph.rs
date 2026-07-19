@@ -72,7 +72,8 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis]) -> CallGraphResult {
 fn map_unique_function_indexes_by_name(analyses: &[FunctionAnalysis]) -> HashMap<&str, usize> {
     let mut indexes_by_name: HashMap<&str, Option<usize>> = HashMap::new();
     for analysis in analyses {
-        let Some(name) = analysis.name.as_deref() else {
+        // JS truthiness: a MISSING node yields an empty-string name, which is "no name" in TS.
+        let Some(name) = analysis.name.as_deref().filter(|name| !name.is_empty()) else {
             continue;
         };
 

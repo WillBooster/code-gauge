@@ -16,7 +16,7 @@ use crate::types::{
     CohesionMetrics, FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics,
     TypeComplexityMetrics,
 };
-use crate::util::{all_children, is_js_whitespace, named_children, node_text, split_lines};
+use crate::util::{all_children, is_js_whitespace, named_children, node_text, split_lines, Source};
 
 pub fn measure(
     code: &str,
@@ -27,10 +27,14 @@ pub fn measure(
     parser
         .set_language(&language.grammar())
         .map_err(|error| error.to_string())?;
+    let source = Source::new(code);
+    // Parsed as UTF-16 to match node-tree-sitter exactly: tree-sitter's error recovery differs
+    // between input encodings for malformed non-ASCII source.
     let tree = parser
-        .parse(code, None)
+        .parse_utf16(source.to_utf16(), None)
         .ok_or_else(|| "parse failed".to_string())?;
     let root = tree.root_node();
+    let code = &source;
     let sets = LanguageSets::new(language);
 
     let functions: Vec<Node<'_>> = collect_nodes(root, &sets.function_nodes)
@@ -79,7 +83,7 @@ pub fn measure(
 
     Ok(NativeMetrics {
         language: language.name.to_string(),
-        bytes: code.len(),
+        bytes: code.code.len(),
         lines,
         class_count: count_classes(root, &sets),
         function_count: function_metrics.len(),
@@ -121,8 +125,8 @@ struct CommentSpan {
 
 /// 1-based numbers of lines that are neither blank nor comment-only, matching classifyLines in
 /// metrics.ts so duplication line coverage and its code-line denominator agree.
-fn classify_lines(code: &str, root: Node<'_>) -> (LineMetrics, HashSet<usize>) {
-    let source_lines = split_lines(code);
+fn classify_lines(code: &Source<'_>, root: Node<'_>) -> (LineMetrics, HashSet<usize>) {
+    let source_lines = split_lines(code.code);
     // Spans are bucketed by line so classification stays linear.
     let mut comment_spans_by_line: HashMap<usize, Vec<CommentSpan>> = HashMap::new();
     for span in collect_comment_spans(root) {
@@ -166,15 +170,17 @@ fn collect_comment_spans(root: Node<'_>) -> Vec<CommentSpan> {
     fn visit(node: Node<'_>, spans: &mut Vec<CommentSpan>) {
         if matches!(node.kind(), "comment" | "line_comment" | "block_comment") {
             for row in node.start_position().row..=node.end_position().row {
+                // Node columns are UTF-16 code units x 2 (the tree is parsed from UTF-16);
+                // halving matches the code-unit columns the line scan below counts.
                 spans.push(CommentSpan {
                     line: row,
                     start_column: if row == node.start_position().row {
-                        node.start_position().column
+                        node.start_position().column / 2
                     } else {
                         0
                     },
                     end_column: if row == node.end_position().row {
-                        node.end_position().column
+                        node.end_position().column / 2
                     } else {
                         usize::MAX
                     },
@@ -197,19 +203,18 @@ fn is_comment_only_line(line: &str, relevant_spans: &[CommentSpan]) -> bool {
     }
 
     // A line may hold several comments (`/* one */ /* two */`), so every non-whitespace column must
-    // be covered by the UNION of spans, not by a single span. Columns are byte offsets here, while
-    // the TypeScript backend uses UTF-16 units; both are internally consistent, so the
-    // classification is identical.
-    for (column, character) in line.char_indices() {
-        if is_js_whitespace(character) {
-            continue;
-        }
-        if !relevant_spans
-            .iter()
-            .any(|span| span.start_column <= column && column < span.end_column)
+    // be covered by the UNION of spans, not by a single span. Columns are UTF-16 code units,
+    // matching the span columns derived from the UTF-16 parse.
+    let mut column = 0;
+    for character in line.chars() {
+        if !is_js_whitespace(character)
+            && !relevant_spans
+                .iter()
+                .any(|span| span.start_column <= column && column < span.end_column)
         {
             return false;
         }
+        column += character.len_utf16();
     }
     true
 }
@@ -509,13 +514,13 @@ fn atomic_operand_node_types() -> &'static HashSet<&'static str> {
     SET.get_or_init(|| ATOMIC_OPERAND_NODE_TYPES.iter().copied().collect())
 }
 
-fn measure_halstead(root: Node<'_>, code: &str) -> HalsteadCounts {
+fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
     let mut operators: HashMap<String, u64> = HashMap::new();
     let mut operands: HashMap<String, u64> = HashMap::new();
 
     fn visit(
         node: Node<'_>,
-        code: &str,
+        code: &Source<'_>,
         operators: &mut HashMap<String, u64>,
         operands: &mut HashMap<String, u64>,
     ) {

@@ -5,7 +5,7 @@ use tree_sitter::Node;
 use crate::complexity::{is_function_boundary, measure_complexity, LanguageSets};
 use crate::util::{
     all_children, find_children_by_field_name, named_children, node_text, strip_js_whitespace,
-    utf16_column,
+    Source,
 };
 
 pub struct FunctionAnalysis {
@@ -58,7 +58,7 @@ pub fn analyze_function(
     sets: &LanguageSets,
     index: usize,
     constructed_type_names: &HashSet<String>,
-    code: &str,
+    code: &Source<'_>,
 ) -> FunctionAnalysis {
     let complexity = measure_complexity(node, sets, 0, true, code);
     let calls = collect_calls(node, sets, constructed_type_names, code);
@@ -66,7 +66,9 @@ pub fn analyze_function(
         index,
         name: find_function_name(node, code),
         start_line: node.start_position().row + 1,
-        start_column: utf16_column(code, node.start_byte(), node.start_position().column),
+        // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving yields
+        // the code-unit column node-tree-sitter reports.
+        start_column: node.start_position().column / 2,
         end_line: node.end_position().row + 1,
         returns_jsx: returns_jsx(node, sets, code),
         cyclomatic_complexity: complexity.cyclomatic_complexity,
@@ -80,7 +82,7 @@ pub fn analyze_function(
 }
 
 /// Counts declared parameters of a function/method, ignoring punctuation and comments.
-fn count_parameters(node: Node<'_>, code: &str) -> usize {
+fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
     // An unparenthesized arrow-function parameter (`x => x + 1`) is a bare `parameter` field.
     if node.child_by_field_name("parameter").is_some() {
         return 1;
@@ -129,7 +131,7 @@ fn count_parameters(node: Node<'_>, code: &str) -> usize {
 }
 
 /// C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator.
-fn is_void_parameter(node: Node<'_>, code: &str) -> bool {
+fn is_void_parameter(node: Node<'_>, code: &Source<'_>) -> bool {
     node.kind() == "parameter_declaration"
         && node.child_by_field_name("declarator").is_none()
         && node
@@ -169,7 +171,7 @@ pub fn collect_calls(
     root: Node<'_>,
     sets: &LanguageSets,
     constructed_type_names: &HashSet<String>,
-    code: &str,
+    code: &Source<'_>,
 ) -> CallsResult {
     let mut callees: IndexSet<String> = IndexSet::new();
     let mut call_count: u64 = 0;
@@ -179,7 +181,7 @@ pub fn collect_calls(
         inside_root: bool,
         sets: &LanguageSets,
         constructed_type_names: &HashSet<String>,
-        code: &str,
+        code: &Source<'_>,
         call_count: &mut u64,
         callees: &mut IndexSet<String>,
     ) {
@@ -204,7 +206,8 @@ pub fn collect_calls(
             } else {
                 find_callee_name(node, code)
             };
-            if let Some(callee) = callee {
+            // JS truthiness: `if (callee)` also drops the empty string a MISSING node produces.
+            if let Some(callee) = callee.filter(|callee| !callee.is_empty()) {
                 callees.insert(callee);
             }
             // Ruby abbreviated assignment on a receiver (`self.foo += 1`) invokes the getter AND the
@@ -267,7 +270,7 @@ const CPP_NAMED_CASTS: &[&str] = &[
 ];
 
 /// C++ casts parse as call expressions (`int(x)`, `static_cast<int>(x)`) but invoke nothing.
-fn is_cpp_cast_expression(node: Node<'_>, code: &str) -> bool {
+fn is_cpp_cast_expression(node: Node<'_>, code: &Source<'_>) -> bool {
     if node.kind() != "call_expression" {
         return false;
     }
@@ -290,7 +293,7 @@ fn is_cpp_cast_expression(node: Node<'_>, code: &str) -> bool {
 fn is_cpp_construction(
     node: Node<'_>,
     constructed_type_names: &HashSet<String>,
-    code: &str,
+    code: &Source<'_>,
 ) -> bool {
     if constructed_type_names.is_empty() {
         return false;
@@ -353,7 +356,7 @@ fn is_cpp_construction(
 }
 
 /// Base name of a possibly qualified/templated C++ type or callee (`ns::Box<int>` -> `Box`).
-pub fn cpp_base_type_name(node: Option<Node<'_>>, code: &str) -> Option<String> {
+pub fn cpp_base_type_name(node: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
     let mut current = node;
     while let Some(node) = current {
         match node.kind() {
@@ -377,7 +380,7 @@ const CPP_CLASS_SPECIFIER_TYPES: &[&str] =
 pub fn collect_constructed_type_names(
     root: Node<'_>,
     sets: &LanguageSets,
-    code: &str,
+    code: &Source<'_>,
 ) -> HashSet<String> {
     let mut names = HashSet::new();
     if sets.name != "cpp" {
@@ -387,8 +390,9 @@ pub fn collect_constructed_type_names(
         CPP_CLASS_SPECIFIER_TYPES.iter().copied().collect();
     for node in collect_nodes(root, &specifier_types) {
         if let Some(name_node) = node.child_by_field_name("name") {
-            if node.child_by_field_name("body").is_some() {
-                names.insert(node_text(name_node, code).to_string());
+            let name = node_text(name_node, code);
+            if !name.is_empty() && node.child_by_field_name("body").is_some() {
+                names.insert(name.to_string());
             }
         }
     }
@@ -396,7 +400,7 @@ pub fn collect_constructed_type_names(
 }
 
 /// `storage_class_specifier` exists only in the C/C++ grammars, so this is language-safe.
-pub fn has_storage_class(node: Node<'_>, keyword: &str, code: &str) -> bool {
+pub fn has_storage_class(node: Node<'_>, keyword: &str, code: &Source<'_>) -> bool {
     all_children(node).iter().any(|child| {
         child.kind() == "storage_class_specifier" && node_text(*child, code) == keyword
     })
@@ -411,10 +415,10 @@ fn is_ruby_implicit_call(node: Node<'_>, sets: &LanguageSets) -> bool {
         || (node.kind() == "super" && node.parent().is_none_or(|parent| parent.kind() != "call"))
 }
 
-pub fn collect_identifiers(root: Node<'_>, code: &str) -> HashSet<String> {
+pub fn collect_identifiers(root: Node<'_>, code: &Source<'_>) -> HashSet<String> {
     let mut identifiers = HashSet::new();
 
-    fn visit(node: Node<'_>, code: &str, identifiers: &mut HashSet<String>) {
+    fn visit(node: Node<'_>, code: &Source<'_>, identifiers: &mut HashSet<String>) {
         match node.kind() {
             "identifier"
             | "property_identifier"
@@ -473,13 +477,13 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
     nodes
 }
 
-pub fn returns_jsx(root: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+pub fn returns_jsx(root: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     fn visit(
         node: Node<'_>,
         inside_root: bool,
         root: Node<'_>,
         sets: &LanguageSets,
-        code: &str,
+        code: &Source<'_>,
     ) -> bool {
         if !inside_root && sets.function_nodes.contains(node.kind()) {
             return false;
@@ -515,13 +519,17 @@ fn get_arrow_function_body(node: Node<'_>) -> Option<Node<'_>> {
     })
 }
 
-fn contains_jsx_expression(root: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+fn contains_jsx_expression(root: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     contains_node(root, sets, &|node| {
         node.kind().starts_with("jsx_") || is_jsx_mapping_call(node, sets, code)
     })
 }
 
-fn contains_react_create_element_call(root: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+fn contains_react_create_element_call(
+    root: Node<'_>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+) -> bool {
     contains_node(root, sets, &|node| is_react_create_element_call(node, code))
 }
 
@@ -552,7 +560,7 @@ fn contains_node(
     visit(root, true, sets, predicate)
 }
 
-fn is_jsx_mapping_call(node: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+fn is_jsx_mapping_call(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     if !is_call_node(node)
         || !is_array_mapping_callee(
             node.child_by_field_name("function")
@@ -568,7 +576,7 @@ fn is_jsx_mapping_call(node: Node<'_>, sets: &LanguageSets, code: &str) -> bool 
         .any(|child| contains_returned_jsx_function(child, sets, code))
 }
 
-fn is_array_mapping_callee(node: Option<Node<'_>>, code: &str) -> bool {
+fn is_array_mapping_callee(node: Option<Node<'_>>, code: &Source<'_>) -> bool {
     let Some(node) = node else {
         return false;
     };
@@ -577,7 +585,7 @@ fn is_array_mapping_callee(node: Option<Node<'_>>, code: &str) -> bool {
     callee_name.as_deref() == Some("map") || callee_name.as_deref() == Some("flatMap")
 }
 
-fn contains_returned_jsx_function(root: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+fn contains_returned_jsx_function(root: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     if sets.function_nodes.contains(root.kind()) {
         return returns_jsx_from_function_node(root, sets, code);
     }
@@ -587,7 +595,7 @@ fn contains_returned_jsx_function(root: Node<'_>, sets: &LanguageSets, code: &st
         .any(|child| contains_returned_jsx_function(child, sets, code))
 }
 
-fn returns_jsx_from_function_node(root: Node<'_>, sets: &LanguageSets, code: &str) -> bool {
+fn returns_jsx_from_function_node(root: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     let body = if root.kind() == "arrow_function" {
         get_arrow_function_body(root)
     } else {
@@ -633,8 +641,11 @@ fn contains_own_return_node(
     visit(root, true, sets, predicate)
 }
 
-pub fn find_function_name(node: Node<'_>, code: &str) -> Option<String> {
-    if let Some(wrapped_name) = find_wrapped_component_name(node, code) {
+pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
+    if let Some(wrapped_name) =
+        find_wrapped_component_name(node, code).filter(|name| !name.is_empty())
+    {
         return Some(wrapped_name);
     }
 
@@ -645,6 +656,7 @@ pub fn find_function_name(node: Node<'_>, code: &str) -> Option<String> {
     // C/C++ definitions name the function inside the (possibly pointer-wrapped) declarator chain.
     if let Some(declarator_name) =
         unwrap_declarator_name(node.child_by_field_name("declarator"), false, code)
+            .filter(|name| !name.is_empty())
     {
         return Some(declarator_name);
     }
@@ -691,7 +703,7 @@ pub fn find_function_name(node: Node<'_>, code: &str) -> Option<String> {
         .map(|name| node_text(name, code).to_string())
 }
 
-fn find_ruby_assignment_name(assignment: Node<'_>, code: &str) -> Option<String> {
+fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     let left_node = assignment.child_by_field_name("left")?;
     if left_node.kind() == "identifier" || left_node.kind() == "constant" {
         Some(node_text(left_node, code).to_string())
@@ -700,7 +712,7 @@ fn find_ruby_assignment_name(assignment: Node<'_>, code: &str) -> Option<String>
     }
 }
 
-fn is_ruby_lambda_call(node: Node<'_>, code: &str) -> bool {
+fn is_ruby_lambda_call(node: Node<'_>, code: &Source<'_>) -> bool {
     if node.kind() != "call" || node.child_by_field_name("receiver").is_some() {
         return false;
     }
@@ -713,7 +725,7 @@ fn is_ruby_lambda_call(node: Node<'_>, code: &str) -> bool {
 fn find_go_func_literal_name(
     node: Node<'_>,
     expression_list: Node<'_>,
-    code: &str,
+    code: &Source<'_>,
 ) -> Option<String> {
     let holder = expression_list.parent()?;
     // Comments interleave with expressions in the list but have no matching binding target.
@@ -750,7 +762,7 @@ fn find_go_func_literal_name(
 }
 
 /// Go's blank identifier `_` discards the value and creates no callable binding.
-fn as_go_binding_name(target: Option<Node<'_>>, code: &str) -> Option<String> {
+fn as_go_binding_name(target: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
     match target {
         Some(target) if target.kind() == "identifier" && node_text(target, code) != "_" => {
             Some(node_text(target, code).to_string())
@@ -759,7 +771,7 @@ fn as_go_binding_name(target: Option<Node<'_>>, code: &str) -> Option<String> {
     }
 }
 
-fn find_wrapped_component_name(node: Node<'_>, code: &str) -> Option<String> {
+fn find_wrapped_component_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     let mut current = node;
     loop {
         let arguments_node = current.parent();
@@ -787,7 +799,7 @@ fn find_wrapped_component_name(node: Node<'_>, code: &str) -> Option<String> {
     }
 }
 
-fn is_react_component_wrapper_call(node: Node<'_>, code: &str) -> bool {
+fn is_react_component_wrapper_call(node: Node<'_>, code: &Source<'_>) -> bool {
     let callee_node = node
         .child_by_field_name("function")
         .or_else(|| node.named_child(0));
@@ -811,7 +823,7 @@ pub fn is_call_node(node: Node<'_>) -> bool {
 }
 
 /// Reconstructs `operator+` / `operator int` from tree-sitter-cpp's ERROR-wrapped misparses.
-fn find_cpp_explicit_operator_name(node: Node<'_>, code: &str) -> Option<String> {
+fn find_cpp_explicit_operator_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // `this->operator+(y)`: the operator_name lands inside an ERROR child of the call itself.
     for child in all_children(node) {
         if child.kind() == "ERROR" {
@@ -855,7 +867,7 @@ const ANONYMOUS_CALLABLE_NODE_TYPES: &[&str] = &[
     "anonymous_function",
 ];
 
-pub fn find_callee_name(node: Node<'_>, code: &str) -> Option<String> {
+pub fn find_callee_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // Ruby lambdas/procs are invoked via `helper.call(...)`; the receiver is the real callee.
     if node.kind() == "call" {
         let method_node = node.child_by_field_name("method");
@@ -916,7 +928,7 @@ fn unwrap_parenthesized_expression(node: Node<'_>) -> Node<'_> {
     current
 }
 
-pub fn find_rightmost_identifier(node: Node<'_>, code: &str) -> Option<String> {
+pub fn find_rightmost_identifier(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // Generic-call wrappers put type arguments after the callee, so the right-to-left search below
     // would return the type argument; the callee lives in the `function`/`name` field.
     if node.kind() == "generic_function"
@@ -957,7 +969,10 @@ pub fn find_rightmost_identifier(node: Node<'_>, code: &str) -> Option<String> {
             continue;
         };
 
-        if let Some(identifier) = find_rightmost_identifier(child, code) {
+        // JS truthiness: an empty identifier (MISSING node) does not stop the search.
+        if let Some(identifier) =
+            find_rightmost_identifier(child, code).filter(|name| !name.is_empty())
+        {
             return Some(identifier);
         }
     }
@@ -965,7 +980,7 @@ pub fn find_rightmost_identifier(node: Node<'_>, code: &str) -> Option<String> {
     None
 }
 
-fn is_react_create_element_call(node: Node<'_>, code: &str) -> bool {
+fn is_react_create_element_call(node: Node<'_>, code: &Source<'_>) -> bool {
     if !is_call_node(node) {
         return false;
     }
@@ -983,7 +998,7 @@ fn is_react_create_element_call(node: Node<'_>, code: &str) -> bool {
 pub fn unwrap_declarator_name(
     declarator: Option<Node<'_>>,
     qualified: bool,
-    code: &str,
+    code: &Source<'_>,
 ) -> Option<String> {
     let mut current = declarator;
     let mut scope_prefix = String::new();

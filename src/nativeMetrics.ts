@@ -42,12 +42,24 @@ export function measureWithNativeBackend(
     return undefined;
   }
 
+  // Lone surrogates cannot cross the N-API boundary losslessly (they become U+FFFD), so
+  // ill-formed strings measure through the TypeScript backend, which sees them as-is.
+  if (!code.isWellFormed()) {
+    return undefined;
+  }
+
   const binding = loadBinding();
   if (!binding) {
     return undefined;
   }
 
-  return JSON.parse(binding.measureCodeNative(code, language.name, includeSyntaxTree)) as NativeMetricsPayload;
+  try {
+    return JSON.parse(binding.measureCodeNative(code, language.name, includeSyntaxTree)) as NativeMetricsPayload;
+  } catch {
+    // A native failure (e.g. a panic on pathological input) falls back to the TypeScript
+    // backend instead of turning measureCode into a throwing API.
+    return undefined;
+  }
 }
 
 /** Whether measureCode currently uses the native backend for built-in languages. */

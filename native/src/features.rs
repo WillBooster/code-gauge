@@ -4,12 +4,12 @@ use crate::structure::{
     is_c_mutable_binding, is_c_variable_declarator, is_misparsed_cpp_module_declaration,
 };
 use crate::types::SyntaxFeatureMetrics;
-use crate::util::{all_children, named_children, node_text};
+use crate::util::{all_children, named_children, node_text, Source};
 
 pub fn measure_syntax_features(
     root: Node<'_>,
     language_name: &str,
-    code: &str,
+    code: &Source<'_>,
 ) -> SyntaxFeatureMetrics {
     let mut metrics = SyntaxFeatureMetrics {
         assignment_count: 0,
@@ -21,7 +21,12 @@ pub fn measure_syntax_features(
         try_statement_count: 0,
     };
 
-    fn visit(node: Node<'_>, language_name: &str, code: &str, metrics: &mut SyntaxFeatureMetrics) {
+    fn visit(
+        node: Node<'_>,
+        language_name: &str,
+        code: &Source<'_>,
+        metrics: &mut SyntaxFeatureMetrics,
+    ) {
         if is_assignment_node(node) {
             metrics.assignment_count += 1;
         }
@@ -101,7 +106,7 @@ fn is_loop_node(node: Node<'_>) -> bool {
 
 /// Java and C/C++ declare several bindings per statement, so each mutable declarator counts. The
 /// C/C++ branches are language-gated because `field_declaration` is a shared node type.
-fn count_mutable_bindings(node: Node<'_>, language_name: &str, code: &str) -> u64 {
+fn count_mutable_bindings(node: Node<'_>, language_name: &str, code: &Source<'_>) -> u64 {
     let is_c = language_name == "c" || language_name == "cpp";
     if node.kind() == "local_variable_declaration"
         || (node.kind() == "field_declaration" && language_name == "java")
@@ -180,7 +185,7 @@ fn count_mutable_bindings(node: Node<'_>, language_name: &str, code: &str) -> u6
     }
 }
 
-fn count_c_mutable_bindings(node: Node<'_>, is_cpp: bool, code: &str) -> u64 {
+fn count_c_mutable_bindings(node: Node<'_>, is_cpp: bool, code: &Source<'_>) -> u64 {
     // The module-syntax misparse only exists in the C++ grammar; in C, `module` is an identifier.
     if is_cpp && is_misparsed_cpp_module_declaration(node, code) {
         return 0;
@@ -213,7 +218,7 @@ fn count_c_bound_identifiers(declarator: Node<'_>) -> u64 {
     1
 }
 
-fn is_mutable_binding_node(node: Node<'_>, code: &str) -> bool {
+fn is_mutable_binding_node(node: Node<'_>, code: &Source<'_>) -> bool {
     (node.kind() == "lexical_declaration"
         && node
             .child(0)
@@ -227,7 +232,7 @@ fn is_mutable_binding_node(node: Node<'_>, code: &str) -> bool {
 }
 
 /// Java variable/field declarations bind mutably unless marked `final`.
-fn is_java_mutable_declaration(node: Node<'_>, code: &str) -> bool {
+fn is_java_mutable_declaration(node: Node<'_>, code: &Source<'_>) -> bool {
     let modifiers = named_children(node)
         .into_iter()
         .find(|child| child.kind() == "modifiers");
@@ -287,14 +292,14 @@ fn is_return_node(node: Node<'_>) -> bool {
     )
 }
 
-fn is_throw_node(node: Node<'_>, code: &str) -> bool {
+fn is_throw_node(node: Node<'_>, code: &Source<'_>) -> bool {
     node.kind() == "throw_statement"
         || node.kind() == "raise_statement"
         || is_ruby_raise_call(node, code)
 }
 
 /// Ruby raises via receiverless `raise`/`fail` calls; a receiver call like `object.raise` is not one.
-fn is_ruby_raise_call(node: Node<'_>, code: &str) -> bool {
+fn is_ruby_raise_call(node: Node<'_>, code: &Source<'_>) -> bool {
     if node.kind() != "call" || node.child_by_field_name("receiver").is_some() {
         return false;
     }

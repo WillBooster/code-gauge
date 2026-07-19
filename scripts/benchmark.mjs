@@ -58,6 +58,10 @@ function runPass(corpus) {
 }
 
 const passes = Number(process.argv[2] ?? 20);
+if (!Number.isSafeInteger(passes) || passes < 1) {
+  console.error('Usage: node scripts/benchmark.mjs [passes]  (passes must be a positive integer)');
+  process.exit(1);
+}
 const corpus = collectCorpus();
 const totalBytes = corpus.reduce((sum, entry) => sum + Buffer.byteLength(entry.code), 0);
 const totalLines = corpus.reduce((sum, entry) => sum + entry.code.split('\n').length, 0);

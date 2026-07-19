@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use tree_sitter::Node;
 
 use crate::types::{DuplicateBlockOccurrence, DuplicationMetrics};
-use crate::util::{all_children, named_children, node_text, to_int32};
+use crate::util::{all_children, named_children, node_text, to_int32, Source};
 
 /// Block-like nodes considered as whole-subtree duplicate candidates; see duplication.ts.
 const DUPLICATE_BLOCK_TYPES: &[&str] = &[
@@ -220,7 +220,7 @@ struct DuplicateCandidate {
 pub fn measure_duplication(
     root: Node<'_>,
     code_line_numbers: &HashSet<usize>,
-    code: &str,
+    code: &Source<'_>,
 ) -> DuplicationMetrics {
     let mut tokens: Vec<Token<'_>> = Vec::new();
     let mut block_ranges: Vec<TokenRange> = Vec::new();
@@ -244,14 +244,14 @@ pub fn measure_duplication(
 
 fn collect_tokens<'a>(
     root: Node<'_>,
-    code: &'a str,
+    code: &Source<'a>,
     tokens: &mut Vec<Token<'a>>,
     block_ranges: &mut Vec<TokenRange>,
     container_statement_ranges: &mut Vec<Vec<TokenRange>>,
 ) {
     fn visit<'a>(
         node: Node<'_>,
-        code: &'a str,
+        code: &Source<'a>,
         tokens: &mut Vec<Token<'a>>,
         block_ranges: &mut Vec<TokenRange>,
         container_statement_ranges: &mut Vec<Vec<TokenRange>>,
@@ -328,7 +328,7 @@ fn atomic_literal_kind(node: Node<'_>) -> Option<&'static str> {
     }
 }
 
-fn append_leaf_token<'a>(node: Node<'_>, code: &'a str, tokens: &mut Vec<Token<'a>>) {
+fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Token<'a>>) {
     if COMMENT_TYPES.contains(&node.kind()) {
         return;
     }
@@ -388,7 +388,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &'a str, tokens: &mut Vec<Token<'
     });
 }
 
-fn is_semantic_name_leaf(node: Node<'_>, code: &str) -> bool {
+fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     let Some(parent) = node.parent() else {
         return false;
     };

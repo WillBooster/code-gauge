@@ -52,8 +52,11 @@ describe.skipIf(!nativeAvailable)('native backend parity with the TypeScript bac
 
 describe('backend selection', () => {
   it('reports whether the native backend is available', () => {
-    // Not an assertion on availability itself (CI may not have a Rust toolchain); this documents
-    // the switch and guards against loader crashes.
+    // CODE_GAUGE_EXPECT_NATIVE=1 (set by the `test/ci` script after `yarn build-native`) turns the
+    // silent skip above into a hard failure, so CI cannot pass while the addon fails to build.
+    if (process.env.CODE_GAUGE_EXPECT_NATIVE === '1') {
+      expect(nativeAvailable).toBe(true);
+    }
     expect(typeof nativeAvailable).toBe('boolean');
   });
 });
