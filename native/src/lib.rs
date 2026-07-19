@@ -1,0 +1,46 @@
+#![deny(clippy::all)]
+
+use napi::bindgen_prelude::*;
+use napi_derive::napi;
+
+mod callgraph;
+mod complexity;
+mod duplication;
+mod features;
+mod functions;
+mod languages;
+mod measure;
+mod structure;
+mod types;
+mod util;
+
+/// Measures code metrics for the given source, returning the NativeMetrics payload as JSON.
+/// The TypeScript wrapper derives the remaining float metrics (Halstead volume/difficulty/...,
+/// maintainability index) so results are bit-identical to the TypeScript backend.
+#[napi]
+pub fn measure_code_native(
+    code: String,
+    language: String,
+    include_syntax_tree: Option<bool>,
+) -> Result<String> {
+    let definition = languages::find_language(&language)
+        .ok_or_else(|| Error::from_reason(format!("Unsupported language: {language}")))?;
+    let metrics = measure::measure(&code, definition, include_syntax_tree.unwrap_or(false))
+        .map_err(Error::from_reason)?;
+    serde_json::to_string(&metrics).map_err(|error| Error::from_reason(error.to_string()))
+}
+
+/// Parses the code and returns the S-expression of the syntax tree, for cross-backend parity checks.
+#[napi]
+pub fn parse_sexp(code: String, language: String) -> Result<String> {
+    let definition = languages::find_language(&language)
+        .ok_or_else(|| Error::from_reason(format!("Unsupported language: {language}")))?;
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&definition.grammar())
+        .map_err(|error| Error::from_reason(error.to_string()))?;
+    let tree = parser
+        .parse(&code, None)
+        .ok_or_else(|| Error::from_reason("parse failed".to_string()))?;
+    Ok(tree.root_node().to_sexp())
+}

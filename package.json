@@ -32,7 +32,9 @@
     "dist/"
   ],
   "scripts": {
+    "benchmark": "node scripts/benchmark.mjs",
     "build": "build-ts lib -i src/index.ts -i src/cli.ts",
+    "build-native": "node scripts/buildNative.mjs",
     "cleanup": "yarn format && yarn lint-fix",
     "format": "sort-package-json && yarn format-code",
     "format-code": "oxfmt --write --no-error-on-unmatched-pattern . '!**/package.json'",

@@ -1,0 +1,361 @@
+use tree_sitter::Language;
+
+/// Per-language node-type configuration mirroring src/languages.ts.
+pub struct LanguageDefinition {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    grammar_id: GrammarId,
+    pub function_node_types: &'static [&'static str],
+    pub class_node_types: &'static [&'static str],
+    pub decision_node_types: &'static [&'static str],
+    pub nesting_node_types: &'static [&'static str],
+}
+
+#[derive(Clone, Copy)]
+enum GrammarId {
+    C,
+    Cpp,
+    Go,
+    Java,
+    JavaScript,
+    Python,
+    Ruby,
+    Rust,
+    TypeScript,
+    Tsx,
+}
+
+impl LanguageDefinition {
+    pub fn grammar(&self) -> Language {
+        match self.grammar_id {
+            GrammarId::C => tree_sitter_c::language(),
+            GrammarId::Cpp => tree_sitter_cpp::language(),
+            GrammarId::Go => tree_sitter_go::language(),
+            GrammarId::Java => tree_sitter_java::language(),
+            GrammarId::JavaScript => tree_sitter_javascript::language(),
+            GrammarId::Python => tree_sitter_python::language(),
+            GrammarId::Ruby => tree_sitter_ruby::language(),
+            GrammarId::Rust => tree_sitter_rust::language(),
+            GrammarId::TypeScript => tree_sitter_typescript::language_typescript(),
+            GrammarId::Tsx => tree_sitter_typescript::language_tsx(),
+        }
+    }
+}
+
+const COMMON_FUNCTION_NODES: &[&str] = &[
+    "function",
+    "function_declaration",
+    "function_definition",
+    "function_expression",
+    "function_item",
+    "function_signature_item",
+    "function_declarator",
+    "func_literal",
+    "method_declaration",
+    "method_definition",
+    "method_spec",
+    "arrow_function",
+    "generator_function",
+    "generator_function_declaration",
+    "lambda",
+    "lambda_expression",
+    "closure_expression",
+];
+
+const COMMON_CLASS_NODES: &[&str] = &[
+    "class",
+    "class_declaration",
+    "class_definition",
+    "interface_declaration",
+    "trait_item",
+    "struct_item",
+    "enum_item",
+    "union_item",
+];
+
+const COMMON_DECISION_NODES: &[&str] = &[
+    "if_statement",
+    "elif_clause",
+    "else_if_clause",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "except_clause",
+    "case_clause",
+    "switch_case",
+    "match_arm",
+    "conditional_expression",
+    "ternary_expression",
+    "if_expression",
+    "while_expression",
+    "for_expression",
+    "loop_expression",
+];
+
+const GO_DECISION_NODES: &[&str] = &[
+    "if_statement",
+    "elif_clause",
+    "else_if_clause",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "except_clause",
+    "case_clause",
+    "switch_case",
+    "match_arm",
+    "conditional_expression",
+    "ternary_expression",
+    "if_expression",
+    "while_expression",
+    "for_expression",
+    "loop_expression",
+    "expression_case",
+    "type_case",
+    "communication_case",
+];
+
+const JAVA_FUNCTION_NODES: &[&str] = &[
+    "function",
+    "function_declaration",
+    "function_definition",
+    "function_expression",
+    "function_item",
+    "function_signature_item",
+    "function_declarator",
+    "func_literal",
+    "method_declaration",
+    "method_definition",
+    "method_spec",
+    "arrow_function",
+    "generator_function",
+    "generator_function_declaration",
+    "lambda",
+    "lambda_expression",
+    "closure_expression",
+    "constructor_declaration",
+    "compact_constructor_declaration",
+];
+
+const JAVA_CLASS_NODES: &[&str] = &[
+    "class",
+    "class_declaration",
+    "class_definition",
+    "interface_declaration",
+    "trait_item",
+    "struct_item",
+    "enum_item",
+    "union_item",
+    "enum_declaration",
+    "record_declaration",
+    "annotation_type_declaration",
+    "object_creation_expression",
+    "enum_constant",
+];
+
+const JAVA_DECISION_NODES: &[&str] = &[
+    "if_statement",
+    "elif_clause",
+    "else_if_clause",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "except_clause",
+    "case_clause",
+    "switch_case",
+    "match_arm",
+    "conditional_expression",
+    "ternary_expression",
+    "if_expression",
+    "while_expression",
+    "for_expression",
+    "loop_expression",
+    "enhanced_for_statement",
+    "switch_block_statement_group",
+    "switch_rule",
+];
+
+const RUBY_FUNCTION_NODES: &[&str] = &["method", "singleton_method", "lambda", "block", "do_block"];
+const RUBY_CLASS_NODES: &[&str] = &["class", "module"];
+const RUBY_DECISION_NODES: &[&str] = &[
+    "if",
+    "elsif",
+    "unless",
+    "while",
+    "until",
+    "for",
+    "when",
+    "in_clause",
+    "rescue",
+    "conditional",
+    "if_modifier",
+    "unless_modifier",
+    "while_modifier",
+    "until_modifier",
+    "rescue_modifier",
+];
+
+const C_FUNCTION_NODES: &[&str] = &["function_definition", "lambda_expression"];
+const C_CLASS_NODES: &[&str] = &["struct_specifier", "enum_specifier", "union_specifier"];
+const C_DECISION_NODES: &[&str] = &[
+    "if_statement",
+    "elif_clause",
+    "else_if_clause",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "except_clause",
+    "case_clause",
+    "switch_case",
+    "match_arm",
+    "conditional_expression",
+    "ternary_expression",
+    "if_expression",
+    "while_expression",
+    "for_expression",
+    "loop_expression",
+    "case_statement",
+];
+const CPP_CLASS_NODES: &[&str] = &[
+    "struct_specifier",
+    "enum_specifier",
+    "union_specifier",
+    "class_specifier",
+];
+const CPP_DECISION_NODES: &[&str] = &[
+    "if_statement",
+    "elif_clause",
+    "else_if_clause",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "except_clause",
+    "case_clause",
+    "switch_case",
+    "match_arm",
+    "conditional_expression",
+    "ternary_expression",
+    "if_expression",
+    "while_expression",
+    "for_expression",
+    "loop_expression",
+    "case_statement",
+    "for_range_loop",
+];
+
+pub const LANGUAGES: &[LanguageDefinition] = &[
+    LanguageDefinition {
+        name: "javascript",
+        aliases: &["js", "mjs", "cjs"],
+        grammar_id: GrammarId::JavaScript,
+        function_node_types: COMMON_FUNCTION_NODES,
+        class_node_types: COMMON_CLASS_NODES,
+        decision_node_types: COMMON_DECISION_NODES,
+        nesting_node_types: COMMON_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "jsx",
+        aliases: &[],
+        grammar_id: GrammarId::JavaScript,
+        function_node_types: COMMON_FUNCTION_NODES,
+        class_node_types: COMMON_CLASS_NODES,
+        decision_node_types: COMMON_DECISION_NODES,
+        nesting_node_types: COMMON_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "typescript",
+        aliases: &["ts"],
+        grammar_id: GrammarId::TypeScript,
+        function_node_types: COMMON_FUNCTION_NODES,
+        class_node_types: COMMON_CLASS_NODES,
+        decision_node_types: COMMON_DECISION_NODES,
+        nesting_node_types: COMMON_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "tsx",
+        aliases: &[],
+        grammar_id: GrammarId::Tsx,
+        function_node_types: COMMON_FUNCTION_NODES,
+        class_node_types: COMMON_CLASS_NODES,
+        decision_node_types: COMMON_DECISION_NODES,
+        nesting_node_types: COMMON_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "python",
+        aliases: &["py"],
+        grammar_id: GrammarId::Python,
+        function_node_types: COMMON_FUNCTION_NODES,
+        class_node_types: COMMON_CLASS_NODES,
+        decision_node_types: COMMON_DECISION_NODES,
+        nesting_node_types: COMMON_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "go",
+        aliases: &[],
+        grammar_id: GrammarId::Go,
+        function_node_types: COMMON_FUNCTION_NODES,
+        class_node_types: COMMON_CLASS_NODES,
+        decision_node_types: GO_DECISION_NODES,
+        nesting_node_types: GO_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "rust",
+        aliases: &["rs"],
+        grammar_id: GrammarId::Rust,
+        function_node_types: COMMON_FUNCTION_NODES,
+        class_node_types: COMMON_CLASS_NODES,
+        decision_node_types: COMMON_DECISION_NODES,
+        nesting_node_types: COMMON_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "java",
+        aliases: &[],
+        grammar_id: GrammarId::Java,
+        function_node_types: JAVA_FUNCTION_NODES,
+        class_node_types: JAVA_CLASS_NODES,
+        decision_node_types: JAVA_DECISION_NODES,
+        nesting_node_types: JAVA_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "ruby",
+        aliases: &["rb"],
+        grammar_id: GrammarId::Ruby,
+        function_node_types: RUBY_FUNCTION_NODES,
+        class_node_types: RUBY_CLASS_NODES,
+        decision_node_types: RUBY_DECISION_NODES,
+        nesting_node_types: RUBY_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "c",
+        aliases: &[],
+        grammar_id: GrammarId::C,
+        function_node_types: C_FUNCTION_NODES,
+        class_node_types: C_CLASS_NODES,
+        decision_node_types: C_DECISION_NODES,
+        nesting_node_types: C_DECISION_NODES,
+    },
+    LanguageDefinition {
+        name: "cpp",
+        aliases: &["c++", "cxx"],
+        grammar_id: GrammarId::Cpp,
+        function_node_types: C_FUNCTION_NODES,
+        class_node_types: CPP_CLASS_NODES,
+        decision_node_types: CPP_DECISION_NODES,
+        nesting_node_types: CPP_DECISION_NODES,
+    },
+];
+
+pub fn find_language(name: &str) -> Option<&'static LanguageDefinition> {
+    LANGUAGES
+        .iter()
+        .find(|language| language.name == name || language.aliases.contains(&name))
+}
