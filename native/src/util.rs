@@ -6,24 +6,32 @@ use tree_sitter::Node;
 /// of the original string without allocating per node.
 pub struct Source<'a> {
     pub code: &'a str,
-    utf8_offset_by_unit: Vec<usize>,
+    /// UTF-16 unit -> UTF-8 byte offset. None for pure-ASCII sources, where the two coincide, so
+    /// the table's 4-bytes-per-unit cost is only paid for sources that actually need mapping.
+    utf8_offset_by_unit: Option<Vec<u32>>,
 }
 
 impl<'a> Source<'a> {
     pub fn new(code: &'a str) -> Source<'a> {
+        if code.is_ascii() {
+            return Source {
+                code,
+                utf8_offset_by_unit: None,
+            };
+        }
         let mut utf8_offset_by_unit = Vec::with_capacity(code.len() + 1);
         for (offset, character) in code.char_indices() {
-            utf8_offset_by_unit.push(offset);
+            utf8_offset_by_unit.push(offset as u32);
             // Both halves of a surrogate pair map to the character start; tree-sitter node
             // boundaries always align to whole code points, so the halves are never split.
             if character.len_utf16() == 2 {
-                utf8_offset_by_unit.push(offset);
+                utf8_offset_by_unit.push(offset as u32);
             }
         }
-        utf8_offset_by_unit.push(code.len());
+        utf8_offset_by_unit.push(code.len() as u32);
         Source {
             code,
-            utf8_offset_by_unit,
+            utf8_offset_by_unit: Some(utf8_offset_by_unit),
         }
     }
 
@@ -32,7 +40,10 @@ impl<'a> Source<'a> {
     }
 
     fn utf8_offset(&self, node_byte: usize) -> usize {
-        self.utf8_offset_by_unit[node_byte / 2]
+        match &self.utf8_offset_by_unit {
+            None => node_byte / 2,
+            Some(map) => map[node_byte / 2] as usize,
+        }
     }
 }
 
