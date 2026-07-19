@@ -1007,6 +1007,10 @@ function returnsJsx(root: Parser.SyntaxNode, language: LanguageDefinition): bool
       return containsJsxExpression(node, functionNodeTypes) || containsReactCreateElementCall(node, functionNodeTypes);
     }
 
+    // Object identity is reliable here: node-tree-sitter caches node wrappers per tree
+    // (unmarshalNode -> tree._cacheNode), so the same underlying node yields the same object.
+    // The golden fixtures pin returnsJsx=true for expression-body arrows (rich.tsx), which is
+    // only reachable through this branch.
     if (
       root.type === 'arrow_function' &&
       node === getArrowFunctionBody(root) &&
