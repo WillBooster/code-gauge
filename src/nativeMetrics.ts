@@ -55,9 +55,14 @@ export function measureWithNativeBackend(
 
   try {
     return JSON.parse(binding.measureCodeNative(code, language.name, includeSyntaxTree)) as NativeMetricsPayload;
-  } catch {
-    // A native failure (e.g. a panic on pathological input) falls back to the TypeScript
-    // backend instead of turning measureCode into a throwing API.
+  } catch (error) {
+    // Parity tests set the strict flag: without it, a binding that starts throwing would silently
+    // degrade the "native" side of every comparison into a TypeScript-vs-TypeScript check.
+    if (process.env.CODE_GAUGE_NATIVE_STRICT === '1') {
+      throw error;
+    }
+    // A native failure (e.g. the tree-depth guard on pathological input) falls back to the
+    // TypeScript backend instead of turning measureCode into a throwing API.
     return undefined;
   }
 }

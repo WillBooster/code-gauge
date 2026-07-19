@@ -11,9 +11,13 @@ const nativeAvailable = isNativeBackendAvailable();
 function measureWith(backend: 'native' | 'typescript', code: string, options: MeasureOptions): CodeMetrics {
   const previous = process.env.CODE_GAUGE_NATIVE;
   process.env.CODE_GAUGE_NATIVE = backend === 'native' ? '1' : '0';
+  // Strict mode rethrows native errors, so a throwing binding fails these comparisons instead of
+  // silently degrading them into TypeScript-vs-TypeScript checks via the production fallback.
+  process.env.CODE_GAUGE_NATIVE_STRICT = backend === 'native' ? '1' : '0';
   try {
     return measureCode(code, options);
   } finally {
+    delete process.env.CODE_GAUGE_NATIVE_STRICT;
     if (previous === undefined) {
       delete process.env.CODE_GAUGE_NATIVE;
     } else {

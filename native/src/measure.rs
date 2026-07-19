@@ -34,6 +34,12 @@ pub fn measure(
         .parse_utf16(source.to_utf16(), None)
         .ok_or_else(|| "parse failed".to_string())?;
     let root = tree.root_node();
+    // The metric passes recurse per tree level and overflow the native stack (a process-killing
+    // SIGSEGV, not a catchable error) around depth ~20k; refusing far below that makes the caller
+    // fall back to the TypeScript backend, which raises a catchable RangeError for such input.
+    if tree_depth(root) > MAX_TREE_DEPTH {
+        return Err(format!("tree depth exceeds {MAX_TREE_DEPTH}"));
+    }
     let code = &source;
     let sets = LanguageSets::new(language);
 
@@ -115,6 +121,31 @@ pub fn measure(
             None
         },
     })
+}
+
+/// See the depth check in measure(); computed iteratively so the check itself cannot overflow.
+const MAX_TREE_DEPTH: usize = 5_000;
+
+fn tree_depth(root: Node<'_>) -> usize {
+    let mut cursor = root.walk();
+    let mut depth = 0;
+    let mut max_depth = 0;
+    loop {
+        if cursor.goto_first_child() {
+            depth += 1;
+            max_depth = max_depth.max(depth);
+            continue;
+        }
+        loop {
+            if cursor.goto_next_sibling() {
+                break;
+            }
+            if !cursor.goto_parent() {
+                return max_depth;
+            }
+            depth -= 1;
+        }
+    }
 }
 
 struct CommentSpan {

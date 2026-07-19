@@ -50,11 +50,23 @@ pub fn all_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
     node.children(&mut cursor).collect()
 }
 
+/// Children carrying the field, with node-tree-sitter's vendored-core semantics: extra children
+/// (error-recovery nodes, comments) inherit the field of the preceding structural sibling.
+/// tree-sitter 0.22.6 instead reports no field for extras (ts_node_field_name_for_child gained an
+/// is_extra early return), which would desynchronize field-based extraction on malformed source.
 pub fn find_children_by_field_name<'t>(node: Node<'t>, field_name: &str) -> Vec<Node<'t>> {
     let mut children = Vec::new();
+    let mut preceding_structural_field: Option<&'static str> = None;
     for index in 0..node.child_count() {
         if let Some(child) = node.child(index) {
-            if node.field_name_for_child(index as u32) == Some(field_name) {
+            let field = if child.is_extra() {
+                preceding_structural_field
+            } else {
+                let field = node.field_name_for_child(index as u32);
+                preceding_structural_field = field;
+                field
+            };
+            if field == Some(field_name) {
                 children.push(child);
             }
         }

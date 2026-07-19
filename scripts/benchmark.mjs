@@ -82,7 +82,8 @@ for (let pass = 0; pass < passes; pass += 1) {
 }
 
 timings.sort((left, right) => left - right);
-const median = timings[Math.floor(timings.length / 2)];
+const middle = Math.floor(timings.length / 2);
+const median = timings.length % 2 === 0 ? (timings[middle - 1] + timings[middle]) / 2 : timings[middle];
 const best = timings[0];
 const mean = timings.reduce((sum, value) => sum + value, 0) / timings.length;
 

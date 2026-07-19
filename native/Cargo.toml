@@ -17,8 +17,12 @@ indexmap = "2"
 regex = "1"
 
 # Grammar crates are pinned to the exact versions of their npm counterparts so the native parser
-# produces byte-identical trees to the node-tree-sitter backend.
-tree-sitter = "0.22"
+# produces byte-identical trees to the node-tree-sitter backend. Core 0.22.6 parses identically to
+# the core node-tree-sitter 0.21.1 vendors (0.21.0 does not: it lacks several parser fixes and can
+# abort on malformed input); its one observed behavioral difference — extra (error-recovery)
+# children no longer inherit fields in ts_node_field_name_for_child — is compensated in
+# util::find_children_by_field_name.
+tree-sitter = "=0.22.6"
 tree-sitter-c = "=0.21.4"
 tree-sitter-cpp = "=0.22.3"
 tree-sitter-go = "=0.21.2"
