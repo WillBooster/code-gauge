@@ -3,7 +3,7 @@
 [![Test rust](https://github.com/WillBooster/code-gauge/actions/workflows/test-rust.yml/badge.svg)](https://github.com/WillBooster/code-gauge/actions/workflows/test-rust.yml)
 [![Test](https://github.com/WillBooster/code-gauge/actions/workflows/test.yml/badge.svg)](https://github.com/WillBooster/code-gauge/actions/workflows/test.yml)
 [![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
-[![wbfy](https://img.shields.io/badge/wbfy-4.3.9-1e90ff.svg)](https://github.com/WillBooster/shared/tree/main/packages/wbfy)
+[![wbfy](https://img.shields.io/badge/wbfy-9.3.0-1e90ff.svg)](https://github.com/WillBooster/shared/tree/main/packages/wbfy)
 
 A command-line tool for measuring code metrics with tree-sitter. It scans a project and reports high-risk files, functions, and React components so you can spot code that is worth refactoring. A [programmatic API](#programmatic-api) is also available.
 
