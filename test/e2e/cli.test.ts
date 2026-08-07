@@ -54,13 +54,7 @@ const riskyFile = `export function evaluate(kind: string, value: number): number
 let projectDir: string;
 
 beforeAll(() => {
-  // On Windows, `yarn` is `yarn.cmd`, which Node 24 refuses to launch through `spawn` without a
-  // shell; passing the command as a single shell string avoids that and the DEP0190 args-with-shell
-  // warning. Elsewhere, resolve `yarn` on PATH directly (no shell).
-  const isWindows = process.platform === 'win32';
-  const build = isWindows
-    ? spawnSync('yarn build', { cwd: repoRoot, encoding: 'utf8', shell: true, timeout: 100_000 })
-    : spawnSync('yarn', ['build'], { cwd: repoRoot, encoding: 'utf8', timeout: 100_000 });
+  const build = spawnSync('bun', ['run', 'build'], { cwd: repoRoot, encoding: 'utf8', timeout: 100_000 });
   if (build.status !== 0) {
     throw new Error(
       `Failed to build the CLI before running E2E tests:\n${build.error?.message ?? ''}\n${build.stdout}\n${build.stderr}`
