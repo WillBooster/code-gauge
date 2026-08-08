@@ -66,6 +66,11 @@ const commonDecisionNodes = [
 // Go `switch`/`select` branches are `*_case` nodes, not the `case_clause`/`switch_case` of other grammars.
 const goDecisionNodes = [...commonDecisionNodes, 'expression_case', 'type_case', 'communication_case'] as const;
 
+// Default switch branches add no decision, but their contents are nested inside the switch like
+// any other arm, so they appear in the nesting sets only.
+const commonNestingNodes = [...commonDecisionNodes, 'switch_default'] as const;
+const goNestingNodes = [...goDecisionNodes, 'default_case'] as const;
+
 const javaFunctionNodes = [
   ...commonFunctionNodes,
   'constructor_declaration',
@@ -86,6 +91,11 @@ const javaDecisionNodes = [
   'switch_block_statement_group',
   'switch_rule',
 ] as const;
+// PMD's standard cyclomatic complexity charges `throw` one path (verified against PMD 7.26.0);
+// it stays out of the nesting set (its argument expressions are not nested) and adds no
+// cognitive point (see cyclomaticOnlyNodeTypes in metrics.ts). Other languages follow their own
+// reference tools (lizard/radon), which do not count throw/raise.
+const javaCyclomaticDecisionNodes = [...javaDecisionNodes, 'throw_statement'] as const;
 
 // Ruby node types are keyword-like (`if`, `while`, ...), so they must stay Ruby-specific: the same
 // strings appear as anonymous keyword tokens in other grammars and would be double-counted there.
@@ -118,6 +128,244 @@ const cClassNodes = ['struct_specifier', 'enum_specifier', 'union_specifier'] as
 const cDecisionNodes = [...commonDecisionNodes, 'case_statement'] as const;
 const cppClassNodes = [...cClassNodes, 'class_specifier'] as const;
 const cppDecisionNodes = [...cDecisionNodes, 'for_range_loop'] as const;
+
+// NCSS node sets: every listed type counts as one non-commenting source statement. The Java set is
+// calibrated against PMD's NcssCount rule (`try` counts 0; `else`, `case`/`default` labels,
+// `catch`, `finally`, and try-with-resources resources count 1 each); the other languages follow
+// the same conventions with their grammar's node types.
+const jsNcssNodes = [
+  'import_statement',
+  'export_statement',
+  'lexical_declaration',
+  'variable_declaration',
+  'function_declaration',
+  'function_signature',
+  'generator_function_declaration',
+  'class_declaration',
+  'abstract_class_declaration',
+  'module',
+  'method_definition',
+  'abstract_method_signature',
+  'class_static_block',
+  'field_definition',
+  'public_field_definition',
+  'type_alias_declaration',
+  'interface_declaration',
+  'enum_declaration',
+  'expression_statement',
+  'if_statement',
+  'else_clause',
+  'switch_statement',
+  'switch_case',
+  'switch_default',
+  'for_statement',
+  'for_in_statement',
+  'while_statement',
+  'do_statement',
+  'catch_clause',
+  'finally_clause',
+  'labeled_statement',
+  'return_statement',
+  'break_statement',
+  'continue_statement',
+  'throw_statement',
+  'debugger_statement',
+  'with_statement',
+] as const;
+
+const pythonNcssNodes = [
+  'import_statement',
+  'import_from_statement',
+  'future_import_statement',
+  'print_statement',
+  'exec_statement',
+  'assert_statement',
+  'expression_statement',
+  'return_statement',
+  'delete_statement',
+  'raise_statement',
+  'pass_statement',
+  'break_statement',
+  'continue_statement',
+  'global_statement',
+  'nonlocal_statement',
+  'if_statement',
+  'elif_clause',
+  'else_clause',
+  'for_statement',
+  'while_statement',
+  'except_clause',
+  'except_group_clause',
+  'finally_clause',
+  'with_statement',
+  'match_statement',
+  'case_clause',
+  'function_definition',
+  'class_definition',
+  'type_alias_statement',
+] as const;
+
+const goNcssNodes = [
+  'package_clause',
+  'import_spec',
+  'type_spec',
+  'type_alias',
+  'const_spec',
+  'var_spec',
+  'function_declaration',
+  'method_declaration',
+  // Struct fields and interface members count contextually (see ncss.ts): only inside a named
+  // `type T struct/interface { ... }`, not in inline anonymous types, which are part of one
+  // declaration.
+  'short_var_declaration',
+  'expression_statement',
+  'send_statement',
+  'inc_statement',
+  'dec_statement',
+  'assignment_statement',
+  'if_statement',
+  'for_statement',
+  'expression_switch_statement',
+  'type_switch_statement',
+  'select_statement',
+  'expression_case',
+  'type_case',
+  'communication_case',
+  'default_case',
+  'return_statement',
+  'break_statement',
+  'continue_statement',
+  'goto_statement',
+  'fallthrough_statement',
+  'defer_statement',
+  'go_statement',
+  'labeled_statement',
+] as const;
+
+const rustNcssNodes = [
+  'use_declaration',
+  'extern_crate_declaration',
+  'foreign_mod_item',
+  'mod_item',
+  'const_item',
+  'static_item',
+  'struct_item',
+  'enum_item',
+  'union_item',
+  'trait_item',
+  'impl_item',
+  'function_item',
+  'function_signature_item',
+  'type_item',
+  'associated_type',
+  'macro_definition',
+  'field_declaration',
+  'let_declaration',
+  'expression_statement',
+  'else_clause',
+  'match_arm',
+] as const;
+
+const javaNcssNodes = [
+  'package_declaration',
+  'import_declaration',
+  'module_declaration',
+  'requires_module_directive',
+  'exports_module_directive',
+  'opens_module_directive',
+  'uses_module_directive',
+  'provides_module_directive',
+  'class_declaration',
+  'interface_declaration',
+  'enum_declaration',
+  'annotation_type_declaration',
+  'annotation_type_element_declaration',
+  'record_declaration',
+  'field_declaration',
+  'constant_declaration',
+  'method_declaration',
+  'constructor_declaration',
+  'compact_constructor_declaration',
+  'static_initializer',
+  'explicit_constructor_invocation',
+  'local_variable_declaration',
+  'expression_statement',
+  'if_statement',
+  'while_statement',
+  'do_statement',
+  'for_statement',
+  'enhanced_for_statement',
+  'switch_statement',
+  'switch_expression',
+  'switch_label',
+  'break_statement',
+  'continue_statement',
+  'return_statement',
+  'throw_statement',
+  'assert_statement',
+  'synchronized_statement',
+  'labeled_statement',
+  'yield_statement',
+  'resource',
+  'catch_clause',
+  'finally_clause',
+] as const;
+
+// Ruby statements have no wrapper node types, so bodies are counted positionally (see
+// ncssContainerNodeTypes); only clause nodes hanging off non-container parents need listing.
+const rubyNcssNodes = ['elsif', 'else', 'when', 'in_clause', 'rescue', 'ensure'] as const;
+const rubyNcssContainers = [
+  'program',
+  'body_statement',
+  'then',
+  'else',
+  'do',
+  'block_body',
+  'begin',
+  'ensure',
+] as const;
+
+const cNcssNodes = [
+  'preproc_include',
+  'preproc_def',
+  'preproc_function_def',
+  'declaration',
+  'type_definition',
+  'field_declaration',
+  'function_definition',
+  // Counted only when they carry a body (see bodylessNcssSpecifierTypes in ncss.ts).
+  'struct_specifier',
+  'enum_specifier',
+  'union_specifier',
+  'expression_statement',
+  'if_statement',
+  'else_clause',
+  'switch_statement',
+  'case_statement',
+  'for_statement',
+  'while_statement',
+  'do_statement',
+  'return_statement',
+  'break_statement',
+  'continue_statement',
+  'goto_statement',
+  'labeled_statement',
+] as const;
+const cppNcssNodes = [
+  ...cNcssNodes,
+  'class_specifier',
+  'namespace_definition',
+  'using_declaration',
+  'alias_declaration',
+  'namespace_alias_definition',
+  'concept_definition',
+  'static_assert_declaration',
+  'for_range_loop',
+  'catch_clause',
+  'throw_statement',
+  'co_return_statement',
+  'co_yield_statement',
+] as const;
 
 function normalizeGrammar(module: GrammarModule): ParserLanguage {
   if (isGrammarWrapper(module, 'default')) {
@@ -163,25 +411,32 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     name: 'python',
     aliases: ['py'],
     parserLanguage: normalizeGrammar(Python as unknown as GrammarModule),
+    ncssNodeTypes: pythonNcssNodes,
   },
   {
     name: 'go',
     parserLanguage: normalizeGrammar(Go as unknown as GrammarModule),
     decisionNodeTypes: goDecisionNodes,
-    nestingNodeTypes: goDecisionNodes,
+    nestingNodeTypes: goNestingNodes,
+    ncssNodeTypes: goNcssNodes,
   },
   {
     name: 'rust',
     aliases: ['rs'],
     parserLanguage: normalizeGrammar(Rust as unknown as GrammarModule),
+    ncssNodeTypes: rustNcssNodes,
+    // `else_clause` is a container so `else if` chains count the nested if_expression; a plain
+    // `else { ... }` is unaffected because its only child is a `block`, itself a container.
+    ncssContainerNodeTypes: ['block', 'else_clause'],
   },
   {
     name: 'java',
     parserLanguage: normalizeGrammar(Java as unknown as GrammarModule),
     functionNodeTypes: javaFunctionNodes,
     classNodeTypes: javaClassNodes,
-    decisionNodeTypes: javaDecisionNodes,
+    decisionNodeTypes: javaCyclomaticDecisionNodes,
     nestingNodeTypes: javaDecisionNodes,
+    ncssNodeTypes: javaNcssNodes,
   },
   {
     name: 'ruby',
@@ -191,6 +446,8 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     classNodeTypes: rubyClassNodes,
     decisionNodeTypes: rubyDecisionNodes,
     nestingNodeTypes: rubyDecisionNodes,
+    ncssNodeTypes: rubyNcssNodes,
+    ncssContainerNodeTypes: rubyNcssContainers,
   },
   {
     name: 'c',
@@ -199,6 +456,7 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     classNodeTypes: cClassNodes,
     decisionNodeTypes: cDecisionNodes,
     nestingNodeTypes: cDecisionNodes,
+    ncssNodeTypes: cNcssNodes,
   },
   {
     name: 'cpp',
@@ -208,12 +466,14 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     classNodeTypes: cppClassNodes,
     decisionNodeTypes: cppDecisionNodes,
     nestingNodeTypes: cppDecisionNodes,
+    ncssNodeTypes: cppNcssNodes,
   },
 ].map((language) => ({
   functionNodeTypes: commonFunctionNodes,
   classNodeTypes: commonClassNodes,
   decisionNodeTypes: commonDecisionNodes,
-  nestingNodeTypes: commonDecisionNodes,
+  nestingNodeTypes: commonNestingNodes,
+  ncssNodeTypes: jsNcssNodes,
   ...language,
 }));
 

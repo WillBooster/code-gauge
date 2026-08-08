@@ -779,7 +779,7 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
   const summary = summarize(result.files);
   writeStdout(`Measured ${summary.fileCount} files under ${target}\n`);
   writeStdout(
-    `LOC ${summary.linesOfCode}, functions ${summary.functionCount}, max cyclomatic ${summary.maxCyclomaticComplexity}, max cognitive ${summary.maxCognitiveComplexity}\n`
+    `LOC ${summary.linesOfCode}, NCSS ${summary.ncssCount}, functions ${summary.functionCount}, max cyclomatic ${summary.maxCyclomaticComplexity}, max cognitive ${summary.maxCognitiveComplexity}\n`
   );
   writeStdout(
     `Calls ${summary.callCount}, internal edges ${summary.internalCallCount}, max call depth ${summary.maxCallDepth}, imports ${summary.importSourceCount}, exports ${summary.exportCount}\n`
@@ -910,6 +910,7 @@ function summarize(files: FileMetrics[]): {
   linesOfCode: number;
   maxCognitiveComplexity: number;
   maxCyclomaticComplexity: number;
+  ncssCount: number;
   callCount: number;
   internalCallCount: number;
   maxCallDepth: number;
@@ -927,6 +928,7 @@ function summarize(files: FileMetrics[]): {
   let linesOfCode = 0;
   let maxCyclomaticComplexity = 0;
   let maxCognitiveComplexity = 0;
+  let ncssCount = 0;
   let callCount = 0;
   let internalCallCount = 0;
   let maxCallDepth = 0;
@@ -945,6 +947,7 @@ function summarize(files: FileMetrics[]): {
     linesOfCode += file.metrics.lines.code;
     maxCyclomaticComplexity = Math.max(maxCyclomaticComplexity, file.metrics.maxCyclomaticComplexity);
     maxCognitiveComplexity = Math.max(maxCognitiveComplexity, file.metrics.maxCognitiveComplexity);
+    ncssCount += file.metrics.ncssCount;
     callCount += file.metrics.callGraph.callCount;
     internalCallCount += file.metrics.callGraph.internalCallCount;
     maxCallDepth = Math.max(maxCallDepth, file.metrics.callGraph.maxCallDepth);
@@ -965,6 +968,7 @@ function summarize(files: FileMetrics[]): {
     linesOfCode,
     maxCyclomaticComplexity,
     maxCognitiveComplexity,
+    ncssCount,
     callCount,
     internalCallCount,
     maxCallDepth,

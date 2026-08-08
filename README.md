@@ -121,7 +121,8 @@ Command-line `--<metric>-threshold` flags set the global base only; use the conf
 
 - Physical LOC, code lines, comment-only lines, and blank lines
 - Function and class counts
-- Cyclomatic and cognitive complexity (per function and maximum)
+- Cyclomatic and cognitive complexity (per function and maximum), following the SonarSource cognitive-complexity specification (except its recursion increment, which is not counted) and cross-validated against PMD's Java rules
+- NCSS (non-commenting source statements, per function and per file), calibrated against PMD's `NcssCount` rule for Java and generalized to every supported language; unlike PMD, package and import declarations count (PMD counts them only with `NcssOption.COUNT_IMPORTS`), and statement-shaped content is counted uniformly in expression positions too (PMD's visitor never descends into lambdas or anonymous classes passed as call arguments, switch-expression bodies, or expression-bodied arrow cases)
 - Nesting depth
 - Intra-file call graph metrics: call counts, fan-in/fan-out, recursion, call depth, and parameter counts
 - Within-file duplication: copy-pasted blocks and statement runs matched on normalized tokens (identifiers anonymized consistently, literals by kind), plus duplicated line count and ratio (distinct from cross-file duplicate symbol names)

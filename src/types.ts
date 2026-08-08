@@ -22,6 +22,13 @@ export interface LanguageDefinition {
   classNodeTypes?: readonly string[];
   decisionNodeTypes?: readonly string[];
   nestingNodeTypes?: readonly string[];
+  /** Node types that each count as one non-commenting source statement (NCSS). */
+  ncssNodeTypes?: readonly string[];
+  /**
+   * Node types whose direct named children count as statements even without a dedicated statement
+   * node type (expression-oriented grammars: Ruby bodies, Rust trailing block expressions).
+   */
+  ncssContainerNodeTypes?: readonly string[];
 }
 
 export interface MeasureOptions {
@@ -52,6 +59,13 @@ export interface HalsteadMetrics {
 
 export interface FunctionMetrics {
   name?: string;
+  /**
+   * The tree-sitter node type of the function (e.g. `method_declaration`, `arrow_function`,
+   * `lambda_expression`), letting consumers distinguish declared methods from lambdas — e.g. to
+   * sum per-function metrics without double-counting lambda content already attributed to the
+   * enclosing function.
+   */
+  nodeType: string;
   startLine: number;
   startColumn: number;
   endLine: number;
@@ -59,6 +73,12 @@ export interface FunctionMetrics {
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
   nestingDepth: number;
+  /**
+   * Non-commenting source statements in the function, PMD-style: the declaration itself, each
+   * statement, and each `else`/`case` label/`catch`/`finally` clause count 1; nested function and
+   * class bodies are included, so summing over functions counts shared regions more than once.
+   */
+  ncss: number;
   callCount: number;
   uniqueCalleeCount: number;
   fanIn: number;
@@ -167,6 +187,8 @@ export interface CodeMetrics {
   cognitiveComplexity: number;
   maxCognitiveComplexity: number;
   nestingDepth: number;
+  /** Non-commenting source statements in the whole file; every statement counts exactly once. */
+  ncssCount: number;
   callGraph: CallGraphMetrics;
   coupling: CouplingMetrics;
   module: ModuleMetrics;

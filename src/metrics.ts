@@ -1,6 +1,7 @@
 import Parser from 'tree-sitter';
 import { measureDuplication } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
+import { commentNodeTypes, countFunctionNcss, countNcss, invalidateNcssSetsCache } from './ncss.js';
 import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
 import type {
   CallGraphMetrics,
@@ -210,6 +211,9 @@ interface CommentSpan {
 interface FunctionAnalysis {
   index: number;
   name?: string;
+  nodeType: string;
+  /** False for bodyless signatures (Java abstract/interface methods), which resolve no calls. */
+  hasImplementation: boolean;
   startLine: number;
   startColumn: number;
   endLine: number;
@@ -217,6 +221,7 @@ interface FunctionAnalysis {
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
   nestingDepth: number;
+  ncss: number;
   callCount: number;
   parameterCount: number;
   callees: Set<string>;
@@ -237,6 +242,9 @@ export class TreeMeasurer {
   private readonly registry = createLanguageRegistry();
 
   registerLanguage(language: LanguageDefinition): void {
+    // Re-registering may carry mutated node-type arrays; drop derived caches so they rebuild.
+    invalidateComplexityNodeSetsCache(language);
+    invalidateNcssSetsCache(language);
     this.registry.set(language.name, language);
     for (const alias of language.aliases ?? []) {
       this.registry.set(alias, language);
@@ -285,6 +293,7 @@ export class TreeMeasurer {
       cognitiveComplexity: globalComplexity.cognitiveComplexity,
       maxCognitiveComplexity: maxMetric(functionMetrics, 'cognitiveComplexity'),
       nestingDepth: globalComplexity.nestingDepth,
+      ncssCount: countNcss(root, language),
       callGraph: structuralMetrics.callGraph,
       coupling: structuralMetrics.coupling,
       module: structuralMetrics.module,
@@ -322,6 +331,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
     lines: payload.lines,
     functions: payload.functions.map((fn) => ({
       name: fn.name,
+      nodeType: fn.nodeType,
       startLine: fn.startLine,
       startColumn: fn.startColumn,
       endLine: fn.endLine,
@@ -329,6 +339,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
       cyclomaticComplexity: fn.cyclomaticComplexity,
       cognitiveComplexity: fn.cognitiveComplexity,
       nestingDepth: fn.nestingDepth,
+      ncss: fn.ncss,
       callCount: fn.callCount,
       uniqueCalleeCount: fn.uniqueCalleeCount,
       fanIn: fn.fanIn,
@@ -343,6 +354,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
     cognitiveComplexity: payload.cognitiveComplexity,
     maxCognitiveComplexity: payload.maxCognitiveComplexity,
     nestingDepth: payload.nestingDepth,
+    ncssCount: payload.ncssCount,
     callGraph: payload.callGraph,
     coupling: payload.coupling,
     module: payload.module,
@@ -370,6 +382,7 @@ function measureStructuralMetrics(
   const callGraph = measureCallGraph(analyses);
   const functionsWithGraph = analyses.map((analysis) => ({
     name: analysis.name,
+    nodeType: analysis.nodeType,
     startLine: analysis.startLine,
     startColumn: analysis.startColumn,
     endLine: analysis.endLine,
@@ -377,6 +390,7 @@ function measureStructuralMetrics(
     cyclomaticComplexity: analysis.cyclomaticComplexity,
     cognitiveComplexity: analysis.cognitiveComplexity,
     nestingDepth: analysis.nestingDepth,
+    ncss: analysis.ncss,
     callCount: analysis.callCount,
     uniqueCalleeCount: analysis.callees.size,
     fanIn: callGraph.fanInByIndex.get(analysis.index) ?? 0,
@@ -407,6 +421,8 @@ function analyzeFunction(
   return {
     index,
     name: findFunctionName(node),
+    nodeType: node.type,
+    hasImplementation: hasImplementationBody(node),
     startLine: node.startPosition.row + 1,
     startColumn: node.startPosition.column,
     endLine: node.endPosition.row + 1,
@@ -414,6 +430,7 @@ function analyzeFunction(
     cyclomaticComplexity: complexity.cyclomaticComplexity,
     cognitiveComplexity: complexity.cognitiveComplexity,
     nestingDepth: complexity.nestingDepth,
+    ncss: countFunctionNcss(node, language),
     callCount: calls.callCount,
     parameterCount: countParameters(node),
     callees: calls.callees,
@@ -563,7 +580,10 @@ function measureCallGraph(analyses: FunctionAnalysis[]): {
 function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<string, number> {
   const indexesByName = new Map<string, number | undefined>();
   for (const analysis of analyses) {
-    if (!analysis.name) {
+    // Bodyless signatures stay in functions[] for PMD-style aggregation, but they must not make
+    // an implemented method's name ambiguous (an interface method and its implementation share a
+    // name), which would drop the implementation's call-graph edges and recursion detection.
+    if (!analysis.name || !analysis.hasImplementation) {
       continue;
     }
 
@@ -573,18 +593,27 @@ function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<strin
 }
 
 /**
- * C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members and Java
- * `method_declaration` covers abstract/interface methods; those have no `body` and are signatures,
- * not implementations, matching how TypeScript method signatures are excluded.
+ * C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members; those have no
+ * `body` and are signatures, not implementations, matching how TypeScript method signatures are
+ * excluded. Java `method_declaration` is NOT here: PMD reports abstract/interface methods as
+ * methods (cyclomatic 1, NCSS 1), so bodyless Java methods stay in the function list.
  */
 const bodyRequiredFunctionTypes = new Set([
   'function_definition',
-  'method_declaration',
   'constructor_declaration',
   'compact_constructor_declaration',
   // Rust trait method signatures (`fn required(&self);`) never carry a body.
   'function_signature_item',
 ]);
+
+/**
+ * Whether the function carries an implementation. Only Java `method_declaration` can be bodyless
+ * here (abstract/interface methods); every other bodyless kind is filtered out of functions[] by
+ * isImplementedFunction.
+ */
+function hasImplementationBody(node: Parser.SyntaxNode): boolean {
+  return node.type !== 'method_declaration' || node.childForFieldName('body') !== null;
+}
 
 function isImplementedFunction(node: Parser.SyntaxNode): boolean {
   if (!bodyRequiredFunctionTypes.has(node.type) || node.childForFieldName('body') !== null) {
@@ -609,6 +638,69 @@ function isFunctionBoundary(node: Parser.SyntaxNode, functionNodeTypes: Set<stri
   return functionNodeTypes.has(node.type) && !isLambdaBodyBlock(node);
 }
 
+// Sonar cognitive complexity charges a switch/match once as a whole; each case label still adds
+// one cyclomatic path. Only named nodes are consulted, so anonymous keyword tokens never match.
+const switchLikeNodeTypes = new Set([
+  'switch_statement',
+  'switch_expression',
+  'expression_switch_statement',
+  'type_switch_statement',
+  'select_statement',
+  'match_expression',
+  'match_statement',
+  'case',
+  'case_match',
+]);
+
+// Per-case decision nodes: cyclomatic-only, because the switch itself carries the cognitive cost.
+const caseClauseNodeTypes = new Set([
+  'case_clause',
+  'switch_case',
+  'switch_block_statement_group',
+  'switch_rule',
+  'case_statement',
+  'expression_case',
+  'type_case',
+  'communication_case',
+  'match_arm',
+  'when',
+  'in_clause',
+]);
+
+const ifLikeNodeTypes = new Set(['if_statement', 'if_expression', 'if', 'unless']);
+
+// Decision nodes that add an execution path but no cognitive point: PMD's cyclomatic complexity
+// charges Java `throw` while its cognitive complexity does not.
+const cyclomaticOnlyNodeTypes = new Set(['throw_statement']);
+
+interface ComplexityNodeSets {
+  functionNodes: Set<string>;
+  decisionNodes: Set<string>;
+  nestingNodes: Set<string>;
+}
+
+// Cached per language: measureComplexity runs once per function plus once per file, so per-call
+// Set construction would add a measurable constant factor on large files.
+const complexityNodeSetsCache = new WeakMap<LanguageDefinition, ComplexityNodeSets>();
+
+/** Drops the cached sets so a re-registered (possibly mutated) definition rebuilds them. */
+function invalidateComplexityNodeSetsCache(language: LanguageDefinition): void {
+  complexityNodeSetsCache.delete(language);
+}
+
+function getComplexityNodeSets(language: LanguageDefinition): ComplexityNodeSets {
+  let sets = complexityNodeSetsCache.get(language);
+  if (!sets) {
+    sets = {
+      functionNodes: new Set(language.functionNodeTypes),
+      decisionNodes: new Set(language.decisionNodeTypes),
+      nestingNodes: new Set(language.nestingNodeTypes),
+    };
+    complexityNodeSetsCache.set(language, sets);
+  }
+  return sets;
+}
+
 function measureComplexity(
   node: Parser.SyntaxNode,
   language: LanguageDefinition,
@@ -618,54 +710,210 @@ function measureComplexity(
   let cyclomaticComplexity = 1;
   let cognitiveComplexity = 0;
   let nestingDepth = nesting;
-  const functionNodes = new Set(language.functionNodeTypes);
-  const decisionNodes = new Set(language.decisionNodeTypes);
-  const nestingNodes = new Set(language.nestingNodeTypes);
+  const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
 
-  function visit(current: Parser.SyntaxNode, currentNesting: number, insideRoot: boolean): void {
-    if (stopAtNestedFunctions && !insideRoot && isFunctionBoundary(current, functionNodes)) {
-      return;
+  // Cyclomatic complexity and nesting depth describe the function's own body, so they stop at
+  // nested function boundaries; cognitive complexity follows the Sonar spec instead and charges
+  // nested function/lambda content to the enclosing function, one nesting level deeper.
+  function visit(
+    current: Parser.SyntaxNode,
+    currentNesting: number,
+    functionNestingBonus: number,
+    insideFunction: boolean,
+    insideNestedFunction: boolean,
+    insideChargedClassBody: boolean
+  ): void {
+    // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
+    // level once for everything inside it — PMD charges the class body, not the methods it holds
+    // (verified: an anonymous-class instance initializer's `if` costs 1 + 1 nesting), so methods
+    // directly inside a charged class body skip the function-boundary bonus.
+    const isChargedClassBody = current.type === 'class_body' && insideFunction;
+    if (isChargedClassBody) {
+      insideNestedFunction = true;
+      functionNestingBonus += 1;
     }
+    if (isFunctionBoundary(current, functionNodes)) {
+      if (insideFunction) {
+        insideNestedFunction = true;
+        if (!insideChargedClassBody) {
+          functionNestingBonus += 1;
+        }
+      }
+      insideFunction = true;
+    }
+    const cognitiveNesting = currentNesting + functionNestingBonus;
+    const countsForOwnBody = !(stopAtNestedFunctions && insideNestedFunction);
 
     // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
     // `if` keyword token), so only named nodes count as decisions.
     const isDecision = current.isNamed && decisionNodes.has(current.type) && !isDefaultSwitchBranch(current);
-    const isNesting = current.isNamed && nestingNodes.has(current.type) && !isDefaultSwitchBranch(current);
+    const isCaseClause = current.isNamed && caseClauseNodeTypes.has(current.type);
+    // Ruby's `case ... else` arm is an `else` node; like every other language's default branch it
+    // nests its contents inside the switch (it cannot go in the Ruby nesting set because
+    // `if`/`begin` else branches would then double-nest under their already-nesting parent).
+    const isNesting =
+      current.isNamed &&
+      (nestingNodes.has(current.type) ||
+        (current.type === 'else' && (current.parent?.type === 'case' || current.parent?.type === 'case_match')));
     // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
     // surcharge, and their bodies stay at the chain's nesting level (Sonar cognitive-complexity
     // semantics); genuinely nested conditionals inside those bodies still deepen.
     const isContinuation = isDecision && isFlatChainContinuation(current);
 
-    if (isDecision) {
+    if (isDecision && countsForOwnBody) {
       cyclomaticComplexity += 1;
-      cognitiveComplexity += isContinuation ? 1 : 1 + currentNesting;
+    }
+    if (isDecision && !isCaseClause && !cyclomaticOnlyNodeTypes.has(current.type)) {
+      cognitiveComplexity += isContinuation ? 1 : 1 + cognitiveNesting;
+    }
+    if (current.isNamed && switchLikeNodeTypes.has(current.type)) {
+      cognitiveComplexity += 1 + cognitiveNesting;
+    }
+    // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
+    // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+    cognitiveComplexity += countPlainElseBranches(current);
+    // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
+    if (isFlowBreakingJump(current)) {
+      cognitiveComplexity += 1;
     }
 
     if (isBooleanOperator(current)) {
-      cyclomaticComplexity += 1;
-      cognitiveComplexity += 1;
+      if (countsForOwnBody) {
+        cyclomaticComplexity += 1;
+      }
+      // A sequence of identical boolean operators reads as one condition, so only the operator
+      // starting a sequence adds a cognitive point (Sonar spec); each operator stays one
+      // cyclomatic path.
+      if (startsBooleanOperatorSequence(current)) {
+        cognitiveComplexity += 1;
+      }
     }
 
     // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
     // add one independent execution path without nesting.
     if (isPatternGuard(current)) {
-      cyclomaticComplexity += 1;
+      if (countsForOwnBody) {
+        cyclomaticComplexity += 1;
+      }
       cognitiveComplexity += 1;
     }
 
     const childNesting = isNesting && !isContinuation ? currentNesting + 1 : currentNesting;
-    nestingDepth = Math.max(nestingDepth, childNesting);
+    if (countsForOwnBody) {
+      nestingDepth = Math.max(nestingDepth, childNesting);
+    }
 
     for (const child of current.children) {
-      visit(child, childNesting, false);
+      visit(child, childNesting, functionNestingBonus, insideFunction, insideNestedFunction, isChargedClassBody);
     }
   }
 
   for (const child of node.children) {
-    visit(child, nesting, false);
+    visit(child, nesting, 0, stopAtNestedFunctions, false, false);
   }
 
   return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
+}
+
+/**
+ * Plain else branches attached to `current`: an `else_clause`/Ruby `else` whose branch is not an
+ * `else if` continuation, or a bare Java/Go `alternative:` statement without a clause wrapper.
+ */
+function countPlainElseBranches(current: Parser.SyntaxNode): number {
+  if (!current.isNamed) {
+    return 0;
+  }
+  if (current.type === 'else') {
+    // A Ruby `case ... else` is the default arm of a switch, which already counts as a whole
+    // (sonar-ruby models it as a match case, not an else branch); `if`/`unless`/`begin` else
+    // branches count one point each.
+    return current.parent?.type === 'case' || current.parent?.type === 'case_match' ? 0 : 1;
+  }
+  if (current.type === 'else_clause') {
+    return current.namedChildren.some((child) => ifLikeNodeTypes.has(child.type)) ? 0 : 1;
+  }
+  if (current.type !== 'if_statement' && current.type !== 'if_expression') {
+    return 0;
+  }
+  let count = 0;
+  for (let index = 0; index < current.childCount; index += 1) {
+    const child = current.child(index);
+    if (
+      child &&
+      current.fieldNameForChild(index) === 'alternative' &&
+      child.type !== 'else_clause' &&
+      child.type !== 'elif_clause' &&
+      !ifLikeNodeTypes.has(child.type)
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/** goto, and break/continue that jump to a label (their only named child is the label). */
+function isFlowBreakingJump(node: Parser.SyntaxNode): boolean {
+  if (!node.isNamed) {
+    return false;
+  }
+  if (node.type === 'goto_statement') {
+    return true;
+  }
+  // Rust jumps are expressions; `break value` carries a named expression child, so only an
+  // explicit `label` child marks a labeled jump.
+  if (node.type === 'break_expression' || node.type === 'continue_expression') {
+    return node.namedChildren.some((child) => child.type === 'label' || child.type === 'loop_label');
+  }
+  // Comments are named children too (`break /* done */;`), so only non-comment children mark a
+  // label.
+  return (
+    (node.type === 'break_statement' || node.type === 'continue_statement') &&
+    node.namedChildren.some((child) => !commentNodeTypes.has(child.type))
+  );
+}
+
+// Wrappers that are transparent when locating the enclosing boolean operation: PMD/Sonar keep a
+// sequence continuous across parentheses (`a && (b && c)` costs one point).
+const parenthesizedNodeTypes = new Set(['parenthesized_expression', 'parenthesized_statements']);
+
+/**
+ * Whether this boolean operator token starts a new sequence, i.e. its binary node is the root of a
+ * run of same-operator binaries (possibly through parentheses). Only the root operator counts one
+ * cognitive point: `a && b && c` and `a && (b && c)` cost one, `a && b || c` costs two, matching
+ * the Sonar specification and PMD 7.26.0.
+ */
+function startsBooleanOperatorSequence(token: Parser.SyntaxNode): boolean {
+  const binary = token.parent;
+  if (!binary) {
+    return true;
+  }
+  let ancestor = binary.parent;
+  while (ancestor && parenthesizedNodeTypes.has(ancestor.type)) {
+    ancestor = ancestor.parent;
+  }
+  if (!ancestor || ancestor.type !== binary.type) {
+    return true;
+  }
+  return normalizeBooleanOperator(findBooleanOperatorText(ancestor)) !== normalizeBooleanOperator(token.text);
+}
+
+/** C++ `and`/`or` are alternative spellings of `&&`/`||`, so mixing them keeps one sequence. */
+function normalizeBooleanOperator(text: string | undefined): string | undefined {
+  if (text === 'and') {
+    return '&&';
+  }
+  if (text === 'or') {
+    return '||';
+  }
+  return text;
+}
+
+function findBooleanOperatorText(binaryNode: Parser.SyntaxNode): string | undefined {
+  const operator = binaryNode.childForFieldName('operator');
+  if (operator) {
+    return operator.text;
+  }
+  return binaryNode.children.find((child) => !child.isNamed && booleanOperators.has(child.text))?.text;
 }
 
 /** Java `guard`, Ruby `if_guard`, Python `if_clause`, and Rust guards inside `match_pattern`. */
@@ -698,7 +946,8 @@ function isFlatChainContinuation(node: Parser.SyntaxNode): boolean {
 /**
  * C/C++ `default:` shares the `case_statement` node type with `case` (only `case` has a `value`
  * field), and Java's default group/rule carries an expressionless `switch_label`; a default branch
- * adds no decision, so these must not count toward complexity or nesting.
+ * adds no decision (and no cyclomatic path), though its contents still nest inside the switch like
+ * any other arm.
  */
 function isDefaultSwitchBranch(node: Parser.SyntaxNode): boolean {
   if (node.type === 'case_statement') {
@@ -763,7 +1012,7 @@ function collectCalls(
   constructedTypeNames: Set<string> = new Set()
 ): { callCount: number; callees: Set<string> } {
   const callees = new Set<string>();
-  const functionNodeTypes = new Set(language.functionNodeTypes);
+  const functionNodeTypes = getComplexityNodeSets(language).functionNodes;
   let callCount = 0;
 
   function visit(node: Parser.SyntaxNode, insideRoot: boolean): void {

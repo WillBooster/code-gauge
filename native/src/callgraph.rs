@@ -72,6 +72,12 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis]) -> CallGraphResult {
 fn map_unique_function_indexes_by_name(analyses: &[FunctionAnalysis]) -> HashMap<&str, usize> {
     let mut indexes_by_name: HashMap<&str, Option<usize>> = HashMap::new();
     for analysis in analyses {
+        // Bodyless signatures stay in the function list for PMD-style aggregation, but they must
+        // not make an implemented method's name ambiguous (an interface method and its
+        // implementation share a name), which would drop the implementation's call-graph edges.
+        if !analysis.has_implementation {
+            continue;
+        }
         // JS truthiness: a MISSING node yields an empty-string name, which is "no name" in TS.
         let Some(name) = analysis.name.as_deref().filter(|name| !name.is_empty()) else {
             continue;

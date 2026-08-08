@@ -11,6 +11,9 @@ use crate::util::{
 pub struct FunctionAnalysis {
     pub index: usize,
     pub name: Option<String>,
+    pub node_type: &'static str,
+    /// False for bodyless signatures (Java abstract/interface methods), which resolve no calls.
+    pub has_implementation: bool,
     pub start_line: usize,
     pub start_column: usize,
     pub end_line: usize,
@@ -18,6 +21,7 @@ pub struct FunctionAnalysis {
     pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
     pub nesting_depth: u64,
+    pub ncss: u64,
     pub call_count: u64,
     pub parameter_count: usize,
     pub callees: IndexSet<String>,
@@ -29,11 +33,12 @@ pub struct CallsResult {
     pub callees: IndexSet<String>,
 }
 
-/// C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members and Java
-/// `method_declaration` covers abstract/interface methods; those are signatures, not implementations.
+/// C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members; those have no
+/// `body` and are signatures, not implementations, matching how TypeScript method signatures are
+/// excluded. Java `method_declaration` is NOT here: PMD reports abstract/interface methods as
+/// methods (cyclomatic 1, NCSS 1), so bodyless Java methods stay in the function list.
 const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
     "function_definition",
-    "method_declaration",
     "constructor_declaration",
     "compact_constructor_declaration",
     "function_signature_item",
@@ -53,6 +58,13 @@ pub fn is_implemented_function(node: Node<'_>) -> bool {
         .any(|child| child.kind() == "try_statement")
 }
 
+/// Whether the function carries an implementation. Only Java `method_declaration` can be
+/// bodyless here (abstract/interface methods); every other bodyless kind is filtered out of the
+/// function list by `is_implemented_function`.
+fn has_implementation_body(node: Node<'_>) -> bool {
+    node.kind() != "method_declaration" || node.child_by_field_name("body").is_some()
+}
+
 pub fn analyze_function(
     node: Node<'_>,
     sets: &LanguageSets,
@@ -65,6 +77,8 @@ pub fn analyze_function(
     FunctionAnalysis {
         index,
         name: find_function_name(node, code),
+        node_type: node.kind(),
+        has_implementation: has_implementation_body(node),
         start_line: node.start_position().row + 1,
         // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving yields
         // the code-unit column node-tree-sitter reports.
@@ -74,6 +88,7 @@ pub fn analyze_function(
         cyclomatic_complexity: complexity.cyclomatic_complexity,
         cognitive_complexity: complexity.cognitive_complexity,
         nesting_depth: complexity.nesting_depth,
+        ncss: crate::ncss::count_function_ncss(node, &sets.ncss_nodes, &sets.ncss_containers),
         call_count: calls.call_count,
         parameter_count: count_parameters(node, code),
         callees: calls.callees,

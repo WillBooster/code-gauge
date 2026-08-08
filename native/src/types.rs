@@ -18,6 +18,7 @@ pub struct NativeMetrics {
     pub cognitive_complexity: u64,
     pub max_cognitive_complexity: u64,
     pub nesting_depth: u64,
+    pub ncss_count: u64,
     pub call_graph: CallGraphMetrics,
     pub coupling: CouplingMetrics,
     pub module: ModuleMetrics,
@@ -44,6 +45,8 @@ pub struct LineMetrics {
 pub struct FunctionMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The tree-sitter node type of the function node (e.g. `method_declaration`, `arrow_function`).
+    pub node_type: String,
     pub start_line: usize,
     pub start_column: usize,
     pub end_line: usize,
@@ -51,6 +54,7 @@ pub struct FunctionMetrics {
     pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
     pub nesting_depth: u64,
+    pub ncss: u64,
     pub call_count: u64,
     pub unique_callee_count: usize,
     pub fan_in: usize,

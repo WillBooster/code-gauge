@@ -238,10 +238,9 @@ describe('measureCode: line, complexity, and Halstead metrics', () => {
 });
 
 describe('measureCode: cognitive complexity and nesting', () => {
-  // classify(): for (+1) → if with `&&` (+2 nesting, +1 logical) → nested if/else (+3). Cyclomatic
-  // complexity is 5 (base 1 + for + outer if + `&&` + inner if), which matches lizard 1.23.0. The
-  // trailing plain `else` adds nothing today, so cognitive complexity is 7; under the strict
-  // SonarSource model it would be 8 (see issue #22). This expectation pins current behavior.
+  // classify(): for (+1) → if with `&&` (+2 nesting, +1 logical) → nested if (+3) with plain else
+  // (+1). Cyclomatic complexity is 5 (base 1 + for + outer if + `&&` + inner if), which matches
+  // lizard 1.23.0; cognitive complexity is 8 per the strict SonarSource model (issue #22).
   it('rewards nesting in cognitive complexity beyond cyclomatic complexity', () => {
     const metrics = measureCode(readFixture('cognitiveNesting.js'), { language: 'javascript' });
 
@@ -249,18 +248,139 @@ describe('measureCode: cognitive complexity and nesting', () => {
     expect(classify).toMatchObject({
       name: 'classify',
       cyclomaticComplexity: 5,
-      cognitiveComplexity: 7,
+      cognitiveComplexity: 8,
       nestingDepth: 3,
       parameterCount: 1,
       recursive: false,
     });
     expect(classify?.cognitiveComplexity).toBeGreaterThan(classify?.cyclomaticComplexity ?? 0);
-    expect(metrics.maxCognitiveComplexity).toBe(7);
+    expect(metrics.maxCognitiveComplexity).toBe(8);
     expect(metrics.nestingDepth).toBe(3);
   });
 });
 
+describe('measureCode: NCSS (non-commenting source statements)', () => {
+  // The same 4-statement `choose` function (declaration + if + two returns) is fixtured in every
+  // supported language, so PMD-style NCSS must agree across grammars.
+  const sampleFixtures: Record<string, string> = {
+    c: 'sample.c',
+    cpp: 'sample.cpp',
+    go: 'sample.go',
+    java: 'sample.java',
+    python: 'sample.py',
+    ruby: 'sample.rb',
+    rust: 'sample.rs',
+    typescript: 'sample.ts',
+  };
+  for (const [language, fixture] of Object.entries(sampleFixtures)) {
+    it(`counts the shared choose() fixture as 4 statements in ${language}`, () => {
+      const metrics = measureCode(readFixture(fixture), { language });
+      const choose = metrics.functions.find((fn) => fn.name === 'choose');
+      expect(choose?.ncss).toBe(4);
+    });
+  }
+
+  it('does not double-count exported declarations in TypeScript', () => {
+    const metrics = measureCode('export const a = 1;\nexport function f() {\n  return a;\n}\n', {
+      language: 'typescript',
+    });
+    // export const (1) + function declaration (1) + return (1); the export wrappers add nothing.
+    expect(metrics.ncssCount).toBe(3);
+    // Contextually counted (internal_module) and ambient-wrapped declarations behave the same.
+    expect(measureCode('export namespace N {}', { language: 'typescript' }).ncssCount).toBe(1);
+    expect(measureCode('export declare function f(): void;', { language: 'typescript' }).ncssCount).toBe(1);
+  });
+
+  it('counts Go type members only inside named type declarations', () => {
+    const named = measureCode('package p\ntype T struct {\n\ta int\n\tb string\n}\n', { language: 'go' });
+    // package (1) + type (1) + two fields.
+    expect(named.ncssCount).toBe(4);
+    const anonymous = measureCode(
+      'package p\nfunc f() {\n\tvar x struct {\n\t\ta int\n\t\tb string\n\t}\n\t_ = x\n}\n',
+      {
+        language: 'go',
+      }
+    );
+    // package (1) + func (1) + var (1) + assignment (1); inline anonymous members are part of the var.
+    expect(anonymous.ncssCount).toBe(4);
+  });
+
+  it('counts else, case labels, catch, and finally but not try, braces, or comments', () => {
+    const code = [
+      'function f(x) {',
+      '  // comment only',
+      '  try {',
+      '    switch (x) {',
+      '      case 1:',
+      '        x += 1;',
+      '        break;',
+      '      default:',
+      '        x -= 1;',
+      '    }',
+      '  } catch (error) {',
+      '    x = 0;',
+      '  } finally {',
+      '    x += 2;',
+      '  }',
+      '  if (x > 0) {',
+      '    x -= 3;',
+      '  } else {',
+      '    x = 4;',
+      '  }',
+      '  return x;',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(code, { language: 'javascript' });
+    // function 1 + switch 1 + case 1 + stmt 1 + break 1 + default 1 + stmt 1 + catch 1 + stmt 1 +
+    // finally 1 + stmt 1 + if 1 + stmt 1 + else 1 + stmt 1 + return 1 = 16 (try adds 0).
+    expect(metrics.ncssCount).toBe(16);
+    expect(metrics.functions[0]?.ncss).toBe(16);
+  });
+
+  it('counts Ruby bodies positionally, including rescue and ensure clauses', () => {
+    const code = [
+      'def load(path)',
+      '  data = read(path)',
+      '  parse(data)',
+      'rescue IOError => error',
+      '  log(error)',
+      'ensure',
+      '  cleanup',
+      'end',
+    ].join('\n');
+    const metrics = measureCode(code, { language: 'ruby' });
+    // def 1 + assignment 1 + call 1 + rescue 1 + call 1 + ensure 1 + call 1 = 7.
+    expect(metrics.ncssCount).toBe(7);
+  });
+
+  it('counts Rust trailing block expressions as statements', () => {
+    const code = 'fn add(left: i32, right: i32) -> i32 {\n    let sum = left + right;\n    sum\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    // fn 1 + let 1 + trailing expression 1.
+    expect(metrics.ncssCount).toBe(3);
+  });
+
+  it('excludes for-header declarations, matching PMD', () => {
+    const code = 'class A {\n  void f(int n) {\n    for (int i = 0; i < n; i++) {\n      use(i);\n    }\n  }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // class 1 + method 1 + for 1 + call statement 1; `int i = 0` belongs to the for header.
+    expect(metrics.ncssCount).toBe(4);
+  });
+});
+
 describe('measureCode: call graph', () => {
+  it('resolves calls to an implementation despite a same-named interface method', () => {
+    const code =
+      'interface I { int fact(int n); }\nclass C implements I {\n  public int fact(int n) { return n == 0 ? 1 : n * fact(n - 1); }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // The bodyless interface method appears in functions[] (PMD parity) but must not make the
+    // implementation's name ambiguous for call-graph resolution.
+    expect(metrics.functions).toHaveLength(2);
+    expect(metrics.functions.filter((fn) => fn.recursive)).toHaveLength(1);
+    expect(metrics.callGraph.recursiveFunctionCount).toBe(1);
+    expect(metrics.callGraph.internalCallCount).toBeGreaterThan(0);
+  });
+
   it('tracks recursion, fan-in/fan-out, and call depth across a small call graph', () => {
     const metrics = measureCode(readFixture('callGraph.js'), { language: 'javascript' });
 
