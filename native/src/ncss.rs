@@ -5,9 +5,25 @@ use crate::util::{all_children, find_children_by_field_name};
 
 const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
 
-/// Nodes never counted positionally inside NCSS containers: metadata and empty statements.
-const POSITIONAL_EXCLUSION_TYPES: &[&str] =
-    &["attribute_item", "inner_attribute_item", "empty_statement"];
+/// Nodes never counted positionally inside NCSS containers: metadata, empty statements, and Ruby
+/// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc).
+const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
+    "attribute_item",
+    "inner_attribute_item",
+    "empty_statement",
+    "heredoc_body",
+];
+
+/// TypeScript interface members count like Java interface members, but the same node types appear
+/// inside object-type annotations (`let x: { a: number }`), which are part of one declaration, so
+/// they only count directly under an interface body.
+const INTERFACE_MEMBER_NODE_TYPES: &[&str] = &[
+    "property_signature",
+    "method_signature",
+    "index_signature",
+    "construct_signature",
+    "call_signature",
+];
 
 /// An if-branch wrapped in one of these already counts through ncss_node_types; a bare
 /// `alternative` (Java/Go put the else branch directly in the field) needs the extra `else` count.
@@ -65,10 +81,7 @@ fn ncss_contribution(
     countable: &HashSet<&'static str>,
     containers: &HashSet<&'static str>,
 ) -> u64 {
-    if !node.is_named()
-        || COMMENT_NODE_TYPES.contains(&node.kind())
-        || is_for_header_initializer(node)
-    {
+    if !node.is_named() || COMMENT_NODE_TYPES.contains(&node.kind()) || is_for_header_node(node) {
         return 0;
     }
 
@@ -78,7 +91,7 @@ fn ncss_contribution(
         .is_some_and(|parent| containers.contains(parent.kind()))
         && !containers.contains(node.kind())
         && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind());
-    if (counts_through_node_type(node, countable) || positional)
+    if (counts_through_node_type(node, countable) || positional || counts_contextually(node))
         && !is_declaration_wrapper(node, countable)
     {
         contribution += 1;
@@ -113,20 +126,50 @@ fn is_declaration_wrapper(node: Node<'_>, countable: &HashSet<&'static str>) -> 
         .is_some_and(|declaration| countable.contains(declaration.kind()))
 }
 
-/// A declaration in a `for` header (`for (int i = 0; ...)`) is part of the loop statement, which
-/// already counts; PMD does not count it separately.
-fn is_for_header_initializer(node: Node<'_>) -> bool {
+const FOR_HEADER_FIELD_NAMES: &[&str] = &["init", "initializer", "condition", "update", "increment"];
+
+/// Statement-shaped nodes in a `for` header (`for (int i = 0; i < n; i++)`) are part of the loop
+/// statement, which already counts; PMD does not count them separately. JavaScript parses the
+/// condition as an `expression_statement` and Go parses the update as an `inc_statement`, so all
+/// header fields must be excluded, not just the initializer.
+fn is_for_header_node(node: Node<'_>) -> bool {
     let Some(parent) = node.parent() else {
         return false;
     };
     if parent.kind() != "for_statement" && parent.kind() != "for_clause" {
         return false;
     }
-    ["init", "initializer"].iter().any(|field_name| {
+    FOR_HEADER_FIELD_NAMES.iter().any(|field_name| {
         find_children_by_field_name(parent, field_name)
             .iter()
             .any(|child| child.id() == node.id())
     })
+}
+
+/// Statements only countable by their position: constructs without a dedicated statement node.
+fn counts_contextually(node: Node<'_>) -> bool {
+    let parent_kind = node.parent().map(|parent| parent.kind());
+    // A Java instance initializer is a bare `block` in the class body; PMD counts it like the
+    // `static_initializer` declaration it parallels.
+    if node.kind() == "block" && parent_kind == Some("class_body") {
+        return true;
+    }
+    // TypeScript interface members (see INTERFACE_MEMBER_NODE_TYPES).
+    if INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind()) && parent_kind == Some("interface_body") {
+        return true;
+    }
+    // A braceless Rust match-arm body (`1 => foo()`) has no expression_statement wrapper; count the
+    // value expression so braced and unbraced arms measure alike.
+    parent_kind == Some("match_arm") && node.kind() != "block" && is_match_arm_value(node)
+}
+
+fn is_match_arm_value(node: Node<'_>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    find_children_by_field_name(parent, "value")
+        .iter()
+        .any(|child| child.id() == node.id())
 }
 
 fn count_bare_alternatives(node: Node<'_>) -> u64 {

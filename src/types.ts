@@ -59,6 +59,13 @@ export interface HalsteadMetrics {
 
 export interface FunctionMetrics {
   name?: string;
+  /**
+   * The tree-sitter node type of the function (e.g. `method_declaration`, `arrow_function`,
+   * `lambda_expression`), letting consumers distinguish declared methods from lambdas — e.g. to
+   * sum per-function metrics without double-counting lambda content already attributed to the
+   * enclosing function.
+   */
+  nodeType: string;
   startLine: number;
   startColumn: number;
   endLine: number;

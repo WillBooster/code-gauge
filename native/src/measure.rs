@@ -59,6 +59,7 @@ pub fn measure(
         .iter()
         .map(|analysis| FunctionMetrics {
             name: analysis.name.clone(),
+            node_type: analysis.node_type.to_string(),
             start_line: analysis.start_line,
             start_column: analysis.start_column,
             end_line: analysis.end_line,

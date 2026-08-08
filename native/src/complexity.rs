@@ -221,7 +221,17 @@ fn count_plain_else_branches(current: Node<'_>) -> u64 {
     }
     let kind = current.kind();
     if kind == "else" {
-        return 1;
+        // A Ruby `case ... else` is the default arm of a switch, which already counts as a whole
+        // (sonar-ruby models it as a match case, not an else branch); `if`/`unless`/`begin` else
+        // branches count one point each.
+        return if current
+            .parent()
+            .is_some_and(|parent| parent.kind() == "case" || parent.kind() == "case_match")
+        {
+            0
+        } else {
+            1
+        };
     }
     if kind == "else_clause" {
         let has_if_like_child = crate::util::named_children(current)
@@ -250,24 +260,43 @@ fn is_flow_breaking_jump(node: Node<'_>) -> bool {
     if node.kind() == "goto_statement" {
         return true;
     }
+    // Rust jumps are expressions; `break value` carries a named expression child, so only an
+    // explicit `label` child marks a labeled jump.
+    if node.kind() == "break_expression" || node.kind() == "continue_expression" {
+        return crate::util::named_children(node)
+            .iter()
+            .any(|child| child.kind() == "label" || child.kind() == "loop_label");
+    }
     (node.kind() == "break_statement" || node.kind() == "continue_statement")
         && node.named_child_count() > 0
 }
 
-/// Whether this boolean operator token starts a new sequence: its left operand is not the same
-/// binary node kind joined by the same operator. `a && b && c` costs one cognitive point while
-/// `a && b || c` costs two, matching the Sonar specification.
+/// Wrappers that are transparent when locating the enclosing boolean operation: PMD/Sonar keep a
+/// sequence continuous across parentheses (`a && (b && c)` costs one point).
+const PARENTHESIZED_NODE_TYPES: &[&str] = &["parenthesized_expression", "parenthesized_statements"];
+
+/// Whether this boolean operator token starts a new sequence, i.e. its binary node is the root of a
+/// run of same-operator binaries (possibly through parentheses). Only the root operator counts one
+/// cognitive point: `a && b && c` and `a && (b && c)` cost one, `a && b || c` costs two, matching
+/// the Sonar specification and PMD 7.26.0.
 fn starts_boolean_operator_sequence(token: Node<'_>, code: &Source<'_>) -> bool {
-    let Some(parent) = token.parent() else {
+    let Some(binary) = token.parent() else {
         return true;
     };
-    let Some(left) = parent.child_by_field_name("left") else {
+    let mut ancestor = binary.parent();
+    while let Some(node) = ancestor {
+        if !PARENTHESIZED_NODE_TYPES.contains(&node.kind()) {
+            break;
+        }
+        ancestor = node.parent();
+    }
+    let Some(ancestor) = ancestor else {
         return true;
     };
-    if left.kind() != parent.kind() {
+    if ancestor.kind() != binary.kind() {
         return true;
     }
-    find_boolean_operator_text(left, code) != Some(node_text(token, code))
+    find_boolean_operator_text(ancestor, code) != Some(node_text(token, code))
 }
 
 fn find_boolean_operator_text<'a>(binary_node: Node<'_>, code: &Source<'a>) -> Option<&'a str> {

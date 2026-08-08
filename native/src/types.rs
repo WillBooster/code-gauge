@@ -45,6 +45,8 @@ pub struct LineMetrics {
 pub struct FunctionMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The tree-sitter node type of the function node (e.g. `method_declaration`, `arrow_function`).
+    pub node_type: String,
     pub start_line: usize,
     pub start_column: usize,
     pub end_line: usize,

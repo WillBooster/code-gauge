@@ -11,6 +11,7 @@ use crate::util::{
 pub struct FunctionAnalysis {
     pub index: usize,
     pub name: Option<String>,
+    pub node_type: &'static str,
     pub start_line: usize,
     pub start_column: usize,
     pub end_line: usize,
@@ -66,6 +67,7 @@ pub fn analyze_function(
     FunctionAnalysis {
         index,
         name: find_function_name(node, code),
+        node_type: node.kind(),
         start_line: node.start_position().row + 1,
         // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving yields
         // the code-unit column node-tree-sitter reports.

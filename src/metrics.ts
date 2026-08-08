@@ -211,6 +211,7 @@ interface CommentSpan {
 interface FunctionAnalysis {
   index: number;
   name?: string;
+  nodeType: string;
   startLine: number;
   startColumn: number;
   endLine: number;
@@ -325,6 +326,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
     lines: payload.lines,
     functions: payload.functions.map((fn) => ({
       name: fn.name,
+      nodeType: fn.nodeType,
       startLine: fn.startLine,
       startColumn: fn.startColumn,
       endLine: fn.endLine,
@@ -375,6 +377,7 @@ function measureStructuralMetrics(
   const callGraph = measureCallGraph(analyses);
   const functionsWithGraph = analyses.map((analysis) => ({
     name: analysis.name,
+    nodeType: analysis.nodeType,
     startLine: analysis.startLine,
     startColumn: analysis.startColumn,
     endLine: analysis.endLine,
@@ -413,6 +416,7 @@ function analyzeFunction(
   return {
     index,
     name: findFunctionName(node),
+    nodeType: node.type,
     startLine: node.startPosition.row + 1,
     startColumn: node.startPosition.column,
     endLine: node.endPosition.row + 1,
@@ -754,7 +758,10 @@ function countPlainElseBranches(current: Parser.SyntaxNode): number {
     return 0;
   }
   if (current.type === 'else') {
-    return 1;
+    // A Ruby `case ... else` is the default arm of a switch, which already counts as a whole
+    // (sonar-ruby models it as a match case, not an else branch); `if`/`unless`/`begin` else
+    // branches count one point each.
+    return current.parent?.type === 'case' || current.parent?.type === 'case_match' ? 0 : 1;
   }
   if (current.type === 'else_clause') {
     return current.namedChildren.some((child) => ifLikeNodeTypes.has(child.type)) ? 0 : 1;
@@ -786,24 +793,37 @@ function isFlowBreakingJump(node: Parser.SyntaxNode): boolean {
   if (node.type === 'goto_statement') {
     return true;
   }
+  // Rust jumps are expressions; `break value` carries a named expression child, so only an
+  // explicit `label` child marks a labeled jump.
+  if (node.type === 'break_expression' || node.type === 'continue_expression') {
+    return node.namedChildren.some((child) => child.type === 'label' || child.type === 'loop_label');
+  }
   return (node.type === 'break_statement' || node.type === 'continue_statement') && node.namedChildCount > 0;
 }
 
+// Wrappers that are transparent when locating the enclosing boolean operation: PMD/Sonar keep a
+// sequence continuous across parentheses (`a && (b && c)` costs one point).
+const parenthesizedNodeTypes = new Set(['parenthesized_expression', 'parenthesized_statements']);
+
 /**
- * Whether this boolean operator token starts a new sequence: its left operand is not the same
- * binary node kind joined by the same operator. `a && b && c` costs one cognitive point while
- * `a && b || c` costs two, matching the Sonar specification.
+ * Whether this boolean operator token starts a new sequence, i.e. its binary node is the root of a
+ * run of same-operator binaries (possibly through parentheses). Only the root operator counts one
+ * cognitive point: `a && b && c` and `a && (b && c)` cost one, `a && b || c` costs two, matching
+ * the Sonar specification and PMD 7.26.0.
  */
 function startsBooleanOperatorSequence(token: Parser.SyntaxNode): boolean {
-  const parent = token.parent;
-  if (!parent) {
+  const binary = token.parent;
+  if (!binary) {
     return true;
   }
-  const left = parent.childForFieldName('left');
-  if (!left || left.type !== parent.type) {
+  let ancestor = binary.parent;
+  while (ancestor && parenthesizedNodeTypes.has(ancestor.type)) {
+    ancestor = ancestor.parent;
+  }
+  if (!ancestor || ancestor.type !== binary.type) {
     return true;
   }
-  return findBooleanOperatorText(left) !== token.text;
+  return findBooleanOperatorText(ancestor) !== token.text;
 }
 
 function findBooleanOperatorText(binaryNode: Parser.SyntaxNode): string | undefined {
@@ -844,7 +864,8 @@ function isFlatChainContinuation(node: Parser.SyntaxNode): boolean {
 /**
  * C/C++ `default:` shares the `case_statement` node type with `case` (only `case` has a `value`
  * field), and Java's default group/rule carries an expressionless `switch_label`; a default branch
- * adds no decision, so these must not count toward complexity or nesting.
+ * adds no decision (and no cyclomatic path), though its contents still nest inside the switch like
+ * any other arm.
  */
 function isDefaultSwitchBranch(node: Parser.SyntaxNode): boolean {
   if (node.type === 'case_statement') {

@@ -66,6 +66,11 @@ const commonDecisionNodes = [
 // Go `switch`/`select` branches are `*_case` nodes, not the `case_clause`/`switch_case` of other grammars.
 const goDecisionNodes = [...commonDecisionNodes, 'expression_case', 'type_case', 'communication_case'] as const;
 
+// Default switch branches add no decision, but their contents are nested inside the switch like
+// any other arm, so they appear in the nesting sets only.
+const commonNestingNodes = [...commonDecisionNodes, 'switch_default'] as const;
+const goNestingNodes = [...goDecisionNodes, 'default_case'] as const;
+
 const javaFunctionNodes = [
   ...commonFunctionNodes,
   'constructor_declaration',
@@ -133,6 +138,8 @@ const jsNcssNodes = [
   'class_declaration',
   'abstract_class_declaration',
   'method_definition',
+  'abstract_method_signature',
+  'class_static_block',
   'field_definition',
   'public_field_definition',
   'type_alias_declaration',
@@ -200,6 +207,10 @@ const goNcssNodes = [
   'var_spec',
   'function_declaration',
   'method_declaration',
+  'field_declaration',
+  // Interface members: `method_elem` in tree-sitter-go 0.21+, `method_spec` in older grammars.
+  'method_elem',
+  'method_spec',
   'short_var_declaration',
   'expression_statement',
   'send_statement',
@@ -332,9 +343,12 @@ const cppNcssNodes = [
   'namespace_definition',
   'using_declaration',
   'alias_declaration',
+  'static_assert_declaration',
   'for_range_loop',
   'catch_clause',
   'throw_statement',
+  'co_return_statement',
+  'co_yield_statement',
 ] as const;
 
 function normalizeGrammar(module: GrammarModule): ParserLanguage {
@@ -387,7 +401,7 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     name: 'go',
     parserLanguage: normalizeGrammar(Go as unknown as GrammarModule),
     decisionNodeTypes: goDecisionNodes,
-    nestingNodeTypes: goDecisionNodes,
+    nestingNodeTypes: goNestingNodes,
     ncssNodeTypes: goNcssNodes,
   },
   {
@@ -440,7 +454,7 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
   functionNodeTypes: commonFunctionNodes,
   classNodeTypes: commonClassNodes,
   decisionNodeTypes: commonDecisionNodes,
-  nestingNodeTypes: commonDecisionNodes,
+  nestingNodeTypes: commonNestingNodes,
   ncssNodeTypes: jsNcssNodes,
   ...language,
 }));

@@ -53,6 +53,14 @@ const expectedByFixture: Record<string, Record<string, readonly [number, number,
     nest: [4, 6, 5],
     lam: [1, 2, 4],
   },
+  'ProbeNestedDecisions.java': {
+    parens1: [4, 2, 3],
+    parens2: [4, 2, 3],
+    parens3: [5, 3, 3],
+    initHost: [1, 0, 2],
+    nested: [1, 5, 7],
+    run: [3, 3, 4],
+  },
 };
 
 function measureFixture(fixture: string): CodeMetrics {
@@ -62,21 +70,22 @@ function measureFixture(fixture: string): CodeMetrics {
 
 /**
  * The aggregate WillBooster/code-analyzer reports: PMD sums cognitive complexity, cyclomatic
- * complexity, and NCSS over every method. Summing per-function values reproduces the cyclomatic
- * and NCSS sums (methods and PMD both attribute nested anonymous-class bodies to the enclosing
- * method AND to the nested method); the file-level cognitive complexity reproduces the cognitive
- * sum, because it charges each construct exactly once while per-function values attribute lambda
- * content to the enclosing function as well.
+ * complexity, and NCSS over every method (constructors and anonymous-class methods included,
+ * lambdas not reported on their own). Summing per-function values over the non-lambda entries
+ * reproduces those sums: cognitive complexity and NCSS attribute nested lambda/anonymous-class
+ * content to the enclosing method exactly like PMD does, and lambda entries are skipped via
+ * `nodeType` so their content is not counted twice.
  */
 function pmdStyleAggregate(metrics: CodeMetrics): {
   cognitiveComplexity: number;
   cyclomaticComplexity: number;
   ncssCount: number;
 } {
+  const methods = metrics.functions.filter((fn) => fn.nodeType !== 'lambda_expression');
   return {
-    cognitiveComplexity: metrics.cognitiveComplexity,
-    cyclomaticComplexity: metrics.functions.reduce((sum, fn) => sum + fn.cyclomaticComplexity, 0),
-    ncssCount: metrics.functions.reduce((sum, fn) => sum + fn.ncss, 0),
+    cognitiveComplexity: methods.reduce((sum, fn) => sum + fn.cognitiveComplexity, 0),
+    cyclomaticComplexity: methods.reduce((sum, fn) => sum + fn.cyclomaticComplexity, 0),
+    ncssCount: methods.reduce((sum, fn) => sum + fn.ncss, 0),
   };
 }
 
@@ -86,7 +95,7 @@ describe('PMD parity (Java): per-method complexity and NCSS', () => {
       const metrics = measureFixture(fixture);
       const actual = Object.fromEntries(
         metrics.functions
-          .filter((fn) => fn.name !== undefined && fn.name in expectedFunctions)
+          .filter((fn) => fn.name !== undefined && Object.hasOwn(expectedFunctions, fn.name))
           .map((fn) => [fn.name, [fn.cyclomaticComplexity, fn.cognitiveComplexity, fn.ncss]])
       );
       expect(actual).toEqual(expectedFunctions);
@@ -120,23 +129,16 @@ describe('PMD parity (Java): code-analyzer aggregate metrics', () => {
       'ComplexCode.java': [14, 27, 86],
       'ProbeStatements.java': [12, 13, 38],
       'ProbeTryForms.java': [2, 9, 25],
-      'ProbeBranches.java': [19, 21, 26],
+      // NCSS is PMD's 26 + 2: `lam` diverges from PMD by design (see expectedByFixture doc).
+      'ProbeBranches.java': [19, 21, 28],
+      'ProbeNestedDecisions.java': [15, 18, 22],
     };
     for (const [fixture, [cognitive, cyclomatic, ncss]] of Object.entries(expectedAggregates)) {
-      const metrics = measureFixture(fixture);
-      expect(metrics.cognitiveComplexity, `${fixture} cognitive`).toBe(cognitive);
-      // Lambdas appear in functions[] with their own cyclomatic complexity and NCSS while PMD only
-      // reports methods, so the sum comparison excludes fixtures' lambda entries via name lookup.
-      const expectedFunctions = expectedByFixture[fixture] ?? {};
-      const methodFunctions = metrics.functions.filter((fn) => fn.name !== undefined && fn.name in expectedFunctions);
-      expect(
-        methodFunctions.reduce((sum, fn) => sum + fn.cyclomaticComplexity, 0),
-        `${fixture} cyclomatic`
-      ).toBe(cyclomatic);
-      const ncssSum = methodFunctions.reduce((sum, fn) => sum + fn.ncss, 0);
-      // ProbeBranches' `lam` diverges from PMD by design (see expectedByFixture doc comment).
-      const expected = fixture === 'ProbeBranches.java' ? ncss + 2 : ncss;
-      expect(ncssSum, `${fixture} ncss`).toBe(expected);
+      expect(pmdStyleAggregate(measureFixture(fixture)), fixture).toEqual({
+        cognitiveComplexity: cognitive,
+        cyclomaticComplexity: cyclomatic,
+        ncssCount: ncss,
+      });
     }
   });
 });
