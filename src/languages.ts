@@ -214,12 +214,9 @@ const goNcssNodes = [
   'var_spec',
   'function_declaration',
   'method_declaration',
-  'field_declaration',
-  // Interface members: `method_elem` in tree-sitter-go 0.21+, `method_spec` in older grammars;
-  // `type_elem` covers embedded interfaces and type-set elements.
-  'method_elem',
-  'method_spec',
-  'type_elem',
+  // Struct fields and interface members count contextually (see ncss.ts): only inside a named
+  // `type T struct/interface { ... }`, not in inline anonymous types, which are part of one
+  // declaration.
   'short_var_declaration',
   'expression_statement',
   'send_statement',

@@ -143,10 +143,15 @@ fn is_declaration_wrapper(node: Node<'_>, countable: &HashSet<&'static str>) -> 
         return false;
     }
     node.child_by_field_name("declaration")
-        .is_some_and(|declaration| countable.contains(declaration.kind()))
+        .is_some_and(|declaration| {
+            countable.contains(declaration.kind())
+                || declaration.kind() == "internal_module"
+                || declaration.kind() == "ambient_declaration"
+        })
 }
 
-const FOR_HEADER_FIELD_NAMES: &[&str] = &["init", "initializer", "condition", "update", "increment"];
+const FOR_HEADER_FIELD_NAMES: &[&str] =
+    &["init", "initializer", "condition", "update", "increment"];
 
 /// Statement-shaped nodes in a `for` header (`for (int i = 0; i < n; i++)`) are part of the loop
 /// statement, which already counts; PMD does not count them separately. JavaScript parses the
@@ -191,7 +196,9 @@ fn counts_contextually(node: Node<'_>) -> bool {
     }
     // A braceless Rust match-arm body (`1 => foo()`) has no expression_statement wrapper; count the
     // value expression so braced and unbraced arms measure alike.
-    if parent_kind == Some("match_arm") && node.kind() != "block" && is_field_of_parent(node, "value")
+    if parent_kind == Some("match_arm")
+        && node.kind() != "block"
+        && is_field_of_parent(node, "value")
     {
         return true;
     }
@@ -221,8 +228,33 @@ fn counts_contextually(node: Node<'_>) -> bool {
     }
     // A Rust item-position macro invocation (`foo! {}` at module level) has no expression_statement
     // wrapper; the semicolon form does and already counts through it.
-    node.kind() == "macro_invocation"
+    if node.kind() == "macro_invocation"
         && (parent_kind == Some("source_file") || parent_kind == Some("declaration_list"))
+    {
+        return true;
+    }
+    // Go struct fields and interface members count like other languages' member declarations, but
+    // only inside a named type declaration; inline anonymous types (`var x struct{ ... }`,
+    // `func f(h interface{ ... })`) are part of one declaration.
+    if node.kind() == "field_declaration" && parent_kind == Some("field_declaration_list") {
+        return is_go_declared_type_body(
+            node.parent().and_then(|parent| parent.parent()),
+            "struct_type",
+        );
+    }
+    if node.kind() == "method_elem" || node.kind() == "method_spec" || node.kind() == "type_elem" {
+        return is_go_declared_type_body(node.parent(), "interface_type");
+    }
+    false
+}
+
+fn is_go_declared_type_body(type_node: Option<Node<'_>>, expected_kind: &str) -> bool {
+    let Some(type_node) = type_node.filter(|type_node| type_node.kind() == expected_kind) else {
+        return false;
+    };
+    type_node
+        .parent()
+        .is_some_and(|parent| parent.kind() == "type_spec" || parent.kind() == "type_alias")
 }
 
 fn is_field_of_parent(node: Node<'_>, field_name: &str) -> bool {

@@ -144,14 +144,21 @@ function isInContainerPosition(node: Parser.SyntaxNode, containers: Set<string>)
 
 /**
  * `export const x = 1` nests a countable declaration inside `export_statement`; only the inner
- * declaration counts, mirroring how PMD counts one statement per declared entity.
+ * declaration counts, mirroring how PMD counts one statement per declared entity. The nested
+ * declaration may also count contextually (`export namespace N {}` → internal_module) or sit one
+ * level deeper (`export declare function f(): void;` → ambient_declaration > function_signature).
  */
 function isDeclarationWrapper(node: Parser.SyntaxNode, countable: Set<string>): boolean {
   if (node.type !== 'export_statement') {
     return false;
   }
   const declaration = node.childForFieldName('declaration');
-  return declaration !== null && countable.has(declaration.type);
+  return (
+    declaration !== null &&
+    (countable.has(declaration.type) ||
+      declaration.type === 'internal_module' ||
+      declaration.type === 'ambient_declaration')
+  );
 }
 
 const forHeaderFieldNames = new Set(['init', 'initializer', 'condition', 'update', 'increment']);
@@ -227,7 +234,23 @@ function countsContextually(node: Parser.SyntaxNode): boolean {
   if (node.type === 'macro_invocation' && (parentType === 'source_file' || parentType === 'declaration_list')) {
     return true;
   }
+  // Go struct fields and interface members count like other languages' member declarations, but
+  // only inside a named type declaration; inline anonymous types (`var x struct{ ... }`,
+  // `func f(h interface{ ... })`) are part of one declaration.
+  if (node.type === 'field_declaration' && parentType === 'field_declaration_list') {
+    return isGoDeclaredTypeBody(node.parent?.parent, 'struct_type');
+  }
+  if (node.type === 'method_elem' || node.type === 'method_spec' || node.type === 'type_elem') {
+    return isGoDeclaredTypeBody(node.parent, 'interface_type');
+  }
   return false;
+}
+
+function isGoDeclaredTypeBody(typeNode: Parser.SyntaxNode | null | undefined, expectedType: string): boolean {
+  if (typeNode?.type !== expectedType) {
+    return false;
+  }
+  return typeNode.parent?.type === 'type_spec' || typeNode.parent?.type === 'type_alias';
 }
 
 function isFieldOfParent(node: Parser.SyntaxNode, fieldName: string): boolean {

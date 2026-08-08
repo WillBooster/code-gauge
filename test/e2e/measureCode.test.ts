@@ -286,6 +286,23 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
     });
     // export const (1) + function declaration (1) + return (1); the export wrappers add nothing.
     expect(metrics.ncssCount).toBe(3);
+    // Contextually counted (internal_module) and ambient-wrapped declarations behave the same.
+    expect(measureCode('export namespace N {}', { language: 'typescript' }).ncssCount).toBe(1);
+    expect(measureCode('export declare function f(): void;', { language: 'typescript' }).ncssCount).toBe(1);
+  });
+
+  it('counts Go type members only inside named type declarations', () => {
+    const named = measureCode('package p\ntype T struct {\n\ta int\n\tb string\n}\n', { language: 'go' });
+    // package (1) + type (1) + two fields.
+    expect(named.ncssCount).toBe(4);
+    const anonymous = measureCode(
+      'package p\nfunc f() {\n\tvar x struct {\n\t\ta int\n\t\tb string\n\t}\n\t_ = x\n}\n',
+      {
+        language: 'go',
+      }
+    );
+    // package (1) + func (1) + var (1) + assignment (1); inline anonymous members are part of the var.
+    expect(anonymous.ncssCount).toBe(4);
   });
 
   it('counts else, case labels, catch, and finally but not try, braces, or comments', () => {
