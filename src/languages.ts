@@ -91,6 +91,11 @@ const javaDecisionNodes = [
   'switch_block_statement_group',
   'switch_rule',
 ] as const;
+// PMD's standard cyclomatic complexity charges `throw` one path (verified against PMD 7.26.0);
+// it stays out of the nesting set (its argument expressions are not nested) and adds no
+// cognitive point (see cyclomaticOnlyNodeTypes in metrics.ts). Other languages follow their own
+// reference tools (lizard/radon), which do not count throw/raise.
+const javaCyclomaticDecisionNodes = [...javaDecisionNodes, 'throw_statement'] as const;
 
 // Ruby node types are keyword-like (`if`, `while`, ...), so they must stay Ruby-specific: the same
 // strings appear as anonymous keyword tokens in other grammars and would be double-counted there.
@@ -355,6 +360,7 @@ const cppNcssNodes = [
   'namespace_definition',
   'using_declaration',
   'alias_declaration',
+  'namespace_alias_definition',
   'concept_definition',
   'static_assert_declaration',
   'for_range_loop',
@@ -431,7 +437,7 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     parserLanguage: normalizeGrammar(Java as unknown as GrammarModule),
     functionNodeTypes: javaFunctionNodes,
     classNodeTypes: javaClassNodes,
-    decisionNodeTypes: javaDecisionNodes,
+    decisionNodeTypes: javaCyclomaticDecisionNodes,
     nestingNodeTypes: javaDecisionNodes,
     ncssNodeTypes: javaNcssNodes,
   },

@@ -5,13 +5,15 @@ use crate::util::{all_children, find_children_by_field_name};
 
 pub const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
 
-/// Nodes never counted positionally inside NCSS containers: metadata, empty statements, and Ruby
-/// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc).
+/// Nodes never counted positionally inside NCSS containers: metadata, empty statements, Ruby
+/// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc),
+/// and Ruby statement parentheses (transparent wrappers whose children count instead).
 const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "attribute_item",
     "inner_attribute_item",
     "empty_statement",
     "heredoc_body",
+    "parenthesized_statements",
 ];
 
 /// TypeScript interface members count like Java interface members, but the same node types appear
@@ -86,9 +88,7 @@ fn ncss_contribution(
     }
 
     let mut contribution = 0;
-    let positional = node
-        .parent()
-        .is_some_and(|parent| containers.contains(parent.kind()))
+    let positional = is_in_container_position(node, containers)
         && !containers.contains(node.kind())
         && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind());
     if (counts_through_node_type(node, countable) || positional || counts_contextually(node))
@@ -113,7 +113,27 @@ fn counts_through_node_type(node: Node<'_>, countable: &HashSet<&'static str>) -
     if BODYLESS_NCSS_SPECIFIER_TYPES.contains(&node.kind()) {
         return node.child_by_field_name("body").is_some();
     }
+    // A try-with-resources `resource` counts only when it declares a variable; `try (r)` reuses an
+    // existing one and adds no statement (matching PMD).
+    if node.kind() == "resource" {
+        return node.child_by_field_name("name").is_some();
+    }
     true
+}
+
+/// Direct container children count positionally; Ruby's `(foo; bar)` statement parentheses are
+/// transparent, so their children count when the parentheses themselves sit in a container.
+fn is_in_container_position(node: Node<'_>, containers: &HashSet<&'static str>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+    if containers.contains(parent.kind()) {
+        return true;
+    }
+    parent.kind() == "parenthesized_statements"
+        && parent
+            .parent()
+            .is_some_and(|grandparent| containers.contains(grandparent.kind()))
 }
 
 /// `export const x = 1` nests a countable declaration inside `export_statement`; only the inner
@@ -136,7 +156,18 @@ fn is_for_header_node(node: Node<'_>) -> bool {
     let Some(parent) = node.parent() else {
         return false;
     };
-    if parent.kind() != "for_statement" && parent.kind() != "for_clause" {
+    // C++20 range-for initializers nest one level deeper: for_range_loop > init_statement > node.
+    if parent.kind() == "init_statement"
+        && parent
+            .parent()
+            .is_some_and(|grandparent| grandparent.kind() == "for_range_loop")
+    {
+        return true;
+    }
+    if parent.kind() != "for_statement"
+        && parent.kind() != "for_clause"
+        && parent.kind() != "for_range_loop"
+    {
         return false;
     }
     FOR_HEADER_FIELD_NAMES.iter().any(|field_name| {
@@ -175,9 +206,23 @@ fn counts_contextually(node: Node<'_>) -> bool {
     }
     // A Ruby endless method (`def f(x) = expr`) stores its single-statement body directly in the
     // `body` field instead of a positional `body_statement` container.
-    (parent_kind == Some("method") || parent_kind == Some("singleton_method"))
+    if (parent_kind == Some("method") || parent_kind == Some("singleton_method"))
         && node.kind() != "body_statement"
         && is_field_of_parent(node, "body")
+    {
+        return true;
+    }
+    // C++ `friend class X;` declares on its own; `friend void g() { ... }` merely wraps a counted
+    // definition.
+    if node.kind() == "friend_declaration" {
+        return !crate::util::named_children(node)
+            .iter()
+            .any(|child| child.kind() == "declaration" || child.kind() == "function_definition");
+    }
+    // A Rust item-position macro invocation (`foo! {}` at module level) has no expression_statement
+    // wrapper; the semicolon form does and already counts through it.
+    node.kind() == "macro_invocation"
+        && (parent_kind == Some("source_file") || parent_kind == Some("declaration_list"))
 }
 
 fn is_field_of_parent(node: Node<'_>, field_name: &str) -> bool {

@@ -230,6 +230,35 @@ const JAVA_DECISION_NODES: &[&str] = &[
     "switch_rule",
 ];
 
+// PMD's standard cyclomatic complexity charges `throw` one path (verified against PMD 7.26.0);
+// it stays out of the nesting set (its argument expressions are not nested) and adds no
+// cognitive point (see CYCLOMATIC_ONLY_NODE_TYPES in complexity.rs). Other languages follow their
+// own reference tools (lizard/radon), which do not count throw/raise.
+const JAVA_CYCLOMATIC_DECISION_NODES: &[&str] = &[
+    "if_statement",
+    "elif_clause",
+    "else_if_clause",
+    "for_statement",
+    "for_in_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "except_clause",
+    "case_clause",
+    "switch_case",
+    "match_arm",
+    "conditional_expression",
+    "ternary_expression",
+    "if_expression",
+    "while_expression",
+    "for_expression",
+    "loop_expression",
+    "enhanced_for_statement",
+    "switch_block_statement_group",
+    "switch_rule",
+    "throw_statement",
+];
+
 const RUBY_FUNCTION_NODES: &[&str] = &["method", "singleton_method", "lambda", "block", "do_block"];
 const RUBY_CLASS_NODES: &[&str] = &["class", "module"];
 const RUBY_DECISION_NODES: &[&str] = &[
@@ -556,6 +585,7 @@ const CPP_NCSS_NODES: &[&str] = &[
     "namespace_definition",
     "using_declaration",
     "alias_declaration",
+    "namespace_alias_definition",
     "concept_definition",
     "static_assert_declaration",
     "for_range_loop",
@@ -649,7 +679,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         grammar_id: GrammarId::Java,
         function_node_types: JAVA_FUNCTION_NODES,
         class_node_types: JAVA_CLASS_NODES,
-        decision_node_types: JAVA_DECISION_NODES,
+        decision_node_types: JAVA_CYCLOMATIC_DECISION_NODES,
         nesting_node_types: JAVA_DECISION_NODES,
         ncss_node_types: JAVA_NCSS_NODES,
         ncss_container_node_types: &[],

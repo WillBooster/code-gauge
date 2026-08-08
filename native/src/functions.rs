@@ -31,11 +31,12 @@ pub struct CallsResult {
     pub callees: IndexSet<String>,
 }
 
-/// C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members and Java
-/// `method_declaration` covers abstract/interface methods; those are signatures, not implementations.
+/// C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members; those have no
+/// `body` and are signatures, not implementations, matching how TypeScript method signatures are
+/// excluded. Java `method_declaration` is NOT here: PMD reports abstract/interface methods as
+/// methods (cyclomatic 1, NCSS 1), so bodyless Java methods stay in the function list.
 const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
     "function_definition",
-    "method_declaration",
     "constructor_declaration",
     "compact_constructor_declaration",
     "function_signature_item",

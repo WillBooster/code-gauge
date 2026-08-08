@@ -584,13 +584,13 @@ function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<strin
 }
 
 /**
- * C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members and Java
- * `method_declaration` covers abstract/interface methods; those have no `body` and are signatures,
- * not implementations, matching how TypeScript method signatures are excluded.
+ * C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members; those have no
+ * `body` and are signatures, not implementations, matching how TypeScript method signatures are
+ * excluded. Java `method_declaration` is NOT here: PMD reports abstract/interface methods as
+ * methods (cyclomatic 1, NCSS 1), so bodyless Java methods stay in the function list.
  */
 const bodyRequiredFunctionTypes = new Set([
   'function_definition',
-  'method_declaration',
   'constructor_declaration',
   'compact_constructor_declaration',
   // Rust trait method signatures (`fn required(&self);`) never carry a body.
@@ -651,6 +651,33 @@ const caseClauseNodeTypes = new Set([
 
 const ifLikeNodeTypes = new Set(['if_statement', 'if_expression', 'if', 'unless']);
 
+// Decision nodes that add an execution path but no cognitive point: PMD's cyclomatic complexity
+// charges Java `throw` while its cognitive complexity does not.
+const cyclomaticOnlyNodeTypes = new Set(['throw_statement']);
+
+interface ComplexityNodeSets {
+  functionNodes: Set<string>;
+  decisionNodes: Set<string>;
+  nestingNodes: Set<string>;
+}
+
+// Cached per language: measureComplexity runs once per function plus once per file, so per-call
+// Set construction would add a measurable constant factor on large files.
+const complexityNodeSetsCache = new WeakMap<LanguageDefinition, ComplexityNodeSets>();
+
+function getComplexityNodeSets(language: LanguageDefinition): ComplexityNodeSets {
+  let sets = complexityNodeSetsCache.get(language);
+  if (!sets) {
+    sets = {
+      functionNodes: new Set(language.functionNodeTypes),
+      decisionNodes: new Set(language.decisionNodeTypes),
+      nestingNodes: new Set(language.nestingNodeTypes),
+    };
+    complexityNodeSetsCache.set(language, sets);
+  }
+  return sets;
+}
+
 function measureComplexity(
   node: Parser.SyntaxNode,
   language: LanguageDefinition,
@@ -660,9 +687,7 @@ function measureComplexity(
   let cyclomaticComplexity = 1;
   let cognitiveComplexity = 0;
   let nestingDepth = nesting;
-  const functionNodes = new Set(language.functionNodeTypes);
-  const decisionNodes = new Set(language.decisionNodeTypes);
-  const nestingNodes = new Set(language.nestingNodeTypes);
+  const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
 
   // Cyclomatic complexity and nesting depth describe the function's own body, so they stop at
   // nested function boundaries; cognitive complexity follows the Sonar spec instead and charges
@@ -715,7 +740,7 @@ function measureComplexity(
     if (isDecision && countsForOwnBody) {
       cyclomaticComplexity += 1;
     }
-    if (isDecision && !isCaseClause) {
+    if (isDecision && !isCaseClause && !cyclomaticOnlyNodeTypes.has(current.type)) {
       cognitiveComplexity += isContinuation ? 1 : 1 + cognitiveNesting;
     }
     if (current.isNamed && switchLikeNodeTypes.has(current.type)) {
@@ -846,7 +871,18 @@ function startsBooleanOperatorSequence(token: Parser.SyntaxNode): boolean {
   if (!ancestor || ancestor.type !== binary.type) {
     return true;
   }
-  return findBooleanOperatorText(ancestor) !== token.text;
+  return normalizeBooleanOperator(findBooleanOperatorText(ancestor)) !== normalizeBooleanOperator(token.text);
+}
+
+/** C++ `and`/`or` are alternative spellings of `&&`/`||`, so mixing them keeps one sequence. */
+function normalizeBooleanOperator(text: string | undefined): string | undefined {
+  if (text === 'and') {
+    return '&&';
+  }
+  if (text === 'or') {
+    return '||';
+  }
+  return text;
 }
 
 function findBooleanOperatorText(binaryNode: Parser.SyntaxNode): string | undefined {
@@ -953,7 +989,7 @@ function collectCalls(
   constructedTypeNames: Set<string> = new Set()
 ): { callCount: number; callees: Set<string> } {
   const callees = new Set<string>();
-  const functionNodeTypes = new Set(language.functionNodeTypes);
+  const functionNodeTypes = getComplexityNodeSets(language).functionNodes;
   let callCount = 0;
 
   function visit(node: Parser.SyntaxNode, insideRoot: boolean): void {

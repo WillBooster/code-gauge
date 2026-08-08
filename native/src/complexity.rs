@@ -81,6 +81,10 @@ const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
 
 const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "unless"];
 
+// Decision nodes that add an execution path but no cognitive point: PMD's cyclomatic complexity
+// charges Java `throw` while its cognitive complexity does not.
+const CYCLOMATIC_ONLY_NODE_TYPES: &[&str] = &["throw_statement"];
+
 /// Cyclomatic complexity and nesting depth describe the function's own body, so their
 /// contributions are gated off inside nested function boundaries; cognitive complexity follows the
 /// Sonar spec instead and charges nested function/lambda content to the enclosing function, one
@@ -153,7 +157,10 @@ pub fn measure_complexity(
         if is_decision && counts_for_own_body {
             result.cyclomatic_complexity += 1;
         }
-        if is_decision && !is_case_clause {
+        if is_decision
+            && !is_case_clause
+            && !CYCLOMATIC_ONLY_NODE_TYPES.contains(&current.kind())
+        {
             result.cognitive_complexity += if is_continuation {
                 1
             } else {
@@ -324,7 +331,17 @@ fn starts_boolean_operator_sequence(token: Node<'_>, code: &Source<'_>) -> bool 
     if ancestor.kind() != binary.kind() {
         return true;
     }
-    find_boolean_operator_text(ancestor, code) != Some(node_text(token, code))
+    find_boolean_operator_text(ancestor, code).map(normalize_boolean_operator)
+        != Some(normalize_boolean_operator(node_text(token, code)))
+}
+
+/// C++ `and`/`or` are alternative spellings of `&&`/`||`, so mixing them keeps one sequence.
+fn normalize_boolean_operator(text: &str) -> &str {
+    match text {
+        "and" => "&&",
+        "or" => "||",
+        _ => text,
+    }
 }
 
 fn find_boolean_operator_text<'a>(binary_node: Node<'_>, code: &Source<'a>) -> Option<&'a str> {

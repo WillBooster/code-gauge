@@ -3,9 +3,16 @@ import type { LanguageDefinition } from './types.js';
 
 export const commentNodeTypes = new Set(['comment', 'line_comment', 'block_comment']);
 
-// Nodes never counted positionally inside NCSS containers: metadata, empty statements, and Ruby
-// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc).
-const positionalExclusionTypes = new Set(['attribute_item', 'inner_attribute_item', 'empty_statement', 'heredoc_body']);
+// Nodes never counted positionally inside NCSS containers: metadata, empty statements, Ruby
+// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc),
+// and Ruby statement parentheses (transparent wrappers whose children count instead).
+const positionalExclusionTypes = new Set([
+  'attribute_item',
+  'inner_attribute_item',
+  'empty_statement',
+  'heredoc_body',
+  'parenthesized_statements',
+]);
 
 // TypeScript interface members count like Java interface members, but the same node types appear
 // inside object-type annotations (`let x: { a: number }`), which are part of one declaration, so
@@ -38,9 +45,26 @@ const bodylessNcssSpecifierTypes = new Set([
  * statement, and clause (`else`, `case`/`default` label, `catch`, `finally`, try-with-resources
  * resource); `try` itself, braces, blank lines, and comments count 0.
  */
+interface NcssSets {
+  countable: Set<string>;
+  containers: Set<string>;
+}
+
+// Cached per language: countNcss runs once per function plus once per file, so per-call Set
+// construction would add a measurable constant factor on large files.
+const ncssSetsCache = new WeakMap<LanguageDefinition, NcssSets>();
+
+function getNcssSets(language: LanguageDefinition): NcssSets {
+  let sets = ncssSetsCache.get(language);
+  if (!sets) {
+    sets = { countable: new Set(language.ncssNodeTypes), containers: new Set(language.ncssContainerNodeTypes) };
+    ncssSetsCache.set(language, sets);
+  }
+  return sets;
+}
+
 export function countNcss(node: Parser.SyntaxNode, language: LanguageDefinition): number {
-  const countable = new Set(language.ncssNodeTypes);
-  const containers = new Set(language.ncssContainerNodeTypes);
+  const { countable, containers } = getNcssSets(language);
   let count = 0;
 
   function visit(current: Parser.SyntaxNode): void {
@@ -59,8 +83,7 @@ export function countNcss(node: Parser.SyntaxNode, language: LanguageDefinition)
  * function node carries no countable declaration of its own (arrow functions, lambdas, blocks).
  */
 export function countFunctionNcss(node: Parser.SyntaxNode, language: LanguageDefinition): number {
-  const countable = new Set(language.ncssNodeTypes);
-  const containers = new Set(language.ncssContainerNodeTypes);
+  const { countable, containers } = getNcssSets(language);
   const selfContribution = ncssContribution(node, countable, containers);
   return countNcss(node, language) + (selfContribution > 0 ? 0 : 1);
 }
@@ -72,7 +95,7 @@ function ncssContribution(node: Parser.SyntaxNode, countable: Set<string>, conta
 
   let contribution = 0;
   const positional =
-    containers.has(node.parent?.type ?? '') && !containers.has(node.type) && !positionalExclusionTypes.has(node.type);
+    isInContainerPosition(node, containers) && !containers.has(node.type) && !positionalExclusionTypes.has(node.type);
   if (
     (countsThroughNodeType(node, countable) || positional || countsContextually(node)) &&
     !isDeclarationWrapper(node, countable)
@@ -96,7 +119,27 @@ function countsThroughNodeType(node: Parser.SyntaxNode, countable: Set<string>):
   if (bodylessNcssSpecifierTypes.has(node.type)) {
     return node.childForFieldName('body') !== null;
   }
+  // A try-with-resources `resource` counts only when it declares a variable; `try (r)` reuses an
+  // existing one and adds no statement (matching PMD).
+  if (node.type === 'resource') {
+    return node.childForFieldName('name') !== null;
+  }
   return true;
+}
+
+/**
+ * Direct container children count positionally; Ruby's `(foo; bar)` statement parentheses are
+ * transparent, so their children count when the parentheses themselves sit in a container.
+ */
+function isInContainerPosition(node: Parser.SyntaxNode, containers: Set<string>): boolean {
+  const parent = node.parent;
+  if (!parent) {
+    return false;
+  }
+  if (containers.has(parent.type)) {
+    return true;
+  }
+  return parent.type === 'parenthesized_statements' && containers.has(parent.parent?.type ?? '');
 }
 
 /**
@@ -121,7 +164,14 @@ const forHeaderFieldNames = new Set(['init', 'initializer', 'condition', 'update
  */
 function isForHeaderNode(node: Parser.SyntaxNode): boolean {
   const parent = node.parent;
-  if (!parent || (parent.type !== 'for_statement' && parent.type !== 'for_clause')) {
+  if (!parent) {
+    return false;
+  }
+  // C++20 range-for initializers nest one level deeper: for_range_loop > init_statement > node.
+  if (parent.type === 'init_statement' && parent.parent?.type === 'for_range_loop') {
+    return true;
+  }
+  if (parent.type !== 'for_statement' && parent.type !== 'for_clause' && parent.type !== 'for_range_loop') {
     return false;
   }
   for (let index = 0; index < parent.childCount; index += 1) {
@@ -165,6 +215,16 @@ function countsContextually(node: Parser.SyntaxNode): boolean {
     node.type !== 'body_statement' &&
     isFieldOfParent(node, 'body')
   ) {
+    return true;
+  }
+  // C++ `friend class X;` declares on its own; `friend void g() { ... }` merely wraps a counted
+  // definition.
+  if (node.type === 'friend_declaration') {
+    return !node.namedChildren.some((child) => child.type === 'declaration' || child.type === 'function_definition');
+  }
+  // A Rust item-position macro invocation (`foo! {}` at module level) has no expression_statement
+  // wrapper; the semicolon form does and already counts through it.
+  if (node.type === 'macro_invocation' && (parentType === 'source_file' || parentType === 'declaration_list')) {
     return true;
   }
   return false;

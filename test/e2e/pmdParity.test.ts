@@ -9,10 +9,12 @@ import { fixturesDir } from './fixtureCorpus.js';
  * for its `analyzeCode` metrics — via its CognitiveComplexity / CyclomaticComplexity / NcssCount
  * rules with report level 1. Each entry is [cyclomatic, cognitive, ncss] for one method.
  *
- * Known deliberate divergence: PMD's NCSS does not see statements inside lambdas passed as call
- * arguments (its visitor never descends through those expressions), while it does count the same
- * lambda body when it is a variable initializer. code-gauge counts lambda bodies consistently in
- * both positions, so `lam` below expects 4 where PMD reports 2.
+ * Known deliberate divergence: PMD's NCSS visitor does not descend into expression positions —
+ * statements inside lambdas or anonymous classes passed as call arguments, switch-expression
+ * bodies, and expression-bodied arrow cases are invisible to it — while it does count the same
+ * constructs in statement/initializer positions. code-gauge counts statement-shaped content
+ * uniformly regardless of position, so `lam` below expects 4 where PMD reports 2, and Java files
+ * using switch expressions or anonymous classes as arguments measure higher than PMD.
  */
 const expectedByFixture: Record<string, Record<string, readonly [number, number, number]>> = {
   'ComplexCode.java': {
@@ -42,7 +44,7 @@ const expectedByFixture: Record<string, Record<string, readonly [number, number,
     tf: [1, 0, 4],
     tw: [2, 1, 5],
     sync: [1, 0, 3],
-    thr: [1, 0, 2],
+    thr: [2, 0, 2],
     init: [1, 0, 5],
     run: [1, 0, 2],
   },
@@ -61,6 +63,15 @@ const expectedByFixture: Record<string, Record<string, readonly [number, number,
     nested: [1, 5, 7],
     run: [3, 3, 4],
   },
+  'ProbeSignatures.java': {
+    area: [1, 0, 1],
+    twice: [1, 0, 2],
+    render: [1, 0, 1],
+    done: [1, 0, 2],
+    thr: [2, 0, 2],
+    twoThrows: [4, 1, 4],
+    existingResource: [1, 0, 2],
+  },
 };
 
 function measureFixture(fixture: string): CodeMetrics {
@@ -70,18 +81,21 @@ function measureFixture(fixture: string): CodeMetrics {
 
 /**
  * The aggregate WillBooster/code-analyzer reports: PMD sums cognitive complexity, cyclomatic
- * complexity, and NCSS over every method (constructors and anonymous-class methods included,
- * lambdas not reported on their own). Summing per-function values over the non-lambda entries
- * reproduces those sums: cognitive complexity and NCSS attribute nested lambda/anonymous-class
- * content to the enclosing method exactly like PMD does, and lambda entries are skipped via
- * `nodeType` so their content is not counted twice.
+ * complexity, and NCSS over every method (constructors, abstract/interface methods, and
+ * anonymous-class methods included; lambdas and compact record constructors not reported on their
+ * own). Summing per-function values over the matching entries reproduces those sums: cognitive
+ * complexity and NCSS attribute nested lambda/anonymous-class content to the enclosing method
+ * exactly like PMD does, and lambda/compact-constructor entries are skipped via `nodeType` so the
+ * sum covers the same method set PMD reports.
  */
 function pmdStyleAggregate(metrics: CodeMetrics): {
   cognitiveComplexity: number;
   cyclomaticComplexity: number;
   ncssCount: number;
 } {
-  const methods = metrics.functions.filter((fn) => fn.nodeType !== 'lambda_expression');
+  const methods = metrics.functions.filter(
+    (fn) => fn.nodeType !== 'lambda_expression' && fn.nodeType !== 'compact_constructor_declaration'
+  );
   return {
     cognitiveComplexity: methods.reduce((sum, fn) => sum + fn.cognitiveComplexity, 0),
     cyclomaticComplexity: methods.reduce((sum, fn) => sum + fn.cyclomaticComplexity, 0),
@@ -128,10 +142,11 @@ describe('PMD parity (Java): code-analyzer aggregate metrics', () => {
     const expectedAggregates: Record<string, [number, number, number]> = {
       'ComplexCode.java': [14, 27, 86],
       'ProbeStatements.java': [12, 13, 38],
-      'ProbeTryForms.java': [2, 9, 25],
+      'ProbeTryForms.java': [2, 10, 25],
       // NCSS is PMD's 26 + 2: `lam` diverges from PMD by design (see expectedByFixture doc).
       'ProbeBranches.java': [19, 21, 28],
       'ProbeNestedDecisions.java': [15, 18, 22],
+      'ProbeSignatures.java': [1, 11, 14],
     };
     for (const [fixture, [cognitive, cyclomatic, ncss]] of Object.entries(expectedAggregates)) {
       expect(pmdStyleAggregate(measureFixture(fixture)), fixture).toEqual({
