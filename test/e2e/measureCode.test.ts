@@ -369,6 +369,18 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
 });
 
 describe('measureCode: call graph', () => {
+  it('resolves calls to an implementation despite a same-named interface method', () => {
+    const code =
+      'interface I { int fact(int n); }\nclass C implements I {\n  public int fact(int n) { return n == 0 ? 1 : n * fact(n - 1); }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // The bodyless interface method appears in functions[] (PMD parity) but must not make the
+    // implementation's name ambiguous for call-graph resolution.
+    expect(metrics.functions).toHaveLength(2);
+    expect(metrics.functions.filter((fn) => fn.recursive)).toHaveLength(1);
+    expect(metrics.callGraph.recursiveFunctionCount).toBe(1);
+    expect(metrics.callGraph.internalCallCount).toBeGreaterThan(0);
+  });
+
   it('tracks recursion, fan-in/fan-out, and call depth across a small call graph', () => {
     const metrics = measureCode(readFixture('callGraph.js'), { language: 'javascript' });
 

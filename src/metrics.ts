@@ -212,6 +212,8 @@ interface FunctionAnalysis {
   index: number;
   name?: string;
   nodeType: string;
+  /** False for bodyless signatures (Java abstract/interface methods), which resolve no calls. */
+  hasImplementation: boolean;
   startLine: number;
   startColumn: number;
   endLine: number;
@@ -420,6 +422,7 @@ function analyzeFunction(
     index,
     name: findFunctionName(node),
     nodeType: node.type,
+    hasImplementation: hasImplementationBody(node),
     startLine: node.startPosition.row + 1,
     startColumn: node.startPosition.column,
     endLine: node.endPosition.row + 1,
@@ -577,7 +580,10 @@ function measureCallGraph(analyses: FunctionAnalysis[]): {
 function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<string, number> {
   const indexesByName = new Map<string, number | undefined>();
   for (const analysis of analyses) {
-    if (!analysis.name) {
+    // Bodyless signatures stay in functions[] for PMD-style aggregation, but they must not make
+    // an implemented method's name ambiguous (an interface method and its implementation share a
+    // name), which would drop the implementation's call-graph edges and recursion detection.
+    if (!analysis.name || !analysis.hasImplementation) {
       continue;
     }
 
@@ -599,6 +605,15 @@ const bodyRequiredFunctionTypes = new Set([
   // Rust trait method signatures (`fn required(&self);`) never carry a body.
   'function_signature_item',
 ]);
+
+/**
+ * Whether the function carries an implementation. Only Java `method_declaration` can be bodyless
+ * here (abstract/interface methods); every other bodyless kind is filtered out of functions[] by
+ * isImplementedFunction.
+ */
+function hasImplementationBody(node: Parser.SyntaxNode): boolean {
+  return node.type !== 'method_declaration' || node.childForFieldName('body') !== null;
+}
 
 function isImplementedFunction(node: Parser.SyntaxNode): boolean {
   if (!bodyRequiredFunctionTypes.has(node.type) || node.childForFieldName('body') !== null) {
