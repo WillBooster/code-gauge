@@ -66,6 +66,7 @@ pub fn measure(
             cyclomatic_complexity: analysis.cyclomatic_complexity,
             cognitive_complexity: analysis.cognitive_complexity,
             nesting_depth: analysis.nesting_depth,
+            ncss: analysis.ncss,
             call_count: analysis.call_count,
             unique_callee_count: analysis.callees.len(),
             fan_in: call_graph
@@ -106,6 +107,7 @@ pub fn measure(
             .max()
             .unwrap_or(0),
         nesting_depth: global_complexity.nesting_depth,
+        ncss_count: crate::ncss::count_ncss(root, &sets.ncss_nodes, &sets.ncss_containers),
         call_graph: call_graph.metrics,
         coupling: measure_coupling(root, &sets, code),
         module: measure_module(root, &sets, code),

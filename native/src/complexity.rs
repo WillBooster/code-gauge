@@ -16,6 +16,8 @@ pub struct LanguageSets {
     pub class_nodes: HashSet<&'static str>,
     pub decision_nodes: HashSet<&'static str>,
     pub nesting_nodes: HashSet<&'static str>,
+    pub ncss_nodes: HashSet<&'static str>,
+    pub ncss_containers: HashSet<&'static str>,
 }
 
 impl LanguageSets {
@@ -26,6 +28,8 @@ impl LanguageSets {
             class_nodes: language.class_node_types.iter().copied().collect(),
             decision_nodes: language.decision_node_types.iter().copied().collect(),
             nesting_nodes: language.nesting_node_types.iter().copied().collect(),
+            ncss_nodes: language.ncss_node_types.iter().copied().collect(),
+            ncss_containers: language.ncss_container_node_types.iter().copied().collect(),
         }
     }
 }
@@ -46,6 +50,41 @@ pub fn is_function_boundary(node: Node<'_>, function_nodes: &HashSet<&'static st
     function_nodes.contains(node.kind()) && !is_lambda_body_block(node)
 }
 
+// Sonar cognitive complexity charges a switch/match once as a whole; each case label still adds
+// one cyclomatic path. Only named nodes are consulted, so anonymous keyword tokens never match.
+const SWITCH_LIKE_NODE_TYPES: &[&str] = &[
+    "switch_statement",
+    "switch_expression",
+    "expression_switch_statement",
+    "type_switch_statement",
+    "select_statement",
+    "match_expression",
+    "match_statement",
+    "case",
+    "case_match",
+];
+
+// Per-case decision nodes: cyclomatic-only, because the switch itself carries the cognitive cost.
+const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
+    "case_clause",
+    "switch_case",
+    "switch_block_statement_group",
+    "switch_rule",
+    "case_statement",
+    "expression_case",
+    "type_case",
+    "communication_case",
+    "match_arm",
+    "when",
+    "in_clause",
+];
+
+const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "unless"];
+
+/// Cyclomatic complexity and nesting depth describe the function's own body, so their
+/// contributions are gated off inside nested function boundaries; cognitive complexity follows the
+/// Sonar spec instead and charges nested function/lambda content to the enclosing function, one
+/// nesting level deeper per function boundary crossed.
 pub fn measure_complexity(
     node: Node<'_>,
     sets: &LanguageSets,
@@ -59,47 +98,77 @@ pub fn measure_complexity(
         nesting_depth: nesting,
     };
 
+    #[allow(clippy::too_many_arguments)]
     fn visit(
         current: Node<'_>,
         current_nesting: u64,
+        mut function_nesting_bonus: u64,
+        mut inside_function: bool,
+        mut inside_nested_function: bool,
         sets: &LanguageSets,
         stop_at_nested_functions: bool,
         code: &Source<'_>,
         result: &mut ComplexityResult,
     ) {
-        if stop_at_nested_functions && is_function_boundary(current, &sets.function_nodes) {
-            return;
+        if is_function_boundary(current, &sets.function_nodes) {
+            if inside_function {
+                inside_nested_function = true;
+                function_nesting_bonus += 1;
+            }
+            inside_function = true;
         }
+        let cognitive_nesting = current_nesting + function_nesting_bonus;
+        let counts_for_own_body = !(stop_at_nested_functions && inside_nested_function);
 
         // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
         // `if` keyword token), so only named nodes count as decisions.
         let is_decision = current.is_named()
             && sets.decision_nodes.contains(current.kind())
             && !is_default_switch_branch(current);
-        let is_nesting = current.is_named()
-            && sets.nesting_nodes.contains(current.kind())
-            && !is_default_switch_branch(current);
+        let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
+        let is_nesting = current.is_named() && sets.nesting_nodes.contains(current.kind());
         // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
-        if is_decision {
+        if is_decision && counts_for_own_body {
             result.cyclomatic_complexity += 1;
+        }
+        if is_decision && !is_case_clause {
             result.cognitive_complexity += if is_continuation {
                 1
             } else {
-                1 + current_nesting
+                1 + cognitive_nesting
             };
+        }
+        if current.is_named() && SWITCH_LIKE_NODE_TYPES.contains(&current.kind()) {
+            result.cognitive_complexity += 1 + cognitive_nesting;
+        }
+        // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
+        // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+        result.cognitive_complexity += count_plain_else_branches(current);
+        // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
+        if is_flow_breaking_jump(current) {
+            result.cognitive_complexity += 1;
         }
 
         if is_boolean_operator(current, code) {
-            result.cyclomatic_complexity += 1;
-            result.cognitive_complexity += 1;
+            if counts_for_own_body {
+                result.cyclomatic_complexity += 1;
+            }
+            // A sequence of identical boolean operators reads as one condition, so only the
+            // operator starting a sequence adds a cognitive point (Sonar spec); each operator stays
+            // one cyclomatic path.
+            if starts_boolean_operator_sequence(current, code) {
+                result.cognitive_complexity += 1;
+            }
         }
 
         // Pattern guards add one independent execution path without nesting.
         if is_pattern_guard(current) {
-            result.cyclomatic_complexity += 1;
+            if counts_for_own_body {
+                result.cyclomatic_complexity += 1;
+            }
             result.cognitive_complexity += 1;
         }
 
@@ -108,12 +177,17 @@ pub fn measure_complexity(
         } else {
             current_nesting
         };
-        result.nesting_depth = result.nesting_depth.max(child_nesting);
+        if counts_for_own_body {
+            result.nesting_depth = result.nesting_depth.max(child_nesting);
+        }
 
         for child in all_children(current) {
             visit(
                 child,
                 child_nesting,
+                function_nesting_bonus,
+                inside_function,
+                inside_nested_function,
                 sets,
                 stop_at_nested_functions,
                 code,
@@ -126,6 +200,9 @@ pub fn measure_complexity(
         visit(
             child,
             nesting,
+            0,
+            stop_at_nested_functions,
+            false,
             sets,
             stop_at_nested_functions,
             code,
@@ -134,6 +211,73 @@ pub fn measure_complexity(
     }
 
     result
+}
+
+/// Plain else branches attached to `current`: an `else_clause`/Ruby `else` whose branch is not an
+/// `else if` continuation, or a bare Java/Go `alternative:` statement without a clause wrapper.
+fn count_plain_else_branches(current: Node<'_>) -> u64 {
+    if !current.is_named() {
+        return 0;
+    }
+    let kind = current.kind();
+    if kind == "else" {
+        return 1;
+    }
+    if kind == "else_clause" {
+        let has_if_like_child = crate::util::named_children(current)
+            .iter()
+            .any(|child| IF_LIKE_NODE_TYPES.contains(&child.kind()));
+        return if has_if_like_child { 0 } else { 1 };
+    }
+    if kind != "if_statement" && kind != "if_expression" {
+        return 0;
+    }
+    crate::util::find_children_by_field_name(current, "alternative")
+        .iter()
+        .filter(|child| {
+            child.kind() != "else_clause"
+                && child.kind() != "elif_clause"
+                && !IF_LIKE_NODE_TYPES.contains(&child.kind())
+        })
+        .count() as u64
+}
+
+/// goto, and break/continue that jump to a label (their only named child is the label).
+fn is_flow_breaking_jump(node: Node<'_>) -> bool {
+    if !node.is_named() {
+        return false;
+    }
+    if node.kind() == "goto_statement" {
+        return true;
+    }
+    (node.kind() == "break_statement" || node.kind() == "continue_statement")
+        && node.named_child_count() > 0
+}
+
+/// Whether this boolean operator token starts a new sequence: its left operand is not the same
+/// binary node kind joined by the same operator. `a && b && c` costs one cognitive point while
+/// `a && b || c` costs two, matching the Sonar specification.
+fn starts_boolean_operator_sequence(token: Node<'_>, code: &Source<'_>) -> bool {
+    let Some(parent) = token.parent() else {
+        return true;
+    };
+    let Some(left) = parent.child_by_field_name("left") else {
+        return true;
+    };
+    if left.kind() != parent.kind() {
+        return true;
+    }
+    find_boolean_operator_text(left, code) != Some(node_text(token, code))
+}
+
+fn find_boolean_operator_text<'a>(binary_node: Node<'_>, code: &Source<'a>) -> Option<&'a str> {
+    if let Some(operator) = binary_node.child_by_field_name("operator") {
+        return Some(node_text(operator, code));
+    }
+    all_children(binary_node)
+        .into_iter()
+        .find(|child| !child.is_named() && BOOLEAN_OPERATORS.contains(&node_text(*child, code)))
+        .map(|child| node_text(child, code))
 }
 
 /// Java `guard`, Ruby `if_guard`, Python `if_clause`, and Rust guards inside `match_pattern`.

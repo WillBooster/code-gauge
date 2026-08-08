@@ -1,6 +1,7 @@
 import Parser from 'tree-sitter';
 import { measureDuplication } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
+import { countFunctionNcss, countNcss } from './ncss.js';
 import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
 import type {
   CallGraphMetrics,
@@ -217,6 +218,7 @@ interface FunctionAnalysis {
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
   nestingDepth: number;
+  ncss: number;
   callCount: number;
   parameterCount: number;
   callees: Set<string>;
@@ -285,6 +287,7 @@ export class TreeMeasurer {
       cognitiveComplexity: globalComplexity.cognitiveComplexity,
       maxCognitiveComplexity: maxMetric(functionMetrics, 'cognitiveComplexity'),
       nestingDepth: globalComplexity.nestingDepth,
+      ncssCount: countNcss(root, language),
       callGraph: structuralMetrics.callGraph,
       coupling: structuralMetrics.coupling,
       module: structuralMetrics.module,
@@ -329,6 +332,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
       cyclomaticComplexity: fn.cyclomaticComplexity,
       cognitiveComplexity: fn.cognitiveComplexity,
       nestingDepth: fn.nestingDepth,
+      ncss: fn.ncss,
       callCount: fn.callCount,
       uniqueCalleeCount: fn.uniqueCalleeCount,
       fanIn: fn.fanIn,
@@ -343,6 +347,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
     cognitiveComplexity: payload.cognitiveComplexity,
     maxCognitiveComplexity: payload.maxCognitiveComplexity,
     nestingDepth: payload.nestingDepth,
+    ncssCount: payload.ncssCount,
     callGraph: payload.callGraph,
     coupling: payload.coupling,
     module: payload.module,
@@ -377,6 +382,7 @@ function measureStructuralMetrics(
     cyclomaticComplexity: analysis.cyclomaticComplexity,
     cognitiveComplexity: analysis.cognitiveComplexity,
     nestingDepth: analysis.nestingDepth,
+    ncss: analysis.ncss,
     callCount: analysis.callCount,
     uniqueCalleeCount: analysis.callees.size,
     fanIn: callGraph.fanInByIndex.get(analysis.index) ?? 0,
@@ -414,6 +420,7 @@ function analyzeFunction(
     cyclomaticComplexity: complexity.cyclomaticComplexity,
     cognitiveComplexity: complexity.cognitiveComplexity,
     nestingDepth: complexity.nestingDepth,
+    ncss: countFunctionNcss(node, language),
     callCount: calls.callCount,
     parameterCount: countParameters(node),
     callees: calls.callees,
@@ -609,6 +616,37 @@ function isFunctionBoundary(node: Parser.SyntaxNode, functionNodeTypes: Set<stri
   return functionNodeTypes.has(node.type) && !isLambdaBodyBlock(node);
 }
 
+// Sonar cognitive complexity charges a switch/match once as a whole; each case label still adds
+// one cyclomatic path. Only named nodes are consulted, so anonymous keyword tokens never match.
+const switchLikeNodeTypes = new Set([
+  'switch_statement',
+  'switch_expression',
+  'expression_switch_statement',
+  'type_switch_statement',
+  'select_statement',
+  'match_expression',
+  'match_statement',
+  'case',
+  'case_match',
+]);
+
+// Per-case decision nodes: cyclomatic-only, because the switch itself carries the cognitive cost.
+const caseClauseNodeTypes = new Set([
+  'case_clause',
+  'switch_case',
+  'switch_block_statement_group',
+  'switch_rule',
+  'case_statement',
+  'expression_case',
+  'type_case',
+  'communication_case',
+  'match_arm',
+  'when',
+  'in_clause',
+]);
+
+const ifLikeNodeTypes = new Set(['if_statement', 'if_expression', 'if', 'unless']);
+
 function measureComplexity(
   node: Parser.SyntaxNode,
   language: LanguageDefinition,
@@ -622,50 +660,158 @@ function measureComplexity(
   const decisionNodes = new Set(language.decisionNodeTypes);
   const nestingNodes = new Set(language.nestingNodeTypes);
 
-  function visit(current: Parser.SyntaxNode, currentNesting: number, insideRoot: boolean): void {
-    if (stopAtNestedFunctions && !insideRoot && isFunctionBoundary(current, functionNodes)) {
-      return;
+  // Cyclomatic complexity and nesting depth describe the function's own body, so they stop at
+  // nested function boundaries; cognitive complexity follows the Sonar spec instead and charges
+  // nested function/lambda content to the enclosing function, one nesting level deeper.
+  function visit(
+    current: Parser.SyntaxNode,
+    currentNesting: number,
+    functionNestingBonus: number,
+    insideFunction: boolean,
+    insideNestedFunction: boolean
+  ): void {
+    if (isFunctionBoundary(current, functionNodes)) {
+      if (insideFunction) {
+        insideNestedFunction = true;
+        functionNestingBonus += 1;
+      }
+      insideFunction = true;
     }
+    const cognitiveNesting = currentNesting + functionNestingBonus;
+    const countsForOwnBody = !(stopAtNestedFunctions && insideNestedFunction);
 
     // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
     // `if` keyword token), so only named nodes count as decisions.
     const isDecision = current.isNamed && decisionNodes.has(current.type) && !isDefaultSwitchBranch(current);
-    const isNesting = current.isNamed && nestingNodes.has(current.type) && !isDefaultSwitchBranch(current);
+    const isCaseClause = current.isNamed && caseClauseNodeTypes.has(current.type);
+    const isNesting = current.isNamed && nestingNodes.has(current.type);
     // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
     // surcharge, and their bodies stay at the chain's nesting level (Sonar cognitive-complexity
     // semantics); genuinely nested conditionals inside those bodies still deepen.
     const isContinuation = isDecision && isFlatChainContinuation(current);
 
-    if (isDecision) {
+    if (isDecision && countsForOwnBody) {
       cyclomaticComplexity += 1;
-      cognitiveComplexity += isContinuation ? 1 : 1 + currentNesting;
+    }
+    if (isDecision && !isCaseClause) {
+      cognitiveComplexity += isContinuation ? 1 : 1 + cognitiveNesting;
+    }
+    if (current.isNamed && switchLikeNodeTypes.has(current.type)) {
+      cognitiveComplexity += 1 + cognitiveNesting;
+    }
+    // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
+    // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+    cognitiveComplexity += countPlainElseBranches(current);
+    // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
+    if (isFlowBreakingJump(current)) {
+      cognitiveComplexity += 1;
     }
 
     if (isBooleanOperator(current)) {
-      cyclomaticComplexity += 1;
-      cognitiveComplexity += 1;
+      if (countsForOwnBody) {
+        cyclomaticComplexity += 1;
+      }
+      // A sequence of identical boolean operators reads as one condition, so only the operator
+      // starting a sequence adds a cognitive point (Sonar spec); each operator stays one
+      // cyclomatic path.
+      if (startsBooleanOperatorSequence(current)) {
+        cognitiveComplexity += 1;
+      }
     }
 
     // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
     // add one independent execution path without nesting.
     if (isPatternGuard(current)) {
-      cyclomaticComplexity += 1;
+      if (countsForOwnBody) {
+        cyclomaticComplexity += 1;
+      }
       cognitiveComplexity += 1;
     }
 
     const childNesting = isNesting && !isContinuation ? currentNesting + 1 : currentNesting;
-    nestingDepth = Math.max(nestingDepth, childNesting);
+    if (countsForOwnBody) {
+      nestingDepth = Math.max(nestingDepth, childNesting);
+    }
 
     for (const child of current.children) {
-      visit(child, childNesting, false);
+      visit(child, childNesting, functionNestingBonus, insideFunction, insideNestedFunction);
     }
   }
 
   for (const child of node.children) {
-    visit(child, nesting, false);
+    visit(child, nesting, 0, stopAtNestedFunctions, false);
   }
 
   return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
+}
+
+/**
+ * Plain else branches attached to `current`: an `else_clause`/Ruby `else` whose branch is not an
+ * `else if` continuation, or a bare Java/Go `alternative:` statement without a clause wrapper.
+ */
+function countPlainElseBranches(current: Parser.SyntaxNode): number {
+  if (!current.isNamed) {
+    return 0;
+  }
+  if (current.type === 'else') {
+    return 1;
+  }
+  if (current.type === 'else_clause') {
+    return current.namedChildren.some((child) => ifLikeNodeTypes.has(child.type)) ? 0 : 1;
+  }
+  if (current.type !== 'if_statement' && current.type !== 'if_expression') {
+    return 0;
+  }
+  let count = 0;
+  for (let index = 0; index < current.childCount; index += 1) {
+    const child = current.child(index);
+    if (
+      child &&
+      current.fieldNameForChild(index) === 'alternative' &&
+      child.type !== 'else_clause' &&
+      child.type !== 'elif_clause' &&
+      !ifLikeNodeTypes.has(child.type)
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+/** goto, and break/continue that jump to a label (their only named child is the label). */
+function isFlowBreakingJump(node: Parser.SyntaxNode): boolean {
+  if (!node.isNamed) {
+    return false;
+  }
+  if (node.type === 'goto_statement') {
+    return true;
+  }
+  return (node.type === 'break_statement' || node.type === 'continue_statement') && node.namedChildCount > 0;
+}
+
+/**
+ * Whether this boolean operator token starts a new sequence: its left operand is not the same
+ * binary node kind joined by the same operator. `a && b && c` costs one cognitive point while
+ * `a && b || c` costs two, matching the Sonar specification.
+ */
+function startsBooleanOperatorSequence(token: Parser.SyntaxNode): boolean {
+  const parent = token.parent;
+  if (!parent) {
+    return true;
+  }
+  const left = parent.childForFieldName('left');
+  if (!left || left.type !== parent.type) {
+    return true;
+  }
+  return findBooleanOperatorText(left) !== token.text;
+}
+
+function findBooleanOperatorText(binaryNode: Parser.SyntaxNode): string | undefined {
+  const operator = binaryNode.childForFieldName('operator');
+  if (operator) {
+    return operator.text;
+  }
+  return binaryNode.children.find((child) => !child.isNamed && booleanOperators.has(child.text))?.text;
 }
 
 /** Java `guard`, Ruby `if_guard`, Python `if_clause`, and Rust guards inside `match_pattern`. */
