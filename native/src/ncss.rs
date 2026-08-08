@@ -124,16 +124,14 @@ fn counts_through_node_type(node: Node<'_>, countable: &HashSet<&'static str>) -
 /// Direct container children count positionally; Ruby's `(foo; bar)` statement parentheses are
 /// transparent, so their children count when the parentheses themselves sit in a container.
 fn is_in_container_position(node: Node<'_>, containers: &HashSet<&'static str>) -> bool {
-    let Some(parent) = node.parent() else {
-        return false;
-    };
-    if containers.contains(parent.kind()) {
-        return true;
+    let mut ancestor = node.parent();
+    while let Some(current) = ancestor {
+        if current.kind() != "parenthesized_statements" {
+            return containers.contains(current.kind());
+        }
+        ancestor = current.parent();
     }
-    parent.kind() == "parenthesized_statements"
-        && parent
-            .parent()
-            .is_some_and(|grandparent| containers.contains(grandparent.kind()))
+    false
 }
 
 /// `export const x = 1` nests a countable declaration inside `export_statement`; only the inner

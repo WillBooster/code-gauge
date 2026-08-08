@@ -1,7 +1,7 @@
 import Parser from 'tree-sitter';
 import { measureDuplication } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
-import { commentNodeTypes, countFunctionNcss, countNcss } from './ncss.js';
+import { commentNodeTypes, countFunctionNcss, countNcss, invalidateNcssSetsCache } from './ncss.js';
 import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
 import type {
   CallGraphMetrics,
@@ -240,6 +240,9 @@ export class TreeMeasurer {
   private readonly registry = createLanguageRegistry();
 
   registerLanguage(language: LanguageDefinition): void {
+    // Re-registering may carry mutated node-type arrays; drop derived caches so they rebuild.
+    invalidateComplexityNodeSetsCache(language);
+    invalidateNcssSetsCache(language);
     this.registry.set(language.name, language);
     for (const alias of language.aliases ?? []) {
       this.registry.set(alias, language);
@@ -664,6 +667,11 @@ interface ComplexityNodeSets {
 // Cached per language: measureComplexity runs once per function plus once per file, so per-call
 // Set construction would add a measurable constant factor on large files.
 const complexityNodeSetsCache = new WeakMap<LanguageDefinition, ComplexityNodeSets>();
+
+/** Drops the cached sets so a re-registered (possibly mutated) definition rebuilds them. */
+function invalidateComplexityNodeSetsCache(language: LanguageDefinition): void {
+  complexityNodeSetsCache.delete(language);
+}
 
 function getComplexityNodeSets(language: LanguageDefinition): ComplexityNodeSets {
   let sets = complexityNodeSetsCache.get(language);

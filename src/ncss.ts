@@ -54,6 +54,11 @@ interface NcssSets {
 // construction would add a measurable constant factor on large files.
 const ncssSetsCache = new WeakMap<LanguageDefinition, NcssSets>();
 
+/** Drops the cached sets so a re-registered (possibly mutated) definition rebuilds them. */
+export function invalidateNcssSetsCache(language: LanguageDefinition): void {
+  ncssSetsCache.delete(language);
+}
+
 function getNcssSets(language: LanguageDefinition): NcssSets {
   let sets = ncssSetsCache.get(language);
   if (!sets) {
@@ -129,17 +134,15 @@ function countsThroughNodeType(node: Parser.SyntaxNode, countable: Set<string>):
 
 /**
  * Direct container children count positionally; Ruby's `(foo; bar)` statement parentheses are
- * transparent, so their children count when the parentheses themselves sit in a container.
+ * transparent (through arbitrary nesting), so their children count when the parentheses
+ * themselves sit in a container.
  */
 function isInContainerPosition(node: Parser.SyntaxNode, containers: Set<string>): boolean {
-  const parent = node.parent;
-  if (!parent) {
-    return false;
+  let ancestor = node.parent;
+  while (ancestor && ancestor.type === 'parenthesized_statements') {
+    ancestor = ancestor.parent;
   }
-  if (containers.has(parent.type)) {
-    return true;
-  }
-  return parent.type === 'parenthesized_statements' && containers.has(parent.parent?.type ?? '');
+  return ancestor !== null && containers.has(ancestor.type);
 }
 
 /**
