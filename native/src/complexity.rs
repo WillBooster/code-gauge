@@ -105,15 +105,26 @@ pub fn measure_complexity(
         mut function_nesting_bonus: u64,
         mut inside_function: bool,
         mut inside_nested_function: bool,
+        inside_charged_class_body: bool,
         sets: &LanguageSets,
         stop_at_nested_functions: bool,
         code: &Source<'_>,
         result: &mut ComplexityResult,
     ) {
+        // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
+        // level once for everything inside it — PMD charges the class body, not the methods it
+        // holds, so methods directly inside a charged class body skip the function-boundary bonus.
+        let is_charged_class_body = current.kind() == "class_body" && inside_function;
+        if is_charged_class_body {
+            inside_nested_function = true;
+            function_nesting_bonus += 1;
+        }
         if is_function_boundary(current, &sets.function_nodes) {
             if inside_function {
                 inside_nested_function = true;
-                function_nesting_bonus += 1;
+                if !inside_charged_class_body {
+                    function_nesting_bonus += 1;
+                }
             }
             inside_function = true;
         }
@@ -126,7 +137,15 @@ pub fn measure_complexity(
             && sets.decision_nodes.contains(current.kind())
             && !is_default_switch_branch(current);
         let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
-        let is_nesting = current.is_named() && sets.nesting_nodes.contains(current.kind());
+        // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
+        // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
+        // `if`/`begin` else branches would then double-nest under their already-nesting parent).
+        let is_nesting = current.is_named()
+            && (sets.nesting_nodes.contains(current.kind())
+                || (current.kind() == "else"
+                    && current.parent().is_some_and(|parent| {
+                        parent.kind() == "case" || parent.kind() == "case_match"
+                    })));
         // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
@@ -188,6 +207,7 @@ pub fn measure_complexity(
                 function_nesting_bonus,
                 inside_function,
                 inside_nested_function,
+                is_charged_class_body,
                 sets,
                 stop_at_nested_functions,
                 code,
@@ -202,6 +222,7 @@ pub fn measure_complexity(
             nesting,
             0,
             stop_at_nested_functions,
+            false,
             false,
             sets,
             stop_at_nested_functions,
@@ -242,10 +263,13 @@ fn count_plain_else_branches(current: Node<'_>) -> u64 {
     if kind != "if_statement" && kind != "if_expression" {
         return 0;
     }
+    // Extras (comments) inherit the preceding sibling's field in find_children_by_field_name, so a
+    // comment between an `elif_clause` and `else_clause` must not be miscounted as a bare branch.
     crate::util::find_children_by_field_name(current, "alternative")
         .iter()
         .filter(|child| {
-            child.kind() != "else_clause"
+            !child.is_extra()
+                && child.kind() != "else_clause"
                 && child.kind() != "elif_clause"
                 && !IF_LIKE_NODE_TYPES.contains(&child.kind())
         })
@@ -267,8 +291,12 @@ fn is_flow_breaking_jump(node: Node<'_>) -> bool {
             .iter()
             .any(|child| child.kind() == "label" || child.kind() == "loop_label");
     }
+    // Comments are named children too (`break /* done */;`), so only non-comment children mark a
+    // label.
     (node.kind() == "break_statement" || node.kind() == "continue_statement")
-        && node.named_child_count() > 0
+        && crate::util::named_children(node)
+            .iter()
+            .any(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
 }
 
 /// Wrappers that are transparent when locating the enclosing boolean operation: PMD/Sonar keep a

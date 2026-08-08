@@ -3,7 +3,7 @@ use tree_sitter::Node;
 
 use crate::util::{all_children, find_children_by_field_name};
 
-const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
+pub const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
 
 /// Nodes never counted positionally inside NCSS containers: metadata, empty statements, and Ruby
 /// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc).
@@ -160,21 +160,40 @@ fn counts_contextually(node: Node<'_>) -> bool {
     }
     // A braceless Rust match-arm body (`1 => foo()`) has no expression_statement wrapper; count the
     // value expression so braced and unbraced arms measure alike.
-    parent_kind == Some("match_arm") && node.kind() != "block" && is_match_arm_value(node)
+    if parent_kind == Some("match_arm") && node.kind() != "block" && is_field_of_parent(node, "value")
+    {
+        return true;
+    }
+    // A TypeScript class-body method overload signature declares a member like its interface twin.
+    if node.kind() == "method_signature" && parent_kind == Some("class_body") {
+        return true;
+    }
+    // An ambient `declare namespace M { ... }` is a bare `internal_module`; the non-ambient
+    // `namespace N { ... }` is wrapped in an `expression_statement`, which already counts.
+    if node.kind() == "internal_module" && parent_kind != Some("expression_statement") {
+        return true;
+    }
+    // A Ruby endless method (`def f(x) = expr`) stores its single-statement body directly in the
+    // `body` field instead of a positional `body_statement` container.
+    (parent_kind == Some("method") || parent_kind == Some("singleton_method"))
+        && node.kind() != "body_statement"
+        && is_field_of_parent(node, "body")
 }
 
-fn is_match_arm_value(node: Node<'_>) -> bool {
+fn is_field_of_parent(node: Node<'_>, field_name: &str) -> bool {
     let Some(parent) = node.parent() else {
         return false;
     };
-    find_children_by_field_name(parent, "value")
+    find_children_by_field_name(parent, field_name)
         .iter()
         .any(|child| child.id() == node.id())
 }
 
 fn count_bare_alternatives(node: Node<'_>) -> u64 {
+    // Extras (comments) inherit the preceding sibling's field in find_children_by_field_name, so a
+    // comment between an `elif_clause` and `else_clause` must not be miscounted as a bare branch.
     find_children_by_field_name(node, "alternative")
         .iter()
-        .filter(|child| !ELSE_CLAUSE_NODE_TYPES.contains(&child.kind()))
+        .filter(|child| !child.is_extra() && !ELSE_CLAUSE_NODE_TYPES.contains(&child.kind()))
         .count() as u64
 }

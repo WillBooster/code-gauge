@@ -1,7 +1,7 @@
 import type Parser from 'tree-sitter';
 import type { LanguageDefinition } from './types.js';
 
-const commentNodeTypes = new Set(['comment', 'line_comment', 'block_comment']);
+export const commentNodeTypes = new Set(['comment', 'line_comment', 'block_comment']);
 
 // Nodes never counted positionally inside NCSS containers: metadata, empty statements, and Ruby
 // heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc).
@@ -146,20 +146,38 @@ function countsContextually(node: Parser.SyntaxNode): boolean {
   }
   // A braceless Rust match-arm body (`1 => foo()`) has no expression_statement wrapper; count the
   // value expression so braced and unbraced arms measure alike.
-  if (parentType === 'match_arm' && node.type !== 'block' && isMatchArmValue(node)) {
+  if (parentType === 'match_arm' && node.type !== 'block' && isFieldOfParent(node, 'value')) {
+    return true;
+  }
+  // A TypeScript class-body method overload signature declares a member like its interface twin.
+  if (node.type === 'method_signature' && parentType === 'class_body') {
+    return true;
+  }
+  // An ambient `declare namespace M { ... }` is a bare `internal_module`; the non-ambient
+  // `namespace N { ... }` is wrapped in an `expression_statement`, which already counts.
+  if (node.type === 'internal_module' && parentType !== 'expression_statement') {
+    return true;
+  }
+  // A Ruby endless method (`def f(x) = expr`) stores its single-statement body directly in the
+  // `body` field instead of a positional `body_statement` container.
+  if (
+    (parentType === 'method' || parentType === 'singleton_method') &&
+    node.type !== 'body_statement' &&
+    isFieldOfParent(node, 'body')
+  ) {
     return true;
   }
   return false;
 }
 
-function isMatchArmValue(node: Parser.SyntaxNode): boolean {
+function isFieldOfParent(node: Parser.SyntaxNode, fieldName: string): boolean {
   const parent = node.parent;
   if (!parent) {
     return false;
   }
   for (let index = 0; index < parent.childCount; index += 1) {
     if (parent.child(index)?.id === node.id) {
-      return parent.fieldNameForChild(index) === 'value';
+      return parent.fieldNameForChild(index) === fieldName;
     }
   }
   return false;

@@ -134,9 +134,11 @@ const jsNcssNodes = [
   'lexical_declaration',
   'variable_declaration',
   'function_declaration',
+  'function_signature',
   'generator_function_declaration',
   'class_declaration',
   'abstract_class_declaration',
+  'module',
   'method_definition',
   'abstract_method_signature',
   'class_static_block',
@@ -208,9 +210,11 @@ const goNcssNodes = [
   'function_declaration',
   'method_declaration',
   'field_declaration',
-  // Interface members: `method_elem` in tree-sitter-go 0.21+, `method_spec` in older grammars.
+  // Interface members: `method_elem` in tree-sitter-go 0.21+, `method_spec` in older grammars;
+  // `type_elem` covers embedded interfaces and type-set elements.
   'method_elem',
   'method_spec',
+  'type_elem',
   'short_var_declaration',
   'expression_statement',
   'send_statement',
@@ -238,6 +242,8 @@ const goNcssNodes = [
 
 const rustNcssNodes = [
   'use_declaration',
+  'extern_crate_declaration',
+  'foreign_mod_item',
   'mod_item',
   'const_item',
   'static_item',
@@ -261,6 +267,12 @@ const rustNcssNodes = [
 const javaNcssNodes = [
   'package_declaration',
   'import_declaration',
+  'module_declaration',
+  'requires_module_directive',
+  'exports_module_directive',
+  'opens_module_directive',
+  'uses_module_directive',
+  'provides_module_directive',
   'class_declaration',
   'interface_declaration',
   'enum_declaration',
@@ -343,6 +355,7 @@ const cppNcssNodes = [
   'namespace_definition',
   'using_declaration',
   'alias_declaration',
+  'concept_definition',
   'static_assert_declaration',
   'for_range_loop',
   'catch_clause',
@@ -409,7 +422,9 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     aliases: ['rs'],
     parserLanguage: normalizeGrammar(Rust as unknown as GrammarModule),
     ncssNodeTypes: rustNcssNodes,
-    ncssContainerNodeTypes: ['block'],
+    // `else_clause` is a container so `else if` chains count the nested if_expression; a plain
+    // `else { ... }` is unaffected because its only child is a `block`, itself a container.
+    ncssContainerNodeTypes: ['block', 'else_clause'],
   },
   {
     name: 'java',

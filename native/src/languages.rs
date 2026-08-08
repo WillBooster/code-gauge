@@ -310,9 +310,11 @@ const JS_NCSS_NODES: &[&str] = &[
     "lexical_declaration",
     "variable_declaration",
     "function_declaration",
+    "function_signature",
     "generator_function_declaration",
     "class_declaration",
     "abstract_class_declaration",
+    "module",
     "method_definition",
     "abstract_method_signature",
     "class_static_block",
@@ -384,9 +386,11 @@ const GO_NCSS_NODES: &[&str] = &[
     "function_declaration",
     "method_declaration",
     "field_declaration",
-    // Interface members: `method_elem` in tree-sitter-go 0.21+, `method_spec` in older grammars.
+    // Interface members: `method_elem` in tree-sitter-go 0.21+, `method_spec` in older grammars;
+    // `type_elem` covers embedded interfaces and type-set elements.
     "method_elem",
     "method_spec",
+    "type_elem",
     "short_var_declaration",
     "expression_statement",
     "send_statement",
@@ -414,6 +418,8 @@ const GO_NCSS_NODES: &[&str] = &[
 
 const RUST_NCSS_NODES: &[&str] = &[
     "use_declaration",
+    "extern_crate_declaration",
+    "foreign_mod_item",
     "mod_item",
     "const_item",
     "static_item",
@@ -433,11 +439,19 @@ const RUST_NCSS_NODES: &[&str] = &[
     "else_clause",
     "match_arm",
 ];
-const RUST_NCSS_CONTAINERS: &[&str] = &["block"];
+// `else_clause` is a container so `else if` chains count the nested if_expression; a plain
+// `else { ... }` is unaffected because its only child is a `block`, itself a container.
+const RUST_NCSS_CONTAINERS: &[&str] = &["block", "else_clause"];
 
 const JAVA_NCSS_NODES: &[&str] = &[
     "package_declaration",
     "import_declaration",
+    "module_declaration",
+    "requires_module_directive",
+    "exports_module_directive",
+    "opens_module_directive",
+    "uses_module_directive",
+    "provides_module_directive",
     "class_declaration",
     "interface_declaration",
     "enum_declaration",
@@ -542,6 +556,7 @@ const CPP_NCSS_NODES: &[&str] = &[
     "namespace_definition",
     "using_declaration",
     "alias_declaration",
+    "concept_definition",
     "static_assert_declaration",
     "for_range_loop",
     "catch_clause",

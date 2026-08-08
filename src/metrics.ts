@@ -1,7 +1,7 @@
 import Parser from 'tree-sitter';
 import { measureDuplication } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
-import { countFunctionNcss, countNcss } from './ncss.js';
+import { commentNodeTypes, countFunctionNcss, countNcss } from './ncss.js';
 import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
 import type {
   CallGraphMetrics,
@@ -672,12 +672,24 @@ function measureComplexity(
     currentNesting: number,
     functionNestingBonus: number,
     insideFunction: boolean,
-    insideNestedFunction: boolean
+    insideNestedFunction: boolean,
+    insideChargedClassBody: boolean
   ): void {
+    // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
+    // level once for everything inside it — PMD charges the class body, not the methods it holds
+    // (verified: an anonymous-class instance initializer's `if` costs 1 + 1 nesting), so methods
+    // directly inside a charged class body skip the function-boundary bonus.
+    const isChargedClassBody = current.type === 'class_body' && insideFunction;
+    if (isChargedClassBody) {
+      insideNestedFunction = true;
+      functionNestingBonus += 1;
+    }
     if (isFunctionBoundary(current, functionNodes)) {
       if (insideFunction) {
         insideNestedFunction = true;
-        functionNestingBonus += 1;
+        if (!insideChargedClassBody) {
+          functionNestingBonus += 1;
+        }
       }
       insideFunction = true;
     }
@@ -688,7 +700,13 @@ function measureComplexity(
     // `if` keyword token), so only named nodes count as decisions.
     const isDecision = current.isNamed && decisionNodes.has(current.type) && !isDefaultSwitchBranch(current);
     const isCaseClause = current.isNamed && caseClauseNodeTypes.has(current.type);
-    const isNesting = current.isNamed && nestingNodes.has(current.type);
+    // Ruby's `case ... else` arm is an `else` node; like every other language's default branch it
+    // nests its contents inside the switch (it cannot go in the Ruby nesting set because
+    // `if`/`begin` else branches would then double-nest under their already-nesting parent).
+    const isNesting =
+      current.isNamed &&
+      (nestingNodes.has(current.type) ||
+        (current.type === 'else' && (current.parent?.type === 'case' || current.parent?.type === 'case_match')));
     // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
     // surcharge, and their bodies stay at the chain's nesting level (Sonar cognitive-complexity
     // semantics); genuinely nested conditionals inside those bodies still deepen.
@@ -738,12 +756,12 @@ function measureComplexity(
     }
 
     for (const child of current.children) {
-      visit(child, childNesting, functionNestingBonus, insideFunction, insideNestedFunction);
+      visit(child, childNesting, functionNestingBonus, insideFunction, insideNestedFunction, isChargedClassBody);
     }
   }
 
   for (const child of node.children) {
-    visit(child, nesting, 0, stopAtNestedFunctions, false);
+    visit(child, nesting, 0, stopAtNestedFunctions, false, false);
   }
 
   return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
@@ -798,7 +816,12 @@ function isFlowBreakingJump(node: Parser.SyntaxNode): boolean {
   if (node.type === 'break_expression' || node.type === 'continue_expression') {
     return node.namedChildren.some((child) => child.type === 'label' || child.type === 'loop_label');
   }
-  return (node.type === 'break_statement' || node.type === 'continue_statement') && node.namedChildCount > 0;
+  // Comments are named children too (`break /* done */;`), so only non-comment children mark a
+  // label.
+  return (
+    (node.type === 'break_statement' || node.type === 'continue_statement') &&
+    node.namedChildren.some((child) => !commentNodeTypes.has(child.type))
+  );
 }
 
 // Wrappers that are transparent when locating the enclosing boolean operation: PMD/Sonar keep a

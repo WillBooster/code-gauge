@@ -744,6 +744,123 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 }
 `;
 
+exports[`measureCode: golden metrics for the fixture corpus > matches the golden metrics for edge/commentBeforeElse.py 1`] = `
+{
+  "bytes": 134,
+  "callGraph": {
+    "callCount": 0,
+    "internalCallCount": 0,
+    "internalEdgeCount": 0,
+    "maxCallDepth": 0,
+    "maxFanIn": 0,
+    "maxFanOut": 0,
+    "recursiveFunctionCount": 0,
+    "uniqueCalleeCount": 0,
+  },
+  "classCount": 0,
+  "cognitiveComplexity": 3,
+  "cohesion": {
+    "averageFunctionIdentifierOverlap": 1,
+    "sharedIdentifierCount": 0,
+    "uniqueIdentifierCount": 2,
+  },
+  "coupling": {
+    "exportCount": 0,
+    "externalImportCount": 0,
+    "importCount": 0,
+    "importSourceCount": 0,
+    "relativeImportCount": 0,
+  },
+  "cyclomaticComplexity": 3,
+  "duplication": {
+    "duplicateBlockCount": 0,
+    "duplicateBlockGroupCount": 0,
+    "duplicateBlockGroups": [],
+    "duplicateLineCount": 0,
+    "duplicationRatio": 0,
+    "maxDuplicateBlockSize": 0,
+  },
+  "functionCount": 1,
+  "functions": [
+    {
+      "callCount": 0,
+      "cognitiveComplexity": 3,
+      "cyclomaticComplexity": 3,
+      "endLine": 8,
+      "fanIn": 0,
+      "fanOut": 0,
+      "name": "pick",
+      "ncss": 7,
+      "nestingDepth": 1,
+      "nodeType": "function_definition",
+      "parameterCount": 1,
+      "recursive": false,
+      "returnsJsx": false,
+      "startColumn": 0,
+      "startLine": 1,
+      "uniqueCalleeCount": 0,
+    },
+  ],
+  "halstead": {
+    "bugs": 0.014792983340064124,
+    "difficulty": 1.2857142857142858,
+    "distinctOperands": 7,
+    "distinctOperators": 2,
+    "effort": 57.058650025961626,
+    "length": 14,
+    "time": 3.1699250014423126,
+    "totalOperands": 9,
+    "totalOperators": 5,
+    "vocabulary": 9,
+    "volume": 44.37895002019237,
+  },
+  "language": "python",
+  "lines": {
+    "blank": 1,
+    "code": 7,
+    "comment": 1,
+    "total": 9,
+  },
+  "maintainabilityIndex": 69.62799780219964,
+  "maxCognitiveComplexity": 3,
+  "maxCyclomaticComplexity": 3,
+  "module": {
+    "declarations": [
+      {
+        "exported": false,
+        "name": "pick",
+        "startLine": 1,
+      },
+    ],
+    "importSources": [],
+  },
+  "ncssCount": 7,
+  "nestingDepth": 1,
+  "syntaxFeatures": {
+    "assignmentCount": 0,
+    "awaitExpressionCount": 0,
+    "loopStatementCount": 0,
+    "mutableBindingCount": 0,
+    "returnStatementCount": 3,
+    "throwStatementCount": 0,
+    "tryStatementCount": 0,
+  },
+  "syntaxTree": undefined,
+  "typeComplexity": {
+    "conditionalTypeCount": 0,
+    "genericParameterCount": 0,
+    "interfaceCount": 0,
+    "intersectionTypeCount": 0,
+    "nonNullAssertionCount": 0,
+    "satisfiesExpressionCount": 0,
+    "typeAliasCount": 0,
+    "typeAnnotationCount": 0,
+    "typeAssertionCount": 0,
+    "unionTypeCount": 0,
+  },
+}
+`;
+
 exports[`measureCode: golden metrics for the fixture corpus > matches the golden metrics for edge/crlf.js 1`] = `
 {
   "bytes": 180,
