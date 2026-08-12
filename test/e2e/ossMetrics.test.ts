@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { measureCode, type CodeMetrics, type FunctionMetrics } from '../../src/index.js';
+import { measureCode, supportedLanguages, type CodeMetrics, type FunctionMetrics } from '../../src/index.js';
 import { fixturesDir } from './fixtureCorpus.js';
 import { ossExpectations, type OracleMetric } from './ossExpectations.js';
 
@@ -34,11 +34,18 @@ function roundFloats(metrics: CodeMetrics): Record<string, unknown> {
     ncssCount: metrics.ncssCount,
     callGraph: metrics.callGraph,
     coupling: metrics.coupling,
+    module: metrics.module,
+    cohesion: {
+      averageFunctionIdentifierOverlap: round(metrics.cohesion.averageFunctionIdentifierOverlap),
+      sharedIdentifierCount: metrics.cohesion.sharedIdentifierCount,
+      uniqueIdentifierCount: metrics.cohesion.uniqueIdentifierCount,
+    },
     syntaxFeatures: metrics.syntaxFeatures,
     typeComplexity: metrics.typeComplexity,
     duplication: {
       duplicateBlockCount: metrics.duplication.duplicateBlockCount,
       duplicateBlockGroupCount: metrics.duplication.duplicateBlockGroupCount,
+      duplicateBlockGroups: metrics.duplication.duplicateBlockGroups,
       duplicateLineCount: metrics.duplication.duplicateLineCount,
       duplicationRatio: round(metrics.duplication.duplicationRatio),
       maxDuplicateBlockSize: metrics.duplication.maxDuplicateBlockSize,
@@ -48,10 +55,45 @@ function roundFloats(metrics: CodeMetrics): Record<string, unknown> {
       distinctOperands: metrics.halstead.distinctOperands,
       totalOperators: metrics.halstead.totalOperators,
       totalOperands: metrics.halstead.totalOperands,
+      vocabulary: metrics.halstead.vocabulary,
+      length: metrics.halstead.length,
       volume: round(metrics.halstead.volume),
+      difficulty: round(metrics.halstead.difficulty),
+      effort: round(metrics.halstead.effort),
+      time: round(metrics.halstead.time),
+      bugs: round(metrics.halstead.bugs),
     },
     maintainabilityIndex: round(metrics.maintainabilityIndex),
   };
+}
+
+/**
+ * Functions are keyed by start AND end line: start lines alone are not unique (e.g. two callbacks
+ * in `p.catch(() => {}).then(() => ...)` share one line). Looking up a span that still maps to
+ * more than one function would silently check the wrong one, so lookupFunction fails loudly then.
+ */
+function keyFunctionsBySpan(metrics: CodeMetrics): Map<string, FunctionMetrics[]> {
+  const bySpan = new Map<string, FunctionMetrics[]>();
+  for (const fn of metrics.functions) {
+    const key = `${fn.startLine}:${fn.endLine}`;
+    bySpan.set(key, [...(bySpan.get(key) ?? []), fn]);
+  }
+  return bySpan;
+}
+
+function lookupFunction(
+  bySpan: Map<string, FunctionMetrics[]>,
+  name: string,
+  startLine: number,
+  endLine: number
+): FunctionMetrics {
+  const [fn, ...rest] = bySpan.get(`${startLine}:${endLine}`) ?? [];
+  expect(fn, `${name}@${startLine}-${endLine} not found`).toBeDefined();
+  expect(rest, `${name}@${startLine}-${endLine} is ambiguous`).toHaveLength(0);
+  if (!fn) {
+    throw new Error('unreachable');
+  }
+  return fn;
 }
 
 describe('real-world OSS corpus: all supported metrics for all supported languages', () => {
@@ -71,20 +113,26 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
       });
 
       it('matches every tool-verified per-function value', () => {
-        const byStartLine = new Map(metrics.functions.map((fn) => [fn.startLine, fn]));
-        for (const [name, startLine, metric, tool, value] of expectation.oracleFunctions) {
-          const fn = byStartLine.get(startLine);
-          expect(fn, `${name}@${startLine} not found`).toBeDefined();
-          expect(fn?.[metricField[metric]], `${metric} of ${name}@${startLine} (verified with ${tool})`).toBe(value);
+        const bySpan = keyFunctionsBySpan(metrics);
+        for (const [name, startLine, endLine, metric, tool, value] of expectation.oracleFunctions) {
+          const fn = lookupFunction(bySpan, name, startLine, endLine);
+          expect(fn[metricField[metric]], `${metric} of ${name}@${startLine} (verified with ${tool})`).toBe(value);
         }
       });
 
       it('stays on the documented side of every known tool divergence', () => {
-        const byStartLine = new Map(metrics.functions.map((fn) => [fn.startLine, fn]));
-        for (const [name, startLine, metric, tool, toolValue, codeGaugeValue] of expectation.knownDivergences) {
-          const fn = byStartLine.get(startLine);
-          expect(fn, `${name}@${startLine} not found`).toBeDefined();
-          const actual = fn?.[metricField[metric]];
+        const bySpan = keyFunctionsBySpan(metrics);
+        for (const [
+          name,
+          startLine,
+          endLine,
+          metric,
+          tool,
+          toolValue,
+          codeGaugeValue,
+        ] of expectation.knownDivergences) {
+          const fn = lookupFunction(bySpan, name, startLine, endLine);
+          const actual = fn[metricField[metric]];
           expect(actual, `${metric} of ${name}@${startLine} (documented divergence from ${tool})`).toBe(codeGaugeValue);
           // If this fails, code-gauge now agrees with the tool: move the entry to oracleFunctions.
           expect(actual, `${metric} of ${name}@${startLine} unexpectedly matches ${tool}`).not.toBe(toolValue);
@@ -95,18 +143,6 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
 
   it('covers every supported language', () => {
     const covered = new Set(ossExpectations.map((expectation) => expectation.language));
-    expect([...covered].toSorted()).toEqual([
-      'c',
-      'cpp',
-      'go',
-      'java',
-      'javascript',
-      'jsx',
-      'python',
-      'ruby',
-      'rust',
-      'tsx',
-      'typescript',
-    ]);
+    expect([...covered].toSorted()).toEqual([...supportedLanguages].toSorted());
   });
 });

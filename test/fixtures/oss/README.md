@@ -21,3 +21,13 @@ origin.
 
 The files are test fixtures only; they are not compiled into or distributed with the published
 package (`files` in `package.json` covers `dist/` only).
+
+## Licenses
+
+The `LICENSES/` directory carries the verbatim upstream license text for every vendored file,
+downloaded from the same tag (`<project>-<tag>.txt`), so each copy is accompanied by its copyright
+and permission notice as those licenses require. Files whose header already embeds the full
+license text (redis' `intset.c`) additionally have the project license alongside for completeness.
+`mattermost-webapp-5.39.0-NOTICE.txt` keeps the portion of Mattermost's Apache-2.0 NOTICE that
+pertains to the vendored file (the third-party dependency list it also contains does not and is
+omitted, as Apache-2.0 §4(d) permits).
