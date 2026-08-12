@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import {
   measureCode,
   supportedLanguages,
@@ -121,13 +121,18 @@ function lookupFunction(
 describe('real-world OSS corpus: all supported metrics for all supported languages', () => {
   for (const expectation of ossExpectations) {
     describe(expectation.file, () => {
-      const code = readFileSync(path.join(fixturesDir, 'oss', expectation.file), 'utf8');
-      const metrics = measureCode(code, { language: expectation.language });
+      // Measured in beforeAll so file reading and parsing run in the test phase, not during test
+      // discovery, and each fixture is parsed once (the syntax tree rides along for the parse test).
+      let code: string;
+      let metrics: CodeMetrics;
+      beforeAll(() => {
+        code = readFileSync(path.join(fixturesDir, 'oss', expectation.file), 'utf8');
+        metrics = measureCode(code, { language: expectation.language, includeSyntaxTree: true });
+      });
 
       it('parses without syntax errors', () => {
-        const { syntaxTree } = measureCode(code, { language: expectation.language, includeSyntaxTree: true });
-        expect(syntaxTree).not.toContain('(ERROR');
-        expect(syntaxTree).not.toContain('(MISSING');
+        expect(metrics.syntaxTree).not.toContain('(ERROR');
+        expect(metrics.syntaxTree).not.toContain('(MISSING');
       });
 
       it('matches the verified aggregate metrics', () => {
