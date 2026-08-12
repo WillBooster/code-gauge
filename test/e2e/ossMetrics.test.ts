@@ -1,7 +1,15 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { measureCode, supportedLanguages, type CodeMetrics, type FunctionMetrics } from '../../src/index.js';
+import {
+  measureCode,
+  supportedLanguages,
+  type CodeMetrics,
+  type CohesionMetrics,
+  type DuplicationMetrics,
+  type FunctionMetrics,
+  type HalsteadMetrics,
+} from '../../src/index.js';
 import { fixturesDir } from './fixtureCorpus.js';
 import { ossExpectations, type OracleMetric } from './ossExpectations.js';
 
@@ -25,11 +33,17 @@ const round = (value: number): number => Math.round(value * 10_000) / 10_000;
  * `language` and `bytes` are asserted separately from their spec (the requested language and the
  * input's byte length); `functions` is covered per entry by the oracle assertions; `syntaxTree`
  * is opt-in output, asserted by the parse test. Every other CodeMetrics field must appear in
- * roundFloats' result — the return type makes forgetting a newly added metric a compile error.
+ * roundFloats' result — the return type makes forgetting a newly added metric a compile error,
+ * including fields added to the hand-enumerated cohesion/duplication/halstead groups.
  */
 type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree'>;
+type RoundedAggregates = Omit<Record<AggregateKey, unknown>, 'cohesion' | 'duplication' | 'halstead'> & {
+  cohesion: Record<keyof CohesionMetrics, number>;
+  duplication: Record<keyof DuplicationMetrics, unknown>;
+  halstead: Record<keyof HalsteadMetrics, number>;
+};
 
-function roundFloats(metrics: CodeMetrics): Record<AggregateKey, unknown> {
+function roundFloats(metrics: CodeMetrics): RoundedAggregates {
   return {
     lines: metrics.lines,
     functionCount: metrics.functionCount,
@@ -154,5 +168,12 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
   it('covers every supported language', () => {
     const covered = new Set(ossExpectations.map((expectation) => expectation.language));
     expect([...covered].toSorted()).toEqual([...supportedLanguages].toSorted());
+  });
+
+  it('has an expectation for every fixture file in the corpus', () => {
+    const measurableFiles = readdirSync(path.join(fixturesDir, 'oss'))
+      .filter((file) => /\.(?:c|cpp|go|java|jsx?|py|rb|rs|tsx?)$/.test(file))
+      .toSorted();
+    expect(measurableFiles).toEqual(ossExpectations.map((expectation) => expectation.file).toSorted());
   });
 });
