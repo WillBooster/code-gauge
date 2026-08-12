@@ -31,7 +31,7 @@ afterAll(() => {
 });
 
 describe.skipIf(!nativeAvailable)('native backend parity with the TypeScript backend', () => {
-  for (const entry of loadFixtureCorpus()) {
+  for (const entry of loadFixtureCorpus({ includeOss: true })) {
     it(`produces identical metrics for ${entry.name}`, () => {
       const expected = measureWith('typescript', entry.code, { language: entry.language });
       const actual = measureWith('native', entry.code, { language: entry.language });
