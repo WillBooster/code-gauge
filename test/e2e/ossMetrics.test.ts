@@ -21,7 +21,15 @@ const metricField: Record<
 
 const round = (value: number): number => Math.round(value * 10_000) / 10_000;
 
-function roundFloats(metrics: CodeMetrics): Record<string, unknown> {
+/**
+ * `language` and `bytes` are asserted separately from their spec (the requested language and the
+ * input's byte length); `functions` is covered per entry by the oracle assertions; `syntaxTree`
+ * is opt-in output, asserted by the parse test. Every other CodeMetrics field must appear in
+ * roundFloats' result — the return type makes forgetting a newly added metric a compile error.
+ */
+type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree'>;
+
+function roundFloats(metrics: CodeMetrics): Record<AggregateKey, unknown> {
   return {
     lines: metrics.lines,
     functionCount: metrics.functionCount,
@@ -109,6 +117,8 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
       });
 
       it('matches the verified aggregate metrics', () => {
+        expect(metrics.language).toBe(expectation.language);
+        expect(metrics.bytes).toBe(Buffer.byteLength(code));
         expect(roundFloats(metrics)).toEqual(expectation.aggregates);
       });
 

@@ -13,7 +13,7 @@ import type { LanguageName } from '../../src/index.js';
  * - `lizard` — lizard 1.23.0 cyclomatic complexity (CCN), attributed to functions by matching
  *   its start/end lines to code-gauge's (lizard's JS/TS line numbers are one lower than
  *   tree-sitter's; Java starts differ by annotation lines, joined via their unique end line).
- *   262 functions match across every language except Ruby-heavy constructs (see below).
+ *   266 functions match across every language except Ruby-heavy constructs (see below).
  * - `gocognit` — gocognit v1.2.0, the standard Go implementation of SonarSource cognitive
  *   complexity. 37 of 38 functions match.
  * - `complexipy` — complexipy 7.0.0, a Rust implementation of SonarSource cognitive complexity
@@ -23,8 +23,10 @@ import type { LanguageName } from '../../src/index.js';
  *   JavaScript, TypeScript, JSX, and TSX.
  *
  * A handful of tool rows could not be attributed to exactly one code-gauge function and are in
- * neither list: lizard rows spanning misparsed JSX (mattermost), TypeScript overload signatures
- * (vscode's `revive`, declarations rather than functions), and two ambiguous same-line callbacks.
+ * neither list: two lizard rows spanning misparsed JSX (mattermost's `createLoginOptions` and
+ * `hideMfa`), the four one-line lizard rows for vscode's `revive` TypeScript overload signatures
+ * (declarations rather than functions), and two sonarjs rows in the Next.js fixture whose
+ * reported position matches no single function (@74:29 and @205:5).
  *
  * Line metrics in `aggregates` were verified against cloc 2.06 for all files (code/comment/blank
  * identical; code-gauge additionally counts the empty line after a trailing final newline as one
@@ -1639,7 +1641,8 @@ export const ossExpectations: readonly OssFileExpectation[] = [
     },
     oracleFunctions: [
       ['(anonymous)', 74, 74, 'cyclomatic', 'lizard', 1],
-      ['(anonymous)', 101, 101, 'cyclomatic', 'lizard', 1],
+      ['(anonymous)', 99, 99, 'cyclomatic', 'lizard', 1],
+      ['(anonymous)', 100, 100, 'cyclomatic', 'lizard', 1],
       ['(anonymous)', 101, 101, 'cyclomatic', 'lizard', 1],
       ['(anonymous)', 102, 105, 'cyclomatic', 'lizard', 1],
       ['(anonymous)', 106, 109, 'cyclomatic', 'lizard', 1],
@@ -2673,9 +2676,12 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ['encodeURIComponentMinimal', 596, 612, 'cognitive', 'sonarjs', 12],
       ['encodeURIComponentMinimal', 596, 612, 'cyclomatic', 'lizard', 7],
       ['_asFormatted', 647, 715, 'cognitive', 'sonarjs', 32],
+      ['_asFormatted', 647, 715, 'cyclomatic', 'lizard', 22],
       ['decodeURIComponentGraceful', 719, 729, 'cognitive', 'sonarjs', 4],
       ['decodeURIComponentGraceful', 719, 729, 'cyclomatic', 'lizard', 3],
       ['percentDecode', 733, 738, 'cognitive', 'sonarjs', 1],
+      ['percentDecode', 733, 738, 'cyclomatic', 'lizard', 2],
+      ['(anonymous)', 737, 737, 'cyclomatic', 'lizard', 1],
     ],
     knownDivergences: [
       ['revive', 404, 415, 'cognitive', 'sonarjs', 7, 5],
