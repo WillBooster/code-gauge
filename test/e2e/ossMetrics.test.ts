@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -10,7 +10,7 @@ import {
   type FunctionMetrics,
   type HalsteadMetrics,
 } from '../../src/index.js';
-import { fixturesDir } from './fixtureCorpus.js';
+import { fixturesDir, loadFixtureCorpus } from './fixtureCorpus.js';
 import { ossExpectations, type OracleMetric } from './ossExpectations.js';
 
 // Measures every supported metric on real-world files from famous OSS projects (pinned to release
@@ -171,8 +171,11 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
   });
 
   it('has an expectation for every fixture file in the corpus', () => {
-    const measurableFiles = readdirSync(path.join(fixturesDir, 'oss'))
-      .filter((file) => /\.(?:c|cpp|go|java|jsx?|py|rb|rs|tsx?)$/.test(file))
+    // The corpus loader is the single source of truth for what counts as a measurable fixture
+    // (extension map, recursive walk), so whatever nativeParity measures must be expected here.
+    const measurableFiles = loadFixtureCorpus({ includeOss: true })
+      .filter((entry) => entry.name.startsWith('oss/'))
+      .map((entry) => entry.name.slice('oss/'.length))
       .toSorted();
     expect(measurableFiles).toEqual(ossExpectations.map((expectation) => expectation.file).toSorted());
   });
