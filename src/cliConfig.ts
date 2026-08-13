@@ -1,5 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { defaultDuplicationOptions } from './duplication.js';
+import type { DuplicationOptions } from './types.js';
 
 /** Risk thresholds; a finding is reported when the measured value is greater than or equal to the threshold. */
 export interface Thresholds {
@@ -15,6 +17,8 @@ export interface Thresholds {
   duplicateBlock: number;
   /** Percentage (1-100) of a file's code lines (comments/blanks excluded) covered by duplicates. */
   duplicationRatioPercent: number;
+  /** Number of cross-file duplicate block groups a file participates in. */
+  crossFileDuplicateBlock: number;
   transitiveDependency: number;
   structuralBreadth: number;
   structuralCoordination: number;
@@ -36,6 +40,7 @@ export const defaultThresholds: Thresholds = {
   parameter: 8,
   duplicateBlock: 2,
   duplicationRatioPercent: 30,
+  crossFileDuplicateBlock: 2,
   transitiveDependency: 25,
   structuralBreadth: 8,
   structuralCoordination: 300,
@@ -81,6 +86,8 @@ export const defaultProfileThresholds: Partial<Record<ProfileKey, Partial<Thresh
 /** Shape of the JSON configuration file. All fields are optional and fall back to the built-in defaults. */
 export interface CodeGaugeConfig {
   thresholds?: Partial<Thresholds>;
+  /** Duplication detection settings applied to every measured file. */
+  duplication?: DuplicationOptions;
   /** Per-profile overrides keyed by language name or `react`; merged over `thresholds` for matching files. */
   languageThresholds?: Partial<Record<ProfileKey, Partial<Thresholds>>>;
   maxFindings?: number;
@@ -94,6 +101,7 @@ export interface CodeGaugeConfig {
 /** Options after merging command-line flags, the configuration file, and the built-in defaults. */
 export interface ResolvedOptions {
   thresholds: Thresholds;
+  duplication: Required<DuplicationOptions>;
   profileThresholds: Partial<Record<ProfileKey, Partial<Thresholds>>>;
   maxFindings: number;
   /** Number of largest files by code LOC to list; 0 disables the section. */
@@ -135,6 +143,9 @@ export interface CliOptions {
   parameterThreshold?: number;
   duplicateBlockThreshold?: number;
   duplicationRatioPercentThreshold?: number;
+  crossFileDuplicateBlockThreshold?: number;
+  duplicationMinTokens?: number;
+  duplicationMaxGapTokens?: number;
   transitiveDependencyThreshold?: number;
   structuralBreadthThreshold?: number;
   structuralCoordinationThreshold?: number;
@@ -162,6 +173,7 @@ const thresholdCliKeys: Record<keyof Thresholds, keyof CliOptions> = {
   parameter: 'parameterThreshold',
   duplicateBlock: 'duplicateBlockThreshold',
   duplicationRatioPercent: 'duplicationRatioPercentThreshold',
+  crossFileDuplicateBlock: 'crossFileDuplicateBlockThreshold',
   transitiveDependency: 'transitiveDependencyThreshold',
   structuralBreadth: 'structuralBreadthThreshold',
   structuralCoordination: 'structuralCoordinationThreshold',
@@ -178,6 +190,11 @@ export function resolveOptions(cli: CliOptions, config: CodeGaugeConfig): Resolv
 
   return {
     thresholds,
+    duplication: {
+      minTokens: cli.duplicationMinTokens ?? config.duplication?.minTokens ?? defaultDuplicationOptions.minTokens,
+      maxGapTokens:
+        cli.duplicationMaxGapTokens ?? config.duplication?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens,
+    },
     profileThresholds: mergeProfileThresholds(defaultProfileThresholds, config.languageThresholds),
     maxFindings: cli.maxFindings ?? config.maxFindings ?? defaultMaxFindings,
     largestFiles: cli.largestFiles ?? config.largestFiles ?? 0,
@@ -271,6 +288,10 @@ function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
     config.thresholds = validateThresholdObject(raw.thresholds, 'thresholds', configFile);
   }
 
+  if (raw.duplication !== undefined) {
+    config.duplication = validateDuplicationObject(raw.duplication, configFile);
+  }
+
   if (raw.languageThresholds !== undefined) {
     if (
       typeof raw.languageThresholds !== 'object' ||
@@ -332,6 +353,33 @@ function validateThresholdObject(value: unknown, label: string, configFile: stri
     thresholds[key as keyof Thresholds] = parsed;
   }
   return thresholds;
+}
+
+function validateDuplicationObject(value: unknown, configFile: string): DuplicationOptions {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    throw new Error(`Config file "${configFile}": "duplication" must be an object.`);
+  }
+  const duplication: DuplicationOptions = {};
+  for (const [key, setting] of Object.entries(value as Record<string, unknown>)) {
+    if (key === 'minTokens') {
+      duplication.minTokens = requirePositiveInteger(setting, 'duplication.minTokens', configFile);
+    } else if (key === 'maxGapTokens') {
+      // 0 is meaningful: it disables gapped-clone merging.
+      duplication.maxGapTokens = requireNonNegativeInteger(setting, 'duplication.maxGapTokens', configFile);
+    } else {
+      throw new Error(
+        `Config file "${configFile}": unknown setting "${key}" in "duplication" (expected minTokens or maxGapTokens).`
+      );
+    }
+  }
+  return duplication;
+}
+
+function requireNonNegativeInteger(value: unknown, key: string, configFile: string): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Config file "${configFile}": "${key}" must be a non-negative integer.`);
+  }
+  return value;
 }
 
 function requirePositiveInteger(value: unknown, key: string, configFile: string): number {

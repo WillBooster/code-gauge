@@ -1,5 +1,13 @@
+export { measureCrossFileDuplication } from './crossFileDuplication.js';
+export type {
+  CrossFileDuplicateBlockGroup,
+  CrossFileDuplicateOccurrence,
+  CrossFileDuplicationMetrics,
+  CrossFileDuplicationSourceFile,
+} from './crossFileDuplication.js';
+export type { CrossFileDuplicateCandidate } from './duplication.js';
 export { defaultLanguages, supportedLanguages } from './languages.js';
-export { TreeMeasurer, defaultMeasurer, measureCode } from './metrics.js';
+export { TreeMeasurer, collectDuplicationCandidates, defaultMeasurer, measureCode } from './metrics.js';
 export { isNativeBackendAvailable } from './nativeMetrics.js';
 export type {
   CallGraphMetrics,
@@ -8,6 +16,7 @@ export type {
   CouplingMetrics,
   DeclarationMetrics,
   DuplicationMetrics,
+  DuplicationOptions,
   FunctionMetrics,
   HalsteadMetrics,
   LanguageDefinition,

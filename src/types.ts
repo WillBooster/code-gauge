@@ -31,9 +31,22 @@ export interface LanguageDefinition {
   ncssContainerNodeTypes?: readonly string[];
 }
 
+/** Detection settings for within-file and cross-file duplication. */
+export interface DuplicationOptions {
+  /** Minimum normalized token count for a region to be considered for duplication (default 40). */
+  minTokens?: number;
+  /**
+   * Maximum normalized-token gap between two adjacent duplicate groups merged into one gapped
+   * (Type-3) clone group (default 30). 0 disables merging.
+   */
+  maxGapTokens?: number;
+}
+
 export interface MeasureOptions {
   language: LanguageName;
   includeSyntaxTree?: boolean;
+  /** Duplication detection settings; non-default values disable the native backend for the call. */
+  duplication?: DuplicationOptions;
 }
 
 export interface LineMetrics {

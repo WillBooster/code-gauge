@@ -255,6 +255,93 @@ describe('cli: polyglot project scan', () => {
   });
 });
 
+const cloneFile = (functionName: string, itemName: string): string => `export function ${functionName}(items) {
+  let total = 0;
+  let count = 0;
+  for (const ${itemName} of items) {
+    if (${itemName}.status === 'paid') {
+      total = total + ${itemName}.amount;
+      count = count + 1;
+    }
+  }
+  const average = count === 0 ? 0 : total / count;
+  return average + total + count;
+}
+`;
+
+describe('cli: cross-file duplication', () => {
+  let cloneDir: string;
+
+  beforeAll(() => {
+    cloneDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-clones-'));
+    writeFileSync(path.join(cloneDir, 'code-gauge.config.json'), '{}\n');
+    mkdirSync(path.join(cloneDir, 'src'), { recursive: true });
+    writeFileSync(path.join(cloneDir, 'src', 'orders.ts'), cloneFile('summarizeOrders', 'order'));
+    // A consistently renamed copy in another file.
+    writeFileSync(path.join(cloneDir, 'src', 'refunds.ts'), cloneFile('summarizeRefunds', 'refund'));
+    writeFileSync(path.join(cloneDir, 'src', 'other.ts'), 'export const other = (x: number) => x * 2;\n');
+  });
+
+  afterAll(() => {
+    if (cloneDir) {
+      rmSync(cloneDir, { recursive: true, force: true });
+    }
+  });
+
+  it('reports cross-file duplicate blocks in the text report', () => {
+    const { stdout } = runCli([cloneDir]);
+
+    expect(stdout).toContain('Cross-file duplicate blocks (top 1):');
+    expect(stdout).toMatch(/\d+ tokens: src[\\/]orders\.ts:1-12, src[\\/]refunds\.ts:1-12/);
+  });
+
+  it('flags participating files once the threshold is met', () => {
+    const { stdout } = runCli([cloneDir, '--cross-file-duplicate-block-threshold', '1']);
+
+    expect(stdout).toMatch(
+      /src[\\/]orders\.ts file \(cross-file duplicated blocks 1 >= 1 \[1-12 ~ src[\\/]refunds\.ts:1-12\]/
+    );
+  });
+
+  it('exposes cross-file duplication in the JSON report', () => {
+    const { stdout } = runCli([cloneDir, '--json']);
+    const report = JSON.parse(stdout);
+
+    expect(report.crossFileDuplication.duplicateBlockCount).toBe(1);
+    expect(report.crossFileDuplication.groups).toHaveLength(1);
+    expect(report.crossFileDuplication.groups[0].occurrences).toHaveLength(2);
+  });
+
+  it('honors --duplication-min-tokens for cross-file detection', () => {
+    const { stdout } = runCli([cloneDir, '--duplication-min-tokens', '500']);
+
+    expect(stdout).not.toContain('Cross-file duplicate blocks');
+  });
+
+  it('rejects a negative --duplication-max-gap-tokens but accepts 0', () => {
+    expect(runCli([cloneDir, '--duplication-max-gap-tokens', '-1']).status).not.toBe(0);
+    expect(runCli([cloneDir, '--duplication-max-gap-tokens', '0']).status).toBe(0);
+  });
+
+  it('honors duplication settings from the config file', () => {
+    const configuredDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-clones-config-'));
+    try {
+      writeFileSync(
+        path.join(configuredDir, 'code-gauge.config.json'),
+        JSON.stringify({ duplication: { minTokens: 500 } })
+      );
+      writeFileSync(path.join(configuredDir, 'orders.ts'), cloneFile('summarizeOrders', 'order'));
+      writeFileSync(path.join(configuredDir, 'refunds.ts'), cloneFile('summarizeRefunds', 'refund'));
+
+      const { stdout } = runCli([configuredDir]);
+
+      expect(stdout).not.toContain('Cross-file duplicate blocks');
+    } finally {
+      rmSync(configuredDir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('cli: error handling', () => {
   it('fails on an unsupported file type', () => {
     const notes = path.join(projectDir, 'notes.txt');

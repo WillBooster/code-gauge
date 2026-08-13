@@ -14,13 +14,17 @@ import {
   resolveThresholds,
   type Thresholds,
 } from './cliConfig.js';
-import { measureCode } from './metrics.js';
+import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
+import type { CrossFileDuplicateCandidate } from './duplication.js';
+import { collectDuplicationCandidates, measureCode } from './metrics.js';
 import { measureTypeScriptProject, type TypeScriptProjectMetrics } from './typescriptProject.js';
 import type { CodeMetrics, FunctionMetrics, LanguageName } from './types.js';
 
 interface FileMetrics {
   file: string;
   metrics: CodeMetrics;
+  /** Cross-file duplicate candidates, collected only for directory scans. */
+  duplicationCandidates?: CrossFileDuplicateCandidate[];
 }
 
 interface RiskTrigger {
@@ -48,6 +52,7 @@ interface RiskFinding {
 interface ScanResult {
   architecture?: ArchitectureMetrics;
   componentFunctionKeys?: Set<string>;
+  crossFileDuplication?: CrossFileDuplicationMetrics;
   displayRoot: string;
   errors: string[];
   fatalError?: string;
@@ -112,6 +117,10 @@ const ignoredDirectoryNames = new Set([
 
 /** Caps the `Duplicate symbols` section so large repositories do not flood the report. */
 const maxDuplicateSymbolGroupLines = 10;
+/** Caps the `Cross-file duplicate blocks` section so large repositories do not flood the report. */
+const maxCrossFileDuplicateGroupLines = 10;
+/** Caps how many cross-file group locations a single risk finding repeats as detail. */
+const maxCrossFileDuplicateDetailGroups = 3;
 
 const testDirectoryNames = new Set(['__tests__', 'test', 'tests', 'spec']);
 const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-](?:test|spec))\.[^.]+$/iu;
@@ -155,6 +164,21 @@ async function main(): Promise<void> {
       parsePercentInteger
     )
     .option(
+      '--cross-file-duplicate-block-threshold <number>',
+      'minimum count of cross-file duplicate block groups per file to report',
+      parsePositiveInteger
+    )
+    .option(
+      '--duplication-min-tokens <number>',
+      'minimum normalized token count for a duplicate region (default 40)',
+      parsePositiveInteger
+    )
+    .option(
+      '--duplication-max-gap-tokens <number>',
+      'maximum token gap merged into one gapped clone group; 0 disables merging (default 30)',
+      parseNonNegativeInteger
+    )
+    .option(
       '--transitive-dependency-threshold <number>',
       'minimum transitively reachable local files to report',
       parsePositiveInteger
@@ -188,11 +212,13 @@ async function main(): Promise<void> {
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
     const result = await scanTarget(resolvedTarget, options);
+    addCrossFileDuplication(result);
     await addArchitectureMetrics(result);
     await addTypeScriptProjectMetrics(result, options, resolvedTarget);
     const risks = findRiskyFunctions(
       result.files,
       result.architecture,
+      result.crossFileDuplication,
       result.componentFunctionKeys,
       result.namedComponentFunctionKeys,
       options,
@@ -268,7 +294,17 @@ async function scanTarget(target: string, options: ResolvedOptions): Promise<Sca
       return { displayRoot, files, errors: [fatalError], fatalError };
     }
 
-    await measureFile(canonicalTarget, language, files, errors, visitedFiles, displayRoot, canonicalTarget);
+    await measureFile(
+      canonicalTarget,
+      language,
+      options,
+      false,
+      files,
+      errors,
+      visitedFiles,
+      displayRoot,
+      canonicalTarget
+    );
     return { displayRoot, files, errors };
   }
 
@@ -494,13 +530,15 @@ async function measureScannableFile(
 ): Promise<void> {
   const language = getLanguage(languageFile, options);
   if (language) {
-    await measureFile(file, language, files, errors, visitedFiles, displayRoot, realFile);
+    await measureFile(file, language, options, true, files, errors, visitedFiles, displayRoot, realFile);
   }
 }
 
 async function measureFile(
   file: string,
   language: LanguageName,
+  options: ResolvedOptions,
+  collectCrossFileCandidates: boolean,
   files: FileMetrics[],
   errors: string[],
   visitedFiles: Set<string>,
@@ -515,18 +553,38 @@ async function measureFile(
     visitedFiles.add(resolvedFile);
 
     const code = await readFile(file, 'utf8');
+    const measureOptions = { language, duplication: options.duplication };
     files.push({
       file,
-      metrics: measureCode(code, { language }),
+      metrics: measureCode(code, measureOptions),
+      // Only directory scans compare files against each other; a single-file target has no peers.
+      duplicationCandidates: collectCrossFileCandidates
+        ? collectDuplicationCandidates(code, measureOptions)
+        : undefined,
     });
   } catch (error) {
     errors.push(`${formatPath(file, displayRoot)}: ${formatError(error)}`);
   }
 }
 
+/** Runs after the scan so every measured file's candidates participate. */
+function addCrossFileDuplication(result: ScanResult): void {
+  if (result.fatalError || result.files.length < 2) {
+    return;
+  }
+  const sourceFiles = result.files.flatMap(({ file, duplicationCandidates }) =>
+    duplicationCandidates ? [{ file: formatPath(file, result.displayRoot), candidates: duplicationCandidates }] : []
+  );
+  if (sourceFiles.length < 2) {
+    return;
+  }
+  result.crossFileDuplication = measureCrossFileDuplication(sourceFiles);
+}
+
 function findRiskyFunctions(
   files: FileMetrics[],
   architecture: ArchitectureMetrics | undefined,
+  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
   componentFunctionKeys: Set<string> | undefined,
   namedComponentFunctionKeys: Set<string> | undefined,
   options: ResolvedOptions,
@@ -543,6 +601,7 @@ function findRiskyFunctions(
         file,
         metrics,
         architectureByFile.get(formatPath(file, displayRoot)),
+        crossFileDuplication,
         thresholds,
         displayRoot
       ),
@@ -568,6 +627,7 @@ function findRiskyFileMetrics(
   file: string,
   metrics: CodeMetrics,
   architecture: ArchitectureFileMetrics | undefined,
+  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
   thresholds: Thresholds,
   displayRoot: string
 ): RiskFinding[] {
@@ -595,6 +655,15 @@ function findRiskyFileMetrics(
     thresholds.duplicationRatioPercent,
     duplicateBlockDetail
   );
+  if (crossFileDuplication) {
+    addTrigger(
+      triggers,
+      'cross-file duplicated blocks',
+      crossFileDuplication.duplicateBlockGroupCountByFile[formattedFile] ?? 0,
+      thresholds.crossFileDuplicateBlock,
+      formatCrossFileDuplicateDetail(crossFileDuplication, formattedFile)
+    );
+  }
   if (architecture) {
     const hasFileScaleRisk = metrics.lines.code >= 100 || architecture.directLocalDependencyCount >= 8;
     if (hasFileScaleRisk) {
@@ -695,6 +764,29 @@ function addTrigger(triggers: RiskTrigger[], metric: string, value: number, thre
   triggers.push({ metric, value, threshold, score: value / threshold, detail });
 }
 
+/** Formats the cross-file groups a file participates in as `12-34 ~ b.ts:56-78; ...` (capped). */
+function formatCrossFileDuplicateDetail(
+  crossFileDuplication: CrossFileDuplicationMetrics,
+  formattedFile: string
+): string | undefined {
+  const involved = crossFileDuplication.groups.filter((group) => group.files.includes(formattedFile));
+  if (involved.length === 0) {
+    return undefined;
+  }
+  const formatted = involved
+    .slice(0, maxCrossFileDuplicateDetailGroups)
+    .map((group) =>
+      group.occurrences
+        .map(({ file, startLine, endLine }) =>
+          file === formattedFile ? `${startLine}-${endLine}` : `${file}:${startLine}-${endLine}`
+        )
+        .join(' ~ ')
+    )
+    .join('; ');
+  const truncatedSuffix = involved.length > maxCrossFileDuplicateDetailGroups ? '; ...' : '';
+  return `${formatted}${truncatedSuffix}`;
+}
+
 /** Formats duplicated block groups as `12-34 ~ 56-78; 90-99 ~ 100-109` (copies joined by ` ~ `, groups by `; `). */
 function formatDuplicateBlockGroups(groups: { endLine: number; startLine: number }[][]): string | undefined {
   if (groups.length === 0) {
@@ -759,6 +851,7 @@ function printJson(result: ScanResult, risks: RiskFinding[], options: ResolvedOp
             ? findLargestFiles(result.files, options.largestFiles, result.displayRoot)
             : undefined,
         architecture: result.architecture,
+        crossFileDuplication: result.crossFileDuplication,
         typeScriptProject: result.typeScriptProject,
         risks: reportedRisks,
         errors: result.errors,
@@ -794,7 +887,7 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     writeStdout(`${formatTypeScriptProjectMetrics(result.typeScriptProject)}\n`);
   }
   writeStdout(
-    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}, duplicated lines (%) >= ${thresholds.duplicationRatioPercent}\n`
+    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}, duplicated lines (%) >= ${thresholds.duplicationRatioPercent}, cross-file duplicated blocks >= ${thresholds.crossFileDuplicateBlock}\n`
   );
   const profileOverrides = formatProfileOverrides(options.profileThresholds);
   if (profileOverrides) {
@@ -809,6 +902,20 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     writeStdout(`\nHigh-risk findings (top ${reportedRisks.length}${totalSuffix}):\n`);
     for (const risk of reportedRisks) {
       writeStdout(`${formatRiskLocation(risk)} ${formatRiskName(risk)} ${formatRiskMetrics(risk)}\n`);
+    }
+  }
+
+  const crossFileGroups = result.crossFileDuplication?.groups ?? [];
+  if (crossFileGroups.length > 0) {
+    const reportedGroups = crossFileGroups.slice(0, maxCrossFileDuplicateGroupLines);
+    const totalSuffix = crossFileGroups.length > reportedGroups.length ? ` of ${crossFileGroups.length}` : '';
+    writeStdout(`\nCross-file duplicate blocks (top ${reportedGroups.length}${totalSuffix}):\n`);
+    for (const group of reportedGroups) {
+      writeStdout(
+        `${group.tokenCount} tokens: ${group.occurrences
+          .map(({ file, startLine, endLine }) => `${file}:${startLine}-${endLine}`)
+          .join(', ')}\n`
+      );
     }
   }
 
@@ -1034,6 +1141,18 @@ function parsePercentInteger(value: string): number {
   const parsed = parsePositiveInteger(value);
   if (parsed > 100) {
     throw new InvalidArgumentError('Expected an integer between 1 and 100.');
+  }
+  return parsed;
+}
+
+function parseNonNegativeInteger(value: string): number {
+  if (!/^\d+$/u.test(value)) {
+    throw new InvalidArgumentError('Expected a non-negative integer.');
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new InvalidArgumentError('Expected a non-negative integer.');
   }
   return parsed;
 }

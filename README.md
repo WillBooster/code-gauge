@@ -54,11 +54,16 @@ A finding is reported when a measured value is **greater than or equal to** its 
     "parameter": 8,
     "duplicateBlock": 2,
     "duplicationRatioPercent": 30,
+    "crossFileDuplicateBlock": 2,
     "transitiveDependency": 25,
     "structuralBreadth": 8,
     "structuralCoordination": 300,
     "stateMutation": 50,
     "duplicateSymbolGroup": 5
+  },
+  "duplication": {
+    "minTokens": 40,
+    "maxGapTokens": 30
   },
   "languageThresholds": {
     "python": { "stateMutation": 90, "structuralCoordination": 350 },
@@ -72,24 +77,25 @@ A finding is reported when a measured value is **greater than or equal to** its 
 }
 ```
 
-| Threshold                 | CLI flag                                | Reports when a …                                       |
-| ------------------------- | --------------------------------------- | ------------------------------------------------------ |
-| `fileLoc`                 | `--file-loc-threshold`                  | file's code LOC is large.                              |
-| `functionLoc`             | `--function-loc-threshold`              | function's physical LOC span is large.                 |
-| `componentLoc`            | `--component-loc-threshold`             | React component's physical LOC span is large.          |
-| `cognitive`               | `--cognitive-threshold`                 | function's cognitive complexity is high.               |
-| `cyclomatic`              | `--cyclomatic-threshold`                | function's cyclomatic complexity is high.              |
-| `call`                    | `--call-threshold`                      | function makes many calls.                             |
-| `import`                  | `--import-threshold`                    | file has many unique import sources.                   |
-| `fanOut`                  | `--fan-out-threshold`                   | function calls many other in-file functions.           |
-| `parameter`               | `--parameter-threshold`                 | function declares many parameters.                     |
-| `duplicateBlock`          | `--duplicate-block-threshold`           | file contains copy-pasted code blocks.                 |
-| `duplicationRatioPercent` | `--duplication-ratio-percent-threshold` | large percentage of a file's code lines is duplicated. |
-| `transitiveDependency`    | `--transitive-dependency-threshold`     | file transitively reaches many local files.            |
-| `structuralBreadth`       | `--structural-breadth-threshold`        | file coordinates many structural concerns.             |
-| `structuralCoordination`  | `--structural-coordination-threshold`   | file's structural coordination score is high.          |
-| `stateMutation`           | `--state-mutation-threshold`            | file mutates state heavily.                            |
-| `duplicateSymbolGroup`    | `--duplicate-symbol-group-threshold`    | file shares many duplicated symbols with others.       |
+| Threshold                 | CLI flag                                 | Reports when a …                                       |
+| ------------------------- | ---------------------------------------- | ------------------------------------------------------ |
+| `fileLoc`                 | `--file-loc-threshold`                   | file's code LOC is large.                              |
+| `functionLoc`             | `--function-loc-threshold`               | function's physical LOC span is large.                 |
+| `componentLoc`            | `--component-loc-threshold`              | React component's physical LOC span is large.          |
+| `cognitive`               | `--cognitive-threshold`                  | function's cognitive complexity is high.               |
+| `cyclomatic`              | `--cyclomatic-threshold`                 | function's cyclomatic complexity is high.              |
+| `call`                    | `--call-threshold`                       | function makes many calls.                             |
+| `import`                  | `--import-threshold`                     | file has many unique import sources.                   |
+| `fanOut`                  | `--fan-out-threshold`                    | function calls many other in-file functions.           |
+| `parameter`               | `--parameter-threshold`                  | function declares many parameters.                     |
+| `duplicateBlock`          | `--duplicate-block-threshold`            | file contains copy-pasted code blocks.                 |
+| `duplicationRatioPercent` | `--duplication-ratio-percent-threshold`  | large percentage of a file's code lines is duplicated. |
+| `crossFileDuplicateBlock` | `--cross-file-duplicate-block-threshold` | file shares copy-pasted code blocks with other files.  |
+| `transitiveDependency`    | `--transitive-dependency-threshold`      | file transitively reaches many local files.            |
+| `structuralBreadth`       | `--structural-breadth-threshold`         | file coordinates many structural concerns.             |
+| `structuralCoordination`  | `--structural-coordination-threshold`    | file's structural coordination score is high.          |
+| `stateMutation`           | `--state-mutation-threshold`             | file mutates state heavily.                            |
+| `duplicateSymbolGroup`    | `--duplicate-symbol-group-threshold`     | file shares many duplicated symbols with others.       |
 
 ### Per-language thresholds
 
@@ -117,6 +123,15 @@ restores the global value for Python while keeping the other built-in adjustment
 
 Command-line `--<metric>-threshold` flags set the global base only; use the config file for per-language tuning.
 
+### Duplication detection settings
+
+The `duplication` config section (or the `--duplication-min-tokens` and `--duplication-max-gap-tokens` flags) tunes how clones are detected rather than when they are reported:
+
+- `minTokens` (default 40): minimum normalized token count for a region to count as a duplicate. Raise it to report only substantial copies; lower it to catch small ones.
+- `maxGapTokens` (default 30): copies edited in one spot split into two exact matches around the edit; adjacent matches separated by at most this many tokens are merged back into a single gapped (Type-3) clone group. `0` disables merging.
+
+Custom detection settings are measured by the TypeScript backend; the native backend implements the defaults only.
+
 ## Metrics
 
 - Physical LOC, code lines, comment-only lines, and blank lines
@@ -125,7 +140,8 @@ Command-line `--<metric>-threshold` flags set the global base only; use the conf
 - NCSS (non-commenting source statements, per function and per file), calibrated against PMD's `NcssCount` rule for Java and generalized to every supported language; unlike PMD, package and import declarations count (PMD counts them only with `NcssOption.COUNT_IMPORTS`), and statement-shaped content is counted uniformly in expression positions too (PMD's visitor never descends into lambdas or anonymous classes passed as call arguments, switch-expression bodies, or expression-bodied arrow cases)
 - Nesting depth
 - Intra-file call graph metrics: call counts, fan-in/fan-out, recursion, call depth, and parameter counts
-- Within-file duplication: copy-pasted blocks and statement runs matched on normalized tokens (identifiers anonymized consistently, literals by kind), plus duplicated line count and ratio (distinct from cross-file duplicate symbol names)
+- Within-file duplication: copy-pasted blocks and statement runs matched on normalized tokens (identifiers anonymized consistently, literals by kind, and literal-dense data tables excluded unless their values also match), with adjacent matches around a small edit merged into gapped (Type-3) clone groups, plus duplicated line count and ratio
+- Cross-file duplication: copy-pasted blocks shared between files, matched with the same normalization and reported as groups with their file locations
 - File coupling (imports/exports) and cohesion (shared function identifiers)
 - Architecture metrics: transitive local dependencies, structural coordination and breadth, state mutation, and cross-file duplicate symbols
 - TypeScript type-shape metrics: annotations, aliases, interfaces, generics, unions, intersections, assertions, and conditional types

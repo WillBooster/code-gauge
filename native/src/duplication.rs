@@ -167,10 +167,20 @@ const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("template_function", "name"),
 ];
 
+/// Kind tags whose raw source text re-enters the fingerprint in literal-dense (data-like) regions.
+const VALUE_CARRYING_LITERAL_KINDS: &[&str] = &["#num", "#str", "#char", "#regex"];
+
 const MIN_DUPLICATE_TOKEN_COUNT: usize = 40;
 const MIN_SEQUENCE_STATEMENT_COUNT: usize = 2;
 const MAX_SEQUENCE_STATEMENT_COUNT: usize = 100;
 const MAX_SELECTION_RERUN_COUNT: usize = 20;
+/// Maximum normalized-token gap between adjacent duplicate groups merged into one gapped clone.
+const MAX_GAP_TOKEN_COUNT: usize = 30;
+
+/// See isLiteralDense in duplication.ts: >= 20% literal values marks a region as data-like.
+fn is_literal_dense(literal_count: usize, token_count: usize) -> bool {
+    literal_count * 5 >= token_count
+}
 
 fn literal_kind_by_type() -> &'static HashMap<&'static str, &'static str> {
     static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
@@ -190,6 +200,10 @@ fn pascal_case_regex() -> &'static regex::Regex {
 struct Token<'a> {
     is_id: bool,
     text: Cow<'a, str>,
+    /// djb2 hash of `text`, precomputed so fingerprinting nested regions never re-hashes a token.
+    text_hash: i32,
+    /// Hash of the raw source text of a value-carrying literal, folded into data-like fingerprints.
+    literal_hash: Option<i32>,
     start_row: usize,
     end_row: usize,
 }
@@ -233,13 +247,16 @@ pub fn measure_duplication(
         &mut container_statement_ranges,
     );
 
-    let mut candidates = collect_block_candidates(&tokens, &block_ranges);
+    let literal_count_prefix = build_literal_count_prefix(&tokens);
+    let mut candidates = collect_block_candidates(&tokens, &literal_count_prefix, &block_ranges);
     candidates.extend(collect_sequence_candidates(
         &tokens,
+        &literal_count_prefix,
         &container_statement_ranges,
     ));
     let counted = select_maximal_duplicates(candidates);
-    summarize_duplicates(&counted, code_line_numbers, &tokens)
+    let groups = merge_adjacent_groups(to_counted_groups(&counted), MAX_GAP_TOKEN_COUNT);
+    summarize_duplicates(&groups, code_line_numbers, &tokens)
 }
 
 fn collect_tokens<'a>(
@@ -267,12 +284,12 @@ fn collect_tokens<'a>(
         } else if let Some(atomic_kind) = atomic_kind {
             // Interpolation-free strings collapse to their kind tag so copies differing only in
             // quote style or content still match.
-            tokens.push(Token {
-                is_id: false,
-                text: Cow::Borrowed(atomic_kind),
-                start_row: node.start_position().row,
-                end_row: node.end_position().row,
-            });
+            tokens.push(make_text_token(
+                Cow::Borrowed(atomic_kind),
+                Some(node_text(node, code)),
+                node.start_position().row,
+                node.end_position().row,
+            ));
         } else if !COMMENT_TYPES.contains(&node.kind()) {
             let mut statement_ranges: Vec<TokenRange> = Vec::new();
             let is_container = node.is_named() && STATEMENT_CONTAINER_TYPES.contains(&node.kind());
@@ -337,21 +354,23 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
     let end_row = node.end_position().row;
     if node.is_named() && SHORTHAND_PROPERTY_TYPES.contains(&node.kind()) {
         let text = node_text(node, code);
-        tokens.push(Token {
-            is_id: false,
-            text: Cow::Borrowed(text),
+        tokens.push(make_text_token(
+            Cow::Borrowed(text),
+            None,
             start_row,
             end_row,
-        });
-        tokens.push(Token {
-            is_id: false,
-            text: Cow::Borrowed(":"),
+        ));
+        tokens.push(make_text_token(
+            Cow::Borrowed(":"),
+            None,
             start_row,
             end_row,
-        });
+        ));
         tokens.push(Token {
             is_id: true,
             text: Cow::Borrowed(text),
+            text_hash: 0,
+            literal_hash: None,
             start_row,
             end_row,
         });
@@ -365,6 +384,8 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         tokens.push(Token {
             is_id: true,
             text: Cow::Borrowed(node_text(node, code)),
+            text_hash: 0,
+            literal_hash: None,
             start_row,
             end_row,
         });
@@ -377,15 +398,50 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
     } else {
         None
     };
-    tokens.push(Token {
+    tokens.push(match literal_kind {
+        Some(kind) => make_text_token(
+            Cow::Borrowed(kind),
+            Some(node_text(node, code)),
+            start_row,
+            end_row,
+        ),
+        None => make_text_token(
+            Cow::Borrowed(node_text(node, code)),
+            None,
+            start_row,
+            end_row,
+        ),
+    });
+}
+
+fn make_text_token<'a>(
+    text: Cow<'a, str>,
+    raw_literal_text: Option<&'a str>,
+    start_row: usize,
+    end_row: usize,
+) -> Token<'a> {
+    let text_hash = hash_text(&text);
+    let literal_hash = match raw_literal_text {
+        Some(raw) if VALUE_CARRYING_LITERAL_KINDS.contains(&text.as_ref()) => Some(hash_text(raw)),
+        _ => None,
+    };
+    Token {
         is_id: false,
-        text: match literal_kind {
-            Some(kind) => Cow::Borrowed(kind),
-            None => Cow::Borrowed(node_text(node, code)),
-        },
+        text,
+        text_hash,
+        literal_hash,
         start_row,
         end_row,
-    });
+    }
+}
+
+/// literal_count_prefix[i] = value-carrying literal tokens in tokens[0..i), for O(1) density checks.
+fn build_literal_count_prefix(tokens: &[Token<'_>]) -> Vec<usize> {
+    let mut prefix = vec![0usize; tokens.len() + 1];
+    for (index, token) in tokens.iter().enumerate() {
+        prefix[index + 1] = prefix[index] + usize::from(token.literal_hash.is_some());
+    }
+    prefix
 }
 
 fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
@@ -484,6 +540,7 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
 
 fn collect_block_candidates(
     tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
     block_ranges: &[TokenRange],
 ) -> Vec<DuplicateCandidate> {
     let mut candidates = Vec::new();
@@ -494,7 +551,12 @@ fn collect_block_candidates(
         }
         let fingerprint = format!(
             "b:{}",
-            fingerprint_tokens(tokens, range.start_token_index, range.end_token_index)
+            fingerprint_key(
+                tokens,
+                literal_count_prefix,
+                range.start_token_index,
+                range.end_token_index
+            )
         );
         candidates.push(to_candidate(
             fingerprint,
@@ -533,13 +595,14 @@ struct ContainerWindows {
 /// duplication.ts for the maximality and sub-window rules replicated here.
 fn collect_sequence_candidates(
     tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
     containers: &[Vec<TokenRange>],
 ) -> Vec<DuplicateCandidate> {
     let mut candidates = Vec::new();
     let mut occurrences_by_window_key: HashMap<i64, WindowOccurrences> = HashMap::new();
     let container_windows: Vec<ContainerWindows> = containers
         .iter()
-        .map(|statements| enumerate_container_windows(tokens, statements))
+        .map(|statements| enumerate_container_windows(tokens, literal_count_prefix, statements))
         .collect();
     for (container_index, windows) in container_windows.iter().enumerate() {
         for (start, row) in windows.window_keys_by_start.iter().enumerate() {
@@ -656,7 +719,12 @@ fn collect_sequence_candidates(
             };
             let fingerprint = format!(
                 "s:{}",
-                fingerprint_tokens(tokens, first.start_token_index, last.end_token_index)
+                fingerprint_key(
+                    tokens,
+                    literal_count_prefix,
+                    first.start_token_index,
+                    last.end_token_index
+                )
             );
             candidates.push(to_candidate(
                 fingerprint,
@@ -693,16 +761,18 @@ fn collect_sequence_candidates(
 
 fn enumerate_container_windows(
     tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
     statements: &[TokenRange],
 ) -> ContainerWindows {
     let statement_hashes: Vec<i32> = statements
         .iter()
         .map(|statement| {
-            hash_text(&fingerprint_tokens(
+            fingerprint_hash(
                 tokens,
+                literal_count_prefix,
                 statement.start_token_index,
                 statement.end_token_index,
-            ))
+            )
         })
         .collect();
     let mut window_keys_by_start: Vec<Vec<Option<i64>>> = Vec::new();
@@ -756,26 +826,83 @@ fn to_candidate(
     }
 }
 
-/// Serializes a token range with identifiers anonymized consistently by first-occurrence order.
-fn fingerprint_tokens(
+/// Content key of a token range; see fingerprintKey in duplication.ts for the format and rationale.
+fn fingerprint_key(
     tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
     start_token_index: usize,
     end_token_index: usize,
 ) -> String {
+    let (primary, secondary) = fingerprint_hash_pair(
+        tokens,
+        literal_count_prefix,
+        start_token_index,
+        end_token_index,
+    );
+    format!(
+        "{primary}:{secondary}:{}",
+        end_token_index - start_token_index
+    )
+}
+
+/// A single 32-bit summary of a range, for the coarse rolling-hash phase.
+fn fingerprint_hash(
+    tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
+    start_token_index: usize,
+    end_token_index: usize,
+) -> i32 {
+    let (primary, secondary) = fingerprint_hash_pair(
+        tokens,
+        literal_count_prefix,
+        start_token_index,
+        end_token_index,
+    );
+    primary ^ secondary.wrapping_mul(31)
+}
+
+/// Two independent 32-bit hashes over the normalized token sequence, replicating the JavaScript
+/// int32 arithmetic of fingerprintHashPair in duplication.ts exactly.
+fn fingerprint_hash_pair(
+    tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
+    start_token_index: usize,
+    end_token_index: usize,
+) -> (i32, i32) {
+    let clamped_end = end_token_index.min(tokens.len());
+    let literal_count = literal_count_prefix.get(clamped_end).copied().unwrap_or(0)
+        - literal_count_prefix
+            .get(start_token_index)
+            .copied()
+            .unwrap_or(0);
+    let literal_dense = is_literal_dense(literal_count, end_token_index - start_token_index);
     let mut index_by_identifier: HashMap<&str, usize> = HashMap::new();
-    let mut parts: Vec<Cow<'_, str>> = Vec::new();
-    for token in &tokens[start_token_index..end_token_index.min(tokens.len())] {
-        if token.is_id {
+    let mut index_hashes: Vec<i32> = Vec::new();
+    let mut primary: i32 = 5381;
+    let mut secondary: i32 = 52_711;
+    for token in &tokens[start_token_index..clamped_end] {
+        let part = if token.is_id {
             let next_index = index_by_identifier.len();
             let identifier_index = *index_by_identifier
                 .entry(token.text.as_ref())
                 .or_insert(next_index);
-            parts.push(Cow::Owned(format!("${identifier_index}")));
+            if identifier_index == index_hashes.len() {
+                index_hashes.push(hash_text(&format!("${identifier_index}")));
+            }
+            index_hashes[identifier_index]
         } else {
-            parts.push(Cow::Borrowed(token.text.as_ref()));
+            token.text_hash
+        };
+        primary = primary.wrapping_mul(31).wrapping_add(part);
+        secondary = secondary.wrapping_mul(37) ^ part;
+        if literal_dense {
+            if let Some(literal_hash) = token.literal_hash {
+                primary = primary.wrapping_mul(31).wrapping_add(literal_hash);
+                secondary = secondary.wrapping_mul(37) ^ literal_hash;
+            }
         }
     }
-    parts.join(" ")
+    (primary, secondary)
 }
 
 /// djb2-style hash over UTF-16 code units, matching hashText in duplication.ts exactly.
@@ -893,8 +1020,123 @@ fn dedupe_by_region(group: Vec<DuplicateCandidate>) -> Vec<DuplicateCandidate> {
     by_region.into_values().collect()
 }
 
-fn summarize_duplicates(
+/// A contiguous run of matched tokens; gapped (merged) duplicates carry several per occurrence.
+#[derive(Clone)]
+struct CountedOccurrence {
+    segments: Vec<(usize, usize)>,
+    /// Sum of segment token counts (the gap tokens are not matched content).
+    token_count: usize,
+    start_token_index: usize,
+    end_token_index: usize,
+    start_line: usize,
+    end_line: usize,
+}
+
+fn to_counted_groups(
     counted: &IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
+) -> Vec<Vec<CountedOccurrence>> {
+    let mut groups: Vec<Vec<CountedOccurrence>> = Vec::new();
+    for group in counted.values() {
+        let mut occurrences: Vec<CountedOccurrence> = group
+            .iter()
+            .map(|candidate| CountedOccurrence {
+                segments: vec![(candidate.start_token_index, candidate.end_token_index)],
+                token_count: candidate.token_count,
+                start_token_index: candidate.start_token_index,
+                end_token_index: candidate.end_token_index,
+                start_line: candidate.start_line,
+                end_line: candidate.end_line,
+            })
+            .collect();
+        occurrences
+            .sort_by_key(|occurrence| (occurrence.start_token_index, occurrence.end_token_index));
+        groups.push(occurrences);
+    }
+    groups
+}
+
+/// Merges duplicate groups separated by a small token gap into one gapped (Type-3) clone group;
+/// see mergeAdjacentGroups in duplication.ts for the pairing and fixpoint rules replicated here.
+fn merge_adjacent_groups(
+    mut groups: Vec<Vec<CountedOccurrence>>,
+    max_gap_tokens: usize,
+) -> Vec<Vec<CountedOccurrence>> {
+    if max_gap_tokens == 0 || groups.len() < 2 {
+        return groups;
+    }
+    groups.sort_by_key(|group| group_sort_key(group));
+    let mut restart = true;
+    while restart {
+        restart = false;
+        'outer: for left_index in 0..groups.len() {
+            for right_index in left_index + 1..groups.len() {
+                let merged =
+                    merge_groups(&groups[left_index], &groups[right_index], max_gap_tokens)
+                        .or_else(|| {
+                            merge_groups(&groups[right_index], &groups[left_index], max_gap_tokens)
+                        });
+                if let Some(merged) = merged {
+                    groups[left_index] = merged;
+                    groups.remove(right_index);
+                    groups.sort_by_key(|group| group_sort_key(group));
+                    restart = true;
+                    break 'outer;
+                }
+            }
+        }
+    }
+    groups
+}
+
+fn group_sort_key(group: &[CountedOccurrence]) -> (usize, usize) {
+    group
+        .first()
+        .map(|first| (first.start_token_index, first.end_token_index))
+        .unwrap_or((0, 0))
+}
+
+/// The merged group when every `second` occurrence gap-follows its `first` counterpart, else None.
+fn merge_groups(
+    first: &[CountedOccurrence],
+    second: &[CountedOccurrence],
+    max_gap_tokens: usize,
+) -> Option<Vec<CountedOccurrence>> {
+    if first.len() != second.len() {
+        return None;
+    }
+    for (index, leading) in first.iter().enumerate() {
+        let trailing = &second[index];
+        let gap = trailing
+            .start_token_index
+            .checked_sub(leading.end_token_index)?;
+        if gap > max_gap_tokens {
+            return None;
+        }
+        // The merged span must stay clear of the next pair, or spans would overlap.
+        if let Some(next) = first.get(index + 1) {
+            if trailing.end_token_index > next.start_token_index {
+                return None;
+            }
+        }
+    }
+    Some(
+        first
+            .iter()
+            .zip(second)
+            .map(|(leading, trailing)| CountedOccurrence {
+                segments: [leading.segments.clone(), trailing.segments.clone()].concat(),
+                token_count: leading.token_count + trailing.token_count,
+                start_token_index: leading.start_token_index,
+                end_token_index: trailing.end_token_index,
+                start_line: leading.start_line,
+                end_line: trailing.end_line,
+            })
+            .collect(),
+    )
+}
+
+fn summarize_duplicates(
+    groups: &[Vec<CountedOccurrence>],
     code_line_numbers: &HashSet<usize>,
     tokens: &[Token<'_>],
 ) -> DuplicationMetrics {
@@ -902,26 +1144,27 @@ fn summarize_duplicates(
     let mut max_duplicate_block_size = 0;
     let mut duplicate_block_groups: Vec<Vec<DuplicateBlockOccurrence>> = Vec::new();
     let mut duplicated_lines: HashSet<usize> = HashSet::new();
-    for group in counted.values() {
+    for group in groups {
         duplicate_block_count += group.len() - 1;
-        for candidate in group {
-            max_duplicate_block_size = max_duplicate_block_size.max(candidate.token_count);
-            // Only CODE lines carrying matched tokens count.
-            for token in
-                &tokens[candidate.start_token_index..candidate.end_token_index.min(tokens.len())]
-            {
-                for row in token.start_row..=token.end_row {
-                    if code_line_numbers.contains(&(row + 1)) {
-                        duplicated_lines.insert(row + 1);
+        for occurrence in group {
+            max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
+            // Only CODE lines carrying matched tokens count; the unmatched gap of a merged clone
+            // stays out of line coverage.
+            for &(segment_start, segment_end) in &occurrence.segments {
+                for token in &tokens[segment_start..segment_end.min(tokens.len())] {
+                    for row in token.start_row..=token.end_row {
+                        if code_line_numbers.contains(&(row + 1)) {
+                            duplicated_lines.insert(row + 1);
+                        }
                     }
                 }
             }
         }
         let mut occurrences: Vec<DuplicateBlockOccurrence> = group
             .iter()
-            .map(|candidate| DuplicateBlockOccurrence {
-                start_line: candidate.start_line,
-                end_line: candidate.end_line,
+            .map(|occurrence| DuplicateBlockOccurrence {
+                start_line: occurrence.start_line,
+                end_line: occurrence.end_line,
             })
             .collect();
         occurrences.sort_by_key(|occurrence| occurrence.start_line);
@@ -932,7 +1175,7 @@ fn summarize_duplicates(
 
     DuplicationMetrics {
         duplicate_block_count,
-        duplicate_block_group_count: counted.len(),
+        duplicate_block_group_count: groups.len(),
         duplicate_block_groups,
         duplicate_line_count: duplicated_lines.len(),
         duplication_ratio: if code_line_numbers.is_empty() {
