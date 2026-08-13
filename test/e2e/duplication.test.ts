@@ -232,6 +232,17 @@ function ${name}(node) {
 }
 `;
 
+const selfCloneRun = (suffix: string, argument: string): string => `
+  const first${suffix} = compute(alpha${suffix}, beta${suffix});
+  const second${suffix} = combine(first${suffix}, ${argument});
+  if (second${suffix} > first${suffix}) {
+    report(second${suffix} - first${suffix});
+  } else {
+    report(first${suffix} + second${suffix});
+  }
+  log('done', first${suffix}, second${suffix});
+`;
+
 const fragmentedCopy = (name: string, middle: string, plusOp: string, minusOp: string): string => `
 function ${name}(items) {
   let total = 0;
@@ -372,6 +383,24 @@ function secondShape(limit, step) {
       expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
       expect(metrics.duplication.duplicateBlockCount).toBe(3);
     }
+  });
+
+  it('keeps a block-internal self-clone as separate copies when a near-miss sibling joins', () => {
+    // Two occurrences of the SAME exact group are distinct copies (a repeated run inside one
+    // function); anchoring a similar sibling must add a third occurrence, not collapse the two
+    // internal copies into one span.
+    const selfClone = `function alpha(input) {${selfCloneRun('A', 'input')}${selfCloneRun('B', 'input')}}\n`;
+    const sibling = `function beta(value) {${selfCloneRun('C', 'value')}${selfCloneRun('D', 'value')}}\n`
+      .replaceAll('report(secondC - firstC)', 'report(secondC * firstC)')
+      .replaceAll('report(firstD + secondD)', 'report(firstD * secondD)')
+      .replaceAll("log('done'", "log('finished'");
+    const alone = measureCode(selfClone, { language: 'javascript' });
+    const withSibling = measureCode(selfClone + sibling, { language: 'javascript' });
+
+    expect(alone.duplication.duplicateBlockGroups[0]?.length).toBe(2);
+    expect(withSibling.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(withSibling.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+    expect(withSibling.duplication.duplicateBlockCount).toBe(2);
   });
 
   it('detects clones nested inside a single enclosing wrapper', () => {

@@ -1394,8 +1394,12 @@ fn collect_near_miss_groups(
             let mut merged: Vec<CountedOccurrence> = Vec::new();
             for &member_index in members {
                 let range = comparable[member_index];
-                let mut overlapping: Vec<CountedOccurrence> = Vec::new();
+                // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
+                // groups belong to the same copy. Bucket per source group and coalesce
+                // positionally across buckets; see collectNearMissGroups in duplication.ts.
+                let mut buckets: Vec<Vec<CountedOccurrence>> = Vec::new();
                 for &group_index in &fully_clustered {
+                    let mut bucket: Vec<CountedOccurrence> = Vec::new();
                     for (occurrence_index, occurrence) in
                         reported_groups[group_index].iter().enumerate()
                     {
@@ -1404,13 +1408,22 @@ fn collect_near_miss_groups(
                             && range.start_token_index < occurrence.end_token_index
                         {
                             consumed.insert((group_index, occurrence_index));
-                            overlapping.push(occurrence.clone());
+                            bucket.push(occurrence.clone());
                         }
                     }
+                    if !bucket.is_empty() {
+                        buckets.push(bucket);
+                    }
                 }
-                if !overlapping.is_empty() {
-                    merged.push(coalesce_occurrences(overlapping));
-                } else if touched_groups_by_block[member_index].is_empty() {
+                let copy_count = buckets.iter().map(|bucket| bucket.len()).max().unwrap_or(0);
+                for copy_index in 0..copy_count {
+                    let parts: Vec<CountedOccurrence> = buckets
+                        .iter()
+                        .filter_map(|bucket| bucket.get(copy_index).cloned())
+                        .collect();
+                    merged.push(coalesce_occurrences(parts));
+                }
+                if copy_count == 0 && touched_groups_by_block[member_index].is_empty() {
                     merged.push(to_occurrence(comparable[member_index]));
                 }
             }
