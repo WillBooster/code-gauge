@@ -928,8 +928,9 @@ function collectNearMissGroups(
     return root;
   };
   for (const [pairKey, shared] of sharedNgramCounts) {
-    const leftIndex = Math.floor(pairKey / comparable.length);
-    const rightIndex = pairKey % comparable.length;
+    // Decoded with the same modulus countSharedNgrams encodes with.
+    const leftIndex = Math.floor(pairKey / ngramSets.length);
+    const rightIndex = pairKey % ngramSets.length;
     const left = sequences[leftIndex];
     const right = sequences[rightIndex];
     const leftNgrams = ngramSets[leftIndex];
