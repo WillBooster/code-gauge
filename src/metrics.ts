@@ -3,7 +3,7 @@ import {
   collectCrossFileDuplicateCandidates,
   defaultDuplicationOptions,
   measureDuplication,
-  type CrossFileDuplicateCandidate,
+  type CrossFileDuplicationFileData,
 } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
 import { commentNodeTypes, countNcss, getNcssSets, invalidateNcssSetsCache, ncssContribution } from './ncss.js';
@@ -332,10 +332,11 @@ export class TreeMeasurer {
   }
 
   /**
-   * Collects duplicate-candidate fingerprints of one file for cross-file clone detection with
-   * measureCrossFileDuplication. Always measured by the TypeScript backend.
+   * Collects one file's duplicate candidates, normalized tokens, and statement structure for
+   * cross-file clone detection with measureCrossFileDuplication. Always measured by the
+   * TypeScript backend.
    */
-  collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
+  collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicationFileData {
     const language = this.registry.get(options.language);
     if (!language) {
       throw new Error(`Unsupported language: ${options.language}`);
@@ -367,7 +368,7 @@ export function measureCode(code: string, options: MeasureOptions): CodeMetrics 
 }
 
 /** Standalone helper mirroring measureCode for the default measurer. */
-export function collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
+export function collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicationFileData {
   return defaultMeasurer.collectDuplicationCandidates(code, options);
 }
 

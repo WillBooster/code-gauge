@@ -1138,7 +1138,9 @@ fn to_counted_groups(
 }
 
 /// Merges duplicate groups separated by a small token gap into one gapped (Type-3) clone group;
-/// see mergeAdjacentGroups in duplication.ts for the pairing and fixpoint rules replicated here.
+/// see mergeAdjacentGroups in duplication.ts for the pairing, partial-merge (unequal
+/// cardinalities: the fully-paired group is subsumed, the other is retained with all its
+/// occurrences), and fixpoint/termination rules replicated here.
 fn merge_adjacent_groups(
     mut groups: Vec<Vec<CountedOccurrence>>,
     max_gap_tokens: usize,
@@ -1152,18 +1154,31 @@ fn merge_adjacent_groups(
         restart = false;
         'outer: for left_index in 0..groups.len() {
             for right_index in left_index + 1..groups.len() {
-                let merged =
-                    merge_groups(&groups[left_index], &groups[right_index], max_gap_tokens)
-                        .or_else(|| {
-                            merge_groups(&groups[right_index], &groups[left_index], max_gap_tokens)
-                        });
-                if let Some(merged) = merged {
-                    groups[left_index] = merged;
+                let forward =
+                    merge_groups(&groups[left_index], &groups[right_index], max_gap_tokens);
+                let swapped = forward.is_none();
+                let result = forward.or_else(|| {
+                    merge_groups(&groups[right_index], &groups[left_index], max_gap_tokens)
+                });
+                let Some(result) = result else {
+                    continue;
+                };
+                let (left_consumed, right_consumed) = if swapped {
+                    (result.second_consumed, result.first_consumed)
+                } else {
+                    (result.first_consumed, result.second_consumed)
+                };
+                if left_consumed && right_consumed {
+                    groups[left_index] = result.merged;
                     groups.remove(right_index);
-                    groups.sort_by_key(|group| group_sort_key(group));
-                    restart = true;
-                    break 'outer;
+                } else if right_consumed {
+                    groups[right_index] = result.merged;
+                } else {
+                    groups[left_index] = result.merged;
                 }
+                groups.sort_by_key(|group| group_sort_key(group));
+                restart = true;
+                break 'outer;
             }
         }
     }
@@ -1177,44 +1192,66 @@ fn group_sort_key(group: &[CountedOccurrence]) -> (usize, usize) {
         .unwrap_or((0, 0))
 }
 
-/// The merged group when every `second` occurrence gap-follows its `first` counterpart, else None.
+struct MergeResult {
+    merged: Vec<CountedOccurrence>,
+    /// Whether every occurrence of the respective input group was paired into the merge.
+    first_consumed: bool,
+    second_consumed: bool,
+}
+
+/// Pairs `second` occurrences with gap-preceding `first` occurrences, greedily in source order;
+/// a faithful port of mergeGroups in duplication.ts (at least two pairs, at least one group fully
+/// consumed, merged spans never overlap).
 fn merge_groups(
     first: &[CountedOccurrence],
     second: &[CountedOccurrence],
     max_gap_tokens: usize,
-) -> Option<Vec<CountedOccurrence>> {
-    if first.len() != second.len() {
-        return None;
-    }
-    for (index, leading) in first.iter().enumerate() {
-        let trailing = &second[index];
-        let gap = trailing
-            .start_token_index
-            .checked_sub(leading.end_token_index)?;
-        if gap > max_gap_tokens {
-            return None;
+) -> Option<MergeResult> {
+    let mut pairs: Vec<(usize, usize)> = Vec::new();
+    let mut leading_index = 0usize;
+    let mut previous_trailing_end: Option<usize> = None;
+    for (trailing_index, trailing) in second.iter().enumerate() {
+        // Leadings ending too far before this trailing can never pair a later (even farther) one.
+        while leading_index < first.len()
+            && first[leading_index].end_token_index + max_gap_tokens < trailing.start_token_index
+        {
+            leading_index += 1;
         }
-        // The merged span must stay clear of the next pair, or spans would overlap.
-        if let Some(next) = first.get(index + 1) {
-            if trailing.end_token_index > next.start_token_index {
-                return None;
+        if let Some(leading) = first.get(leading_index) {
+            if leading.end_token_index <= trailing.start_token_index
+                && previous_trailing_end.is_none_or(|end| leading.start_token_index >= end)
+            {
+                pairs.push((leading_index, trailing_index));
+                previous_trailing_end = Some(trailing.end_token_index);
+                leading_index += 1;
             }
         }
     }
-    Some(
-        first
-            .iter()
-            .zip(second)
-            .map(|(leading, trailing)| CountedOccurrence {
+    let first_consumed = pairs.len() == first.len();
+    let second_consumed = pairs.len() == second.len();
+    if pairs.len() < 2 || (!first_consumed && !second_consumed) {
+        return None;
+    }
+    let merged = pairs
+        .iter()
+        .map(|&(leading_index, trailing_index)| {
+            let leading = &first[leading_index];
+            let trailing = &second[trailing_index];
+            CountedOccurrence {
                 segments: [leading.segments.clone(), trailing.segments.clone()].concat(),
                 token_count: leading.token_count + trailing.token_count,
                 start_token_index: leading.start_token_index,
                 end_token_index: trailing.end_token_index,
                 start_line: leading.start_line,
                 end_line: trailing.end_line,
-            })
-            .collect(),
-    )
+            }
+        })
+        .collect();
+    Some(MergeResult {
+        merged,
+        first_consumed,
+        second_consumed,
+    })
 }
 
 /// Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left

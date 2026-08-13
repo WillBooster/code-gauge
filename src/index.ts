@@ -5,7 +5,7 @@ export type {
   CrossFileDuplicationMetrics,
   CrossFileDuplicationSourceFile,
 } from './crossFileDuplication.js';
-export type { CrossFileDuplicateCandidate } from './duplication.js';
+export type { CrossFileDuplicateCandidate, CrossFileDuplicationFileData } from './duplication.js';
 export { defaultLanguages, supportedLanguages } from './languages.js';
 export { TreeMeasurer, collectDuplicationCandidates, defaultMeasurer, measureCode } from './metrics.js';
 export { isNativeBackendAvailable } from './nativeMetrics.js';

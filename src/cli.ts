@@ -15,7 +15,7 @@ import {
   type Thresholds,
 } from './cliConfig.js';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
-import type { CrossFileDuplicateCandidate } from './duplication.js';
+import type { CrossFileDuplicationFileData } from './duplication.js';
 import { collectDuplicationCandidates, measureCode } from './metrics.js';
 import { measureTypeScriptProject, type TypeScriptProjectMetrics } from './typescriptProject.js';
 import type { CodeMetrics, FunctionMetrics, LanguageName } from './types.js';
@@ -23,8 +23,8 @@ import type { CodeMetrics, FunctionMetrics, LanguageName } from './types.js';
 interface FileMetrics {
   file: string;
   metrics: CodeMetrics;
-  /** Cross-file duplicate candidates, collected only for directory scans. */
-  duplicationCandidates?: CrossFileDuplicateCandidate[];
+  /** Cross-file duplicate candidates and token/statement data, collected only for directory scans. */
+  duplicationCandidates?: CrossFileDuplicationFileData;
 }
 
 interface RiskTrigger {
@@ -219,7 +219,7 @@ async function main(): Promise<void> {
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
     const result = await scanTarget(resolvedTarget, options);
-    addCrossFileDuplication(result);
+    addCrossFileDuplication(result, options);
     await addArchitectureMetrics(result);
     await addTypeScriptProjectMetrics(result, options, resolvedTarget);
     const risks = findRiskyFunctions(
@@ -556,17 +556,17 @@ async function measureFile(
 }
 
 /** Runs after the scan so every measured file's candidates participate. */
-function addCrossFileDuplication(result: ScanResult): void {
+function addCrossFileDuplication(result: ScanResult, options: ResolvedOptions): void {
   if (result.fatalError || result.files.length < 2) {
     return;
   }
   const sourceFiles = result.files.flatMap(({ file, duplicationCandidates }) =>
-    duplicationCandidates ? [{ file: formatPath(file, result.displayRoot), candidates: duplicationCandidates }] : []
+    duplicationCandidates ? [{ file: formatPath(file, result.displayRoot), ...duplicationCandidates }] : []
   );
   if (sourceFiles.length < 2) {
     return;
   }
-  result.crossFileDuplication = measureCrossFileDuplication(sourceFiles);
+  result.crossFileDuplication = measureCrossFileDuplication(sourceFiles, options.duplication);
 }
 
 function findRiskyFunctions(

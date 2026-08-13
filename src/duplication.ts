@@ -258,7 +258,7 @@ function isLiteralDense(literalCount: number, tokenCount: number): boolean {
   return literalCount * 5 >= tokenCount;
 }
 
-interface Token {
+export interface Token {
   /** Normalization target: identifiers to anonymize, literal kind tags, or the raw token text. */
   kind: 'id' | 'text';
   text: string;
@@ -284,10 +284,14 @@ interface Token {
   endRow: number;
 }
 
-interface TokenRange {
+/** A token span with its source position; plain data so cross-file matching can retain it. */
+export interface TokenRange {
   startTokenIndex: number;
   endTokenIndex: number;
-  node: Parser.SyntaxNode;
+  startIndex: number;
+  endIndex: number;
+  startLine: number;
+  endLine: number;
 }
 
 /** A contiguous run of matched tokens; gapped (merged) duplicates carry several per occurrence. */
@@ -307,7 +311,7 @@ interface DuplicateCandidate {
   endLine: number;
 }
 
-interface CountedOccurrence {
+export interface CountedOccurrence {
   /** Matched token runs; more than one once gapped groups are merged. */
   segments: TokenSegment[];
   /** Sum of segment token counts (the gap tokens are not matched content). */
@@ -325,10 +329,24 @@ export interface CrossFileDuplicateCandidate {
   /** Content key: equal fingerprints mean equal normalized token sequences (up to hash collision). */
   fingerprint: string;
   tokenCount: number;
+  /** Token positions within the owning file, for cross-file gapped (Type-3) merging. */
+  startTokenIndex: number;
+  endTokenIndex: number;
   startIndex: number;
   endIndex: number;
   startLine: number;
   endLine: number;
+}
+
+/**
+ * One file's contribution to cross-file clone detection: catalogued candidates plus the normalized
+ * token stream and statement structure, so the project-level pass can match partial statement runs
+ * (windows that a single file cannot know repeat elsewhere) and merge gap-adjacent groups.
+ */
+export interface CrossFileDuplicationFileData {
+  candidates: CrossFileDuplicateCandidate[];
+  tokens: Token[];
+  containerStatements: TokenRange[][];
 }
 
 /**
@@ -377,15 +395,17 @@ export function measureDuplication(
 }
 
 /**
- * Collects this file's duplicate-candidate fingerprints for cross-file clone detection: whole
- * block-like subtrees plus each statement container's full run (so wholly copied files and class
- * bodies match even when no inner block clears the threshold on its own). Nested and overlapping
+ * Collects this file's contribution to cross-file clone detection: fingerprinted candidates for
+ * whole block-like subtrees plus each statement container's full run (so wholly copied files and
+ * class bodies match even when no inner block clears the threshold on its own), together with the
+ * normalized token stream and statement structure that let measureCrossFileDuplication match
+ * partial statement runs and merge gap-adjacent groups project-wide. Nested and overlapping
  * candidates are all returned; the project-level selection keeps only maximal ones.
  */
 export function collectCrossFileDuplicateCandidates(
   root: Parser.SyntaxNode,
   options?: DuplicationOptions
-): CrossFileDuplicateCandidate[] {
+): CrossFileDuplicationFileData {
   const minTokens = options?.minTokens ?? defaultDuplicationOptions.minTokens;
   const tokens: Token[] = [];
   const blockRanges: TokenRange[] = [];
@@ -409,19 +429,12 @@ export function collectCrossFileDuplicateCandidates(
         `s:${fingerprintKey(tokens, literalCountPrefix, first.startTokenIndex, last.endTokenIndex)}`,
         first.startTokenIndex,
         last.endTokenIndex,
-        first.node,
-        last.node
+        first,
+        last
       )
     );
   }
-  return dedupeByRegion(candidates).map(({ fingerprint, tokenCount, startIndex, endIndex, startLine, endLine }) => ({
-    fingerprint,
-    tokenCount,
-    startIndex,
-    endIndex,
-    startLine,
-    endLine,
-  }));
+  return { candidates: dedupeByRegion(candidates), tokens, containerStatements: containerStatementRanges };
 }
 
 function collectTokens(
@@ -458,7 +471,14 @@ function collectTokens(
       }
     }
 
-    const range = { startTokenIndex, endTokenIndex: tokens.length, node };
+    const range = {
+      startTokenIndex,
+      endTokenIndex: tokens.length,
+      startIndex: node.startIndex,
+      endIndex: node.endIndex,
+      startLine: node.startPosition.row + 1,
+      endLine: node.endPosition.row + 1,
+    };
     if (node.isNamed && duplicateBlockTypes.has(node.type)) {
       blockRanges.push(range);
     }
@@ -561,7 +581,7 @@ function stripMatchingQuotes(text: string): string {
 }
 
 /** literalCountPrefix[i] = value-carrying literal tokens in tokens[0..i), for O(1) density checks. */
-function buildLiteralCountPrefix(tokens: Token[]): Int32Array {
+export function buildLiteralCountPrefix(tokens: Token[]): Int32Array {
   const prefix = new Int32Array(tokens.length + 1);
   for (const [index, token] of tokens.entries()) {
     prefix[index + 1] = (prefix[index] ?? 0) + (token.literalHash === undefined ? 0 : 1);
@@ -657,8 +677,8 @@ function collectBlockCandidates(
         `b:${fingerprintKey(tokens, literalCountPrefix, range.startTokenIndex, range.endTokenIndex)}`,
         range.startTokenIndex,
         range.endTokenIndex,
-        range.node,
-        range.node
+        range,
+        range
       )
     );
   }
@@ -669,6 +689,8 @@ interface WindowOccurrences {
   count: number;
   /** -1 once occurrences span more than one container. */
   containerIndex: number;
+  /** -1 once occurrences span more than one context (file). */
+  contextIndex: number;
   minStart: number;
   maxStart: number;
 }
@@ -679,24 +701,63 @@ interface SequenceWindow {
   length: number;
 }
 
-/**
- * Enumerates runs of consecutive sibling statements. Every container statement participates; only
- * the window length is capped, so enumeration stays linear in the statement count. Windows are
- * grouped by a cheap rolling hash of per-statement fingerprints, and only locally maximal repeated
- * windows — those whose one-statement extensions stop repeating — become candidates with an exact
- * (window-consistent) fingerprint. Without the maximality filter a degenerate file of
- * near-identical statements would fingerprint every sub-window of every repeated region.
- */
 function collectSequenceCandidates(
   tokens: Token[],
   literalCountPrefix: Int32Array,
   containers: TokenRange[][],
   minTokens: number
 ): DuplicateCandidate[] {
-  const candidates: DuplicateCandidate[] = [];
+  return collectSequenceWindowCandidates([{ tokens, literalCountPrefix, containers }], minTokens, false).map(
+    ({ candidate }) => candidate
+  );
+}
+
+/** One file's token stream and statement containers, as a window-matching context. */
+export interface SequenceWindowContext {
+  tokens: Token[];
+  literalCountPrefix: Int32Array;
+  containers: TokenRange[][];
+}
+
+export interface ContextualSequenceCandidate {
+  candidate: DuplicateCandidate;
+  contextIndex: number;
+}
+
+/**
+ * Enumerates runs of consecutive sibling statements over one or more contexts (files). Every
+ * container statement participates; only the window length is capped, so enumeration stays linear
+ * in the statement count. Windows are grouped by a cheap rolling hash of per-statement
+ * fingerprints, and only locally maximal repeated windows — those whose one-statement extensions
+ * stop repeating — become candidates with an exact (window-consistent) fingerprint. Without the
+ * maximality filter a degenerate file of near-identical statements would fingerprint every
+ * sub-window of every repeated region. With `requireMultipleContexts` a window only counts as
+ * repeated when its occurrences span at least two contexts (CPD-style cross-file matching): a
+ * repeat confined to one file is that file's own concern, and emitting it here would flood the
+ * project-level selection with unusable single-file groups.
+ */
+export function collectSequenceWindowCandidates(
+  contexts: SequenceWindowContext[],
+  minTokens: number,
+  requireMultipleContexts: boolean
+): ContextualSequenceCandidate[] {
+  const candidates: ContextualSequenceCandidate[] = [];
+  const contextIndexByContainer: number[] = [];
+  const containers: TokenRange[][] = [];
+  for (const [contextIndex, context] of contexts.entries()) {
+    for (const statements of context.containers) {
+      contextIndexByContainer.push(contextIndex);
+      containers.push(statements);
+    }
+  }
+  const contextAt = (containerIndex: number): SequenceWindowContext | undefined =>
+    contexts[contextIndexByContainer[containerIndex] ?? 0];
   const occurrencesByWindowKey = new Map<number, WindowOccurrences>();
-  const containerWindows = containers.map((statements) => enumerateContainerWindows(tokens, statements, minTokens));
+  const containerWindows = containers.map((statements, containerIndex) =>
+    enumerateContainerWindows(contextAt(containerIndex)?.tokens ?? [], statements, minTokens)
+  );
   for (const [containerIndex, windows] of containerWindows.entries()) {
+    const contextIndex = contextIndexByContainer[containerIndex] ?? 0;
     for (const [start, row] of windows.windowKeysByStart.entries()) {
       for (const windowKey of row) {
         if (windowKey === undefined) {
@@ -708,10 +769,19 @@ function collectSequenceCandidates(
           if (occurrences.containerIndex !== containerIndex) {
             occurrences.containerIndex = -1;
           }
+          if (occurrences.contextIndex !== contextIndex) {
+            occurrences.contextIndex = -1;
+          }
           occurrences.minStart = Math.min(occurrences.minStart, start);
           occurrences.maxStart = Math.max(occurrences.maxStart, start);
         } else {
-          occurrencesByWindowKey.set(windowKey, { count: 1, containerIndex, minStart: start, maxStart: start });
+          occurrencesByWindowKey.set(windowKey, {
+            count: 1,
+            containerIndex,
+            contextIndex,
+            minStart: start,
+            maxStart: start,
+          });
         }
       }
     }
@@ -719,17 +789,20 @@ function collectSequenceCandidates(
 
   // A window only "repeats" when two of its occurrences can coexist without overlapping: sliding
   // matches inside a homogeneous run (start spread smaller than the window length) can never both
-  // be counted and must neither qualify a window nor dominate its sub-windows.
+  // be counted and must neither qualify a window nor dominate its sub-windows. Cross-context
+  // matching instead requires occurrences in two contexts, which coexist by construction.
   const repeats = (windowKey: number | undefined, length: number): boolean => {
     if (windowKey === undefined) {
       return false;
     }
     const occurrences = occurrencesByWindowKey.get(windowKey);
-    return (
-      occurrences !== undefined &&
-      occurrences.count >= 2 &&
-      (occurrences.containerIndex === -1 || occurrences.maxStart - occurrences.minStart >= length)
-    );
+    if (occurrences === undefined || occurrences.count < 2) {
+      return false;
+    }
+    if (requireMultipleContexts) {
+      return occurrences.contextIndex === -1;
+    }
+    return occurrences.containerIndex === -1 || occurrences.maxStart - occurrences.minStart >= length;
   };
 
   // A window whose statements all share one normalized shape (sixteen `let x = 0;` declarations,
@@ -778,11 +851,15 @@ function collectSequenceCandidates(
       const statements = containers[window.containerIndex];
       const first = statements?.[window.start];
       const last = statements?.[window.start + window.length - 1];
-      if (!first || !last) {
+      const context = contextAt(window.containerIndex);
+      if (!first || !last || !context) {
         continue;
       }
-      const fingerprint = `s:${fingerprintKey(tokens, literalCountPrefix, first.startTokenIndex, last.endTokenIndex)}`;
-      candidates.push(toCandidate(fingerprint, first.startTokenIndex, last.endTokenIndex, first.node, last.node));
+      const fingerprint = `s:${fingerprintKey(context.tokens, context.literalCountPrefix, first.startTokenIndex, last.endTokenIndex)}`;
+      candidates.push({
+        candidate: toCandidate(fingerprint, first.startTokenIndex, last.endTokenIndex, first, last),
+        contextIndex: contextIndexByContainer[window.containerIndex] ?? 0,
+      });
       emitted.push(window);
     }
     frontier = [];
@@ -1176,10 +1253,10 @@ function toNearMissOccurrence(range: TokenRange): CountedOccurrence {
     tokenCount: range.endTokenIndex - range.startTokenIndex,
     startTokenIndex: range.startTokenIndex,
     endTokenIndex: range.endTokenIndex,
-    startIndex: range.node.startIndex,
-    endIndex: range.node.endIndex,
-    startLine: range.node.startPosition.row + 1,
-    endLine: range.node.endPosition.row + 1,
+    startIndex: range.startIndex,
+    endIndex: range.endIndex,
+    startLine: range.startLine,
+    endLine: range.endLine,
   };
 }
 
@@ -1352,18 +1429,18 @@ function toCandidate(
   fingerprint: string,
   startTokenIndex: number,
   endTokenIndex: number,
-  firstNode: Parser.SyntaxNode,
-  lastNode: Parser.SyntaxNode
+  first: TokenRange,
+  last: TokenRange
 ): DuplicateCandidate {
   return {
     fingerprint,
     tokenCount: endTokenIndex - startTokenIndex,
     startTokenIndex,
     endTokenIndex,
-    startIndex: firstNode.startIndex,
-    endIndex: lastNode.endIndex,
-    startLine: firstNode.startPosition.row + 1,
-    endLine: lastNode.endPosition.row + 1,
+    startIndex: first.startIndex,
+    endIndex: last.endIndex,
+    startLine: first.startLine,
+    endLine: last.endLine,
   };
 }
 
@@ -1511,12 +1588,21 @@ function toCountedGroups(counted: Map<string, DuplicateCandidate[]>): CountedOcc
 /**
  * Merges duplicate groups separated by a small token gap into one gapped (Type-3) clone group: a
  * copy edited in one spot splits into two exact groups whose occurrences sit side by side in the
- * same order. Two groups merge when they have the same number of occurrences and, pairing
- * occurrences in source order, every pair is gap-adjacent without crossing into the next pair.
- * Merging repeats to a fixpoint so a clone edited in several spots still reassembles. Gap tokens
- * are not matched content: line coverage and sizes count only the matched segments.
+ * same order. Occurrences are paired greedily in source order; a merge happens when the pairing
+ * fully consumes at least one group with at least two pairs. Equal-cardinality groups whose
+ * occurrences all pair merge into one group as before. When cardinalities differ (a fragment also
+ * occurs standalone: prefix ×3, suffix ×2), the fully-paired group is subsumed into the merged
+ * gapped group while the other group is RETAINED with ALL its occurrences: dropping the leftover
+ * would lose duplicated-line coverage, and reporting it alone would make a single-occurrence group
+ * (contradicting duplicateBlockGroupCount's "appears more than once" meaning). Line coverage
+ * unions ranges, so the overlap between the retained exact group and the merged group is harmless.
+ * Merging repeats to a fixpoint so a clone edited in several spots still reassembles; it
+ * terminates because a full merge shrinks the group count and a partial merge keeps it while
+ * strictly growing the bounded total span of merged occurrences. Gap tokens are not matched
+ * content: line coverage and sizes count only the matched segments. Generic so cross-file merging
+ * can thread file identity through occurrences.
  */
-function mergeAdjacentGroups(groups: CountedOccurrence[][], maxGapTokens: number): CountedOccurrence[][] {
+export function mergeAdjacentGroups<T extends CountedOccurrence>(groups: T[][], maxGapTokens: number): T[][] {
   if (maxGapTokens <= 0 || groups.length < 2) {
     return groups;
   }
@@ -1531,14 +1617,24 @@ function mergeAdjacentGroups(groups: CountedOccurrence[][], maxGapTokens: number
         if (!left || !right) {
           continue;
         }
-        const merged = mergeGroups(left, right, maxGapTokens) ?? mergeGroups(right, left, maxGapTokens);
-        if (merged) {
-          groups[leftIndex] = merged;
-          groups.splice(rightIndex, 1);
-          groups.sort(compareGroups);
-          restart = true;
-          break;
+        const forward = mergeGroups(left, right, maxGapTokens);
+        const result = forward ?? mergeGroups(right, left, maxGapTokens);
+        if (!result) {
+          continue;
         }
+        const leftConsumed = forward ? result.firstConsumed : result.secondConsumed;
+        const rightConsumed = forward ? result.secondConsumed : result.firstConsumed;
+        if (leftConsumed && rightConsumed) {
+          groups[leftIndex] = result.merged;
+          groups.splice(rightIndex, 1);
+        } else if (rightConsumed) {
+          groups[rightIndex] = result.merged;
+        } else {
+          groups[leftIndex] = result.merged;
+        }
+        groups.sort(compareGroups);
+        restart = true;
+        break;
       }
     }
   }
@@ -1554,46 +1650,64 @@ function compareGroups(left: CountedOccurrence[], right: CountedOccurrence[]): n
   );
 }
 
-/** The merged group when every `second` occurrence gap-follows its `first` counterpart, else undefined. */
-function mergeGroups(
-  first: CountedOccurrence[],
-  second: CountedOccurrence[],
+interface MergeResult<T> {
+  merged: T[];
+  /** Whether every occurrence of the respective input group was paired into the merge. */
+  firstConsumed: boolean;
+  secondConsumed: boolean;
+}
+
+/**
+ * Pairs `second` occurrences with gap-preceding `first` occurrences, greedily in source order:
+ * each trailing occurrence takes the earliest unused leading occurrence within the gap, and a
+ * pair's leading must start at or after the previous pair's trailing end so merged spans never
+ * overlap. A merge needs at least two pairs (a merged group must still mean "appears more than
+ * once") and must fully consume at least one group; for equal cardinalities this reduces to the
+ * strict all-pairs merge, so pre-partial-merge behavior is unchanged there.
+ */
+function mergeGroups<T extends CountedOccurrence>(
+  first: T[],
+  second: T[],
   maxGapTokens: number
-): CountedOccurrence[] | undefined {
-  if (first.length !== second.length) {
+): MergeResult<T> | undefined {
+  const pairs: [T, T][] = [];
+  let leadingIndex = 0;
+  let previousTrailingEnd = -1;
+  for (const trailing of second) {
+    // Leadings ending too far before this trailing can never pair a later (even farther) one.
+    while (leadingIndex < first.length) {
+      const leading = first[leadingIndex];
+      if (leading && leading.endTokenIndex + maxGapTokens < trailing.startTokenIndex) {
+        leadingIndex += 1;
+      } else {
+        break;
+      }
+    }
+    const leading = first[leadingIndex];
+    if (
+      leading &&
+      leading.endTokenIndex <= trailing.startTokenIndex &&
+      leading.startTokenIndex >= previousTrailingEnd
+    ) {
+      pairs.push([leading, trailing]);
+      previousTrailingEnd = trailing.endTokenIndex;
+      leadingIndex += 1;
+    }
+  }
+  const firstConsumed = pairs.length === first.length;
+  const secondConsumed = pairs.length === second.length;
+  if (pairs.length < 2 || (!firstConsumed && !secondConsumed)) {
     return undefined;
   }
-  for (const [index, leading] of first.entries()) {
-    const trailing = second[index];
-    if (!trailing) {
-      return undefined;
-    }
-    const gap = trailing.startTokenIndex - leading.endTokenIndex;
-    if (gap < 0 || gap > maxGapTokens) {
-      return undefined;
-    }
-    // The merged span must stay clear of the next pair, or spans would overlap.
-    const next = first[index + 1];
-    if (next && trailing.endTokenIndex > next.startTokenIndex) {
-      return undefined;
-    }
-  }
-  return first.map((leading, index) => {
-    const trailing = second[index];
-    if (!trailing) {
-      return leading;
-    }
-    return {
-      segments: [...leading.segments, ...trailing.segments],
-      tokenCount: leading.tokenCount + trailing.tokenCount,
-      startTokenIndex: leading.startTokenIndex,
-      endTokenIndex: trailing.endTokenIndex,
-      startIndex: leading.startIndex,
-      endIndex: trailing.endIndex,
-      startLine: leading.startLine,
-      endLine: trailing.endLine,
-    };
-  });
+  const merged = pairs.map(([leading, trailing]) => ({
+    ...leading,
+    segments: [...leading.segments, ...trailing.segments],
+    tokenCount: leading.tokenCount + trailing.tokenCount,
+    endTokenIndex: trailing.endTokenIndex,
+    endIndex: trailing.endIndex,
+    endLine: trailing.endLine,
+  }));
+  return { merged, firstConsumed, secondConsumed };
 }
 
 function summarizeDuplicates(
