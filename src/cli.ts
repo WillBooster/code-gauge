@@ -55,6 +55,8 @@ interface ScanResult {
   crossFileDuplication?: CrossFileDuplicationMetrics;
   displayRoot: string;
   errors: string[];
+  /** Non-fatal degradations (e.g. cross-file candidates unavailable); the file is still measured. */
+  warnings: string[];
   fatalError?: string;
   files: FileMetrics[];
   namedComponentFunctionKeys?: Set<string>;
@@ -270,6 +272,7 @@ interface ScanContext {
   options: ResolvedOptions;
   files: FileMetrics[];
   errors: string[];
+  warnings: string[];
   visitedDirectories: Set<string>;
   visitedFiles: Set<string>;
   /** Scan root: paths are displayed relative to it, and symbolic links may not escape it. */
@@ -279,6 +282,7 @@ interface ScanContext {
 async function scanTarget(target: string, options: ResolvedOptions): Promise<ScanResult> {
   const files: FileMetrics[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
   let canonicalTarget = target;
   try {
     canonicalTarget = await realpath(target);
@@ -293,7 +297,7 @@ async function scanTarget(target: string, options: ResolvedOptions): Promise<Sca
     targetStat = await stat(canonicalTarget);
   } catch (error) {
     const fatalError = `${formatPath(canonicalTarget, fallbackDisplayRoot)}: ${formatError(error)}`;
-    return { displayRoot: fallbackDisplayRoot, files, errors: [fatalError], fatalError };
+    return { displayRoot: fallbackDisplayRoot, files, errors: [fatalError], warnings, fatalError };
   }
 
   if (targetStat.isFile()) {
@@ -301,25 +305,26 @@ async function scanTarget(target: string, options: ResolvedOptions): Promise<Sca
     const language = getLanguage(canonicalTarget, options, true);
     if (!language) {
       const fatalError = `${formatPath(canonicalTarget, displayRoot)}: unsupported file type`;
-      return { displayRoot, files, errors: [fatalError], fatalError };
+      return { displayRoot, files, errors: [fatalError], warnings, fatalError };
     }
 
-    const context = makeScanContext(options, files, errors, displayRoot);
+    const context = makeScanContext(options, files, errors, warnings, displayRoot);
     await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
-    return { displayRoot, files, errors };
+    return { displayRoot, files, errors, warnings };
   }
 
-  await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, canonicalTarget));
-  return { displayRoot: canonicalTarget, files, errors };
+  await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, warnings, canonicalTarget));
+  return { displayRoot: canonicalTarget, files, errors, warnings };
 }
 
 function makeScanContext(
   options: ResolvedOptions,
   files: FileMetrics[],
   errors: string[],
+  warnings: string[],
   rootDirectory: string
 ): ScanContext {
-  return { options, files, errors, visitedDirectories: new Set(), visitedFiles: new Set(), rootDirectory };
+  return { options, files, errors, warnings, visitedDirectories: new Set(), visitedFiles: new Set(), rootDirectory };
 }
 
 async function addTypeScriptProjectMetrics(
@@ -532,8 +537,10 @@ async function measureFile(
       try {
         fileMetrics.duplicationCandidates = collectDuplicationCandidates(code, measureOptions);
       } catch (error) {
-        context.errors.push(
-          `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates: ${formatError(error)}`
+        // A warning, not an error: the file's metrics are complete, only its participation in
+        // cross-file matching is lost, so it is not "skipped" and must not fail --fail-on-error.
+        context.warnings.push(
+          `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates unavailable: ${formatError(error)}`
         );
       }
     }
@@ -834,6 +841,7 @@ function printJson(result: ScanResult, risks: RiskFinding[], options: ResolvedOp
         typeScriptProject: result.typeScriptProject,
         risks: reportedRisks,
         errors: result.errors,
+        warnings: result.warnings,
       },
       undefined,
       2
@@ -918,6 +926,16 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     writeStdout(`\nLargest files by code LOC (top ${largestFiles.length}):\n`);
     for (const { file, codeLoc } of largestFiles) {
       writeStdout(`${file} (code LOC ${codeLoc})\n`);
+    }
+  }
+
+  if (result.warnings.length > 0) {
+    writeStderr(`\nDegraded ${result.warnings.length} files (measured, but excluded from cross-file matching):\n`);
+    for (const warning of result.warnings.slice(0, 10)) {
+      writeStderr(`- ${warning}\n`);
+    }
+    if (result.warnings.length > 10) {
+      writeStderr(`- ... ${result.warnings.length - 10} more\n`);
     }
   }
 
