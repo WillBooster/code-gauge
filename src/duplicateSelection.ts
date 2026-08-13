@@ -1,0 +1,109 @@
+/**
+ * Maximal, non-overlapping duplicate-group selection shared by the within-file and cross-file
+ * detectors. Candidates are grouped by fingerprint, ranked by total coverage, kept greedily
+ * without overlapping a kept region, and groups that fall below the survivor requirement are shed
+ * one at a time (largest first) so their regions stop blocking smaller groups.
+ */
+
+export interface SelectableRegion {
+  fingerprint: string;
+  tokenCount: number;
+  startIndex: number;
+  endIndex: number;
+  /**
+   * Regions can only overlap within the same bucket. The within-file detector uses one bucket;
+   * the cross-file detector buckets by file index.
+   */
+  regionBucket?: number;
+}
+
+/** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
+const maxSelectionRerunCount = 20;
+
+/**
+ * @param isSurvivingGroup whether a selected group counts (e.g. at least two occurrences, or
+ *   occurrences spanning at least two files); failing groups are shed and re-selected without.
+ * @param compareTies optional deterministic tie-break applied after the coverage ranking.
+ */
+export function selectMaximalGroups<T extends SelectableRegion>(
+  candidates: T[],
+  isSurvivingGroup: (group: T[]) => boolean,
+  compareTies?: (left: T, right: T) => number
+): Map<string, T[]> {
+  const byFingerprint = new Map<string, T[]>();
+  for (const candidate of candidates) {
+    const group = byFingerprint.get(candidate.fingerprint) ?? [];
+    group.push(candidate);
+    byFingerprint.set(candidate.fingerprint, group);
+  }
+
+  const groups = [...byFingerprint.values()].map(dedupeByRegion).filter(isSurvivingGroup);
+  // Greedy order ranks by total coverage (region size × copies): a 3×3-statement group must beat
+  // a 2×4-statement group overlapping two of its copies, or the third copy is silently dropped
+  // and the reported duplication shrinks as more copies are added.
+  const groupSizeByFingerprint = new Map(groups.map((group) => [group[0]?.fingerprint ?? '', group.length]));
+  const coverage = (candidate: T): number =>
+    candidate.tokenCount * (groupSizeByFingerprint.get(candidate.fingerprint) ?? 1);
+  let duplicates = groups.flat();
+  duplicates.sort((left, right) => coverage(right) - coverage(left) || (compareTies ? compareTies(left, right) : 0));
+
+  // Greedy selection can keep a candidate whose group ends up below the survivor requirement;
+  // such an uncounted region must not block smaller groups, so the largest failed group is
+  // removed and the selection reruns. One group at a time: freeing a failed group's regions can
+  // rescue another. The rerun cap bounds degenerate inputs; past it the remaining failed groups
+  // are dropped, trading a sliver of recall on such files for bounded runtime.
+  for (let rerun = 0; ; rerun += 1) {
+    const keptRegionsByBucket = new Map<number, { startIndex: number; endIndex: number }[]>();
+    const counted = new Map<string, T[]>();
+    for (const candidate of duplicates) {
+      const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
+      if (
+        keptRegions.some((region) => region.startIndex < candidate.endIndex && candidate.startIndex < region.endIndex)
+      ) {
+        continue;
+      }
+      keptRegions.push(candidate);
+      keptRegionsByBucket.set(candidate.regionBucket ?? 0, keptRegions);
+      const group = counted.get(candidate.fingerprint) ?? [];
+      group.push(candidate);
+      counted.set(candidate.fingerprint, group);
+    }
+
+    let failedFingerprint: string | undefined;
+    let failedTokenCount = -1;
+    for (const [fingerprint, group] of counted) {
+      const tokenCount = group[0]?.tokenCount ?? 0;
+      if (!isSurvivingGroup(group) && tokenCount > failedTokenCount) {
+        failedFingerprint = fingerprint;
+        failedTokenCount = tokenCount;
+      }
+    }
+    // No failed fingerprint means every counted group met the survivor requirement.
+    if (failedFingerprint === undefined) {
+      return counted;
+    }
+    if (rerun >= maxSelectionRerunCount) {
+      for (const [fingerprint, group] of counted) {
+        if (!isSurvivingGroup(group)) {
+          counted.delete(fingerprint);
+        }
+      }
+      return counted;
+    }
+
+    duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
+  }
+}
+
+/** Drops candidates covering the same source region (a block and the statement run spanning it). */
+export function dedupeByRegion<T extends SelectableRegion>(group: T[]): T[] {
+  const byRegion = new Map<string, T>();
+  for (const candidate of group) {
+    const key = `${candidate.regionBucket ?? 0}:${candidate.startIndex}:${candidate.endIndex}`;
+    const existing = byRegion.get(key);
+    if (!existing || candidate.tokenCount > existing.tokenCount) {
+      byRegion.set(key, candidate);
+    }
+  }
+  return [...byRegion.values()];
+}

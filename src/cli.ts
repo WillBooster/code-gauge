@@ -14,13 +14,17 @@ import {
   resolveThresholds,
   type Thresholds,
 } from './cliConfig.js';
-import { measureCode } from './metrics.js';
+import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
+import type { CrossFileDuplicateCandidate } from './duplication.js';
+import { collectDuplicationCandidates, measureCode } from './metrics.js';
 import { measureTypeScriptProject, type TypeScriptProjectMetrics } from './typescriptProject.js';
 import type { CodeMetrics, FunctionMetrics, LanguageName } from './types.js';
 
 interface FileMetrics {
   file: string;
   metrics: CodeMetrics;
+  /** Cross-file duplicate candidates, collected only for directory scans. */
+  duplicationCandidates?: CrossFileDuplicateCandidate[];
 }
 
 interface RiskTrigger {
@@ -48,8 +52,11 @@ interface RiskFinding {
 interface ScanResult {
   architecture?: ArchitectureMetrics;
   componentFunctionKeys?: Set<string>;
+  crossFileDuplication?: CrossFileDuplicationMetrics;
   displayRoot: string;
   errors: string[];
+  /** Non-fatal degradations (e.g. cross-file candidates unavailable); the file is still measured. */
+  warnings: string[];
   fatalError?: string;
   files: FileMetrics[];
   namedComponentFunctionKeys?: Set<string>;
@@ -112,6 +119,10 @@ const ignoredDirectoryNames = new Set([
 
 /** Caps the `Duplicate symbols` section so large repositories do not flood the report. */
 const maxDuplicateSymbolGroupLines = 10;
+/** Caps the `Cross-file duplicate blocks` section so large repositories do not flood the report. */
+const maxCrossFileDuplicateGroupLines = 10;
+/** Caps how many cross-file group locations a single risk finding repeats as detail. */
+const maxCrossFileDuplicateDetailGroups = 3;
 
 const testDirectoryNames = new Set(['__tests__', 'test', 'tests', 'spec']);
 const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-](?:test|spec))\.[^.]+$/iu;
@@ -155,6 +166,21 @@ async function main(): Promise<void> {
       parsePercentInteger
     )
     .option(
+      '--cross-file-duplicate-block-threshold <number>',
+      'minimum count of cross-file duplicate block groups per file to report',
+      parsePositiveInteger
+    )
+    .option(
+      '--duplication-min-tokens <number>',
+      'minimum normalized token count for a duplicate region (default 40)',
+      parsePositiveInteger
+    )
+    .option(
+      '--duplication-max-gap-tokens <number>',
+      'maximum token gap merged into one gapped clone group; 0 disables merging (default 30)',
+      parseNonNegativeInteger
+    )
+    .option(
       '--transitive-dependency-threshold <number>',
       'minimum transitively reachable local files to report',
       parsePositiveInteger
@@ -188,11 +214,13 @@ async function main(): Promise<void> {
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
     const result = await scanTarget(resolvedTarget, options);
+    addCrossFileDuplication(result);
     await addArchitectureMetrics(result);
     await addTypeScriptProjectMetrics(result, options, resolvedTarget);
     const risks = findRiskyFunctions(
       result.files,
       result.architecture,
+      result.crossFileDuplication,
       result.componentFunctionKeys,
       result.namedComponentFunctionKeys,
       options,
@@ -239,10 +267,22 @@ async function configSearchDirectory(target: string): Promise<string> {
   }
 }
 
+/** Shared state of one scan, threaded through the directory walk instead of positional plumbing. */
+interface ScanContext {
+  options: ResolvedOptions;
+  files: FileMetrics[];
+  errors: string[];
+  warnings: string[];
+  visitedDirectories: Set<string>;
+  visitedFiles: Set<string>;
+  /** Scan root: paths are displayed relative to it, and symbolic links may not escape it. */
+  rootDirectory: string;
+}
+
 async function scanTarget(target: string, options: ResolvedOptions): Promise<ScanResult> {
   const files: FileMetrics[] = [];
   const errors: string[] = [];
-  const visitedFiles = new Set<string>();
+  const warnings: string[] = [];
   let canonicalTarget = target;
   try {
     canonicalTarget = await realpath(target);
@@ -257,7 +297,7 @@ async function scanTarget(target: string, options: ResolvedOptions): Promise<Sca
     targetStat = await stat(canonicalTarget);
   } catch (error) {
     const fatalError = `${formatPath(canonicalTarget, fallbackDisplayRoot)}: ${formatError(error)}`;
-    return { displayRoot: fallbackDisplayRoot, files, errors: [fatalError], fatalError };
+    return { displayRoot: fallbackDisplayRoot, files, errors: [fatalError], warnings, fatalError };
   }
 
   if (targetStat.isFile()) {
@@ -265,15 +305,26 @@ async function scanTarget(target: string, options: ResolvedOptions): Promise<Sca
     const language = getLanguage(canonicalTarget, options, true);
     if (!language) {
       const fatalError = `${formatPath(canonicalTarget, displayRoot)}: unsupported file type`;
-      return { displayRoot, files, errors: [fatalError], fatalError };
+      return { displayRoot, files, errors: [fatalError], warnings, fatalError };
     }
 
-    await measureFile(canonicalTarget, language, files, errors, visitedFiles, displayRoot, canonicalTarget);
-    return { displayRoot, files, errors };
+    const context = makeScanContext(options, files, errors, warnings, displayRoot);
+    await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
+    return { displayRoot, files, errors, warnings };
   }
 
-  await scanDirectory(canonicalTarget, options, files, errors, new Set(), visitedFiles, canonicalTarget);
-  return { displayRoot: canonicalTarget, files, errors };
+  await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, warnings, canonicalTarget));
+  return { displayRoot: canonicalTarget, files, errors, warnings };
+}
+
+function makeScanContext(
+  options: ResolvedOptions,
+  files: FileMetrics[],
+  errors: string[],
+  warnings: string[],
+  rootDirectory: string
+): ScanContext {
+  return { options, files, errors, warnings, visitedDirectories: new Set(), visitedFiles: new Set(), rootDirectory };
 }
 
 async function addTypeScriptProjectMetrics(
@@ -366,89 +417,63 @@ async function addArchitectureMetrics(result: ScanResult): Promise<void> {
   }
 }
 
-async function scanDirectory(
-  directory: string,
-  options: ResolvedOptions,
-  files: FileMetrics[],
-  errors: string[],
-  visitedDirectories: Set<string>,
-  visitedFiles: Set<string>,
-  rootDirectory: string
-): Promise<void> {
+async function scanDirectory(directory: string, context: ScanContext): Promise<void> {
   let resolvedDirectory;
   try {
     resolvedDirectory = await realpath(directory);
   } catch (error) {
-    errors.push(`${formatPath(directory, rootDirectory)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(directory, context.rootDirectory)}: ${formatError(error)}`);
     return;
   }
 
-  if (!isWithinDirectory(resolvedDirectory, rootDirectory)) {
+  if (!isWithinDirectory(resolvedDirectory, context.rootDirectory)) {
     return;
   }
 
-  if (visitedDirectories.has(resolvedDirectory)) {
+  if (context.visitedDirectories.has(resolvedDirectory)) {
     return;
   }
-  visitedDirectories.add(resolvedDirectory);
+  context.visitedDirectories.add(resolvedDirectory);
 
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch (error) {
-    errors.push(`${formatPath(directory, rootDirectory)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(directory, context.rootDirectory)}: ${formatError(error)}`);
     return;
   }
 
   for (const entry of entries) {
     const entryPath = path.join(directory, entry.name);
     if (entry.isSymbolicLink()) {
-      await scanSymbolicLink(
-        entry.name,
-        entryPath,
-        options,
-        files,
-        errors,
-        visitedDirectories,
-        visitedFiles,
-        rootDirectory
-      );
+      await scanSymbolicLink(entry.name, entryPath, context);
       continue;
     }
 
     if (entry.isDirectory()) {
-      if (shouldSkipDirectory(entry.name, options)) {
+      if (shouldSkipDirectory(entry.name, context.options)) {
         continue;
       }
-      await scanDirectory(entryPath, options, files, errors, visitedDirectories, visitedFiles, rootDirectory);
+      await scanDirectory(entryPath, context);
       continue;
     }
 
     if (entry.isFile()) {
-      await measureScannableFile(entryPath, options, files, errors, visitedFiles, rootDirectory);
+      await measureScannableFile(entryPath, context);
     }
   }
 }
 
-async function scanSymbolicLink(
-  name: string,
-  entryPath: string,
-  options: ResolvedOptions,
-  files: FileMetrics[],
-  errors: string[],
-  visitedDirectories: Set<string>,
-  visitedFiles: Set<string>,
-  rootDirectory: string
-): Promise<void> {
+async function scanSymbolicLink(name: string, entryPath: string, context: ScanContext): Promise<void> {
   let resolvedPath;
   try {
     resolvedPath = await realpath(entryPath);
   } catch (error) {
-    errors.push(`${formatPath(entryPath, rootDirectory)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(entryPath, context.rootDirectory)}: ${formatError(error)}`);
     return;
   }
 
-  if (!isWithinDirectory(resolvedPath, rootDirectory)) {
+  if (!isWithinDirectory(resolvedPath, context.rootDirectory)) {
     return;
   }
 
@@ -456,77 +481,93 @@ async function scanSymbolicLink(
   try {
     entryStat = await stat(entryPath);
   } catch (error) {
-    errors.push(`${formatPath(entryPath, rootDirectory)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(entryPath, context.rootDirectory)}: ${formatError(error)}`);
     return;
   }
 
   if (entryStat.isDirectory()) {
-    if (shouldSkipDirectory(name, options) || shouldSkipDirectory(path.basename(resolvedPath), options)) {
+    if (
+      shouldSkipDirectory(name, context.options) ||
+      shouldSkipDirectory(path.basename(resolvedPath), context.options)
+    ) {
       return;
     }
-    await scanDirectory(entryPath, options, files, errors, visitedDirectories, visitedFiles, rootDirectory);
+    await scanDirectory(entryPath, context);
     return;
   }
 
   if (entryStat.isFile()) {
-    await measureScannableFile(
-      entryPath,
-      options,
-      files,
-      errors,
-      visitedFiles,
-      rootDirectory,
-      resolvedPath,
-      resolvedPath
-    );
+    await measureScannableFile(entryPath, context, resolvedPath, resolvedPath);
   }
 }
 
 async function measureScannableFile(
   file: string,
-  options: ResolvedOptions,
-  files: FileMetrics[],
-  errors: string[],
-  visitedFiles: Set<string>,
-  displayRoot: string,
+  context: ScanContext,
   languageFile = file,
   realFile?: string
 ): Promise<void> {
-  const language = getLanguage(languageFile, options);
+  const language = getLanguage(languageFile, context.options);
   if (language) {
-    await measureFile(file, language, files, errors, visitedFiles, displayRoot, realFile);
+    await measureFile(file, language, 'directory', context, realFile);
   }
 }
 
 async function measureFile(
   file: string,
   language: LanguageName,
-  files: FileMetrics[],
-  errors: string[],
-  visitedFiles: Set<string>,
-  displayRoot: string,
+  mode: 'single-file' | 'directory',
+  context: ScanContext,
   realFile?: string
 ): Promise<void> {
   try {
     const resolvedFile = realFile ?? (await realpath(file));
-    if (visitedFiles.has(resolvedFile)) {
+    if (context.visitedFiles.has(resolvedFile)) {
       return;
     }
-    visitedFiles.add(resolvedFile);
+    context.visitedFiles.add(resolvedFile);
 
     const code = await readFile(file, 'utf8');
-    files.push({
-      file,
-      metrics: measureCode(code, { language }),
-    });
+    const measureOptions = { language, duplication: context.options.duplication };
+    const fileMetrics: FileMetrics = { file, metrics: measureCode(code, measureOptions) };
+    // Only directory scans compare files against each other; a single-file target has no peers.
+    // Candidate collection failing (it always parses with the JavaScript binding, which can give
+    // up where the native backend measured fine) must not discard the measured metrics.
+    if (mode === 'directory') {
+      try {
+        fileMetrics.duplicationCandidates = collectDuplicationCandidates(code, measureOptions);
+      } catch (error) {
+        // A warning, not an error: the file's metrics are complete, only its participation in
+        // cross-file matching is lost, so it is not "skipped" and must not fail --fail-on-error.
+        context.warnings.push(
+          `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates unavailable: ${formatError(error)}`
+        );
+      }
+    }
+    context.files.push(fileMetrics);
   } catch (error) {
-    errors.push(`${formatPath(file, displayRoot)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(file, context.rootDirectory)}: ${formatError(error)}`);
   }
+}
+
+/** Runs after the scan so every measured file's candidates participate. */
+function addCrossFileDuplication(result: ScanResult): void {
+  if (result.fatalError || result.files.length < 2) {
+    return;
+  }
+  const sourceFiles = result.files.flatMap(({ file, duplicationCandidates }) =>
+    duplicationCandidates ? [{ file: formatPath(file, result.displayRoot), candidates: duplicationCandidates }] : []
+  );
+  if (sourceFiles.length < 2) {
+    return;
+  }
+  result.crossFileDuplication = measureCrossFileDuplication(sourceFiles);
 }
 
 function findRiskyFunctions(
   files: FileMetrics[],
   architecture: ArchitectureMetrics | undefined,
+  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
   componentFunctionKeys: Set<string> | undefined,
   namedComponentFunctionKeys: Set<string> | undefined,
   options: ResolvedOptions,
@@ -543,6 +584,7 @@ function findRiskyFunctions(
         file,
         metrics,
         architectureByFile.get(formatPath(file, displayRoot)),
+        crossFileDuplication,
         thresholds,
         displayRoot
       ),
@@ -568,6 +610,7 @@ function findRiskyFileMetrics(
   file: string,
   metrics: CodeMetrics,
   architecture: ArchitectureFileMetrics | undefined,
+  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
   thresholds: Thresholds,
   displayRoot: string
 ): RiskFinding[] {
@@ -595,6 +638,18 @@ function findRiskyFileMetrics(
     thresholds.duplicationRatioPercent,
     duplicateBlockDetail
   );
+  if (crossFileDuplication) {
+    // Object.hasOwn: a file named like an Object.prototype member must not read an inherited value.
+    addTrigger(
+      triggers,
+      'cross-file duplicated blocks',
+      Object.hasOwn(crossFileDuplication.duplicateBlockGroupCountByFile, formattedFile)
+        ? (crossFileDuplication.duplicateBlockGroupCountByFile[formattedFile] ?? 0)
+        : 0,
+      thresholds.crossFileDuplicateBlock,
+      formatCrossFileDuplicateDetail(crossFileDuplication, formattedFile)
+    );
+  }
   if (architecture) {
     const hasFileScaleRisk = metrics.lines.code >= 100 || architecture.directLocalDependencyCount >= 8;
     if (hasFileScaleRisk) {
@@ -695,6 +750,29 @@ function addTrigger(triggers: RiskTrigger[], metric: string, value: number, thre
   triggers.push({ metric, value, threshold, score: value / threshold, detail });
 }
 
+/** Formats the cross-file groups a file participates in as `12-34 ~ b.ts:56-78; ...` (capped). */
+function formatCrossFileDuplicateDetail(
+  crossFileDuplication: CrossFileDuplicationMetrics,
+  formattedFile: string
+): string | undefined {
+  const involved = crossFileDuplication.groups.filter((group) => group.files.includes(formattedFile));
+  if (involved.length === 0) {
+    return undefined;
+  }
+  const formatted = involved
+    .slice(0, maxCrossFileDuplicateDetailGroups)
+    .map((group) =>
+      group.occurrences
+        .map(({ file, startLine, endLine }) =>
+          file === formattedFile ? `${startLine}-${endLine}` : `${file}:${startLine}-${endLine}`
+        )
+        .join(' ~ ')
+    )
+    .join('; ');
+  const truncatedSuffix = involved.length > maxCrossFileDuplicateDetailGroups ? '; ...' : '';
+  return `${formatted}${truncatedSuffix}`;
+}
+
 /** Formats duplicated block groups as `12-34 ~ 56-78; 90-99 ~ 100-109` (copies joined by ` ~ `, groups by `; `). */
 function formatDuplicateBlockGroups(groups: { endLine: number; startLine: number }[][]): string | undefined {
   if (groups.length === 0) {
@@ -759,9 +837,11 @@ function printJson(result: ScanResult, risks: RiskFinding[], options: ResolvedOp
             ? findLargestFiles(result.files, options.largestFiles, result.displayRoot)
             : undefined,
         architecture: result.architecture,
+        crossFileDuplication: result.crossFileDuplication,
         typeScriptProject: result.typeScriptProject,
         risks: reportedRisks,
         errors: result.errors,
+        warnings: result.warnings,
       },
       undefined,
       2
@@ -794,7 +874,7 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     writeStdout(`${formatTypeScriptProjectMetrics(result.typeScriptProject)}\n`);
   }
   writeStdout(
-    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}, duplicated lines (%) >= ${thresholds.duplicationRatioPercent}\n`
+    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}, duplicated lines (%) >= ${thresholds.duplicationRatioPercent}, cross-file duplicated blocks >= ${thresholds.crossFileDuplicateBlock}\n`
   );
   const profileOverrides = formatProfileOverrides(options.profileThresholds);
   if (profileOverrides) {
@@ -809,6 +889,20 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     writeStdout(`\nHigh-risk findings (top ${reportedRisks.length}${totalSuffix}):\n`);
     for (const risk of reportedRisks) {
       writeStdout(`${formatRiskLocation(risk)} ${formatRiskName(risk)} ${formatRiskMetrics(risk)}\n`);
+    }
+  }
+
+  const crossFileGroups = result.crossFileDuplication?.groups ?? [];
+  if (crossFileGroups.length > 0) {
+    const reportedGroups = crossFileGroups.slice(0, maxCrossFileDuplicateGroupLines);
+    const totalSuffix = crossFileGroups.length > reportedGroups.length ? ` of ${crossFileGroups.length}` : '';
+    writeStdout(`\nCross-file duplicate blocks (top ${reportedGroups.length}${totalSuffix}):\n`);
+    for (const group of reportedGroups) {
+      writeStdout(
+        `${group.tokenCount} tokens: ${group.occurrences
+          .map(({ file, startLine, endLine }) => `${file}:${startLine}-${endLine}`)
+          .join(', ')}\n`
+      );
     }
   }
 
@@ -832,6 +926,16 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     writeStdout(`\nLargest files by code LOC (top ${largestFiles.length}):\n`);
     for (const { file, codeLoc } of largestFiles) {
       writeStdout(`${file} (code LOC ${codeLoc})\n`);
+    }
+  }
+
+  if (result.warnings.length > 0) {
+    writeStderr(`\nDegraded ${result.warnings.length} files (measured, but excluded from cross-file matching):\n`);
+    for (const warning of result.warnings.slice(0, 10)) {
+      writeStderr(`- ${warning}\n`);
+    }
+    if (result.warnings.length > 10) {
+      writeStderr(`- ... ${result.warnings.length - 10} more\n`);
     }
   }
 
@@ -1034,6 +1138,18 @@ function parsePercentInteger(value: string): number {
   const parsed = parsePositiveInteger(value);
   if (parsed > 100) {
     throw new InvalidArgumentError('Expected an integer between 1 and 100.');
+  }
+  return parsed;
+}
+
+function parseNonNegativeInteger(value: string): number {
+  if (!/^\d+$/u.test(value)) {
+    throw new InvalidArgumentError('Expected a non-negative integer.');
+  }
+
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new InvalidArgumentError('Expected a non-negative integer.');
   }
   return parsed;
 }

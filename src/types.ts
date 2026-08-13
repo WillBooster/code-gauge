@@ -31,9 +31,23 @@ export interface LanguageDefinition {
   ncssContainerNodeTypes?: readonly string[];
 }
 
+/** Detection settings for within-file and cross-file duplication. */
+export interface DuplicationOptions {
+  /** Minimum normalized token count for a region to be considered for duplication (default 40). */
+  minTokens?: number;
+  /**
+   * Maximum normalized-token gap between two adjacent duplicate groups merged into one gapped
+   * (Type-3) clone group (default 30). 0 disables merging. Applies to within-file detection only:
+   * cross-file matching compares whole candidates and does not merge across gaps yet.
+   */
+  maxGapTokens?: number;
+}
+
 export interface MeasureOptions {
   language: LanguageName;
   includeSyntaxTree?: boolean;
+  /** Duplication detection settings; non-default values disable the native backend for the call. */
+  duplication?: DuplicationOptions;
 }
 
 export interface LineMetrics {
@@ -139,7 +153,11 @@ export interface SyntaxFeatureMetrics {
  * consistently renamed copies match. Distinct from cross-file duplicate symbol names.
  */
 export interface DuplicationMetrics {
-  /** Number of redundant (extra) copies of duplicated regions, i.e. sum of (groupSize - 1). */
+  /**
+   * Number of redundant (extra) duplicated regions: sum over groups of (groupSize - 1) times the
+   * matched fragments per occurrence, so a gapped (merged) clone counts like its unmerged
+   * fragments and threshold semantics do not shift with merging.
+   */
   duplicateBlockCount: number;
   /** Number of distinct normalized token sequences that appear more than once. */
   duplicateBlockGroupCount: number;

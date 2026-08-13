@@ -1,5 +1,6 @@
 import type Parser from 'tree-sitter';
-import type { DuplicationMetrics } from './types.js';
+import { dedupeByRegion, selectMaximalGroups } from './duplicateSelection.js';
+import type { DuplicationMetrics, DuplicationOptions } from './types.js';
 
 /**
  * Block-like nodes considered as whole-subtree duplicate candidates. Detection itself is
@@ -147,7 +148,26 @@ const literalKindByType = new Map([
   ['regex_pattern', '#regex'],
 ]);
 
+/**
+ * Kind tags whose raw source text re-enters the fingerprint in literal-dense (data-like) regions.
+ * `#heredoc` is excluded: heredoc marker names are naming choices, not data values.
+ */
+const valueCarryingLiteralKinds = new Set(['#num', '#str', '#char', '#regex']);
+
 const commentTypes = new Set(['comment', 'line_comment', 'block_comment']);
+
+/**
+ * String children that carry actual content, i.e. stringFragmentTypes minus the delimiter nodes
+ * (Python's `string_start`/`string_end`), for delimiter-independent literal values.
+ */
+const stringContentFragmentTypes = new Set([
+  'string_fragment',
+  'multiline_string_fragment',
+  'string_content',
+  'raw_string_content',
+  'escape_sequence',
+  'heredoc_content',
+]);
 
 /** Children of a string node that carry only literal content; anything else is interpolation. */
 const stringFragmentTypes = new Set([
@@ -187,8 +207,11 @@ const semanticNameFieldByParentType = new Map([
   ['template_function', 'name'],
 ]);
 
-/** Minimum normalized token count for a region to be considered for duplication, to skip trivial repeats. */
-const minDuplicateTokenCount = 40;
+export const defaultDuplicationOptions: Required<DuplicationOptions> = {
+  minTokens: 40,
+  maxGapTokens: 30,
+};
+
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
 const minSequenceStatementCount = 2;
 /**
@@ -197,13 +220,35 @@ const minSequenceStatementCount = 2;
  * conservative undercount trading completeness for bounded discovery cost).
  */
 const maxSequenceStatementCount = 100;
-/** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
-const maxSelectionRerunCount = 20;
+
+/**
+ * A region whose normalized tokens are at least 20% literal values is data-like (a lookup table, a
+ * constant list, a value-mapping switch), not logic: literal values re-enter its fingerprint so
+ * tables that merely share their shape stop counting as copy-paste. Logic-heavy code sits well
+ * below the bound (5-10% literals) while object/array tables sit above it (25-50%); punctuation
+ * and member names dilute tables, which is why the bound is far below half. Compared in integer
+ * math (5 * literals >= total) so the TypeScript and native backends cannot disagree on the
+ * boundary.
+ */
+function isLiteralDense(literalCount: number, tokenCount: number): boolean {
+  return literalCount * 5 >= tokenCount;
+}
 
 interface Token {
   /** Normalization target: identifiers to anonymize, literal kind tags, or the raw token text. */
   kind: 'id' | 'text';
   text: string;
+  /**
+   * Two INDEPENDENT hashes of `text` (djb2 and FNV-1a), precomputed so fingerprinting nested
+   * regions never re-hashes a token. Feeding the same per-token hash to both fingerprint
+   * accumulators would collapse the key to 32 effective bits: one djb2 collision between two
+   * token texts would then equate whole regions.
+   */
+  textHash: number;
+  textHash2: number;
+  /** Hash pair of a value-carrying literal's value, folded into data-like region fingerprints. */
+  literalHash?: number;
+  literalHash2?: number;
   /** 0-based source rows the token occupies, so line coverage counts only matched-token lines. */
   startRow: number;
   endRow: number;
@@ -213,6 +258,12 @@ interface TokenRange {
   startTokenIndex: number;
   endTokenIndex: number;
   node: Parser.SyntaxNode;
+}
+
+/** A contiguous run of matched tokens; gapped (merged) duplicates carry several per occurrence. */
+interface TokenSegment {
+  startTokenIndex: number;
+  endTokenIndex: number;
 }
 
 interface DuplicateCandidate {
@@ -226,26 +277,108 @@ interface DuplicateCandidate {
   endLine: number;
 }
 
+interface CountedOccurrence {
+  /** Matched token runs; more than one once gapped groups are merged. */
+  segments: TokenSegment[];
+  /** Sum of segment token counts (the gap tokens are not matched content). */
+  tokenCount: number;
+  startTokenIndex: number;
+  endTokenIndex: number;
+  startIndex: number;
+  endIndex: number;
+  startLine: number;
+  endLine: number;
+}
+
+/** A duplicate region found in one file, exported for cross-file matching by fingerprint. */
+export interface CrossFileDuplicateCandidate {
+  /** Content key: equal fingerprints mean equal normalized token sequences (up to hash collision). */
+  fingerprint: string;
+  tokenCount: number;
+  startIndex: number;
+  endIndex: number;
+  startLine: number;
+  endLine: number;
+}
+
 /**
  * Detects copy-pasted regions within a file. Regions are compared by their normalized token
  * sequence: identifiers are anonymized consistently by first-occurrence order (`a.f(a, b)` matches
  * `x.f(x, y)` but not `x.f(y, z)`), literals are normalized by kind, and member/type names and all
- * keywords/operators are kept verbatim. Candidates are whole block-like subtrees plus runs of
- * consecutive sibling statements, so a copy pasted into the middle of a longer block is still
- * found. Only maximal, non-overlapping regions are counted.
+ * keywords/operators are kept verbatim. Literal-dense (data-like) regions additionally require
+ * equal literal values. Candidates are whole block-like subtrees plus runs of consecutive sibling
+ * statements, so a copy pasted into the middle of a longer block is still found. Only maximal,
+ * non-overlapping regions are counted, and adjacent groups separated by a small token gap merge
+ * into one gapped (Type-3) clone group.
  */
-export function measureDuplication(root: Parser.SyntaxNode, codeLineNumbers: Set<number>): DuplicationMetrics {
+export function measureDuplication(
+  root: Parser.SyntaxNode,
+  codeLineNumbers: Set<number>,
+  options?: DuplicationOptions
+): DuplicationMetrics {
+  const minTokens = options?.minTokens ?? defaultDuplicationOptions.minTokens;
+  const maxGapTokens = options?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens;
   const tokens: Token[] = [];
   const blockRanges: TokenRange[] = [];
   const containerStatementRanges: TokenRange[][] = [];
   collectTokens(root, tokens, blockRanges, containerStatementRanges);
+  const literalCountPrefix = buildLiteralCountPrefix(tokens);
 
   const candidates = [
-    ...collectBlockCandidates(tokens, blockRanges),
-    ...collectSequenceCandidates(tokens, containerStatementRanges),
+    ...collectBlockCandidates(tokens, literalCountPrefix, blockRanges, minTokens),
+    ...collectSequenceCandidates(tokens, literalCountPrefix, containerStatementRanges, minTokens),
   ];
-  const counted = selectMaximalDuplicates(candidates);
-  return summarizeDuplicates(counted, codeLineNumbers, tokens);
+  const counted = selectMaximalGroups(candidates, (group) => group.length >= 2);
+  const groups = mergeAdjacentGroups(toCountedGroups(counted), maxGapTokens);
+  return summarizeDuplicates(groups, codeLineNumbers, tokens);
+}
+
+/**
+ * Collects this file's duplicate-candidate fingerprints for cross-file clone detection: whole
+ * block-like subtrees plus each statement container's full run (so wholly copied files and class
+ * bodies match even when no inner block clears the threshold on its own). Nested and overlapping
+ * candidates are all returned; the project-level selection keeps only maximal ones.
+ */
+export function collectCrossFileDuplicateCandidates(
+  root: Parser.SyntaxNode,
+  options?: DuplicationOptions
+): CrossFileDuplicateCandidate[] {
+  const minTokens = options?.minTokens ?? defaultDuplicationOptions.minTokens;
+  const tokens: Token[] = [];
+  const blockRanges: TokenRange[] = [];
+  const containerStatementRanges: TokenRange[][] = [];
+  collectTokens(root, tokens, blockRanges, containerStatementRanges);
+  const literalCountPrefix = buildLiteralCountPrefix(tokens);
+
+  const candidates = collectBlockCandidates(tokens, literalCountPrefix, blockRanges, minTokens);
+  for (const statements of containerStatementRanges) {
+    const first = statements[0];
+    const last = statements.at(-1);
+    if (!first || !last) {
+      continue;
+    }
+    const tokenCount = last.endTokenIndex - first.startTokenIndex;
+    if (tokenCount < minTokens) {
+      continue;
+    }
+    candidates.push(
+      toCandidate(
+        `s:${fingerprintKey(tokens, literalCountPrefix, first.startTokenIndex, last.endTokenIndex)}`,
+        first.startTokenIndex,
+        last.endTokenIndex,
+        first.node,
+        last.node
+      )
+    );
+  }
+  return dedupeByRegion(candidates).map(({ fingerprint, tokenCount, startIndex, endIndex, startLine, endLine }) => ({
+    fingerprint,
+    tokenCount,
+    startIndex,
+    endIndex,
+    startLine,
+    endLine,
+  }));
 }
 
 function collectTokens(
@@ -262,7 +395,9 @@ function collectTokens(
     } else if (atomicKind !== undefined) {
       // Interpolation-free strings collapse to their kind tag so copies differing only in quote
       // style or content still match; delimiter tokens would otherwise break the equivalence.
-      tokens.push({ kind: 'text', text: atomicKind, startRow: node.startPosition.row, endRow: node.endPosition.row });
+      tokens.push(
+        makeTextToken(atomicKind, literalValueText(node, atomicKind), node.startPosition.row, node.endPosition.row)
+      );
     } else if (!commentTypes.has(node.type)) {
       const statementRanges: TokenRange[] = [];
       const isContainer = node.isNamed && statementContainerTypes.has(node.type);
@@ -272,7 +407,10 @@ function collectTokens(
           statementRanges.push(childRange);
         }
       }
-      if (isContainer && statementRanges.length >= minSequenceStatementCount) {
+      // Single-statement containers are recorded too: within-file window enumeration needs two
+      // statements and simply yields nothing for them, but cross-file matching must still see a
+      // file whose only top-level statement is not a catalogued block type (a lone exported table).
+      if (isContainer && statementRanges.length > 0) {
         containerStatementRanges.push(statementRanges);
       }
     }
@@ -305,22 +443,78 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
   const endRow = node.endPosition.row;
   if (node.isNamed && shorthandPropertyTypes.has(node.type)) {
     tokens.push(
-      { kind: 'text', text: node.text, startRow, endRow },
-      { kind: 'text', text: ':', startRow, endRow },
-      { kind: 'id', text: node.text, startRow, endRow }
+      makeTextToken(node.text, undefined, startRow, endRow),
+      makeTextToken(':', undefined, startRow, endRow),
+      { kind: 'id', text: node.text, textHash: 0, textHash2: 0, startRow, endRow }
     );
     return;
   }
 
   if (node.isNamed && anonymizedIdentifierTypes.has(node.type) && !isSemanticNameLeaf(node)) {
-    tokens.push({ kind: 'id', text: node.text, startRow, endRow });
+    tokens.push({ kind: 'id', text: node.text, textHash: 0, textHash2: 0, startRow, endRow });
     return;
   }
 
   // Anything else keeps its text: keywords, operators, punctuation, and semantic names such as
   // `property_identifier`/`type_identifier`, which must distinguish otherwise-identical structures.
   const literalKind = node.isNamed ? literalKindByType.get(node.type) : undefined;
-  tokens.push({ kind: 'text', text: literalKind ?? node.text, startRow, endRow });
+  if (literalKind === undefined) {
+    tokens.push(makeTextToken(node.text, undefined, startRow, endRow));
+  } else {
+    tokens.push(makeTextToken(literalKind, literalValueText(node, literalKind), startRow, endRow));
+  }
+}
+
+function makeTextToken(text: string, literalValueText: string | undefined, startRow: number, endRow: number): Token {
+  const token: Token = { kind: 'text', text, textHash: hashText(text), textHash2: hashText2(text), startRow, endRow };
+  if (literalValueText !== undefined && valueCarryingLiteralKinds.has(text)) {
+    token.literalHash = hashText(literalValueText);
+    token.literalHash2 = hashText2(literalValueText);
+  }
+  return token;
+}
+
+/**
+ * The value of a literal as folded into literal-dense fingerprints. Strings hash their CONTENT,
+ * not their source spelling: formatters rewrite quote style on paste (`'one'` vs `"one"`), so
+ * delimiters must not make two copied tables differ. Content comes from the fragment children when
+ * the grammar provides them (which also drops Python's `string_start`/`string_end` delimiter
+ * nodes), else from the text with one matching pair of surrounding quotes stripped. Numbers keep
+ * their raw text: formatters preserve numeric spelling, and canonicalizing values (`0x10` vs `16`)
+ * identically in JavaScript and Rust would be far riskier than the rare mismatch it would unify.
+ */
+function literalValueText(node: Parser.SyntaxNode, kind: string): string {
+  if (kind !== '#str' && kind !== '#char') {
+    return node.text;
+  }
+  // Fragment leaves (string_fragment, escape_sequence, heredoc_content, ...) already carry bare
+  // content; a quote appearing there is content, not a delimiter.
+  if (stringContentFragmentTypes.has(node.type)) {
+    return node.text;
+  }
+  const fragments = node.namedChildren.filter((child) => stringContentFragmentTypes.has(child.type));
+  if (fragments.length > 0) {
+    return fragments.map((child) => child.text).join('');
+  }
+  return stripMatchingQuotes(node.text);
+}
+
+const quoteCharacters = new Set(['"', "'", '`']);
+
+function stripMatchingQuotes(text: string): string {
+  const first = text[0];
+  return text.length >= 2 && first !== undefined && quoteCharacters.has(first) && text.endsWith(first)
+    ? text.slice(1, -1)
+    : text;
+}
+
+/** literalCountPrefix[i] = value-carrying literal tokens in tokens[0..i), for O(1) density checks. */
+function buildLiteralCountPrefix(tokens: Token[]): Int32Array {
+  const prefix = new Int32Array(tokens.length + 1);
+  for (const [index, token] of tokens.entries()) {
+    prefix[index + 1] = (prefix[index] ?? 0) + (token.literalHash === undefined ? 0 : 1);
+  }
+  return prefix;
 }
 
 function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
@@ -394,16 +588,21 @@ function isSemanticNameLeaf(node: Parser.SyntaxNode): boolean {
   return field !== undefined && parent.childForFieldName(field)?.id === node.id;
 }
 
-function collectBlockCandidates(tokens: Token[], blockRanges: TokenRange[]): DuplicateCandidate[] {
+function collectBlockCandidates(
+  tokens: Token[],
+  literalCountPrefix: Int32Array,
+  blockRanges: TokenRange[],
+  minTokens: number
+): DuplicateCandidate[] {
   const candidates: DuplicateCandidate[] = [];
   for (const range of blockRanges) {
     const tokenCount = range.endTokenIndex - range.startTokenIndex;
-    if (tokenCount < minDuplicateTokenCount) {
+    if (tokenCount < minTokens) {
       continue;
     }
     candidates.push(
       toCandidate(
-        `b:${fingerprintTokens(tokens, range.startTokenIndex, range.endTokenIndex)}`,
+        `b:${fingerprintKey(tokens, literalCountPrefix, range.startTokenIndex, range.endTokenIndex)}`,
         range.startTokenIndex,
         range.endTokenIndex,
         range.node,
@@ -436,10 +635,15 @@ interface SequenceWindow {
  * (window-consistent) fingerprint. Without the maximality filter a degenerate file of
  * near-identical statements would fingerprint every sub-window of every repeated region.
  */
-function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]): DuplicateCandidate[] {
+function collectSequenceCandidates(
+  tokens: Token[],
+  literalCountPrefix: Int32Array,
+  containers: TokenRange[][],
+  minTokens: number
+): DuplicateCandidate[] {
   const candidates: DuplicateCandidate[] = [];
   const occurrencesByWindowKey = new Map<number, WindowOccurrences>();
-  const containerWindows = containers.map((statements) => enumerateContainerWindows(tokens, statements));
+  const containerWindows = containers.map((statements) => enumerateContainerWindows(tokens, statements, minTokens));
   for (const [containerIndex, windows] of containerWindows.entries()) {
     for (const [start, row] of windows.windowKeysByStart.entries()) {
       for (const windowKey of row) {
@@ -525,7 +729,7 @@ function collectSequenceCandidates(tokens: Token[], containers: TokenRange[][]):
       if (!first || !last) {
         continue;
       }
-      const fingerprint = `s:${fingerprintTokens(tokens, first.startTokenIndex, last.endTokenIndex)}`;
+      const fingerprint = `s:${fingerprintKey(tokens, literalCountPrefix, first.startTokenIndex, last.endTokenIndex)}`;
       candidates.push(toCandidate(fingerprint, first.startTokenIndex, last.endTokenIndex, first.node, last.node));
       emitted.push(window);
     }
@@ -560,9 +764,9 @@ interface ContainerWindows {
   statementHashes: number[];
 }
 
-function enumerateContainerWindows(tokens: Token[], statements: TokenRange[]): ContainerWindows {
+function enumerateContainerWindows(tokens: Token[], statements: TokenRange[], minTokens: number): ContainerWindows {
   const statementHashes = statements.map((statement) =>
-    hashText(fingerprintTokens(tokens, statement.startTokenIndex, statement.endTokenIndex))
+    fingerprintHash(tokens, statement.startTokenIndex, statement.endTokenIndex)
   );
   const windowKeysByStart: (number | undefined)[][] = [];
   for (let start = 0; start < statements.length; start += 1) {
@@ -580,7 +784,7 @@ function enumerateContainerWindows(tokens: Token[], statements: TokenRange[]): C
       tokenCount += statement.endTokenIndex - statement.startTokenIndex;
       const statementCount = end - start + 1;
       row[statementCount] =
-        statementCount >= minSequenceStatementCount && tokenCount >= minDuplicateTokenCount
+        statementCount >= minSequenceStatementCount && tokenCount >= minTokens
           ? combineHashes(hash, statementCount)
           : undefined;
     }
@@ -608,27 +812,100 @@ function toCandidate(
   };
 }
 
-/** Serializes a token range with identifiers anonymized consistently by first-occurrence order. */
-function fingerprintTokens(tokens: Token[], startTokenIndex: number, endTokenIndex: number): string {
+/** Caches of hashText/hashText2 over '$0', '$1', ... so anonymized identifiers hash without allocating. */
+const anonymizedIndexHashes: number[] = [];
+const anonymizedIndexHashes2: number[] = [];
+
+function anonymizedIndexHash(index: number): number {
+  let hash = anonymizedIndexHashes[index];
+  if (hash === undefined) {
+    hash = hashText(`$${index}`);
+    anonymizedIndexHashes[index] = hash;
+  }
+  return hash;
+}
+
+function anonymizedIndexHash2(index: number): number {
+  let hash = anonymizedIndexHashes2[index];
+  if (hash === undefined) {
+    hash = hashText2(`$${index}`);
+    anonymizedIndexHashes2[index] = hash;
+  }
+  return hash;
+}
+
+/**
+ * Content key of a token range: two independent 32-bit hashes over the normalized token sequence
+ * (identifiers anonymized consistently by first-occurrence order) plus the token count. Regions
+ * with equal keys are treated as equal content; a collision would need both 32-bit hashes and the
+ * length to coincide, which is negligible for a metrics report. Hashing per-token instead of
+ * serializing the whole range to a string keeps fingerprinting allocation-free for nested regions.
+ */
+function fingerprintKey(
+  tokens: Token[],
+  literalCountPrefix: Int32Array,
+  startTokenIndex: number,
+  endTokenIndex: number
+): string {
+  const literalCount = (literalCountPrefix[endTokenIndex] ?? 0) - (literalCountPrefix[startTokenIndex] ?? 0);
+  const literalDense = isLiteralDense(literalCount, endTokenIndex - startTokenIndex);
+  const [primary, secondary] = fingerprintHashPair(tokens, startTokenIndex, endTokenIndex, literalDense);
+  return `${primary}:${secondary}:${endTokenIndex - startTokenIndex}`;
+}
+
+/**
+ * A single 32-bit summary of a range for the coarse rolling-hash phase. Deliberately
+ * density-agnostic: density is a property of the final candidate REGION, and folding literal
+ * values into per-statement hashes would make a dense statement inside a logic-heavy window
+ * (`const weights = [1, 2, 3];`) block the window from ever being enumerated. The coarse phase
+ * over-approximates on shape alone; the exact region fingerprint still applies the density rule.
+ */
+function fingerprintHash(tokens: Token[], startTokenIndex: number, endTokenIndex: number): number {
+  const [primary, secondary] = fingerprintHashPair(tokens, startTokenIndex, endTokenIndex, false);
+  // XOR already coerces to int32, matching the native backend's i32 arithmetic.
+  return primary ^ Math.imul(secondary, 31);
+}
+
+function fingerprintHashPair(
+  tokens: Token[],
+  startTokenIndex: number,
+  endTokenIndex: number,
+  foldLiteralValues: boolean
+): [number, number] {
   const indexByIdentifier = new Map<string, number>();
-  const parts: string[] = [];
+  let primary = 5381;
+  let secondary = 52_711;
   for (let index = startTokenIndex; index < endTokenIndex; index += 1) {
     const token = tokens[index];
     if (!token) {
       continue;
     }
+    // Each accumulator consumes its own independent per-token hash: sharing one would collapse
+    // the key to 32 effective bits (a single djb2 collision would equate whole regions).
+    let part: number;
+    let part2: number;
     if (token.kind === 'id') {
       let identifierIndex = indexByIdentifier.get(token.text);
       if (identifierIndex === undefined) {
         identifierIndex = indexByIdentifier.size;
         indexByIdentifier.set(token.text, identifierIndex);
       }
-      parts.push(`$${identifierIndex}`);
+      part = anonymizedIndexHash(identifierIndex);
+      part2 = anonymizedIndexHash2(identifierIndex);
     } else {
-      parts.push(token.text);
+      part = token.textHash;
+      part2 = token.textHash2;
+    }
+    // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 (Math.trunc does not), which must match the native backend's wrapping i32 arithmetic.
+    primary = (Math.imul(primary, 31) + part) | 0;
+    secondary = Math.imul(secondary, 37) ^ part2;
+    if (foldLiteralValues && token.literalHash !== undefined && token.literalHash2 !== undefined) {
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 (Math.trunc does not), which must match the native backend's wrapping i32 arithmetic.
+      primary = (Math.imul(primary, 31) + token.literalHash) | 0;
+      secondary = Math.imul(secondary, 37) ^ token.literalHash2;
     }
   }
-  return parts.join(' ');
+  return [primary, secondary];
 }
 
 /** djb2-style hash; XOR keeps the value in signed 32-bit range, which is fine for a grouping key. */
@@ -641,98 +918,131 @@ function hashText(text: string): number {
   return hash;
 }
 
+/** FNV-1a over UTF-16 code units: independent of hashText so the two accumulators never share input. */
+function hashText2(text: string): number {
+  let hash = -2_128_831_035; // 2166136261 as int32 (the FNV-1a offset basis)
+  for (let index = 0; index < text.length; index += 1) {
+    // oxlint-disable-next-line unicorn/prefer-code-point -- hashes UTF-16 code units like hashText.
+    hash = Math.imul(hash ^ text.charCodeAt(index), 16_777_619);
+  }
+  return hash;
+}
+
 function combineHashes(hash: number, value: number): number {
   return Math.imul(hash, 31) + value;
 }
 
-/**
- * Keeps only maximal, non-overlapping duplicates: candidates are grouped by fingerprint, larger
- * regions win over regions overlapping them, and groups reduced below two survivors are dropped.
- */
-function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, DuplicateCandidate[]> {
-  const byFingerprint = new Map<string, DuplicateCandidate[]>();
-  for (const candidate of candidates) {
-    const group = byFingerprint.get(candidate.fingerprint) ?? [];
-    group.push(candidate);
-    byFingerprint.set(candidate.fingerprint, group);
+function toCountedGroups(counted: Map<string, DuplicateCandidate[]>): CountedOccurrence[][] {
+  const groups: CountedOccurrence[][] = [];
+  for (const group of counted.values()) {
+    const occurrences = group.map((candidate) => ({
+      segments: [{ startTokenIndex: candidate.startTokenIndex, endTokenIndex: candidate.endTokenIndex }],
+      tokenCount: candidate.tokenCount,
+      startTokenIndex: candidate.startTokenIndex,
+      endTokenIndex: candidate.endTokenIndex,
+      startIndex: candidate.startIndex,
+      endIndex: candidate.endIndex,
+      startLine: candidate.startLine,
+      endLine: candidate.endLine,
+    }));
+    occurrences.sort(
+      (left, right) => left.startTokenIndex - right.startTokenIndex || left.endTokenIndex - right.endTokenIndex
+    );
+    groups.push(occurrences);
   }
+  return groups;
+}
 
-  const groups = [...byFingerprint.values()].map(dedupeByRegion).filter((group) => group.length >= 2);
-  // Greedy order ranks by total coverage (region size × copies): a 3×3-statement group must beat
-  // a 2×4-statement group overlapping two of its copies, or the third copy is silently dropped
-  // and the reported duplication shrinks as more copies are added.
-  const groupSizeByFingerprint = new Map(groups.map((group) => [group[0]?.fingerprint ?? '', group.length]));
-  const coverage = (candidate: DuplicateCandidate): number =>
-    candidate.tokenCount * (groupSizeByFingerprint.get(candidate.fingerprint) ?? 1);
-  let duplicates = groups.flat();
-  duplicates.sort((left, right) => coverage(right) - coverage(left));
-
-  // Greedy selection can keep a candidate whose group ends up below two survivors; such an
-  // uncounted region must not block smaller groups, so the largest failed group is removed and the
-  // selection reruns. One group at a time: freeing a failed group's regions can rescue another.
-  // The rerun cap bounds degenerate inputs; past it the remaining failed groups are dropped,
-  // trading a sliver of recall on such files for bounded runtime.
-  for (let rerun = 0; ; rerun += 1) {
-    const keptRegions: { startIndex: number; endIndex: number }[] = [];
-    const counted = new Map<string, DuplicateCandidate[]>();
-    for (const candidate of duplicates) {
-      if (keptRegions.some((region) => overlaps(region, candidate))) {
-        continue;
-      }
-      keptRegions.push(candidate);
-      const group = counted.get(candidate.fingerprint) ?? [];
-      group.push(candidate);
-      counted.set(candidate.fingerprint, group);
-    }
-
-    let failedFingerprint: string | undefined;
-    let failedTokenCount = -1;
-    for (const [fingerprint, group] of counted) {
-      const tokenCount = group[0]?.tokenCount ?? 0;
-      if (group.length < 2 && tokenCount > failedTokenCount) {
-        failedFingerprint = fingerprint;
-        failedTokenCount = tokenCount;
-      }
-    }
-    // No failed fingerprint means every counted group kept at least two survivors.
-    if (failedFingerprint === undefined) {
-      return counted;
-    }
-    if (rerun >= maxSelectionRerunCount) {
-      for (const [fingerprint, group] of counted) {
-        if (group.length < 2) {
-          counted.delete(fingerprint);
+/**
+ * Merges duplicate groups separated by a small token gap into one gapped (Type-3) clone group: a
+ * copy edited in one spot splits into two exact groups whose occurrences sit side by side in the
+ * same order. Two groups merge when they have the same number of occurrences and, pairing
+ * occurrences in source order, every pair is gap-adjacent without crossing into the next pair.
+ * Merging repeats to a fixpoint so a clone edited in several spots still reassembles. Gap tokens
+ * are not matched content: line coverage and sizes count only the matched segments.
+ */
+function mergeAdjacentGroups(groups: CountedOccurrence[][], maxGapTokens: number): CountedOccurrence[][] {
+  if (maxGapTokens <= 0 || groups.length < 2) {
+    return groups;
+  }
+  // Deterministic processing order (mirrored by the native backend): by first occurrence position.
+  groups.sort(compareGroups);
+  for (let restart = true; restart;) {
+    restart = false;
+    for (let leftIndex = 0; leftIndex < groups.length && !restart; leftIndex += 1) {
+      for (let rightIndex = leftIndex + 1; rightIndex < groups.length; rightIndex += 1) {
+        const left = groups[leftIndex];
+        const right = groups[rightIndex];
+        if (!left || !right) {
+          continue;
+        }
+        const merged = mergeGroups(left, right, maxGapTokens) ?? mergeGroups(right, left, maxGapTokens);
+        if (merged) {
+          groups[leftIndex] = merged;
+          groups.splice(rightIndex, 1);
+          groups.sort(compareGroups);
+          restart = true;
+          break;
         }
       }
-      return counted;
-    }
-
-    duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
-  }
-}
-
-/** Drops candidates covering the same source region (a block and the statement run spanning it). */
-function dedupeByRegion(group: DuplicateCandidate[]): DuplicateCandidate[] {
-  const byRegion = new Map<string, DuplicateCandidate>();
-  for (const candidate of group) {
-    const key = `${candidate.startIndex}:${candidate.endIndex}`;
-    const existing = byRegion.get(key);
-    if (!existing || candidate.tokenCount > existing.tokenCount) {
-      byRegion.set(key, candidate);
     }
   }
-  return [...byRegion.values()];
+  return groups;
 }
 
-function overlaps(
-  left: { startIndex: number; endIndex: number },
-  right: { startIndex: number; endIndex: number }
-): boolean {
-  return left.startIndex < right.endIndex && right.startIndex < left.endIndex;
+function compareGroups(left: CountedOccurrence[], right: CountedOccurrence[]): number {
+  const leftFirst = left[0];
+  const rightFirst = right[0];
+  return (
+    (leftFirst?.startTokenIndex ?? 0) - (rightFirst?.startTokenIndex ?? 0) ||
+    (leftFirst?.endTokenIndex ?? 0) - (rightFirst?.endTokenIndex ?? 0)
+  );
+}
+
+/** The merged group when every `second` occurrence gap-follows its `first` counterpart, else undefined. */
+function mergeGroups(
+  first: CountedOccurrence[],
+  second: CountedOccurrence[],
+  maxGapTokens: number
+): CountedOccurrence[] | undefined {
+  if (first.length !== second.length) {
+    return undefined;
+  }
+  for (const [index, leading] of first.entries()) {
+    const trailing = second[index];
+    if (!trailing) {
+      return undefined;
+    }
+    const gap = trailing.startTokenIndex - leading.endTokenIndex;
+    if (gap < 0 || gap > maxGapTokens) {
+      return undefined;
+    }
+    // The merged span must stay clear of the next pair, or spans would overlap.
+    const next = first[index + 1];
+    if (next && trailing.endTokenIndex > next.startTokenIndex) {
+      return undefined;
+    }
+  }
+  return first.map((leading, index) => {
+    const trailing = second[index];
+    if (!trailing) {
+      return leading;
+    }
+    return {
+      segments: [...leading.segments, ...trailing.segments],
+      tokenCount: leading.tokenCount + trailing.tokenCount,
+      startTokenIndex: leading.startTokenIndex,
+      endTokenIndex: trailing.endTokenIndex,
+      startIndex: leading.startIndex,
+      endIndex: trailing.endIndex,
+      startLine: leading.startLine,
+      endLine: trailing.endLine,
+    };
+  });
 }
 
 function summarizeDuplicates(
-  counted: Map<string, DuplicateCandidate[]>,
+  groups: CountedOccurrence[][],
   codeLineNumbers: Set<number>,
   tokens: Token[]
 ): DuplicationMetrics {
@@ -740,18 +1050,24 @@ function summarizeDuplicates(
   let maxDuplicateBlockSize = 0;
   const duplicateBlockGroups: { startLine: number; endLine: number }[][] = [];
   const duplicatedLines = new Set<number>();
-  for (const group of counted.values()) {
-    duplicateBlockCount += group.length - 1;
-    for (const candidate of group) {
-      maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, candidate.tokenCount);
-      // Only CODE lines carrying matched tokens count: comments and blank gaps inside a
-      // candidate's bounding range — and blank rows inside a multi-row token (heredocs, template
-      // literals) — are not duplicated content and would push the ratio past 1.
-      for (let index = candidate.startTokenIndex; index < candidate.endTokenIndex; index += 1) {
-        const token = tokens[index];
-        for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
-          if (codeLineNumbers.has(row + 1)) {
-            duplicatedLines.add(row + 1);
+  for (const group of groups) {
+    // Each redundant occurrence contributes one count per matched fragment, so merging a gapped
+    // clone's fragments into one group does not halve the count a `duplicateBlock` threshold sees:
+    // an edited two-fragment pair still counts 2, exactly as its unmerged fragments did.
+    duplicateBlockCount += (group.length - 1) * (group[0]?.segments.length ?? 1);
+    for (const occurrence of group) {
+      maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, occurrence.tokenCount);
+      // Only CODE lines carrying matched tokens count: comments and blank gaps inside an
+      // occurrence's bounding range — the unmatched gap of a merged clone, and blank rows inside a
+      // multi-row token (heredocs, template literals) — are not duplicated content and would push
+      // the ratio past 1.
+      for (const segment of occurrence.segments) {
+        for (let index = segment.startTokenIndex; index < segment.endTokenIndex; index += 1) {
+          const token = tokens[index];
+          for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
+            if (codeLineNumbers.has(row + 1)) {
+              duplicatedLines.add(row + 1);
+            }
           }
         }
       }
@@ -766,7 +1082,7 @@ function summarizeDuplicates(
 
   return {
     duplicateBlockCount,
-    duplicateBlockGroupCount: counted.size,
+    duplicateBlockGroupCount: groups.length,
     duplicateBlockGroups,
     duplicateLineCount: duplicatedLines.size,
     duplicationRatio: codeLineNumbers.size === 0 ? 0 : duplicatedLines.size / codeLineNumbers.size,

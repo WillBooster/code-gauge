@@ -1,5 +1,10 @@
 import Parser from 'tree-sitter';
-import { measureDuplication } from './duplication.js';
+import {
+  collectCrossFileDuplicateCandidates,
+  defaultDuplicationOptions,
+  measureDuplication,
+  type CrossFileDuplicateCandidate,
+} from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
 import { commentNodeTypes, countFunctionNcss, countNcss, invalidateNcssSetsCache } from './ncss.js';
 import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
@@ -261,17 +266,16 @@ export class TreeMeasurer {
       throw new Error(`Unsupported language: ${options.language}`);
     }
 
-    const nativePayload = measureWithNativeBackend(code, language, options.includeSyntaxTree ?? false);
+    // The native backend implements only the default duplication settings, so custom settings
+    // measure through the TypeScript backend instead of silently ignoring them.
+    const nativePayload = usesDefaultDuplicationOptions(options)
+      ? measureWithNativeBackend(code, language, options.includeSyntaxTree ?? false)
+      : undefined;
     if (nativePayload) {
       return assembleNativeMetrics(nativePayload, options.includeSyntaxTree ?? false);
     }
 
-    const parser = new Parser();
-    parser.setLanguage(language.parserLanguage);
-    const tree = parser.parse(code, undefined, {
-      bufferSize: code.length + 1,
-    });
-    const root = tree.rootNode;
+    const root = parseRoot(code, language);
     const functions = collectNodes(root, new Set(language.functionNodeTypes)).filter(
       (node) => !isLambdaBodyBlock(node) && isImplementedFunction(node)
     );
@@ -300,7 +304,7 @@ export class TreeMeasurer {
       cohesion: structuralMetrics.cohesion,
       syntaxFeatures: structuralMetrics.syntaxFeatures,
       typeComplexity: structuralMetrics.typeComplexity,
-      duplication: measureDuplication(root, codeLineNumbers),
+      duplication: measureDuplication(root, codeLineNumbers, options.duplication),
       halstead,
       maintainabilityIndex: calculateMaintainabilityIndex(
         halstead.volume,
@@ -310,12 +314,43 @@ export class TreeMeasurer {
       syntaxTree: options.includeSyntaxTree ? root.toString() : undefined,
     };
   }
+
+  /**
+   * Collects duplicate-candidate fingerprints of one file for cross-file clone detection with
+   * measureCrossFileDuplication. Always measured by the TypeScript backend.
+   */
+  collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
+    const language = this.registry.get(options.language);
+    if (!language) {
+      throw new Error(`Unsupported language: ${options.language}`);
+    }
+    return collectCrossFileDuplicateCandidates(parseRoot(code, language), options.duplication);
+  }
+}
+
+function parseRoot(code: string, language: LanguageDefinition): Parser.SyntaxNode {
+  const parser = new Parser();
+  parser.setLanguage(language.parserLanguage);
+  return parser.parse(code, undefined, { bufferSize: code.length + 1 }).rootNode;
+}
+
+function usesDefaultDuplicationOptions(options: MeasureOptions): boolean {
+  const duplication = options.duplication;
+  return (
+    (duplication?.minTokens ?? defaultDuplicationOptions.minTokens) === defaultDuplicationOptions.minTokens &&
+    (duplication?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens) === defaultDuplicationOptions.maxGapTokens
+  );
 }
 
 export const defaultMeasurer = new TreeMeasurer();
 
 export function measureCode(code: string, options: MeasureOptions): CodeMetrics {
   return defaultMeasurer.measure(code, options);
+}
+
+/** Standalone helper mirroring measureCode for the default measurer. */
+export function collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
+  return defaultMeasurer.collectDuplicationCandidates(code, options);
 }
 
 /**
