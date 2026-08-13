@@ -200,6 +200,38 @@ function ${name}(entries, factor) {
 }
 `;
 
+const pythonMethodClone = (name: string, weight: string, operator: string): string => `
+    def ${name}(self, entries, factor):
+        accumulated = 0
+        for item in entries:
+            scaled = item.${weight} * item.quantity
+            if item.special:
+                accumulated ${operator} scaled * 0.5
+            else:
+                accumulated += scaled
+        print('accumulated', accumulated, factor)
+        return accumulated * (1 + factor)
+`;
+
+const callRunClone = (name: string, first: string, second: string, argA: string, argB: string): string => `
+function ${name}(${argA}, ${argB}) {
+  ${first}(${argA}, ${argB});
+  ${second}(${argA}, ${argB});
+  validate${name}(${argA}, ${argB});
+  finish${name}(${argA}, ${argB});
+  log${name}(${argA}, ${argB});
+  emit${name}(${argA}, ${argB});
+}
+`;
+
+const dispatchPredicate = (name: string, values: string[]): string => `
+function ${name}(node) {
+  return (
+    ${values.map((value) => `node.kind === '${value}'`).join(' ||\n    ')}
+  );
+}
+`;
+
 describe('duplication: near-miss (Type-3) clones', () => {
   // The two copies differ in a member name, an operator, and scattered renames, so no exact
   // fragment reaches minTokens and gap merging never fires: only the similarity pipeline
@@ -262,6 +294,45 @@ function secondShape(limit, step) {
 }
 `;
     const metrics = measureCode(different, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('detects clones nested inside a single enclosing wrapper', () => {
+    // A describe()/IIFE wrapper is itself an eligible block spanning the whole file; candidate
+    // selection must descend through it instead of comparing the lone wrapper to nothing.
+    const wrapped = `describe('suite', () => {${nearMissPair}});`;
+    const iife = `(function () {${nearMissPair}})();`;
+
+    expect(measureCode(wrapped, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(1);
+    expect(measureCode(iife, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('detects clones inside a single Python class body', () => {
+    const singleClass = `class Totals:${pythonMethodClone('total_price', 'price', '+=')}${pythonMethodClone('total_weight', 'weight', '-=')}`;
+
+    expect(measureCode(singleClass, { language: 'python' }).duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('does not pair same-skeleton functions calling entirely different APIs', () => {
+    // Punctuation and keywords dominate a token-level LCS, so without the content gate these two
+    // unrelated call runs would exceed 70% structural similarity.
+    const code =
+      callRunClone('One', 'parse', 'persist', 'record', 'ctx') +
+      callRunClone('Two', 'connect', 'upload', 'asset', 'session');
+
+    expect(measureCode(code, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('does not pair dispatch predicates differing in every literal value', () => {
+    // `x.kind === '...' || ...` chains sit below the literal-density bound yet reduce to a
+    // content-free skeleton; folding literal values plus the content gate must reject them. The
+    // branch counts differ so the exact pipeline (which abstracts literals by design) cannot
+    // match either: this pins the near-miss phase's rejection specifically.
+    const code =
+      dispatchPredicate('isLoop', ['for', 'while', 'do', 'for_in', 'for_of', 'loop', 'repeat', 'until']) +
+      dispatchPredicate('isJump', ['break', 'continue', 'return', 'throw', 'goto', 'yield', 'await', 'halt', 'exit']);
+    const metrics = measureCode(code, { language: 'javascript' });
 
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
   });

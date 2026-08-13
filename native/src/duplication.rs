@@ -192,6 +192,8 @@ const MIN_SIMILARITY_PERCENT: usize = 70;
 const NEAR_MISS_NGRAM_SIZE: usize = 5;
 /// Filtration threshold: shared distinct n-grams over the smaller set; see duplication.ts.
 const NEAR_MISS_FILTRATION_PERCENT: usize = 10;
+/// Exclusive bound on shared content-bearing tokens (names and literal values); see duplication.ts.
+const MIN_CONTENT_SIMILARITY_PERCENT: usize = 50;
 
 /// See isLiteralDense in duplication.ts: >= 20% literal values marks a region as data-like.
 fn is_literal_dense(literal_count: usize, token_count: usize) -> bool {
@@ -222,6 +224,8 @@ struct Token<'a> {
     /// Hash pair of a value-carrying literal's value, folded into data-like region fingerprints.
     literal_hash: Option<i32>,
     literal_hash2: Option<i32>,
+    /// True for verbatim-kept NAMES (named grammar leaves); see the Token doc in duplication.ts.
+    is_name: bool,
     start_row: usize,
     end_row: usize,
 }
@@ -311,6 +315,7 @@ fn collect_tokens<'a>(
             tokens.push(make_text_token(
                 Cow::Borrowed(atomic_kind),
                 Some(literal_value_text(node, atomic_kind, code)),
+                false,
                 node.start_position().row,
                 node.end_position().row,
             ));
@@ -383,12 +388,14 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         tokens.push(make_text_token(
             Cow::Borrowed(text),
             None,
+            true,
             start_row,
             end_row,
         ));
         tokens.push(make_text_token(
             Cow::Borrowed(":"),
             None,
+            false,
             start_row,
             end_row,
         ));
@@ -399,6 +406,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
             text_hash2: 0,
             literal_hash: None,
             literal_hash2: None,
+            is_name: false,
             start_row,
             end_row,
         });
@@ -416,6 +424,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
             text_hash2: 0,
             literal_hash: None,
             literal_hash2: None,
+            is_name: false,
             start_row,
             end_row,
         });
@@ -432,12 +441,14 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         Some(kind) => make_text_token(
             Cow::Borrowed(kind),
             Some(literal_value_text(node, kind, code)),
+            false,
             start_row,
             end_row,
         ),
         None => make_text_token(
             Cow::Borrowed(node_text(node, code)),
             None,
+            node.is_named(),
             start_row,
             end_row,
         ),
@@ -447,6 +458,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
 fn make_text_token<'a>(
     text: Cow<'a, str>,
     literal_value_text: Option<Cow<'a, str>>,
+    is_name: bool,
     start_row: usize,
     end_row: usize,
 ) -> Token<'a> {
@@ -465,6 +477,7 @@ fn make_text_token<'a>(
         text_hash2,
         literal_hash,
         literal_hash2,
+        is_name,
         start_row,
         end_row,
     }
@@ -1243,31 +1256,25 @@ fn collect_near_miss_groups(
         })
         .collect();
     eligible.sort_by_key(|range| (range.start_token_index, std::cmp::Reverse(range.end_token_index)));
-    // Block ranges nest or are disjoint, so keeping only outermost survivors makes every reported
-    // near-miss occurrence disjoint by construction.
-    let mut outermost: Vec<&TokenRange> = Vec::new();
-    let mut last_kept_end = 0usize;
-    for range in eligible {
-        if outermost.is_empty() || range.start_token_index >= last_kept_end {
-            last_kept_end = range.end_token_index;
-            outermost.push(range);
-        }
-    }
-    if outermost.len() < 2 {
+    let comparable = select_comparable_blocks(&eligible);
+    if comparable.len() < 2 {
         return Vec::new();
     }
 
     // Interned per call so a file's symbol ids (and thus its n-gram hashes) match the TypeScript
     // backend's first-encounter assignment order exactly.
-    let mut symbol_id_by_token_hashes: HashMap<(i32, i32), i32> = HashMap::new();
-    let sequences: Vec<Vec<i32>> = outermost
+    let mut symbol_id_by_token_hashes: HashMap<(i32, i32, i32, i32), i32> = HashMap::new();
+    let sequences: Vec<NormalizedBlock> = comparable
         .iter()
         .map(|range| normalize_block_sequence(tokens, range, &mut symbol_id_by_token_hashes))
         .collect();
-    let ngram_sets: Vec<HashSet<i32>> = sequences.iter().map(|s| collect_ngram_set(s)).collect();
+    let ngram_sets: Vec<HashSet<i32>> = sequences
+        .iter()
+        .map(|block| collect_ngram_set(&block.sequence))
+        .collect();
     let shared_counts = count_shared_ngrams(&ngram_sets);
 
-    let mut parent: Vec<usize> = (0..outermost.len()).collect();
+    let mut parent: Vec<usize> = (0..comparable.len()).collect();
     fn find(parent: &mut [usize], mut index: usize) -> usize {
         let mut root = index;
         while parent[root] != root {
@@ -1287,8 +1294,17 @@ fn collect_near_miss_groups(
         if shared * 100 < NEAR_MISS_FILTRATION_PERCENT * min_ngrams {
             continue;
         }
+        // A structural match must be backed by shared content (names and literal values); the
+        // bound is exclusive, matching duplication.ts.
+        if content_overlap(left, right) * 100
+            <= MIN_CONTENT_SIMILARITY_PERCENT * left.content_total.max(right.content_total)
+        {
+            continue;
+        }
         // Per-fragment similarity against the larger block (NiCad semantics).
-        if lcs_length(left, right) * 100 >= MIN_SIMILARITY_PERCENT * left.len().max(right.len()) {
+        if lcs_length(&left.sequence, &right.sequence) * 100
+            >= MIN_SIMILARITY_PERCENT * left.sequence.len().max(right.sequence.len())
+        {
             let left_root = find(&mut parent, left_index);
             let right_root = find(&mut parent, right_index);
             parent[left_root.max(right_root)] = left_root.min(right_root);
@@ -1296,7 +1312,7 @@ fn collect_near_miss_groups(
     }
 
     let mut members_by_root: IndexMap<usize, Vec<&TokenRange>> = IndexMap::new();
-    for (index, range) in outermost.iter().enumerate() {
+    for (index, range) in comparable.iter().enumerate() {
         let root = find(&mut parent, index);
         members_by_root.entry(root).or_default().push(range);
     }
@@ -1323,14 +1339,84 @@ fn collect_near_miss_groups(
     groups
 }
 
-/// A block's tokens as comparable integers; see normalizeBlockSequence in duplication.ts.
+/// Keeps the block ranges the near-miss phase compares; a faithful port of selectComparableBlocks
+/// in duplication.ts (wrappers whose subtree branches into two or more disjoint eligible
+/// sub-blocks are descended through; linear chains keep their top).
+fn select_comparable_blocks<'a>(eligible: &[&'a TokenRange]) -> Vec<&'a TokenRange> {
+    struct ForestNode<'a> {
+        range: &'a TokenRange,
+        children: Vec<usize>,
+    }
+    // Index arena: nodes never move, so ancestor references on the stack stay valid.
+    let mut nodes: Vec<ForestNode<'a>> = Vec::new();
+    let mut roots: Vec<usize> = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
+    for &range in eligible {
+        while let Some(&top) = stack.last() {
+            if nodes[top].range.end_token_index <= range.start_token_index {
+                stack.pop();
+            } else {
+                break;
+            }
+        }
+        if let Some(&top) = stack.last() {
+            // Equal spans (two node types covering the same tokens) collapse into the first.
+            if nodes[top].range.start_token_index == range.start_token_index
+                && nodes[top].range.end_token_index == range.end_token_index
+            {
+                continue;
+            }
+        }
+        let id = nodes.len();
+        nodes.push(ForestNode {
+            range,
+            children: Vec::new(),
+        });
+        match stack.last() {
+            Some(&top) => nodes[top].children.push(id),
+            None => roots.push(id),
+        }
+        stack.push(id);
+    }
+
+    fn branches(nodes: &[ForestNode<'_>], id: usize) -> bool {
+        let children = &nodes[id].children;
+        children.len() >= 2 || (children.len() == 1 && branches(nodes, children[0]))
+    }
+    fn visit<'a>(nodes: &[ForestNode<'a>], id: usize, kept: &mut Vec<&'a TokenRange>) {
+        if branches(nodes, id) {
+            for &child in &nodes[id].children {
+                visit(nodes, child, kept);
+            }
+        } else {
+            kept.push(nodes[id].range);
+        }
+    }
+    let mut kept = Vec::new();
+    for &root in &roots {
+        visit(&nodes, root, &mut kept);
+    }
+    kept
+}
+
+struct NormalizedBlock {
+    sequence: Vec<i32>,
+    /// Occurrences per content-bearing symbol (names and literal values), for the content gate.
+    content_count_by_symbol: HashMap<i32, usize>,
+    content_total: usize,
+}
+
+/// A block's tokens as comparable integers; see normalizeBlockSequence in duplication.ts
+/// (literal VALUES are folded into the symbol, unlike the exact fingerprint's kind tags).
 fn normalize_block_sequence(
     tokens: &[Token<'_>],
     range: &TokenRange,
-    symbol_id_by_token_hashes: &mut HashMap<(i32, i32), i32>,
-) -> Vec<i32> {
+    symbol_id_by_token_hashes: &mut HashMap<(i32, i32, i32, i32), i32>,
+) -> NormalizedBlock {
     let mut sequence = Vec::with_capacity(range.end_token_index - range.start_token_index);
     let mut index_by_identifier: HashMap<&str, i32> = HashMap::new();
+    let mut content_count_by_symbol: HashMap<i32, usize> = HashMap::new();
+    let mut content_total = 0usize;
     for token in &tokens[range.start_token_index..range.end_token_index.min(tokens.len())] {
         let value = if token.is_id {
             let next_index = index_by_identifier.len() as i32;
@@ -1340,13 +1426,49 @@ fn normalize_block_sequence(
             -(identifier_index + 1)
         } else {
             let next_id = symbol_id_by_token_hashes.len() as i32;
-            *symbol_id_by_token_hashes
-                .entry((token.text_hash, token.text_hash2))
-                .or_insert(next_id)
+            let id = *symbol_id_by_token_hashes
+                .entry((
+                    token.text_hash,
+                    token.text_hash2,
+                    token.literal_hash.unwrap_or(0),
+                    token.literal_hash2.unwrap_or(0),
+                ))
+                .or_insert(next_id);
+            if token.is_name || token.literal_hash.is_some() {
+                *content_count_by_symbol.entry(id).or_insert(0) += 1;
+                content_total += 1;
+            }
+            id
         };
         sequence.push(value);
     }
-    sequence
+    NormalizedBlock {
+        sequence,
+        content_count_by_symbol,
+        content_total,
+    }
+}
+
+/// Multiset overlap of two blocks' content-bearing symbols, for the content gate.
+fn content_overlap(left: &NormalizedBlock, right: &NormalizedBlock) -> usize {
+    let (smaller, larger) = if left.content_count_by_symbol.len() <= right.content_count_by_symbol.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    smaller
+        .content_count_by_symbol
+        .iter()
+        .map(|(symbol, count)| {
+            (*count).min(
+                larger
+                    .content_count_by_symbol
+                    .get(symbol)
+                    .copied()
+                    .unwrap_or(0),
+            )
+        })
+        .sum()
 }
 
 /// The distinct 5-gram hashes of a normalized block sequence, matching collectNgramSet exactly.

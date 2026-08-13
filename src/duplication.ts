@@ -225,6 +225,16 @@ const nearMissNgramSize = 5;
  * useful similarity, and the cheap set-overlap check prunes the quadratic candidate space.
  */
 const nearMissFiltrationPercent = 10;
+/**
+ * Token-level LCS over normalized code is dominated by punctuation and keywords, so a structural
+ * 70% match alone is weak evidence of copying: two same-skeleton functions calling entirely
+ * different APIs can exceed it. A near-miss pair must therefore also share at least half of the
+ * larger block's content-bearing tokens (verbatim-kept names and literal values — the tokens that
+ * distinguish WHAT the code does rather than how it is shaped). The bound is exclusive: a
+ * value-mapping predicate pair (`x.type === 'a' || ...` with equal branch counts and zero shared
+ * values) shares exactly half its content — the repeated member name — and must not pass.
+ */
+const minContentSimilarityPercent = 50;
 
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
 const minSequenceStatementCount = 2;
@@ -263,6 +273,12 @@ interface Token {
   /** Hash pair of a value-carrying literal's value, folded into data-like region fingerprints. */
   literalHash?: number;
   literalHash2?: number;
+  /**
+   * True for verbatim-kept NAMES (member/callee/type names, named grammar leaves): together with
+   * value-carrying literals these are the content-bearing tokens the near-miss content gate
+   * counts. Keywords, operators, and punctuation come from unnamed nodes and stay false.
+   */
+  isName?: boolean;
   /** 0-based source rows the token occupies, so line coverage counts only matched-token lines. */
   startRow: number;
   endRow: number;
@@ -463,7 +479,7 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
   const endRow = node.endPosition.row;
   if (node.isNamed && shorthandPropertyTypes.has(node.type)) {
     tokens.push(
-      makeTextToken(node.text, undefined, startRow, endRow),
+      makeTextToken(node.text, undefined, startRow, endRow, true),
       makeTextToken(':', undefined, startRow, endRow),
       { kind: 'id', text: node.text, textHash: 0, textHash2: 0, startRow, endRow }
     );
@@ -479,17 +495,26 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
   // `property_identifier`/`type_identifier`, which must distinguish otherwise-identical structures.
   const literalKind = node.isNamed ? literalKindByType.get(node.type) : undefined;
   if (literalKind === undefined) {
-    tokens.push(makeTextToken(node.text, undefined, startRow, endRow));
+    tokens.push(makeTextToken(node.text, undefined, startRow, endRow, node.isNamed));
   } else {
     tokens.push(makeTextToken(literalKind, literalValueText(node, literalKind), startRow, endRow));
   }
 }
 
-function makeTextToken(text: string, literalValueText: string | undefined, startRow: number, endRow: number): Token {
+function makeTextToken(
+  text: string,
+  literalValueText: string | undefined,
+  startRow: number,
+  endRow: number,
+  isName = false
+): Token {
   const token: Token = { kind: 'text', text, textHash: hashText(text), textHash2: hashText2(text), startRow, endRow };
   if (literalValueText !== undefined && valueCarryingLiteralKinds.has(text)) {
     token.literalHash = hashText(literalValueText);
     token.literalHash2 = hashText2(literalValueText);
+  }
+  if (isName) {
+    token.isName = true;
   }
   return token;
 }
@@ -819,12 +844,15 @@ function enumerateContainerWindows(tokens: Token[], statements: TokenRange[], mi
  * per-fragment similarity semantics: an inverted index of 5-grams over normalized tokens proposes
  * candidate pairs, a cheap shared-n-gram ratio prunes them, and token-level LCS verifies that the
  * pair is at least `minSimilarityPercent` similar relative to the LARGER block (so a small block
- * embedded in a big one does not count). Verified pairs are clustered transitively; each cluster
- * becomes one clone group whose occurrences span whole blocks. Only outermost blocks that are not
- * literal-dense (the data-table guard) and do not touch an exactly-reported region participate, so
- * near-miss groups never overlap exact ones. Reported occurrences cover their whole block: unlike
- * exact matches, a near-miss occurrence includes its edited tokens, which is how NiCad-style
- * detectors report Type-3 fragments.
+ * embedded in a big one does not count), with a content gate requiring shared names/literal values
+ * so same-skeleton code calling different APIs does not pair on punctuation alone. Verified pairs
+ * are clustered transitively; each cluster becomes one clone group whose occurrences span whole
+ * blocks. Only blocks that are not literal-dense (the data-table guard) and do not touch an
+ * exactly-reported region participate, and wrappers containing several comparable sub-blocks
+ * (a `describe(...)` call, a class body) are descended through, so near-miss groups never overlap
+ * each other or exact ones. Reported occurrences cover their whole block: unlike exact matches, a
+ * near-miss occurrence includes its edited tokens, which is how NiCad-style detectors report
+ * Type-3 fragments.
  */
 function collectNearMissGroups(
   tokens: Token[],
@@ -852,29 +880,19 @@ function collectNearMissGroups(
     .toSorted(
       (left, right) => left.startTokenIndex - right.startTokenIndex || right.endTokenIndex - left.endTokenIndex
     );
-  // Block ranges nest or are disjoint, so keeping only outermost survivors makes every reported
-  // near-miss occurrence disjoint by construction (functions are compared as whole bodies, like
-  // NiCad's function granularity, instead of re-reporting every nested sub-block of a pair).
-  const outermost: TokenRange[] = [];
-  let lastKeptEnd = -1;
-  for (const range of eligible) {
-    if (range.startTokenIndex >= lastKeptEnd) {
-      outermost.push(range);
-      lastKeptEnd = range.endTokenIndex;
-    }
-  }
-  if (outermost.length < 2) {
+  const comparable = selectComparableBlocks(eligible);
+  if (comparable.length < 2) {
     return [];
   }
 
   // Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
   // other files the process measured before it.
   const symbolIdByTokenHashes = new Map<string, number>();
-  const sequences = outermost.map((range) => normalizeBlockSequence(tokens, range, symbolIdByTokenHashes));
-  const ngramSets = sequences.map(collectNgramSet);
+  const sequences = comparable.map((range) => normalizeBlockSequence(tokens, range, symbolIdByTokenHashes));
+  const ngramSets = sequences.map(({ sequence }) => collectNgramSet(sequence));
   const sharedNgramCounts = countSharedNgrams(ngramSets);
 
-  const parent = outermost.map((_, index) => index);
+  const parent = comparable.map((_, index) => index);
   const find = (index: number): number => {
     let root = index;
     while (parent[root] !== root) {
@@ -888,8 +906,8 @@ function collectNearMissGroups(
     return root;
   };
   for (const [pairKey, shared] of sharedNgramCounts) {
-    const leftIndex = Math.floor(pairKey / outermost.length);
-    const rightIndex = pairKey % outermost.length;
+    const leftIndex = Math.floor(pairKey / comparable.length);
+    const rightIndex = pairKey % comparable.length;
     const left = sequences[leftIndex];
     const right = sequences[rightIndex];
     const leftNgrams = ngramSets[leftIndex];
@@ -900,10 +918,21 @@ function collectNearMissGroups(
     if (shared * 100 < nearMissFiltrationPercent * Math.min(leftNgrams.size, rightNgrams.size)) {
       continue;
     }
+    // A structural match must be backed by shared content (names and literal values), or two
+    // same-skeleton blocks calling entirely different APIs would pair on punctuation alone.
+    if (
+      contentOverlap(left, right) * 100 <=
+      minContentSimilarityPercent * Math.max(left.contentTotal, right.contentTotal)
+    ) {
+      continue;
+    }
     // Per-fragment similarity against the larger block (NiCad semantics): both blocks must be
     // mostly covered by the common subsequence, which is stricter than NIL's min-denominator and
     // keeps a generic small block from "matching" inside every big one.
-    if (lcsLength(left, right) * 100 >= minSimilarityPercent * Math.max(left.length, right.length)) {
+    if (
+      lcsLength(left.sequence, right.sequence) * 100 >=
+      minSimilarityPercent * Math.max(left.sequence.length, right.sequence.length)
+    ) {
       const leftRoot = find(leftIndex);
       const rightRoot = find(rightIndex);
       parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
@@ -911,7 +940,7 @@ function collectNearMissGroups(
   }
 
   const membersByRoot = new Map<number, TokenRange[]>();
-  for (const [index, range] of outermost.entries()) {
+  for (const [index, range] of comparable.entries()) {
     const root = find(index);
     const members = membersByRoot.get(root) ?? [];
     members.push(range);
@@ -940,19 +969,80 @@ function collectNearMissGroups(
 }
 
 /**
+ * Keeps the block ranges the near-miss phase compares. Block ranges nest or are disjoint, so they
+ * form a forest; a candidate whose subtree branches into two or more disjoint eligible sub-blocks
+ * is a WRAPPER (a `describe(...)` statement, an IIFE, a class body) and is descended through —
+ * otherwise a file whose code sits inside one enclosing construct would yield a single candidate
+ * and silently disable near-miss detection. A linear chain keeps its top (the most context), and
+ * the kept set is an antichain, so reported near-miss occurrences stay disjoint by construction.
+ */
+function selectComparableBlocks(eligible: TokenRange[]): TokenRange[] {
+  interface ForestNode {
+    range: TokenRange;
+    children: ForestNode[];
+  }
+  const roots: ForestNode[] = [];
+  const stack: ForestNode[] = [];
+  for (const range of eligible) {
+    while (stack.length > 0 && (stack.at(-1) as ForestNode).range.endTokenIndex <= range.startTokenIndex) {
+      stack.pop();
+    }
+    const top = stack.at(-1);
+    // Equal spans (two node types covering the same tokens) collapse into the first.
+    if (top && top.range.startTokenIndex === range.startTokenIndex && top.range.endTokenIndex === range.endTokenIndex) {
+      continue;
+    }
+    const node: ForestNode = { range, children: [] };
+    if (top) {
+      top.children.push(node);
+    } else {
+      roots.push(node);
+    }
+    stack.push(node);
+  }
+
+  const branches = (node: ForestNode): boolean =>
+    node.children.length >= 2 || (node.children.length === 1 && branches(node.children[0] as ForestNode));
+  const kept: TokenRange[] = [];
+  const visit = (node: ForestNode): void => {
+    if (branches(node)) {
+      for (const child of node.children) {
+        visit(child);
+      }
+    } else {
+      kept.push(node.range);
+    }
+  };
+  for (const root of roots) {
+    visit(root);
+  }
+  return kept;
+}
+
+interface NormalizedBlock {
+  sequence: Int32Array;
+  /** Occurrences per content-bearing symbol (names and literal values), for the content gate. */
+  contentCountBySymbol: Map<number, number>;
+  contentTotal: number;
+}
+
+/**
  * A block's tokens as comparable integers: anonymized identifiers become negative first-occurrence
  * indexes (per block, mirroring the exact fingerprint's rename tolerance) and every other token
- * becomes a non-negative id interned over BOTH 32-bit text hashes, so one hash collision cannot
- * equate two different tokens. Literal values are not folded: literal-dense blocks never reach the
- * near-miss phase, so the kind tag is the right granularity here.
+ * becomes a non-negative id interned over BOTH 32-bit text hashes — with literal VALUES folded in,
+ * unlike the exact fingerprint's kind tags — so one hash collision cannot equate two different
+ * tokens and a fuzzy 70% match cannot mistake same-shape tables or dispatch predicates with
+ * entirely different values for copies.
  */
 function normalizeBlockSequence(
   tokens: Token[],
   range: TokenRange,
   symbolIdByTokenHashes: Map<string, number>
-): Int32Array {
+): NormalizedBlock {
   const sequence = new Int32Array(range.endTokenIndex - range.startTokenIndex);
   const indexByIdentifier = new Map<string, number>();
+  const contentCountBySymbol = new Map<number, number>();
+  let contentTotal = 0;
   for (let index = range.startTokenIndex; index < range.endTokenIndex; index += 1) {
     const token = tokens[index];
     if (!token) {
@@ -967,17 +1057,32 @@ function normalizeBlockSequence(
       }
       value = -(identifierIndex + 1);
     } else {
-      const key = `${token.textHash}:${token.textHash2}`;
+      const key = `${token.textHash}:${token.textHash2}:${token.literalHash ?? 0}:${token.literalHash2 ?? 0}`;
       let id = symbolIdByTokenHashes.get(key);
       if (id === undefined) {
         id = symbolIdByTokenHashes.size;
         symbolIdByTokenHashes.set(key, id);
       }
       value = id;
+      if (token.isName === true || token.literalHash !== undefined) {
+        contentCountBySymbol.set(value, (contentCountBySymbol.get(value) ?? 0) + 1);
+        contentTotal += 1;
+      }
     }
     sequence[index - range.startTokenIndex] = value;
   }
-  return sequence;
+  return { sequence, contentCountBySymbol, contentTotal };
+}
+
+/** Multiset overlap of two blocks' content-bearing symbols, for the content gate. */
+function contentOverlap(left: NormalizedBlock, right: NormalizedBlock): number {
+  const [smaller, larger] =
+    left.contentCountBySymbol.size <= right.contentCountBySymbol.size ? [left, right] : [right, left];
+  let overlap = 0;
+  for (const [symbol, count] of smaller.contentCountBySymbol) {
+    overlap += Math.min(count, larger.contentCountBySymbol.get(symbol) ?? 0);
+  }
+  return overlap;
 }
 
 /** The distinct 5-gram hashes of a normalized block sequence, for the filtration set overlap. */
@@ -1334,10 +1439,12 @@ function summarizeDuplicates(
     duplicateBlockCount += (group.length - 1) * (group[0]?.segments.length ?? 1);
     for (const occurrence of group) {
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, occurrence.tokenCount);
-      // Only CODE lines carrying matched tokens count: comments and blank gaps inside an
+      // Only CODE lines carrying segment tokens count: comments and blank gaps inside an
       // occurrence's bounding range — the unmatched gap of a merged clone, and blank rows inside a
       // multi-row token (heredocs, template literals) — are not duplicated content and would push
-      // the ratio past 1.
+      // the ratio past 1. A near-miss occurrence's single segment deliberately spans its WHOLE
+      // block, edited tokens included: an LCS has no canonical per-line attribution, and
+      // NiCad-style detectors treat the whole near-miss fragment as the clone.
       for (const segment of occurrence.segments) {
         for (let index = segment.startTokenIndex; index < segment.endTokenIndex; index += 1) {
           const token = tokens[index];
