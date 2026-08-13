@@ -11,7 +11,8 @@ import { fixturesDir } from './fixtureCorpus.js';
 
 // End-to-end coverage of the duplication detector across every supported language, plus the
 // detector's semantic guarantees: rename tolerance, the literal-density (data-table) guard, gapped
-// (Type-3) clone merging, detection options, and cross-file clone detection. The per-language
+// (Type-3) clone merging, near-miss (Type-3) similarity matching, detection options, and
+// cross-file clone detection. The per-language
 // fixtures double as regression guards for the language-specific node-type catalogs in
 // duplication.ts: a grammar update or catalog omission that stops tokenizing a language correctly
 // surfaces here as a missed (or spurious) clone.
@@ -182,6 +183,99 @@ if (second${suffix} > first${suffix}) {
   report(first${suffix} - second${suffix});
 }
 `;
+
+const scatteredEditClone = (name: string, item: string, weightMember: string, operator: string): string => `
+function ${name}(entries, factor) {
+  let accumulated = 0;
+  for (const ${item} of entries) {
+    const scaled = ${item}.${weightMember} * ${item}.quantity;
+    if (${item}.special) {
+      accumulated ${operator} scaled * 0.5;
+    } else {
+      accumulated += scaled;
+    }
+  }
+  console.log('accumulated', accumulated, factor);
+  return accumulated * (1 + factor);
+}
+`;
+
+describe('duplication: near-miss (Type-3) clones', () => {
+  // The two copies differ in a member name, an operator, and scattered renames, so no exact
+  // fragment reaches minTokens and gap merging never fires: only the similarity pipeline
+  // (n-gram filtration + token-LCS verification) can pair them.
+  const nearMissPair =
+    scatteredEditClone('totalPrice', 'item', 'price', '+=') + scatteredEditClone('totalWeight', 'row', 'weight', '-=');
+
+  it('detects a clone with scattered small edits that the exact pipeline misses', () => {
+    const metrics = measureCode(nearMissPair, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockCount).toBe(1);
+    const group = metrics.duplication.duplicateBlockGroups[0] ?? [];
+    expect(group.length).toBe(2);
+    // Each occurrence spans its whole function body, edited tokens included.
+    expect((group[0]?.endLine ?? 0) - (group[0]?.startLine ?? 0)).toBeGreaterThan(10);
+    expect(metrics.duplication.duplicationRatio).toBeLessThanOrEqual(1);
+  });
+
+  it('reports exact matches only when minSimilarityPercent is 100', () => {
+    const metrics = measureCode(nearMissPair, {
+      language: 'javascript',
+      duplication: { minSimilarityPercent: 100 },
+    });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('clusters three similar copies into one group', () => {
+    const tripled = nearMissPair + scatteredEditClone('totalVolume', 'box', 'volume', '+=');
+    const metrics = measureCode(tripled, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+    expect(metrics.duplication.duplicateBlockCount).toBe(2);
+  });
+
+  it('does not pair structurally different functions', () => {
+    const different = `
+function firstShape(entries) {
+  const seen = new Map();
+  for (const entry of entries) {
+    seen.set(entry.key, (seen.get(entry.key) ?? 0) + entry.count);
+  }
+  return [...seen.values()].filter((value) => value > 10).map((value) => value * 2);
+}
+function secondShape(limit, step) {
+  let cursor = 0;
+  const results = [];
+  while (cursor < limit) {
+    try {
+      results.push(fetchChunk(cursor, step));
+    } catch (error) {
+      console.error('chunk failed', cursor, error);
+      break;
+    }
+    cursor += step;
+  }
+  return results;
+}
+`;
+    const metrics = measureCode(different, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('honors a stricter similarity threshold', () => {
+    // Consistent renames are anonymized away, so only the member name and the operator differ:
+    // the pair sits just below 99% similarity.
+    const strict = measureCode(nearMissPair, { language: 'javascript', duplication: { minSimilarityPercent: 99 } });
+    const lenient = measureCode(nearMissPair, { language: 'javascript', duplication: { minSimilarityPercent: 70 } });
+
+    expect(strict.duplication.duplicateBlockGroupCount).toBe(0);
+    expect(lenient.duplication.duplicateBlockGroupCount).toBe(1);
+  });
+});
 
 describe('duplication: fingerprint integrity', () => {
   it('does not equate regions whose only difference is a djb2-colliding token', () => {

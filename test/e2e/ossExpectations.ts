@@ -927,13 +927,24 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         nonNullAssertionCount: 0,
         satisfiesExpressionCount: 0,
       },
+      // Near-miss (Type-3) clones: RunTLS/RunListener and RunUnix/RunFd share the same
+      // debugPrint + trusted-proxy warning + serve boilerplate with small edits.
       duplication: {
-        duplicateBlockCount: 0,
-        duplicateBlockGroupCount: 0,
-        duplicateBlockGroups: [],
-        duplicateLineCount: 0,
-        duplicationRatio: 0,
-        maxDuplicateBlockSize: 0,
+        duplicateBlockCount: 2,
+        duplicateBlockGroupCount: 2,
+        duplicateBlockGroups: [
+          [
+            { startLine: 496, endLine: 507 },
+            { startLine: 556, endLine: 567 },
+          ],
+          [
+            { startLine: 512, endLine: 530 },
+            { startLine: 535, endLine: 552 },
+          ],
+        ],
+        duplicateLineCount: 52,
+        duplicationRatio: 0.1068,
+        maxDuplicateBlockSize: 97,
       },
       halstead: {
         distinctOperators: 23,
@@ -2358,13 +2369,20 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         nonNullAssertionCount: 0,
         satisfiesExpressionCount: 0,
       },
+      // Near-miss (Type-3) clone: the parse_excludes_file2/parse_excludes_file4 tests differ
+      // only in where .unwrap() is applied.
       duplication: {
-        duplicateBlockCount: 0,
-        duplicateBlockGroupCount: 0,
-        duplicateBlockGroups: [],
-        duplicateLineCount: 0,
-        duplicationRatio: 0,
-        maxDuplicateBlockSize: 0,
+        duplicateBlockCount: 1,
+        duplicateBlockGroupCount: 1,
+        duplicateBlockGroups: [
+          [
+            { startLine: 763, endLine: 767 },
+            { startLine: 776, endLine: 783 },
+          ],
+        ],
+        duplicateLineCount: 13,
+        duplicationRatio: 0.0231,
+        maxDuplicateBlockSize: 41,
       },
       halstead: {
         distinctOperators: 23,

@@ -41,6 +41,13 @@ export interface DuplicationOptions {
    * cross-file matching compares whole candidates and does not merge across gaps yet.
    */
   maxGapTokens?: number;
+  /**
+   * Minimum similarity percent (1-100) for near-miss (Type-3) clone blocks, measured as the
+   * token-level longest common subsequence relative to the larger block (NiCad-style per-fragment
+   * similarity). 100 disables near-miss detection and reports exact (Type-1/2) matches plus gapped
+   * merges only (default 70). Applies to within-file detection only.
+   */
+  minSimilarityPercent?: number;
 }
 
 export interface MeasureOptions {

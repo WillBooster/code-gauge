@@ -323,6 +323,12 @@ describe('cli: cross-file duplication', () => {
     expect(runCli([cloneDir, '--duplication-max-gap-tokens', '0']).status).toBe(0);
   });
 
+  it('rejects an out-of-range --duplication-min-similarity-percent but accepts 100', () => {
+    expect(runCli([cloneDir, '--duplication-min-similarity-percent', '0']).status).not.toBe(0);
+    expect(runCli([cloneDir, '--duplication-min-similarity-percent', '101']).status).not.toBe(0);
+    expect(runCli([cloneDir, '--duplication-min-similarity-percent', '100']).status).toBe(0);
+  });
+
   it('honors duplication settings from the config file', () => {
     const configuredDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-clones-config-'));
     try {

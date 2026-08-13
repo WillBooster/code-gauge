@@ -186,6 +186,12 @@ const MAX_SEQUENCE_STATEMENT_COUNT: usize = 100;
 const MAX_SELECTION_RERUN_COUNT: usize = 20;
 /// Maximum normalized-token gap between adjacent duplicate groups merged into one gapped clone.
 const MAX_GAP_TOKEN_COUNT: usize = 30;
+/// Minimum LCS similarity percent for near-miss (Type-3) clone blocks; see duplication.ts.
+const MIN_SIMILARITY_PERCENT: usize = 70;
+/// N-gram size for the near-miss candidate index (NIL's default); see duplication.ts.
+const NEAR_MISS_NGRAM_SIZE: usize = 5;
+/// Filtration threshold: shared distinct n-grams over the smaller set; see duplication.ts.
+const NEAR_MISS_FILTRATION_PERCENT: usize = 10;
 
 /// See isLiteralDense in duplication.ts: >= 20% literal values marks a region as data-like.
 fn is_literal_dense(literal_count: usize, token_count: usize) -> bool {
@@ -267,7 +273,13 @@ pub fn measure_duplication(
         &container_statement_ranges,
     ));
     let counted = select_maximal_duplicates(candidates);
-    let groups = merge_adjacent_groups(to_counted_groups(&counted), MAX_GAP_TOKEN_COUNT);
+    let mut groups = merge_adjacent_groups(to_counted_groups(&counted), MAX_GAP_TOKEN_COUNT);
+    groups.extend(collect_near_miss_groups(
+        &tokens,
+        &literal_count_prefix,
+        &block_ranges,
+        &groups,
+    ));
     summarize_duplicates(&groups, code_line_numbers, &tokens)
 }
 
@@ -1191,6 +1203,221 @@ fn merge_groups(
             })
             .collect(),
     )
+}
+
+/// Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
+/// unreported; a faithful port of collectNearMissGroups in duplication.ts (NIL-style n-gram
+/// filtration, then token-level LCS with NiCad-style per-fragment similarity, then transitive
+/// clustering of verified pairs).
+fn collect_near_miss_groups(
+    tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
+    block_ranges: &[TokenRange],
+    reported_groups: &[Vec<CountedOccurrence>],
+) -> Vec<Vec<CountedOccurrence>> {
+    if MIN_SIMILARITY_PERCENT >= 100 {
+        return Vec::new();
+    }
+    let reported_regions: Vec<(usize, usize)> = reported_groups
+        .iter()
+        .flatten()
+        .map(|occurrence| (occurrence.start_token_index, occurrence.end_token_index))
+        .collect();
+    let mut eligible: Vec<&TokenRange> = block_ranges
+        .iter()
+        .filter(|range| {
+            let token_count = range.end_token_index - range.start_token_index;
+            let literal_count = literal_count_prefix
+                .get(range.end_token_index)
+                .copied()
+                .unwrap_or(0)
+                - literal_count_prefix
+                    .get(range.start_token_index)
+                    .copied()
+                    .unwrap_or(0);
+            token_count >= MIN_DUPLICATE_TOKEN_COUNT
+                && !is_literal_dense(literal_count, token_count)
+                && !reported_regions.iter().any(|&(start, end)| {
+                    start < range.end_token_index && range.start_token_index < end
+                })
+        })
+        .collect();
+    eligible.sort_by_key(|range| (range.start_token_index, std::cmp::Reverse(range.end_token_index)));
+    // Block ranges nest or are disjoint, so keeping only outermost survivors makes every reported
+    // near-miss occurrence disjoint by construction.
+    let mut outermost: Vec<&TokenRange> = Vec::new();
+    let mut last_kept_end = 0usize;
+    for range in eligible {
+        if outermost.is_empty() || range.start_token_index >= last_kept_end {
+            last_kept_end = range.end_token_index;
+            outermost.push(range);
+        }
+    }
+    if outermost.len() < 2 {
+        return Vec::new();
+    }
+
+    // Interned per call so a file's symbol ids (and thus its n-gram hashes) match the TypeScript
+    // backend's first-encounter assignment order exactly.
+    let mut symbol_id_by_token_hashes: HashMap<(i32, i32), i32> = HashMap::new();
+    let sequences: Vec<Vec<i32>> = outermost
+        .iter()
+        .map(|range| normalize_block_sequence(tokens, range, &mut symbol_id_by_token_hashes))
+        .collect();
+    let ngram_sets: Vec<HashSet<i32>> = sequences.iter().map(|s| collect_ngram_set(s)).collect();
+    let shared_counts = count_shared_ngrams(&ngram_sets);
+
+    let mut parent: Vec<usize> = (0..outermost.len()).collect();
+    fn find(parent: &mut [usize], mut index: usize) -> usize {
+        let mut root = index;
+        while parent[root] != root {
+            root = parent[root];
+        }
+        while parent[index] != root {
+            let next = parent[index];
+            parent[index] = root;
+            index = next;
+        }
+        root
+    }
+    for (&(left_index, right_index), &shared) in &shared_counts {
+        let left = &sequences[left_index];
+        let right = &sequences[right_index];
+        let min_ngrams = ngram_sets[left_index].len().min(ngram_sets[right_index].len());
+        if shared * 100 < NEAR_MISS_FILTRATION_PERCENT * min_ngrams {
+            continue;
+        }
+        // Per-fragment similarity against the larger block (NiCad semantics).
+        if lcs_length(left, right) * 100 >= MIN_SIMILARITY_PERCENT * left.len().max(right.len()) {
+            let left_root = find(&mut parent, left_index);
+            let right_root = find(&mut parent, right_index);
+            parent[left_root.max(right_root)] = left_root.min(right_root);
+        }
+    }
+
+    let mut members_by_root: IndexMap<usize, Vec<&TokenRange>> = IndexMap::new();
+    for (index, range) in outermost.iter().enumerate() {
+        let root = find(&mut parent, index);
+        members_by_root.entry(root).or_default().push(range);
+    }
+    let mut groups: Vec<Vec<CountedOccurrence>> = Vec::new();
+    for members in members_by_root.values() {
+        if members.len() < 2 {
+            continue;
+        }
+        groups.push(
+            members
+                .iter()
+                .map(|range| CountedOccurrence {
+                    segments: vec![(range.start_token_index, range.end_token_index)],
+                    token_count: range.end_token_index - range.start_token_index,
+                    start_token_index: range.start_token_index,
+                    end_token_index: range.end_token_index,
+                    start_line: range.start_line,
+                    end_line: range.end_line,
+                })
+                .collect(),
+        );
+    }
+    groups.sort_by_key(|group| group_sort_key(group));
+    groups
+}
+
+/// A block's tokens as comparable integers; see normalizeBlockSequence in duplication.ts.
+fn normalize_block_sequence(
+    tokens: &[Token<'_>],
+    range: &TokenRange,
+    symbol_id_by_token_hashes: &mut HashMap<(i32, i32), i32>,
+) -> Vec<i32> {
+    let mut sequence = Vec::with_capacity(range.end_token_index - range.start_token_index);
+    let mut index_by_identifier: HashMap<&str, i32> = HashMap::new();
+    for token in &tokens[range.start_token_index..range.end_token_index.min(tokens.len())] {
+        let value = if token.is_id {
+            let next_index = index_by_identifier.len() as i32;
+            let identifier_index = *index_by_identifier
+                .entry(token.text.as_ref())
+                .or_insert(next_index);
+            -(identifier_index + 1)
+        } else {
+            let next_id = symbol_id_by_token_hashes.len() as i32;
+            *symbol_id_by_token_hashes
+                .entry((token.text_hash, token.text_hash2))
+                .or_insert(next_id)
+        };
+        sequence.push(value);
+    }
+    sequence
+}
+
+/// The distinct 5-gram hashes of a normalized block sequence, matching collectNgramSet exactly.
+fn collect_ngram_set(sequence: &[i32]) -> HashSet<i32> {
+    let mut ngrams = HashSet::new();
+    if sequence.len() < NEAR_MISS_NGRAM_SIZE {
+        return ngrams;
+    }
+    for window in sequence.windows(NEAR_MISS_NGRAM_SIZE) {
+        let mut hash: i32 = 5381;
+        for &value in window {
+            hash = hash.wrapping_mul(31).wrapping_add(value);
+        }
+        ngrams.insert(hash);
+    }
+    ngrams
+}
+
+/// Shared distinct-n-gram counts per block pair (left < right).
+fn count_shared_ngrams(ngram_sets: &[HashSet<i32>]) -> HashMap<(usize, usize), usize> {
+    let mut blocks_by_ngram: HashMap<i32, Vec<usize>> = HashMap::new();
+    for (block_index, ngrams) in ngram_sets.iter().enumerate() {
+        for &ngram in ngrams {
+            blocks_by_ngram.entry(ngram).or_default().push(block_index);
+        }
+    }
+    let mut shared_counts: HashMap<(usize, usize), usize> = HashMap::new();
+    for blocks in blocks_by_ngram.values() {
+        for (position, &left_index) in blocks.iter().enumerate() {
+            for &right_index in &blocks[position + 1..] {
+                let pair = (left_index.min(right_index), left_index.max(right_index));
+                *shared_counts.entry(pair).or_insert(0) += 1;
+            }
+        }
+    }
+    shared_counts
+}
+
+/// Longest-common-subsequence LENGTH via the Allison–Dix bit-parallel recurrence. Only the length
+/// is needed and LCS length is algorithm-independent, so u64 words are safe even though the
+/// TypeScript backend uses 32-bit words.
+fn lcs_length(a: &[i32], b: &[i32]) -> usize {
+    if a.is_empty() || b.is_empty() {
+        return 0;
+    }
+    let word_count = a.len().div_ceil(64);
+    let mut position_masks: HashMap<i32, Vec<u64>> = HashMap::new();
+    for (index, &symbol) in a.iter().enumerate() {
+        position_masks
+            .entry(symbol)
+            .or_insert_with(|| vec![0; word_count])[index / 64] |= 1u64 << (index % 64);
+    }
+
+    let mut v = vec![0u64; word_count];
+    for symbol in b {
+        let match_mask = position_masks.get(symbol);
+        // `(v << 1) | 1` shifts a carry bit across words; subtraction borrows across words.
+        let mut shift_carry = 1u64;
+        let mut borrow = 0u64;
+        for (word, slot) in v.iter_mut().enumerate() {
+            let previous = *slot;
+            let x = match_mask.map_or(0, |mask| mask[word]) | previous;
+            let shifted = (previous << 1) | shift_carry;
+            shift_carry = previous >> 63;
+            let (partial, underflow1) = x.overflowing_sub(shifted);
+            let (difference, underflow2) = partial.overflowing_sub(borrow);
+            borrow = u64::from(underflow1 || underflow2);
+            *slot = x & !difference;
+        }
+    }
+    v.iter().map(|word| word.count_ones() as usize).sum()
 }
 
 fn summarize_duplicates(

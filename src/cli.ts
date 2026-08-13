@@ -181,6 +181,11 @@ async function main(): Promise<void> {
       parseNonNegativeInteger
     )
     .option(
+      '--duplication-min-similarity-percent <number>',
+      'minimum similarity percent (1-100) for near-miss (Type-3) clone blocks; 100 reports exact matches only (default 70)',
+      parsePercentInteger
+    )
+    .option(
       '--transitive-dependency-threshold <number>',
       'minimum transitively reachable local files to report',
       parsePositiveInteger

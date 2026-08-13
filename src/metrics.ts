@@ -338,7 +338,9 @@ function usesDefaultDuplicationOptions(options: MeasureOptions): boolean {
   const duplication = options.duplication;
   return (
     (duplication?.minTokens ?? defaultDuplicationOptions.minTokens) === defaultDuplicationOptions.minTokens &&
-    (duplication?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens) === defaultDuplicationOptions.maxGapTokens
+    (duplication?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens) === defaultDuplicationOptions.maxGapTokens &&
+    (duplication?.minSimilarityPercent ?? defaultDuplicationOptions.minSimilarityPercent) ===
+      defaultDuplicationOptions.minSimilarityPercent
   );
 }
 

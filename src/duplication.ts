@@ -210,7 +210,21 @@ const semanticNameFieldByParentType = new Map([
 export const defaultDuplicationOptions: Required<DuplicationOptions> = {
   minTokens: 40,
   maxGapTokens: 30,
+  minSimilarityPercent: 70,
 };
+
+/**
+ * N-gram size for the near-miss candidate index. 5 is NIL's published default (Nakagawa et al.,
+ * ESEC/FSE 2021): short enough that edited clones still share many n-grams, long enough that
+ * unrelated blocks rarely collide.
+ */
+const nearMissNgramSize = 5;
+/**
+ * Blocks sharing fewer than this percentage of the smaller block's distinct n-grams skip LCS
+ * verification entirely (NIL's filtration phase, default 10%): a pair below it cannot reach any
+ * useful similarity, and the cheap set-overlap check prunes the quadratic candidate space.
+ */
+const nearMissFiltrationPercent = 10;
 
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
 const minSequenceStatementCount = 2;
@@ -309,7 +323,9 @@ export interface CrossFileDuplicateCandidate {
  * equal literal values. Candidates are whole block-like subtrees plus runs of consecutive sibling
  * statements, so a copy pasted into the middle of a longer block is still found. Only maximal,
  * non-overlapping regions are counted, and adjacent groups separated by a small token gap merge
- * into one gapped (Type-3) clone group.
+ * into one gapped (Type-3) clone group. Blocks the exact pipeline misses are additionally compared
+ * by similarity (n-gram filtration then token-level LCS, NiCad/NIL-style), so near-miss (Type-3)
+ * clones whose edits fragment them below `minTokens` are still reported.
  */
 export function measureDuplication(
   root: Parser.SyntaxNode,
@@ -318,6 +334,7 @@ export function measureDuplication(
 ): DuplicationMetrics {
   const minTokens = options?.minTokens ?? defaultDuplicationOptions.minTokens;
   const maxGapTokens = options?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens;
+  const minSimilarityPercent = options?.minSimilarityPercent ?? defaultDuplicationOptions.minSimilarityPercent;
   const tokens: Token[] = [];
   const blockRanges: TokenRange[] = [];
   const containerStatementRanges: TokenRange[][] = [];
@@ -330,6 +347,9 @@ export function measureDuplication(
   ];
   const counted = selectMaximalGroups(candidates, (group) => group.length >= 2);
   const groups = mergeAdjacentGroups(toCountedGroups(counted), maxGapTokens);
+  groups.push(
+    ...collectNearMissGroups(tokens, literalCountPrefix, blockRanges, minTokens, minSimilarityPercent, groups)
+  );
   return summarizeDuplicates(groups, codeLineNumbers, tokens);
 }
 
@@ -791,6 +811,263 @@ function enumerateContainerWindows(tokens: Token[], statements: TokenRange[], mi
     windowKeysByStart.push(row);
   }
   return { windowKeysByStart, statementHashes };
+}
+
+/**
+ * Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
+ * unreported, following the locate-filter-verify design of NIL (ESEC/FSE 2021) with NiCad's
+ * per-fragment similarity semantics: an inverted index of 5-grams over normalized tokens proposes
+ * candidate pairs, a cheap shared-n-gram ratio prunes them, and token-level LCS verifies that the
+ * pair is at least `minSimilarityPercent` similar relative to the LARGER block (so a small block
+ * embedded in a big one does not count). Verified pairs are clustered transitively; each cluster
+ * becomes one clone group whose occurrences span whole blocks. Only outermost blocks that are not
+ * literal-dense (the data-table guard) and do not touch an exactly-reported region participate, so
+ * near-miss groups never overlap exact ones. Reported occurrences cover their whole block: unlike
+ * exact matches, a near-miss occurrence includes its edited tokens, which is how NiCad-style
+ * detectors report Type-3 fragments.
+ */
+function collectNearMissGroups(
+  tokens: Token[],
+  literalCountPrefix: Int32Array,
+  blockRanges: TokenRange[],
+  minTokens: number,
+  minSimilarityPercent: number,
+  reportedGroups: CountedOccurrence[][]
+): CountedOccurrence[][] {
+  if (minSimilarityPercent >= 100) {
+    return [];
+  }
+  const reportedRegions = reportedGroups.flat();
+  const overlapsReported = (range: TokenRange): boolean =>
+    reportedRegions.some(
+      (region) => region.startTokenIndex < range.endTokenIndex && range.startTokenIndex < region.endTokenIndex
+    );
+  const eligible = blockRanges
+    .filter((range) => {
+      const tokenCount = range.endTokenIndex - range.startTokenIndex;
+      const literalCount =
+        (literalCountPrefix[range.endTokenIndex] ?? 0) - (literalCountPrefix[range.startTokenIndex] ?? 0);
+      return tokenCount >= minTokens && !isLiteralDense(literalCount, tokenCount) && !overlapsReported(range);
+    })
+    .toSorted(
+      (left, right) => left.startTokenIndex - right.startTokenIndex || right.endTokenIndex - left.endTokenIndex
+    );
+  // Block ranges nest or are disjoint, so keeping only outermost survivors makes every reported
+  // near-miss occurrence disjoint by construction (functions are compared as whole bodies, like
+  // NiCad's function granularity, instead of re-reporting every nested sub-block of a pair).
+  const outermost: TokenRange[] = [];
+  let lastKeptEnd = -1;
+  for (const range of eligible) {
+    if (range.startTokenIndex >= lastKeptEnd) {
+      outermost.push(range);
+      lastKeptEnd = range.endTokenIndex;
+    }
+  }
+  if (outermost.length < 2) {
+    return [];
+  }
+
+  // Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
+  // other files the process measured before it.
+  const symbolIdByTokenHashes = new Map<string, number>();
+  const sequences = outermost.map((range) => normalizeBlockSequence(tokens, range, symbolIdByTokenHashes));
+  const ngramSets = sequences.map(collectNgramSet);
+  const sharedNgramCounts = countSharedNgrams(ngramSets);
+
+  const parent = outermost.map((_, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) {
+      root = parent[root] ?? root;
+    }
+    while (parent[index] !== root) {
+      const next = parent[index] ?? root;
+      parent[index] = root;
+      index = next;
+    }
+    return root;
+  };
+  for (const [pairKey, shared] of sharedNgramCounts) {
+    const leftIndex = Math.floor(pairKey / outermost.length);
+    const rightIndex = pairKey % outermost.length;
+    const left = sequences[leftIndex];
+    const right = sequences[rightIndex];
+    const leftNgrams = ngramSets[leftIndex];
+    const rightNgrams = ngramSets[rightIndex];
+    if (!left || !right || !leftNgrams || !rightNgrams) {
+      continue;
+    }
+    if (shared * 100 < nearMissFiltrationPercent * Math.min(leftNgrams.size, rightNgrams.size)) {
+      continue;
+    }
+    // Per-fragment similarity against the larger block (NiCad semantics): both blocks must be
+    // mostly covered by the common subsequence, which is stricter than NIL's min-denominator and
+    // keeps a generic small block from "matching" inside every big one.
+    if (lcsLength(left, right) * 100 >= minSimilarityPercent * Math.max(left.length, right.length)) {
+      const leftRoot = find(leftIndex);
+      const rightRoot = find(rightIndex);
+      parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
+    }
+  }
+
+  const membersByRoot = new Map<number, TokenRange[]>();
+  for (const [index, range] of outermost.entries()) {
+    const root = find(index);
+    const members = membersByRoot.get(root) ?? [];
+    members.push(range);
+    membersByRoot.set(root, members);
+  }
+  const groups: CountedOccurrence[][] = [];
+  for (const members of membersByRoot.values()) {
+    if (members.length < 2) {
+      continue;
+    }
+    groups.push(
+      members.map((range) => ({
+        segments: [{ startTokenIndex: range.startTokenIndex, endTokenIndex: range.endTokenIndex }],
+        tokenCount: range.endTokenIndex - range.startTokenIndex,
+        startTokenIndex: range.startTokenIndex,
+        endTokenIndex: range.endTokenIndex,
+        startIndex: range.node.startIndex,
+        endIndex: range.node.endIndex,
+        startLine: range.node.startPosition.row + 1,
+        endLine: range.node.endPosition.row + 1,
+      }))
+    );
+  }
+  groups.sort(compareGroups);
+  return groups;
+}
+
+/**
+ * A block's tokens as comparable integers: anonymized identifiers become negative first-occurrence
+ * indexes (per block, mirroring the exact fingerprint's rename tolerance) and every other token
+ * becomes a non-negative id interned over BOTH 32-bit text hashes, so one hash collision cannot
+ * equate two different tokens. Literal values are not folded: literal-dense blocks never reach the
+ * near-miss phase, so the kind tag is the right granularity here.
+ */
+function normalizeBlockSequence(
+  tokens: Token[],
+  range: TokenRange,
+  symbolIdByTokenHashes: Map<string, number>
+): Int32Array {
+  const sequence = new Int32Array(range.endTokenIndex - range.startTokenIndex);
+  const indexByIdentifier = new Map<string, number>();
+  for (let index = range.startTokenIndex; index < range.endTokenIndex; index += 1) {
+    const token = tokens[index];
+    if (!token) {
+      continue;
+    }
+    let value: number;
+    if (token.kind === 'id') {
+      let identifierIndex = indexByIdentifier.get(token.text);
+      if (identifierIndex === undefined) {
+        identifierIndex = indexByIdentifier.size;
+        indexByIdentifier.set(token.text, identifierIndex);
+      }
+      value = -(identifierIndex + 1);
+    } else {
+      const key = `${token.textHash}:${token.textHash2}`;
+      let id = symbolIdByTokenHashes.get(key);
+      if (id === undefined) {
+        id = symbolIdByTokenHashes.size;
+        symbolIdByTokenHashes.set(key, id);
+      }
+      value = id;
+    }
+    sequence[index - range.startTokenIndex] = value;
+  }
+  return sequence;
+}
+
+/** The distinct 5-gram hashes of a normalized block sequence, for the filtration set overlap. */
+function collectNgramSet(sequence: Int32Array): Set<number> {
+  const ngrams = new Set<number>();
+  for (let start = 0; start + nearMissNgramSize <= sequence.length; start += 1) {
+    let hash = 5381;
+    for (let offset = 0; offset < nearMissNgramSize; offset += 1) {
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 to match the native backend's wrapping i32 arithmetic.
+      hash = (Math.imul(hash, 31) + (sequence[start + offset] ?? 0)) | 0;
+    }
+    ngrams.add(hash);
+  }
+  return ngrams;
+}
+
+/** Shared distinct-n-gram counts per block pair, keyed `leftIndex * blockCount + rightIndex`. */
+function countSharedNgrams(ngramSets: Set<number>[]): Map<number, number> {
+  const blocksByNgram = new Map<number, number[]>();
+  for (const [blockIndex, ngrams] of ngramSets.entries()) {
+    for (const ngram of ngrams) {
+      const blocks = blocksByNgram.get(ngram) ?? [];
+      blocks.push(blockIndex);
+      blocksByNgram.set(ngram, blocks);
+    }
+  }
+  const sharedCounts = new Map<number, number>();
+  for (const blocks of blocksByNgram.values()) {
+    for (const [position, leftIndex] of blocks.entries()) {
+      for (const rightIndex of blocks.slice(position + 1)) {
+        const pairKey = leftIndex * ngramSets.length + rightIndex;
+        sharedCounts.set(pairKey, (sharedCounts.get(pairKey) ?? 0) + 1);
+      }
+    }
+  }
+  return sharedCounts;
+}
+
+/**
+ * Longest-common-subsequence LENGTH of two symbol sequences via the Allison–Dix bit-parallel
+ * recurrence (O(|a|/32 · |b|) words): per symbol of `b`, `x = match | v` and
+ * `v = x & ~(x - ((v << 1) | 1))` over multi-word bit vectors; the set bits of `v` count the LCS.
+ * Only the length is needed (similarity is a ratio), and LCS length is algorithm-independent, so
+ * the native backend may use a different word size and still agree bit-for-bit.
+ */
+function lcsLength(a: Int32Array, b: Int32Array): number {
+  const wordCount = (a.length + 31) >>> 5;
+  const positionMasks = new Map<number, Uint32Array>();
+  for (const [index, symbol] of a.entries()) {
+    let mask = positionMasks.get(symbol);
+    if (!mask) {
+      mask = new Uint32Array(wordCount);
+      positionMasks.set(symbol, mask);
+    }
+    const word = index >>> 5;
+    // The Uint32Array store wraps the signed int32 bit pattern to unsigned.
+    mask[word] = (mask[word] ?? 0) | (1 << (index & 31));
+  }
+
+  const v = new Uint32Array(wordCount);
+  for (const symbol of b) {
+    const matchMask = positionMasks.get(symbol);
+    // `(v << 1) | 1` shifts a carry bit across words; subtraction borrows across words.
+    let shiftCarry = 1;
+    let borrow = 0;
+    for (let word = 0; word < wordCount; word += 1) {
+      const previous = v[word] ?? 0;
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `>>> 0` reinterprets the signed int32 bit pattern as unsigned so the borrow subtraction below compares magnitudes; Math.trunc would keep it negative.
+      const x = ((matchMask?.[word] ?? 0) | previous) >>> 0;
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- same unsigned reinterpretation as `x`.
+      const shifted = ((previous << 1) | shiftCarry) >>> 0;
+      shiftCarry = previous >>> 31;
+      const difference = x - shifted - borrow;
+      borrow = difference < 0 ? 1 : 0;
+      // The Uint32Array store wraps the signed int32 bit pattern to unsigned.
+      v[word] = x & ~difference;
+    }
+  }
+
+  let length = 0;
+  for (const word of v) {
+    length += popCount(word);
+  }
+  return length;
+}
+
+function popCount(value: number): number {
+  let count = value - ((value >>> 1) & 0x55_55_55_55);
+  count = (count & 0x33_33_33_33) + ((count >>> 2) & 0x33_33_33_33);
+  return (Math.imul((count + (count >>> 4)) & 0x0F_0F_0F_0F, 0x01_01_01_01) >>> 24) & 0xFF;
 }
 
 function toCandidate(
