@@ -1,4 +1,5 @@
 import type Parser from 'tree-sitter';
+import { dedupeByRegion, selectMaximalGroups } from './duplicateSelection.js';
 import type { DuplicationMetrics, DuplicationOptions } from './types.js';
 
 /**
@@ -206,8 +207,6 @@ const minSequenceStatementCount = 2;
  * conservative undercount trading completeness for bounded discovery cost).
  */
 const maxSequenceStatementCount = 100;
-/** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
-const maxSelectionRerunCount = 20;
 
 /**
  * A region whose normalized tokens are at least 20% literal values is data-like (a lookup table, a
@@ -309,7 +308,7 @@ export function measureDuplication(
     ...collectBlockCandidates(tokens, literalCountPrefix, blockRanges, minTokens),
     ...collectSequenceCandidates(tokens, literalCountPrefix, containerStatementRanges, minTokens),
   ];
-  const counted = selectMaximalDuplicates(candidates);
+  const counted = selectMaximalGroups(candidates, (group) => group.length >= 2);
   const groups = mergeAdjacentGroups(toCountedGroups(counted), maxGapTokens);
   return summarizeDuplicates(groups, codeLineNumbers, tokens);
 }
@@ -386,7 +385,10 @@ function collectTokens(
           statementRanges.push(childRange);
         }
       }
-      if (isContainer && statementRanges.length >= minSequenceStatementCount) {
+      // Single-statement containers are recorded too: within-file window enumeration needs two
+      // statements and simply yields nothing for them, but cross-file matching must still see a
+      // file whose only top-level statement is not a catalogued block type (a lone exported table).
+      if (isContainer && statementRanges.length > 0) {
         containerStatementRanges.push(statementRanges);
       }
     }
@@ -584,9 +586,7 @@ function collectSequenceCandidates(
 ): DuplicateCandidate[] {
   const candidates: DuplicateCandidate[] = [];
   const occurrencesByWindowKey = new Map<number, WindowOccurrences>();
-  const containerWindows = containers.map((statements) =>
-    enumerateContainerWindows(tokens, literalCountPrefix, statements, minTokens)
-  );
+  const containerWindows = containers.map((statements) => enumerateContainerWindows(tokens, statements, minTokens));
   for (const [containerIndex, windows] of containerWindows.entries()) {
     for (const [start, row] of windows.windowKeysByStart.entries()) {
       for (const windowKey of row) {
@@ -707,14 +707,9 @@ interface ContainerWindows {
   statementHashes: number[];
 }
 
-function enumerateContainerWindows(
-  tokens: Token[],
-  literalCountPrefix: Int32Array,
-  statements: TokenRange[],
-  minTokens: number
-): ContainerWindows {
+function enumerateContainerWindows(tokens: Token[], statements: TokenRange[], minTokens: number): ContainerWindows {
   const statementHashes = statements.map((statement) =>
-    fingerprintHash(tokens, literalCountPrefix, statement.startTokenIndex, statement.endTokenIndex)
+    fingerprintHash(tokens, statement.startTokenIndex, statement.endTokenIndex)
   );
   const windowKeysByStart: (number | undefined)[][] = [];
   for (let start = 0; start < statements.length; start += 1) {
@@ -785,30 +780,31 @@ function fingerprintKey(
   startTokenIndex: number,
   endTokenIndex: number
 ): string {
-  const [primary, secondary] = fingerprintHashPair(tokens, literalCountPrefix, startTokenIndex, endTokenIndex);
+  const literalCount = (literalCountPrefix[endTokenIndex] ?? 0) - (literalCountPrefix[startTokenIndex] ?? 0);
+  const literalDense = isLiteralDense(literalCount, endTokenIndex - startTokenIndex);
+  const [primary, secondary] = fingerprintHashPair(tokens, startTokenIndex, endTokenIndex, literalDense);
   return `${primary}:${secondary}:${endTokenIndex - startTokenIndex}`;
 }
 
-/** A single 32-bit summary of a range, for the coarse rolling-hash phase. */
-function fingerprintHash(
-  tokens: Token[],
-  literalCountPrefix: Int32Array,
-  startTokenIndex: number,
-  endTokenIndex: number
-): number {
-  const [primary, secondary] = fingerprintHashPair(tokens, literalCountPrefix, startTokenIndex, endTokenIndex);
+/**
+ * A single 32-bit summary of a range for the coarse rolling-hash phase. Deliberately
+ * density-agnostic: density is a property of the final candidate REGION, and folding literal
+ * values into per-statement hashes would make a dense statement inside a logic-heavy window
+ * (`const weights = [1, 2, 3];`) block the window from ever being enumerated. The coarse phase
+ * over-approximates on shape alone; the exact region fingerprint still applies the density rule.
+ */
+function fingerprintHash(tokens: Token[], startTokenIndex: number, endTokenIndex: number): number {
+  const [primary, secondary] = fingerprintHashPair(tokens, startTokenIndex, endTokenIndex, false);
   // XOR already coerces to int32, matching the native backend's i32 arithmetic.
   return primary ^ Math.imul(secondary, 31);
 }
 
 function fingerprintHashPair(
   tokens: Token[],
-  literalCountPrefix: Int32Array,
   startTokenIndex: number,
-  endTokenIndex: number
+  endTokenIndex: number,
+  foldLiteralValues: boolean
 ): [number, number] {
-  const literalCount = (literalCountPrefix[endTokenIndex] ?? 0) - (literalCountPrefix[startTokenIndex] ?? 0);
-  const literalDense = isLiteralDense(literalCount, endTokenIndex - startTokenIndex);
   const indexByIdentifier = new Map<string, number>();
   let primary = 5381;
   let secondary = 52_711;
@@ -831,7 +827,7 @@ function fingerprintHashPair(
     // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 (Math.trunc does not), which must match the native backend's wrapping i32 arithmetic.
     primary = (Math.imul(primary, 31) + part) | 0;
     secondary = Math.imul(secondary, 37) ^ part;
-    if (literalDense && token.literalHash !== undefined) {
+    if (foldLiteralValues && token.literalHash !== undefined) {
       // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 (Math.trunc does not), which must match the native backend's wrapping i32 arithmetic.
       primary = (Math.imul(primary, 31) + token.literalHash) | 0;
       secondary = Math.imul(secondary, 37) ^ token.literalHash;
@@ -852,92 +848,6 @@ function hashText(text: string): number {
 
 function combineHashes(hash: number, value: number): number {
   return Math.imul(hash, 31) + value;
-}
-
-/**
- * Keeps only maximal, non-overlapping duplicates: candidates are grouped by fingerprint, larger
- * regions win over regions overlapping them, and groups reduced below two survivors are dropped.
- */
-function selectMaximalDuplicates(candidates: DuplicateCandidate[]): Map<string, DuplicateCandidate[]> {
-  const byFingerprint = new Map<string, DuplicateCandidate[]>();
-  for (const candidate of candidates) {
-    const group = byFingerprint.get(candidate.fingerprint) ?? [];
-    group.push(candidate);
-    byFingerprint.set(candidate.fingerprint, group);
-  }
-
-  const groups = [...byFingerprint.values()].map(dedupeByRegion).filter((group) => group.length >= 2);
-  // Greedy order ranks by total coverage (region size × copies): a 3×3-statement group must beat
-  // a 2×4-statement group overlapping two of its copies, or the third copy is silently dropped
-  // and the reported duplication shrinks as more copies are added.
-  const groupSizeByFingerprint = new Map(groups.map((group) => [group[0]?.fingerprint ?? '', group.length]));
-  const coverage = (candidate: DuplicateCandidate): number =>
-    candidate.tokenCount * (groupSizeByFingerprint.get(candidate.fingerprint) ?? 1);
-  let duplicates = groups.flat();
-  duplicates.sort((left, right) => coverage(right) - coverage(left));
-
-  // Greedy selection can keep a candidate whose group ends up below two survivors; such an
-  // uncounted region must not block smaller groups, so the largest failed group is removed and the
-  // selection reruns. One group at a time: freeing a failed group's regions can rescue another.
-  // The rerun cap bounds degenerate inputs; past it the remaining failed groups are dropped,
-  // trading a sliver of recall on such files for bounded runtime.
-  for (let rerun = 0; ; rerun += 1) {
-    const keptRegions: { startIndex: number; endIndex: number }[] = [];
-    const counted = new Map<string, DuplicateCandidate[]>();
-    for (const candidate of duplicates) {
-      if (keptRegions.some((region) => overlaps(region, candidate))) {
-        continue;
-      }
-      keptRegions.push(candidate);
-      const group = counted.get(candidate.fingerprint) ?? [];
-      group.push(candidate);
-      counted.set(candidate.fingerprint, group);
-    }
-
-    let failedFingerprint: string | undefined;
-    let failedTokenCount = -1;
-    for (const [fingerprint, group] of counted) {
-      const tokenCount = group[0]?.tokenCount ?? 0;
-      if (group.length < 2 && tokenCount > failedTokenCount) {
-        failedFingerprint = fingerprint;
-        failedTokenCount = tokenCount;
-      }
-    }
-    // No failed fingerprint means every counted group kept at least two survivors.
-    if (failedFingerprint === undefined) {
-      return counted;
-    }
-    if (rerun >= maxSelectionRerunCount) {
-      for (const [fingerprint, group] of counted) {
-        if (group.length < 2) {
-          counted.delete(fingerprint);
-        }
-      }
-      return counted;
-    }
-
-    duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
-  }
-}
-
-/** Drops candidates covering the same source region (a block and the statement run spanning it). */
-function dedupeByRegion(group: DuplicateCandidate[]): DuplicateCandidate[] {
-  const byRegion = new Map<string, DuplicateCandidate>();
-  for (const candidate of group) {
-    const key = `${candidate.startIndex}:${candidate.endIndex}`;
-    const existing = byRegion.get(key);
-    if (!existing || candidate.tokenCount > existing.tokenCount) {
-      byRegion.set(key, candidate);
-    }
-  }
-  return [...byRegion.values()];
-}
-
-function overlaps(
-  left: { startIndex: number; endIndex: number },
-  right: { startIndex: number; endIndex: number }
-): boolean {
-  return left.startIndex < right.endIndex && right.startIndex < left.endIndex;
 }
 
 function toCountedGroups(counted: Map<string, DuplicateCandidate[]>): CountedOccurrence[][] {

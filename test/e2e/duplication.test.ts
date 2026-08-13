@@ -136,7 +136,29 @@ describe('duplication: literal-density guard', () => {
     expect(differentValues.duplication.duplicateBlockGroupCount).toBe(0);
     expect(identicalValues.duplication.duplicateBlockGroupCount).toBe(1);
   });
+
+  it('still detects a statement-run clone containing one dense statement with different values', () => {
+    // The run itself is logic-heavy (below the density bound), so the small embedded array's
+    // values must not break the match: density is a property of the candidate region, and the
+    // coarse per-statement prefilter must not fold values the region-level rule would ignore.
+    const metrics = measureCode(statementRun('One', '1, 2, 3, 4') + statementRun('Two', '5, 6, 7, 8'), {
+      language: 'javascript',
+    });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+  });
 });
+
+const statementRun = (suffix: string, arrayValues: string): string => `
+const first${suffix} = compute(alpha${suffix}, beta${suffix});
+const weights${suffix} = [${arrayValues}];
+const second${suffix} = combine(first${suffix}, weights${suffix});
+if (second${suffix} > first${suffix}) {
+  report(second${suffix} - first${suffix});
+} else {
+  report(first${suffix} - second${suffix});
+}
+`;
 
 describe('duplication: detection options', () => {
   it('honors a raised minTokens', () => {
@@ -209,6 +231,24 @@ describe('duplication: cross-file clones', () => {
     ]);
 
     expect(metrics.groups).toEqual([]);
+  });
+
+  it('detects a wholly copied single-statement file', () => {
+    // A lone top-level statement that is not a catalogued block type (an exported table) must
+    // still produce a full-run candidate.
+    const singleStatementFile = `export const lookup = {
+  alpha: 'one', bravo: 'two', charlie: 'three', delta: 'four', echo: 'five',
+  foxtrot: 'six', golf: 'seven', hotel: 'eight', india: 'nine', juliet: 'ten',
+  kilo: 'eleven', lima: 'twelve', mike: 'thirteen', november: 'fourteen', oscar: 'fifteen',
+};
+`;
+    const metrics = measureCrossFileDuplication([
+      { file: 'a.js', candidates: collectDuplicationCandidates(singleStatementFile, { language: 'javascript' }) },
+      { file: 'b.js', candidates: collectDuplicationCandidates(singleStatementFile, { language: 'javascript' }) },
+    ]);
+
+    expect(metrics.groups.length).toBe(1);
+    expect(metrics.groups[0]?.files).toEqual(['a.js', 'b.js']);
   });
 
   it('detects a wholly copied file through the container run candidate', () => {

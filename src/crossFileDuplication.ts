@@ -1,3 +1,4 @@
+import { selectMaximalGroups } from './duplicateSelection.js';
 import type { CrossFileDuplicateCandidate } from './duplication.js';
 
 export interface CrossFileDuplicationSourceFile {
@@ -26,11 +27,8 @@ export interface CrossFileDuplicationMetrics {
   groups: CrossFileDuplicateBlockGroup[];
 }
 
-/** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
-const maxSelectionRerunCount = 20;
-
 interface SelectableCandidate extends CrossFileDuplicateCandidate {
-  fileIndex: number;
+  regionBucket: number;
   file: string;
 }
 
@@ -42,86 +40,20 @@ interface SelectableCandidate extends CrossFileDuplicateCandidate {
  * within-file repeat is already reported by that file's own duplication metrics.
  */
 export function measureCrossFileDuplication(files: CrossFileDuplicationSourceFile[]): CrossFileDuplicationMetrics {
-  const byFingerprint = new Map<string, SelectableCandidate[]>();
-  for (const [fileIndex, { file, candidates }] of files.entries()) {
-    for (const candidate of candidates) {
-      const group = byFingerprint.get(candidate.fingerprint) ?? [];
-      group.push({ ...candidate, fileIndex, file });
-      byFingerprint.set(candidate.fingerprint, group);
-    }
-  }
-
-  const groups = [...byFingerprint.values()].map(dedupeByRegion).filter(spansMultipleFiles);
-  const groupSizeByFingerprint = new Map(groups.map((group) => [group[0]?.fingerprint ?? '', group.length]));
-  const coverage = (candidate: SelectableCandidate): number =>
-    candidate.tokenCount * (groupSizeByFingerprint.get(candidate.fingerprint) ?? 1);
-  let duplicates = groups.flat();
-  // Coverage-ranked greedy selection; file index and position break ties deterministically.
-  duplicates.sort(
-    (left, right) =>
-      coverage(right) - coverage(left) || left.fileIndex - right.fileIndex || left.startIndex - right.startIndex
+  const candidates: SelectableCandidate[] = files.flatMap(({ file, candidates }, fileIndex) =>
+    candidates.map((candidate) => ({ ...candidate, regionBucket: fileIndex, file }))
   );
-
-  // Like within-file selection, a greedily kept candidate can strand its group below the survivor
-  // requirement (two occurrences in two files); the largest failed group is shed and the selection
-  // reruns so its regions stop blocking smaller groups.
-  for (let rerun = 0; ; rerun += 1) {
-    const keptRegionsByFile = new Map<number, { startIndex: number; endIndex: number }[]>();
-    const counted = new Map<string, SelectableCandidate[]>();
-    for (const candidate of duplicates) {
-      const keptRegions = keptRegionsByFile.get(candidate.fileIndex) ?? [];
-      if (
-        keptRegions.some((region) => region.startIndex < candidate.endIndex && candidate.startIndex < region.endIndex)
-      ) {
-        continue;
-      }
-      keptRegions.push(candidate);
-      keptRegionsByFile.set(candidate.fileIndex, keptRegions);
-      const group = counted.get(candidate.fingerprint) ?? [];
-      group.push(candidate);
-      counted.set(candidate.fingerprint, group);
-    }
-
-    let failedFingerprint: string | undefined;
-    let failedTokenCount = -1;
-    for (const [fingerprint, group] of counted) {
-      const tokenCount = group[0]?.tokenCount ?? 0;
-      if (!spansMultipleFiles(group) && tokenCount > failedTokenCount) {
-        failedFingerprint = fingerprint;
-        failedTokenCount = tokenCount;
-      }
-    }
-    if (failedFingerprint === undefined) {
-      return summarize(counted);
-    }
-    if (rerun >= maxSelectionRerunCount) {
-      for (const [fingerprint, group] of counted) {
-        if (!spansMultipleFiles(group)) {
-          counted.delete(fingerprint);
-        }
-      }
-      return summarize(counted);
-    }
-
-    duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
-  }
+  const counted = selectMaximalGroups(
+    candidates,
+    spansMultipleFiles,
+    // File index and position break coverage ties deterministically.
+    (left, right) => left.regionBucket - right.regionBucket || left.startIndex - right.startIndex
+  );
+  return summarize(counted);
 }
 
 function spansMultipleFiles(group: SelectableCandidate[]): boolean {
-  return group.length >= 2 && new Set(group.map((candidate) => candidate.fileIndex)).size >= 2;
-}
-
-/** Drops candidates covering the same source region (a block and the container run spanning it). */
-function dedupeByRegion(group: SelectableCandidate[]): SelectableCandidate[] {
-  const byRegion = new Map<string, SelectableCandidate>();
-  for (const candidate of group) {
-    const key = `${candidate.fileIndex}:${candidate.startIndex}:${candidate.endIndex}`;
-    const existing = byRegion.get(key);
-    if (!existing || candidate.tokenCount > existing.tokenCount) {
-      byRegion.set(key, candidate);
-    }
-  }
-  return [...byRegion.values()];
+  return group.length >= 2 && new Set(group.map((candidate) => candidate.regionBucket)).size >= 2;
 }
 
 function summarize(counted: Map<string, SelectableCandidate[]>): CrossFileDuplicationMetrics {

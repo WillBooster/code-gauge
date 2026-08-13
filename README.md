@@ -128,7 +128,7 @@ Command-line `--<metric>-threshold` flags set the global base only; use the conf
 The `duplication` config section (or the `--duplication-min-tokens` and `--duplication-max-gap-tokens` flags) tunes how clones are detected rather than when they are reported:
 
 - `minTokens` (default 40): minimum normalized token count for a region to count as a duplicate. Raise it to report only substantial copies; lower it to catch small ones.
-- `maxGapTokens` (default 30): copies edited in one spot split into two exact matches around the edit; adjacent matches separated by at most this many tokens are merged back into a single gapped (Type-3) clone group. `0` disables merging.
+- `maxGapTokens` (default 30): copies edited in one spot split into two exact matches around the edit; adjacent matches separated by at most this many tokens are merged back into a single gapped (Type-3) clone group. `0` disables merging. Applies to within-file detection only; cross-file matching compares whole candidates.
 
 Custom detection settings are measured by the TypeScript backend; the native backend implements the defaults only.
 

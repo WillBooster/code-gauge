@@ -37,7 +37,8 @@ export interface DuplicationOptions {
   minTokens?: number;
   /**
    * Maximum normalized-token gap between two adjacent duplicate groups merged into one gapped
-   * (Type-3) clone group (default 30). 0 disables merging.
+   * (Type-3) clone group (default 30). 0 disables merging. Applies to within-file detection only:
+   * cross-file matching compares whole candidates and does not merge across gaps yet.
    */
   maxGapTokens?: number;
 }

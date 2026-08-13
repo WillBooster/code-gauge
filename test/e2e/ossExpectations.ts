@@ -1922,31 +1922,34 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         nonNullAssertionCount: 0,
         satisfiesExpressionCount: 0,
       },
-      // Gapped-clone merging reassembles the three consecutive "Upgrade from X to Y" test
-      // sections (each a near-identical copy separated by one differing statement) into a single
-      // three-occurrence group instead of two overlapping pairwise groups.
       duplication: {
         duplicateBlockCount: 2,
-        duplicateBlockGroupCount: 1,
+        duplicateBlockGroupCount: 2,
         duplicateBlockGroups: [
           [
             {
-              endLine: 479,
+              endLine: 481,
               startLine: 458,
             },
             {
-              endLine: 502,
-              startLine: 481,
-            },
-            {
-              endLine: 525,
+              endLine: 527,
               startLine: 504,
             },
           ],
+          [
+            {
+              endLine: 489,
+              startLine: 482,
+            },
+            {
+              endLine: 499,
+              startLine: 492,
+            },
+          ],
         ],
-        duplicateLineCount: 63,
-        duplicationRatio: 0.1514,
-        maxDuplicateBlockSize: 170,
+        duplicateLineCount: 60,
+        duplicationRatio: 0.1442,
+        maxDuplicateBlockSize: 180,
       },
       halstead: {
         distinctOperators: 26,

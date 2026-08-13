@@ -305,7 +305,9 @@ fn collect_tokens<'a>(
                     statement_ranges.push(child_range);
                 }
             }
-            if is_container && statement_ranges.len() >= MIN_SEQUENCE_STATEMENT_COUNT {
+            // Single-statement containers are recorded too, mirroring collectTokens in
+            // duplication.ts: window enumeration needs two statements and yields nothing for them.
+            if is_container && !statement_ranges.is_empty() {
                 container_statement_ranges.push(statement_ranges);
             }
         }
@@ -602,7 +604,7 @@ fn collect_sequence_candidates(
     let mut occurrences_by_window_key: HashMap<i64, WindowOccurrences> = HashMap::new();
     let container_windows: Vec<ContainerWindows> = containers
         .iter()
-        .map(|statements| enumerate_container_windows(tokens, literal_count_prefix, statements))
+        .map(|statements| enumerate_container_windows(tokens, statements))
         .collect();
     for (container_index, windows) in container_windows.iter().enumerate() {
         for (start, row) in windows.window_keys_by_start.iter().enumerate() {
@@ -759,20 +761,11 @@ fn collect_sequence_candidates(
     candidates
 }
 
-fn enumerate_container_windows(
-    tokens: &[Token<'_>],
-    literal_count_prefix: &[usize],
-    statements: &[TokenRange],
-) -> ContainerWindows {
+fn enumerate_container_windows(tokens: &[Token<'_>], statements: &[TokenRange]) -> ContainerWindows {
     let statement_hashes: Vec<i32> = statements
         .iter()
         .map(|statement| {
-            fingerprint_hash(
-                tokens,
-                literal_count_prefix,
-                statement.start_token_index,
-                statement.end_token_index,
-            )
+            fingerprint_hash(tokens, statement.start_token_index, statement.end_token_index)
         })
         .collect();
     let mut window_keys_by_start: Vec<Vec<Option<i64>>> = Vec::new();
@@ -833,42 +826,6 @@ fn fingerprint_key(
     start_token_index: usize,
     end_token_index: usize,
 ) -> String {
-    let (primary, secondary) = fingerprint_hash_pair(
-        tokens,
-        literal_count_prefix,
-        start_token_index,
-        end_token_index,
-    );
-    format!(
-        "{primary}:{secondary}:{}",
-        end_token_index - start_token_index
-    )
-}
-
-/// A single 32-bit summary of a range, for the coarse rolling-hash phase.
-fn fingerprint_hash(
-    tokens: &[Token<'_>],
-    literal_count_prefix: &[usize],
-    start_token_index: usize,
-    end_token_index: usize,
-) -> i32 {
-    let (primary, secondary) = fingerprint_hash_pair(
-        tokens,
-        literal_count_prefix,
-        start_token_index,
-        end_token_index,
-    );
-    primary ^ secondary.wrapping_mul(31)
-}
-
-/// Two independent 32-bit hashes over the normalized token sequence, replicating the JavaScript
-/// int32 arithmetic of fingerprintHashPair in duplication.ts exactly.
-fn fingerprint_hash_pair(
-    tokens: &[Token<'_>],
-    literal_count_prefix: &[usize],
-    start_token_index: usize,
-    end_token_index: usize,
-) -> (i32, i32) {
     let clamped_end = end_token_index.min(tokens.len());
     let literal_count = literal_count_prefix.get(clamped_end).copied().unwrap_or(0)
         - literal_count_prefix
@@ -876,6 +833,31 @@ fn fingerprint_hash_pair(
             .copied()
             .unwrap_or(0);
     let literal_dense = is_literal_dense(literal_count, end_token_index - start_token_index);
+    let (primary, secondary) =
+        fingerprint_hash_pair(tokens, start_token_index, end_token_index, literal_dense);
+    format!(
+        "{primary}:{secondary}:{}",
+        end_token_index - start_token_index
+    )
+}
+
+/// A single 32-bit summary of a range for the coarse rolling-hash phase. Deliberately
+/// density-agnostic; see fingerprintHash in duplication.ts for the rationale.
+fn fingerprint_hash(tokens: &[Token<'_>], start_token_index: usize, end_token_index: usize) -> i32 {
+    let (primary, secondary) =
+        fingerprint_hash_pair(tokens, start_token_index, end_token_index, false);
+    primary ^ secondary.wrapping_mul(31)
+}
+
+/// Two independent 32-bit hashes over the normalized token sequence, replicating the JavaScript
+/// int32 arithmetic of fingerprintHashPair in duplication.ts exactly.
+fn fingerprint_hash_pair(
+    tokens: &[Token<'_>],
+    start_token_index: usize,
+    end_token_index: usize,
+    fold_literal_values: bool,
+) -> (i32, i32) {
+    let clamped_end = end_token_index.min(tokens.len());
     let mut index_by_identifier: HashMap<&str, usize> = HashMap::new();
     let mut index_hashes: Vec<i32> = Vec::new();
     let mut primary: i32 = 5381;
@@ -895,7 +877,7 @@ fn fingerprint_hash_pair(
         };
         primary = primary.wrapping_mul(31).wrapping_add(part);
         secondary = secondary.wrapping_mul(37) ^ part;
-        if literal_dense {
+        if fold_literal_values {
             if let Some(literal_hash) = token.literal_hash {
                 primary = primary.wrapping_mul(31).wrapping_add(literal_hash);
                 secondary = secondary.wrapping_mul(37) ^ literal_hash;
