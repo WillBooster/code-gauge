@@ -58,7 +58,9 @@ function spansMultipleFiles(group: SelectableCandidate[]): boolean {
 
 function summarize(counted: Map<string, SelectableCandidate[]>): CrossFileDuplicationMetrics {
   const groups: CrossFileDuplicateBlockGroup[] = [];
-  const duplicateBlockGroupCountByFile: Record<string, number> = {};
+  // Accumulated in a Map: file names are arbitrary strings, and a plain object would read
+  // inherited properties for names like "constructor".
+  const groupCountByFile = new Map<string, number>();
   let duplicateBlockCount = 0;
   for (const group of counted.values()) {
     duplicateBlockCount += group.length - 1;
@@ -67,7 +69,7 @@ function summarize(counted: Map<string, SelectableCandidate[]>): CrossFileDuplic
       .toSorted((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);
     const files = [...new Set(occurrences.map(({ file }) => file))];
     for (const file of files) {
-      duplicateBlockGroupCountByFile[file] = (duplicateBlockGroupCountByFile[file] ?? 0) + 1;
+      groupCountByFile.set(file, (groupCountByFile.get(file) ?? 0) + 1);
     }
     groups.push({ files, occurrences, tokenCount: group[0]?.tokenCount ?? 0 });
   }
@@ -77,5 +79,5 @@ function summarize(counted: Map<string, SelectableCandidate[]>): CrossFileDuplic
       (left.occurrences[0]?.file ?? '').localeCompare(right.occurrences[0]?.file ?? '') ||
       (left.occurrences[0]?.startLine ?? 0) - (right.occurrences[0]?.startLine ?? 0)
   );
-  return { duplicateBlockCount, duplicateBlockGroupCountByFile, groups };
+  return { duplicateBlockCount, duplicateBlockGroupCountByFile: Object.fromEntries(groupCountByFile), groups };
 }

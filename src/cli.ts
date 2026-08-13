@@ -265,10 +265,20 @@ async function configSearchDirectory(target: string): Promise<string> {
   }
 }
 
+/** Shared state of one scan, threaded through the directory walk instead of positional plumbing. */
+interface ScanContext {
+  options: ResolvedOptions;
+  files: FileMetrics[];
+  errors: string[];
+  visitedDirectories: Set<string>;
+  visitedFiles: Set<string>;
+  /** Scan root: paths are displayed relative to it, and symbolic links may not escape it. */
+  rootDirectory: string;
+}
+
 async function scanTarget(target: string, options: ResolvedOptions): Promise<ScanResult> {
   const files: FileMetrics[] = [];
   const errors: string[] = [];
-  const visitedFiles = new Set<string>();
   let canonicalTarget = target;
   try {
     canonicalTarget = await realpath(target);
@@ -294,22 +304,22 @@ async function scanTarget(target: string, options: ResolvedOptions): Promise<Sca
       return { displayRoot, files, errors: [fatalError], fatalError };
     }
 
-    await measureFile(
-      canonicalTarget,
-      language,
-      options,
-      false,
-      files,
-      errors,
-      visitedFiles,
-      displayRoot,
-      canonicalTarget
-    );
+    const context = makeScanContext(options, files, errors, displayRoot);
+    await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
     return { displayRoot, files, errors };
   }
 
-  await scanDirectory(canonicalTarget, options, files, errors, new Set(), visitedFiles, canonicalTarget);
+  await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, canonicalTarget));
   return { displayRoot: canonicalTarget, files, errors };
+}
+
+function makeScanContext(
+  options: ResolvedOptions,
+  files: FileMetrics[],
+  errors: string[],
+  rootDirectory: string
+): ScanContext {
+  return { options, files, errors, visitedDirectories: new Set(), visitedFiles: new Set(), rootDirectory };
 }
 
 async function addTypeScriptProjectMetrics(
@@ -402,89 +412,63 @@ async function addArchitectureMetrics(result: ScanResult): Promise<void> {
   }
 }
 
-async function scanDirectory(
-  directory: string,
-  options: ResolvedOptions,
-  files: FileMetrics[],
-  errors: string[],
-  visitedDirectories: Set<string>,
-  visitedFiles: Set<string>,
-  rootDirectory: string
-): Promise<void> {
+async function scanDirectory(directory: string, context: ScanContext): Promise<void> {
   let resolvedDirectory;
   try {
     resolvedDirectory = await realpath(directory);
   } catch (error) {
-    errors.push(`${formatPath(directory, rootDirectory)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(directory, context.rootDirectory)}: ${formatError(error)}`);
     return;
   }
 
-  if (!isWithinDirectory(resolvedDirectory, rootDirectory)) {
+  if (!isWithinDirectory(resolvedDirectory, context.rootDirectory)) {
     return;
   }
 
-  if (visitedDirectories.has(resolvedDirectory)) {
+  if (context.visitedDirectories.has(resolvedDirectory)) {
     return;
   }
-  visitedDirectories.add(resolvedDirectory);
+  context.visitedDirectories.add(resolvedDirectory);
 
   let entries;
   try {
     entries = await readdir(directory, { withFileTypes: true });
   } catch (error) {
-    errors.push(`${formatPath(directory, rootDirectory)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(directory, context.rootDirectory)}: ${formatError(error)}`);
     return;
   }
 
   for (const entry of entries) {
     const entryPath = path.join(directory, entry.name);
     if (entry.isSymbolicLink()) {
-      await scanSymbolicLink(
-        entry.name,
-        entryPath,
-        options,
-        files,
-        errors,
-        visitedDirectories,
-        visitedFiles,
-        rootDirectory
-      );
+      await scanSymbolicLink(entry.name, entryPath, context);
       continue;
     }
 
     if (entry.isDirectory()) {
-      if (shouldSkipDirectory(entry.name, options)) {
+      if (shouldSkipDirectory(entry.name, context.options)) {
         continue;
       }
-      await scanDirectory(entryPath, options, files, errors, visitedDirectories, visitedFiles, rootDirectory);
+      await scanDirectory(entryPath, context);
       continue;
     }
 
     if (entry.isFile()) {
-      await measureScannableFile(entryPath, options, files, errors, visitedFiles, rootDirectory);
+      await measureScannableFile(entryPath, context);
     }
   }
 }
 
-async function scanSymbolicLink(
-  name: string,
-  entryPath: string,
-  options: ResolvedOptions,
-  files: FileMetrics[],
-  errors: string[],
-  visitedDirectories: Set<string>,
-  visitedFiles: Set<string>,
-  rootDirectory: string
-): Promise<void> {
+async function scanSymbolicLink(name: string, entryPath: string, context: ScanContext): Promise<void> {
   let resolvedPath;
   try {
     resolvedPath = await realpath(entryPath);
   } catch (error) {
-    errors.push(`${formatPath(entryPath, rootDirectory)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(entryPath, context.rootDirectory)}: ${formatError(error)}`);
     return;
   }
 
-  if (!isWithinDirectory(resolvedPath, rootDirectory)) {
+  if (!isWithinDirectory(resolvedPath, context.rootDirectory)) {
     return;
   }
 
@@ -492,78 +476,62 @@ async function scanSymbolicLink(
   try {
     entryStat = await stat(entryPath);
   } catch (error) {
-    errors.push(`${formatPath(entryPath, rootDirectory)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(entryPath, context.rootDirectory)}: ${formatError(error)}`);
     return;
   }
 
   if (entryStat.isDirectory()) {
-    if (shouldSkipDirectory(name, options) || shouldSkipDirectory(path.basename(resolvedPath), options)) {
+    if (
+      shouldSkipDirectory(name, context.options) ||
+      shouldSkipDirectory(path.basename(resolvedPath), context.options)
+    ) {
       return;
     }
-    await scanDirectory(entryPath, options, files, errors, visitedDirectories, visitedFiles, rootDirectory);
+    await scanDirectory(entryPath, context);
     return;
   }
 
   if (entryStat.isFile()) {
-    await measureScannableFile(
-      entryPath,
-      options,
-      files,
-      errors,
-      visitedFiles,
-      rootDirectory,
-      resolvedPath,
-      resolvedPath
-    );
+    await measureScannableFile(entryPath, context, resolvedPath, resolvedPath);
   }
 }
 
 async function measureScannableFile(
   file: string,
-  options: ResolvedOptions,
-  files: FileMetrics[],
-  errors: string[],
-  visitedFiles: Set<string>,
-  displayRoot: string,
+  context: ScanContext,
   languageFile = file,
   realFile?: string
 ): Promise<void> {
-  const language = getLanguage(languageFile, options);
+  const language = getLanguage(languageFile, context.options);
   if (language) {
-    await measureFile(file, language, options, true, files, errors, visitedFiles, displayRoot, realFile);
+    await measureFile(file, language, 'directory', context, realFile);
   }
 }
 
 async function measureFile(
   file: string,
   language: LanguageName,
-  options: ResolvedOptions,
-  collectCrossFileCandidates: boolean,
-  files: FileMetrics[],
-  errors: string[],
-  visitedFiles: Set<string>,
-  displayRoot: string,
+  mode: 'single-file' | 'directory',
+  context: ScanContext,
   realFile?: string
 ): Promise<void> {
   try {
     const resolvedFile = realFile ?? (await realpath(file));
-    if (visitedFiles.has(resolvedFile)) {
+    if (context.visitedFiles.has(resolvedFile)) {
       return;
     }
-    visitedFiles.add(resolvedFile);
+    context.visitedFiles.add(resolvedFile);
 
     const code = await readFile(file, 'utf8');
-    const measureOptions = { language, duplication: options.duplication };
-    files.push({
+    const measureOptions = { language, duplication: context.options.duplication };
+    context.files.push({
       file,
       metrics: measureCode(code, measureOptions),
       // Only directory scans compare files against each other; a single-file target has no peers.
-      duplicationCandidates: collectCrossFileCandidates
-        ? collectDuplicationCandidates(code, measureOptions)
-        : undefined,
+      duplicationCandidates: mode === 'directory' ? collectDuplicationCandidates(code, measureOptions) : undefined,
     });
   } catch (error) {
-    errors.push(`${formatPath(file, displayRoot)}: ${formatError(error)}`);
+    context.errors.push(`${formatPath(file, context.rootDirectory)}: ${formatError(error)}`);
   }
 }
 
@@ -656,10 +624,13 @@ function findRiskyFileMetrics(
     duplicateBlockDetail
   );
   if (crossFileDuplication) {
+    // Object.hasOwn: a file named like an Object.prototype member must not read an inherited value.
     addTrigger(
       triggers,
       'cross-file duplicated blocks',
-      crossFileDuplication.duplicateBlockGroupCountByFile[formattedFile] ?? 0,
+      Object.hasOwn(crossFileDuplication.duplicateBlockGroupCountByFile, formattedFile)
+        ? (crossFileDuplication.duplicateBlockGroupCountByFile[formattedFile] ?? 0)
+        : 0,
       thresholds.crossFileDuplicateBlock,
       formatCrossFileDuplicateDetail(crossFileDuplication, formattedFile)
     );

@@ -128,6 +128,16 @@ function ${name}() {
 }
 `;
 
+const stringTable = (name: string, quote: string): string => `
+function ${name}() {
+  return {
+    alpha: ${quote}one${quote}, bravo: ${quote}two${quote}, charlie: ${quote}three${quote}, delta: ${quote}four${quote}, echo: ${quote}five${quote},
+    foxtrot: ${quote}six${quote}, golf: ${quote}seven${quote}, hotel: ${quote}eight${quote}, india: ${quote}nine${quote}, juliet: ${quote}ten${quote},
+    kilo: ${quote}eleven${quote}, lima: ${quote}twelve${quote}, mike: ${quote}thirteen${quote}, november: ${quote}fourteen${quote}, oscar: ${quote}fifteen${quote},
+  };
+}
+`;
+
 describe('duplication: literal-density guard', () => {
   it('rejects same-shape tables with different values but keeps true table copies', () => {
     const differentValues = measureCode(table('alpha', 0) + table('beta', 20), { language: 'javascript' });
@@ -135,6 +145,18 @@ describe('duplication: literal-density guard', () => {
 
     expect(differentValues.duplication.duplicateBlockGroupCount).toBe(0);
     expect(identicalValues.duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('matches copied tables across quote styles but not across number values', () => {
+    // Formatters rewrite quote style on paste, so delimiters are not literal-value differences.
+    const mixedQuotes = measureCode(stringTable('alpha', "'") + stringTable('beta', '"'), { language: 'javascript' });
+    const differentWords = measureCode(
+      stringTable('alpha', "'") + stringTable('beta', "'").replaceAll('one', 'uno').replaceAll('two', 'dos'),
+      { language: 'javascript' }
+    );
+
+    expect(mixedQuotes.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(differentWords.duplication.duplicateBlockGroupCount).toBe(0);
   });
 
   it('still detects a statement-run clone containing one dense statement with different values', () => {
@@ -231,6 +253,15 @@ describe('duplication: cross-file clones', () => {
     ]);
 
     expect(metrics.groups).toEqual([]);
+  });
+
+  it('counts groups correctly for files named like Object.prototype members', () => {
+    const metrics = measureCrossFileDuplication([
+      { file: 'constructor', candidates: collectDuplicationCandidates(fileA, { language: 'javascript' }) },
+      { file: 'toString', candidates: collectDuplicationCandidates(fileA, { language: 'javascript' }) },
+    ]);
+
+    expect(metrics.duplicateBlockGroupCountByFile).toEqual({ constructor: 1, toString: 1 });
   });
 
   it('detects a wholly copied single-statement file', () => {

@@ -170,6 +170,16 @@ const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
 /// Kind tags whose raw source text re-enters the fingerprint in literal-dense (data-like) regions.
 const VALUE_CARRYING_LITERAL_KINDS: &[&str] = &["#num", "#str", "#char", "#regex"];
 
+/// String children that carry actual content (STRING_FRAGMENT_TYPES minus the delimiter nodes).
+const STRING_CONTENT_FRAGMENT_TYPES: &[&str] = &[
+    "string_fragment",
+    "multiline_string_fragment",
+    "string_content",
+    "raw_string_content",
+    "escape_sequence",
+    "heredoc_content",
+];
+
 const MIN_DUPLICATE_TOKEN_COUNT: usize = 40;
 const MIN_SEQUENCE_STATEMENT_COUNT: usize = 2;
 const MAX_SEQUENCE_STATEMENT_COUNT: usize = 100;
@@ -286,7 +296,7 @@ fn collect_tokens<'a>(
             // quote style or content still match.
             tokens.push(make_text_token(
                 Cow::Borrowed(atomic_kind),
-                Some(node_text(node, code)),
+                Some(literal_value_text(node, atomic_kind, code)),
                 node.start_position().row,
                 node.end_position().row,
             ));
@@ -403,7 +413,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
     tokens.push(match literal_kind {
         Some(kind) => make_text_token(
             Cow::Borrowed(kind),
-            Some(node_text(node, code)),
+            Some(literal_value_text(node, kind, code)),
             start_row,
             end_row,
         ),
@@ -418,13 +428,15 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
 
 fn make_text_token<'a>(
     text: Cow<'a, str>,
-    raw_literal_text: Option<&'a str>,
+    literal_value_text: Option<Cow<'a, str>>,
     start_row: usize,
     end_row: usize,
 ) -> Token<'a> {
     let text_hash = hash_text(&text);
-    let literal_hash = match raw_literal_text {
-        Some(raw) if VALUE_CARRYING_LITERAL_KINDS.contains(&text.as_ref()) => Some(hash_text(raw)),
+    let literal_hash = match literal_value_text {
+        Some(value) if VALUE_CARRYING_LITERAL_KINDS.contains(&text.as_ref()) => {
+            Some(hash_text(&value))
+        }
         _ => None,
     };
     Token {
@@ -435,6 +447,40 @@ fn make_text_token<'a>(
         start_row,
         end_row,
     }
+}
+
+/// The value of a literal as folded into literal-dense fingerprints; see literalValueText in
+/// duplication.ts for the delimiter-independence rationale mirrored here.
+fn literal_value_text<'a>(node: Node<'_>, kind: &str, code: &Source<'a>) -> Cow<'a, str> {
+    if kind != "#str" && kind != "#char" {
+        return Cow::Borrowed(node_text(node, code));
+    }
+    // Fragment leaves already carry bare content; a quote appearing there is content.
+    if STRING_CONTENT_FRAGMENT_TYPES.contains(&node.kind()) {
+        return Cow::Borrowed(node_text(node, code));
+    }
+    let fragments: Vec<&str> = named_children(node)
+        .iter()
+        .filter(|child| STRING_CONTENT_FRAGMENT_TYPES.contains(&child.kind()))
+        .map(|child| node_text(*child, code))
+        .collect();
+    if !fragments.is_empty() {
+        return Cow::Owned(fragments.concat());
+    }
+    Cow::Borrowed(strip_matching_quotes(node_text(node, code)))
+}
+
+/// Strips one matching pair of surrounding ASCII quotes, matching stripMatchingQuotes in
+/// duplication.ts (quote characters are ASCII, so byte indexing is UTF-8 safe).
+fn strip_matching_quotes(text: &str) -> &str {
+    let bytes = text.as_bytes();
+    if bytes.len() >= 2 {
+        let first = bytes[0];
+        if (first == b'"' || first == b'\'' || first == b'`') && bytes[bytes.len() - 1] == first {
+            return &text[1..text.len() - 1];
+        }
+    }
+    text
 }
 
 /// literal_count_prefix[i] = value-carrying literal tokens in tokens[0..i), for O(1) density checks.
@@ -761,11 +807,18 @@ fn collect_sequence_candidates(
     candidates
 }
 
-fn enumerate_container_windows(tokens: &[Token<'_>], statements: &[TokenRange]) -> ContainerWindows {
+fn enumerate_container_windows(
+    tokens: &[Token<'_>],
+    statements: &[TokenRange],
+) -> ContainerWindows {
     let statement_hashes: Vec<i32> = statements
         .iter()
         .map(|statement| {
-            fingerprint_hash(tokens, statement.start_token_index, statement.end_token_index)
+            fingerprint_hash(
+                tokens,
+                statement.start_token_index,
+                statement.end_token_index,
+            )
         })
         .collect();
     let mut window_keys_by_start: Vec<Vec<Option<i64>>> = Vec::new();

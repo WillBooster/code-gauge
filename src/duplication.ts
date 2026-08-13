@@ -156,6 +156,19 @@ const valueCarryingLiteralKinds = new Set(['#num', '#str', '#char', '#regex']);
 
 const commentTypes = new Set(['comment', 'line_comment', 'block_comment']);
 
+/**
+ * String children that carry actual content, i.e. stringFragmentTypes minus the delimiter nodes
+ * (Python's `string_start`/`string_end`), for delimiter-independent literal values.
+ */
+const stringContentFragmentTypes = new Set([
+  'string_fragment',
+  'multiline_string_fragment',
+  'string_content',
+  'raw_string_content',
+  'escape_sequence',
+  'heredoc_content',
+]);
+
 /** Children of a string node that carry only literal content; anything else is interpolation. */
 const stringFragmentTypes = new Set([
   'string_fragment',
@@ -375,7 +388,9 @@ function collectTokens(
     } else if (atomicKind !== undefined) {
       // Interpolation-free strings collapse to their kind tag so copies differing only in quote
       // style or content still match; delimiter tokens would otherwise break the equivalence.
-      tokens.push(makeTextToken(atomicKind, node.text, node.startPosition.row, node.endPosition.row));
+      tokens.push(
+        makeTextToken(atomicKind, literalValueText(node, atomicKind), node.startPosition.row, node.endPosition.row)
+      );
     } else if (!commentTypes.has(node.type)) {
       const statementRanges: TokenRange[] = [];
       const isContainer = node.isNamed && statementContainerTypes.has(node.type);
@@ -439,16 +454,50 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
   if (literalKind === undefined) {
     tokens.push(makeTextToken(node.text, undefined, startRow, endRow));
   } else {
-    tokens.push(makeTextToken(literalKind, node.text, startRow, endRow));
+    tokens.push(makeTextToken(literalKind, literalValueText(node, literalKind), startRow, endRow));
   }
 }
 
-function makeTextToken(text: string, rawLiteralText: string | undefined, startRow: number, endRow: number): Token {
+function makeTextToken(text: string, literalValueText: string | undefined, startRow: number, endRow: number): Token {
   const token: Token = { kind: 'text', text, textHash: hashText(text), startRow, endRow };
-  if (rawLiteralText !== undefined && valueCarryingLiteralKinds.has(text)) {
-    token.literalHash = hashText(rawLiteralText);
+  if (literalValueText !== undefined && valueCarryingLiteralKinds.has(text)) {
+    token.literalHash = hashText(literalValueText);
   }
   return token;
+}
+
+/**
+ * The value of a literal as folded into literal-dense fingerprints. Strings hash their CONTENT,
+ * not their source spelling: formatters rewrite quote style on paste (`'one'` vs `"one"`), so
+ * delimiters must not make two copied tables differ. Content comes from the fragment children when
+ * the grammar provides them (which also drops Python's `string_start`/`string_end` delimiter
+ * nodes), else from the text with one matching pair of surrounding quotes stripped. Numbers keep
+ * their raw text: formatters preserve numeric spelling, and canonicalizing values (`0x10` vs `16`)
+ * identically in JavaScript and Rust would be far riskier than the rare mismatch it would unify.
+ */
+function literalValueText(node: Parser.SyntaxNode, kind: string): string {
+  if (kind !== '#str' && kind !== '#char') {
+    return node.text;
+  }
+  // Fragment leaves (string_fragment, escape_sequence, heredoc_content, ...) already carry bare
+  // content; a quote appearing there is content, not a delimiter.
+  if (stringContentFragmentTypes.has(node.type)) {
+    return node.text;
+  }
+  const fragments = node.namedChildren.filter((child) => stringContentFragmentTypes.has(child.type));
+  if (fragments.length > 0) {
+    return fragments.map((child) => child.text).join('');
+  }
+  return stripMatchingQuotes(node.text);
+}
+
+const quoteCharacters = new Set(['"', "'", '`']);
+
+function stripMatchingQuotes(text: string): string {
+  const first = text[0];
+  return text.length >= 2 && first !== undefined && quoteCharacters.has(first) && text.endsWith(first)
+    ? text.slice(1, -1)
+    : text;
 }
 
 /** literalCountPrefix[i] = value-carrying literal tokens in tokens[0..i), for O(1) density checks. */
