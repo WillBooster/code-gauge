@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
 
 use crate::util::{all_children, node_text, Source};
@@ -85,21 +85,256 @@ const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "un
 // charges Java `throw` while its cognitive complexity does not.
 const CYCLOMATIC_ONLY_NODE_TYPES: &[&str] = &["throw_statement"];
 
-/// Cyclomatic complexity and nesting depth describe the function's own body, so their
-/// contributions are gated off inside nested function boundaries; cognitive complexity follows the
-/// Sonar spec instead and charges nested function/lambda content to the enclosing function, one
-/// nesting level deeper per function boundary crossed.
+pub struct FunctionBodyMetrics {
+    pub cyclomatic_complexity: u64,
+    pub cognitive_complexity: u64,
+    pub nesting_depth: u64,
+    pub ncss: u64,
+}
+
+/// Accumulator for one function body during measure_function_body_metrics' post-order pass.
+struct FunctionBodyFrame {
+    cyclomatic_complexity: u64,
+    cognitive_complexity: u64,
+    /// Count of `1 + nesting` cognitive increments, for re-basing on hoist into the parent frame.
+    nesting_sensitive_count: u64,
+    nesting_depth: u64,
+    ncss: u64,
+    has_own_ncss_contribution: bool,
+    /// Cognitive nesting (structural nesting + function/class bonuses) carried into this body.
+    entry_cognitive_nesting: u64,
+    /// Structural nesting carried into this body (bonuses excluded), for nesting depth.
+    entry_structural_nesting: u64,
+}
+
+impl FunctionBodyFrame {
+    fn new(entry_cognitive_nesting: u64, entry_structural_nesting: u64) -> Self {
+        FunctionBodyFrame {
+            cyclomatic_complexity: 1,
+            cognitive_complexity: 0,
+            nesting_sensitive_count: 0,
+            nesting_depth: 0,
+            ncss: 0,
+            has_own_ncss_contribution: false,
+            entry_cognitive_nesting,
+            entry_structural_nesting,
+        }
+    }
+}
+
+struct FunctionBodyPass<'sets, 'code, 'source> {
+    sets: &'sets LanguageSets,
+    code: &'code Source<'source>,
+    frames: Vec<FunctionBodyFrame>,
+    results: HashMap<usize, FunctionBodyMetrics>,
+}
+
+/// Per-function complexity and NCSS for every function boundary, in one post-order pass so each
+/// node is visited once instead of once per enclosing function (issue #35). A function's metrics
+/// are its own-body contributions plus, per directly nested function, that function's
+/// already-computed totals: NCSS hoists as-is; cognitive complexity re-bases the nested function's
+/// nesting-sensitive increments (each worth `1 + nesting`) by the nesting offset at the embedding
+/// site, while flat increments (else branches, boolean-operator sequences, chain continuations,
+/// jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
+/// only, so nothing hoists.
+pub fn measure_function_body_metrics(
+    root: Node<'_>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+) -> HashMap<usize, FunctionBodyMetrics> {
+    let mut pass = FunctionBodyPass {
+        sets,
+        code,
+        // frames[0] is a sentinel for top-level code; its accumulation is discarded.
+        frames: vec![FunctionBodyFrame::new(0, 0)],
+        results: HashMap::new(),
+    };
+    pass.visit(root, 0, 0, false, false, false);
+    pass.results
+}
+
+impl FunctionBodyPass<'_, '_, '_> {
+    fn visit(
+        &mut self,
+        current: Node<'_>,
+        current_nesting: u64,
+        mut function_nesting_bonus: u64,
+        mut inside_function: bool,
+        mut inside_nested_region: bool,
+        inside_charged_class_body: bool,
+    ) {
+        // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
+        // level once for everything inside it — PMD charges the class body, not the methods it
+        // holds, so methods directly inside a charged class body skip the function-boundary bonus.
+        let is_charged_class_body = current.kind() == "class_body" && inside_function;
+        if is_charged_class_body {
+            inside_nested_region = true;
+            function_nesting_bonus += 1;
+        }
+        let opens_frame = is_function_boundary(current, &self.sets.function_nodes);
+        if opens_frame {
+            if inside_function && !inside_charged_class_body {
+                function_nesting_bonus += 1;
+            }
+            inside_function = true;
+        }
+        // The node's own increments target the frame it is embedded in, not the one it opens; a
+        // frame-opening or charged-class-body node contributes nothing to that frame's own body
+        // (cyclomatic/nesting), matching the per-function traversal this pass replaces.
+        let entry_cognitive_nesting = self.top_frame().entry_cognitive_nesting;
+        let entry_structural_nesting = self.top_frame().entry_structural_nesting;
+        let relative_nesting = current_nesting + function_nesting_bonus - entry_cognitive_nesting;
+        let counts_for_own_body = !inside_nested_region && !opens_frame;
+
+        // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
+        // `if` keyword token), so only named nodes count as decisions.
+        let is_decision = current.is_named()
+            && self.sets.decision_nodes.contains(current.kind())
+            && !is_default_switch_branch(current);
+        let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
+        // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
+        // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
+        // `if`/`begin` else branches would then double-nest under their already-nesting parent).
+        let is_nesting = current.is_named()
+            && (self.sets.nesting_nodes.contains(current.kind())
+                || (current.kind() == "else"
+                    && current.parent().is_some_and(|parent| {
+                        parent.kind() == "case" || parent.kind() == "case_match"
+                    })));
+        // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
+        // surcharge (Sonar cognitive-complexity semantics).
+        let is_continuation = is_decision && is_flat_chain_continuation(current);
+
+        if is_decision && counts_for_own_body {
+            self.top_frame().cyclomatic_complexity += 1;
+        }
+        if is_decision && !is_case_clause && !CYCLOMATIC_ONLY_NODE_TYPES.contains(&current.kind()) {
+            if is_continuation {
+                self.top_frame().cognitive_complexity += 1;
+            } else {
+                self.top_frame().cognitive_complexity += 1 + relative_nesting;
+                self.top_frame().nesting_sensitive_count += 1;
+            }
+        }
+        if current.is_named() && SWITCH_LIKE_NODE_TYPES.contains(&current.kind()) {
+            self.top_frame().cognitive_complexity += 1 + relative_nesting;
+            self.top_frame().nesting_sensitive_count += 1;
+        }
+        // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
+        // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+        self.top_frame().cognitive_complexity += count_plain_else_branches(current);
+        // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
+        if is_flow_breaking_jump(current) {
+            self.top_frame().cognitive_complexity += 1;
+        }
+
+        if is_boolean_operator(current, self.code) {
+            if counts_for_own_body {
+                self.top_frame().cyclomatic_complexity += 1;
+            }
+            // A sequence of identical boolean operators reads as one condition, so only the
+            // operator starting a sequence adds a cognitive point (Sonar spec); each operator stays
+            // one cyclomatic path.
+            if starts_boolean_operator_sequence(current, self.code) {
+                self.top_frame().cognitive_complexity += 1;
+            }
+        }
+
+        // Pattern guards add one independent execution path without nesting.
+        if is_pattern_guard(current) {
+            if counts_for_own_body {
+                self.top_frame().cyclomatic_complexity += 1;
+            }
+            self.top_frame().cognitive_complexity += 1;
+        }
+
+        let child_nesting = if is_nesting && !is_continuation {
+            current_nesting + 1
+        } else {
+            current_nesting
+        };
+        if counts_for_own_body {
+            let frame = self.top_frame();
+            frame.nesting_depth = frame
+                .nesting_depth
+                .max(child_nesting - entry_structural_nesting);
+        }
+
+        if opens_frame {
+            self.frames.push(FunctionBodyFrame::new(
+                child_nesting + function_nesting_bonus,
+                child_nesting,
+            ));
+        }
+        // The node's NCSS contribution belongs to the innermost frame whose subtree holds it — the
+        // frame the node opens, if any (per-function NCSS includes the declaration node itself).
+        let own_ncss = crate::ncss::ncss_contribution(
+            current,
+            &self.sets.ncss_nodes,
+            &self.sets.ncss_containers,
+        );
+        let ncss_frame = self.top_frame();
+        ncss_frame.ncss += own_ncss;
+        if opens_frame && own_ncss > 0 {
+            ncss_frame.has_own_ncss_contribution = true;
+        }
+
+        for child in all_children(current) {
+            self.visit(
+                child,
+                child_nesting,
+                function_nesting_bonus,
+                inside_function,
+                if opens_frame {
+                    false
+                } else {
+                    inside_nested_region
+                },
+                is_charged_class_body,
+            );
+        }
+
+        if opens_frame {
+            let closed = self.frames.pop().expect("frame opened above");
+            self.results.insert(
+                current.id(),
+                FunctionBodyMetrics {
+                    cyclomatic_complexity: closed.cyclomatic_complexity,
+                    cognitive_complexity: closed.cognitive_complexity,
+                    nesting_depth: closed.nesting_depth,
+                    // A function node without a countable declaration of its own (arrow functions,
+                    // lambdas, blocks) still counts 1 for the declaration itself.
+                    ncss: closed.ncss + u64::from(!closed.has_own_ncss_contribution),
+                },
+            );
+            let parent = self.top_frame();
+            parent.cognitive_complexity += closed.cognitive_complexity
+                + closed.nesting_sensitive_count
+                    * (closed.entry_cognitive_nesting - parent.entry_cognitive_nesting);
+            parent.nesting_sensitive_count += closed.nesting_sensitive_count;
+            parent.ncss += closed.ncss;
+        }
+    }
+
+    fn top_frame(&mut self) -> &mut FunctionBodyFrame {
+        self.frames
+            .last_mut()
+            .expect("sentinel frame always present")
+    }
+}
+
+/// File-level complexity over the whole tree. Cognitive complexity charges nested function/lambda
+/// content one nesting level deeper per function boundary crossed (Sonar spec); cyclomatic
+/// complexity and nesting depth count every node once.
 pub fn measure_complexity(
     node: Node<'_>,
     sets: &LanguageSets,
-    nesting: u64,
-    stop_at_nested_functions: bool,
     code: &Source<'_>,
 ) -> ComplexityResult {
     let mut result = ComplexityResult {
         cyclomatic_complexity: 1,
         cognitive_complexity: 0,
-        nesting_depth: nesting,
+        nesting_depth: 0,
     };
 
     #[allow(clippy::too_many_arguments)]
@@ -108,10 +343,8 @@ pub fn measure_complexity(
         current_nesting: u64,
         mut function_nesting_bonus: u64,
         mut inside_function: bool,
-        mut inside_nested_function: bool,
         inside_charged_class_body: bool,
         sets: &LanguageSets,
-        stop_at_nested_functions: bool,
         code: &Source<'_>,
         result: &mut ComplexityResult,
     ) {
@@ -120,20 +353,15 @@ pub fn measure_complexity(
         // holds, so methods directly inside a charged class body skip the function-boundary bonus.
         let is_charged_class_body = current.kind() == "class_body" && inside_function;
         if is_charged_class_body {
-            inside_nested_function = true;
             function_nesting_bonus += 1;
         }
         if is_function_boundary(current, &sets.function_nodes) {
-            if inside_function {
-                inside_nested_function = true;
-                if !inside_charged_class_body {
-                    function_nesting_bonus += 1;
-                }
+            if inside_function && !inside_charged_class_body {
+                function_nesting_bonus += 1;
             }
             inside_function = true;
         }
         let cognitive_nesting = current_nesting + function_nesting_bonus;
-        let counts_for_own_body = !(stop_at_nested_functions && inside_nested_function);
 
         // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
         // `if` keyword token), so only named nodes count as decisions.
@@ -154,13 +382,10 @@ pub fn measure_complexity(
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
-        if is_decision && counts_for_own_body {
+        if is_decision {
             result.cyclomatic_complexity += 1;
         }
-        if is_decision
-            && !is_case_clause
-            && !CYCLOMATIC_ONLY_NODE_TYPES.contains(&current.kind())
-        {
+        if is_decision && !is_case_clause && !CYCLOMATIC_ONLY_NODE_TYPES.contains(&current.kind()) {
             result.cognitive_complexity += if is_continuation {
                 1
             } else {
@@ -179,9 +404,7 @@ pub fn measure_complexity(
         }
 
         if is_boolean_operator(current, code) {
-            if counts_for_own_body {
-                result.cyclomatic_complexity += 1;
-            }
+            result.cyclomatic_complexity += 1;
             // A sequence of identical boolean operators reads as one condition, so only the
             // operator starting a sequence adds a cognitive point (Sonar spec); each operator stays
             // one cyclomatic path.
@@ -192,9 +415,7 @@ pub fn measure_complexity(
 
         // Pattern guards add one independent execution path without nesting.
         if is_pattern_guard(current) {
-            if counts_for_own_body {
-                result.cyclomatic_complexity += 1;
-            }
+            result.cyclomatic_complexity += 1;
             result.cognitive_complexity += 1;
         }
 
@@ -203,9 +424,7 @@ pub fn measure_complexity(
         } else {
             current_nesting
         };
-        if counts_for_own_body {
-            result.nesting_depth = result.nesting_depth.max(child_nesting);
-        }
+        result.nesting_depth = result.nesting_depth.max(child_nesting);
 
         for child in all_children(current) {
             visit(
@@ -213,10 +432,8 @@ pub fn measure_complexity(
                 child_nesting,
                 function_nesting_bonus,
                 inside_function,
-                inside_nested_function,
                 is_charged_class_body,
                 sets,
-                stop_at_nested_functions,
                 code,
                 result,
             );
@@ -224,18 +441,7 @@ pub fn measure_complexity(
     }
 
     for child in all_children(node) {
-        visit(
-            child,
-            nesting,
-            0,
-            stop_at_nested_functions,
-            false,
-            false,
-            sets,
-            stop_at_nested_functions,
-            code,
-            &mut result,
-        );
+        visit(child, 0, 0, false, false, sets, code, &mut result);
     }
 
     result

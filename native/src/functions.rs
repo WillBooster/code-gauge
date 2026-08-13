@@ -2,7 +2,7 @@ use indexmap::IndexSet;
 use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
 
-use crate::complexity::{is_function_boundary, measure_complexity, LanguageSets};
+use crate::complexity::{is_function_boundary, FunctionBodyMetrics, LanguageSets};
 use crate::util::{
     all_children, find_children_by_field_name, named_children, node_text, strip_js_whitespace,
     Source,
@@ -90,9 +90,9 @@ pub fn analyze_function(
     sets: &LanguageSets,
     index: usize,
     constructed_type_names: &HashSet<String>,
+    body_metrics: &FunctionBodyMetrics,
     code: &Source<'_>,
 ) -> FunctionAnalysis {
-    let complexity = measure_complexity(node, sets, 0, true, code);
     let calls = collect_calls(node, sets, constructed_type_names, code);
     FunctionAnalysis {
         index,
@@ -106,10 +106,10 @@ pub fn analyze_function(
         start_column: node.start_position().column / 2,
         end_line: node.end_position().row + 1,
         returns_jsx: returns_jsx(node, sets, code),
-        cyclomatic_complexity: complexity.cyclomatic_complexity,
-        cognitive_complexity: complexity.cognitive_complexity,
-        nesting_depth: complexity.nesting_depth,
-        ncss: crate::ncss::count_function_ncss(node, &sets.ncss_nodes, &sets.ncss_containers),
+        cyclomatic_complexity: body_metrics.cyclomatic_complexity,
+        cognitive_complexity: body_metrics.cognitive_complexity,
+        nesting_depth: body_metrics.nesting_depth,
+        ncss: body_metrics.ncss,
         call_count: calls.call_count,
         parameter_count: count_parameters(node, code),
         callees: calls.callees,

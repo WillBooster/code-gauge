@@ -3,7 +3,9 @@ use std::sync::OnceLock;
 use tree_sitter::Node;
 
 use crate::callgraph::measure_call_graph;
-use crate::complexity::{is_lambda_body_block, measure_complexity, LanguageSets};
+use crate::complexity::{
+    is_lambda_body_block, measure_complexity, measure_function_body_metrics, LanguageSets,
+};
 use crate::duplication::measure_duplication;
 use crate::features::measure_syntax_features;
 use crate::functions::{
@@ -49,43 +51,61 @@ pub fn measure(
         .collect();
 
     let constructed_type_names = collect_constructed_type_names(root, &sets, code);
+    let body_metrics_by_node_id = measure_function_body_metrics(root, &sets, code);
     let analyses: Vec<_> = functions
         .iter()
         .enumerate()
-        .map(|(index, node)| analyze_function(*node, &sets, index, &constructed_type_names, code))
+        .map(|(index, node)| {
+            let body_metrics = body_metrics_by_node_id
+                .get(&node.id())
+                .expect("every collected function node opens a frame in the body-metrics pass");
+            analyze_function(
+                *node,
+                &sets,
+                index,
+                &constructed_type_names,
+                body_metrics,
+                code,
+            )
+        })
         .collect();
     let call_graph = measure_call_graph(&analyses, sets.name);
     let function_metrics: Vec<FunctionMetrics> = analyses
         .iter()
-        .map(|analysis| FunctionMetrics {
-            name: analysis.name.clone(),
-            node_type: analysis.node_type.to_string(),
-            start_line: analysis.start_line,
-            start_column: analysis.start_column,
-            end_line: analysis.end_line,
-            returns_jsx: analysis.returns_jsx,
-            cyclomatic_complexity: analysis.cyclomatic_complexity,
-            cognitive_complexity: analysis.cognitive_complexity,
-            nesting_depth: analysis.nesting_depth,
-            ncss: analysis.ncss,
-            call_count: analysis.call_count,
-            unique_callee_count: analysis.callees.len(),
-            fan_in: call_graph
-                .fan_in_by_index
-                .get(&analysis.index)
-                .copied()
-                .unwrap_or(0),
-            fan_out: call_graph
-                .fan_out_by_index
-                .get(&analysis.index)
-                .copied()
-                .unwrap_or(0),
-            parameter_count: analysis.parameter_count,
-            recursive: call_graph.recursive_indexes.contains(&analysis.index),
+        .map(|analysis| {
+            let recursive = call_graph.recursive_indexes.contains(&analysis.index);
+            FunctionMetrics {
+                name: analysis.name.clone(),
+                node_type: analysis.node_type.to_string(),
+                start_line: analysis.start_line,
+                start_column: analysis.start_column,
+                end_line: analysis.end_line,
+                returns_jsx: analysis.returns_jsx,
+                cyclomatic_complexity: analysis.cyclomatic_complexity,
+                // Sonar adds one flat point to each function in a recursion cycle; recursion is only
+                // known after call-graph analysis, so the adjustment lands here (issue #22).
+                cognitive_complexity: analysis.cognitive_complexity + u64::from(recursive),
+                nesting_depth: analysis.nesting_depth,
+                ncss: analysis.ncss,
+                call_count: analysis.call_count,
+                unique_callee_count: analysis.callees.len(),
+                fan_in: call_graph
+                    .fan_in_by_index
+                    .get(&analysis.index)
+                    .copied()
+                    .unwrap_or(0),
+                fan_out: call_graph
+                    .fan_out_by_index
+                    .get(&analysis.index)
+                    .copied()
+                    .unwrap_or(0),
+                parameter_count: analysis.parameter_count,
+                recursive,
+            }
         })
         .collect();
 
-    let global_complexity = measure_complexity(root, &sets, 0, false, code);
+    let global_complexity = measure_complexity(root, &sets, code);
     let (lines, code_line_numbers) = classify_lines(code, root);
     let halstead_counts = measure_halstead(root, code);
 

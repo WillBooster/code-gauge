@@ -191,7 +191,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 594,
   "callGraph": {
     "callCount": 8,
-    "internalCallCount": 3,
+    "internalCallCount": 4,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 3,
@@ -510,7 +510,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 228,
   "callGraph": {
     "callCount": 4,
-    "internalCallCount": 3,
+    "internalCallCount": 4,
     "internalEdgeCount": 3,
     "maxCallDepth": 2,
     "maxFanIn": 2,
@@ -545,7 +545,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "functions": [
     {
       "callCount": 1,
-      "cognitiveComplexity": 1,
+      "cognitiveComplexity": 2,
       "cyclomaticComplexity": 2,
       "endLine": 4,
       "fanIn": 2,
@@ -619,7 +619,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     "total": 15,
   },
   "maintainabilityIndex": 61.065193975036564,
-  "maxCognitiveComplexity": 1,
+  "maxCognitiveComplexity": 2,
   "maxCyclomaticComplexity": 2,
   "module": {
     "declarations": [
@@ -4752,7 +4752,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 4,
-      "cognitiveComplexity": 0,
+      "cognitiveComplexity": 1,
       "cyclomaticComplexity": 1,
       "endLine": 133,
       "fanIn": 3,
@@ -5979,7 +5979,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1513,
   "callGraph": {
     "callCount": 7,
-    "internalCallCount": 4,
+    "internalCallCount": 5,
     "internalEdgeCount": 4,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -6050,7 +6050,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 1,
+      "cognitiveComplexity": 2,
       "cyclomaticComplexity": 2,
       "endLine": 57,
       "fanIn": 1,
@@ -6237,7 +6237,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1837,
   "callGraph": {
     "callCount": 16,
-    "internalCallCount": 6,
+    "internalCallCount": 10,
     "internalEdgeCount": 6,
     "maxCallDepth": 2,
     "maxFanIn": 2,
@@ -6434,7 +6434,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 1,
+      "cognitiveComplexity": 2,
       "cyclomaticComplexity": 2,
       "endLine": 76,
       "fanIn": 2,
@@ -6584,7 +6584,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1416,
   "callGraph": {
     "callCount": 9,
-    "internalCallCount": 3,
+    "internalCallCount": 4,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -6709,7 +6709,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 1,
+      "cognitiveComplexity": 2,
       "cyclomaticComplexity": 2,
       "endLine": 81,
       "fanIn": 1,
@@ -6886,7 +6886,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 2216,
   "callGraph": {
     "callCount": 26,
-    "internalCallCount": 2,
+    "internalCallCount": 3,
     "internalEdgeCount": 2,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -7083,7 +7083,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 1,
+      "cognitiveComplexity": 2,
       "cyclomaticComplexity": 2,
       "endLine": 92,
       "fanIn": 1,
@@ -7171,7 +7171,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1406,
   "callGraph": {
     "callCount": 19,
-    "internalCallCount": 3,
+    "internalCallCount": 6,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -7260,7 +7260,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 1,
-      "cognitiveComplexity": 3,
+      "cognitiveComplexity": 4,
       "cyclomaticComplexity": 4,
       "endLine": 56,
       "fanIn": 1,
@@ -7726,7 +7726,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 4,
+      "cognitiveComplexity": 5,
       "cyclomaticComplexity": 3,
       "endLine": 57,
       "fanIn": 1,
@@ -7892,7 +7892,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1491,
   "callGraph": {
     "callCount": 27,
-    "internalCallCount": 5,
+    "internalCallCount": 11,
     "internalEdgeCount": 5,
     "maxCallDepth": 2,
     "maxFanIn": 2,
@@ -8242,7 +8242,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 2177,
   "callGraph": {
     "callCount": 26,
-    "internalCallCount": 3,
+    "internalCallCount": 6,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -8295,7 +8295,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 0,
+      "cognitiveComplexity": 1,
       "cyclomaticComplexity": 1,
       "endLine": 30,
       "fanIn": 1,
@@ -8367,7 +8367,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 2,
+      "cognitiveComplexity": 3,
       "cyclomaticComplexity": 2,
       "endLine": 72,
       "fanIn": 1,
@@ -8520,7 +8520,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 2613,
   "callGraph": {
     "callCount": 13,
-    "internalCallCount": 4,
+    "internalCallCount": 6,
     "internalEdgeCount": 4,
     "maxCallDepth": 2,
     "maxFanIn": 2,
@@ -8602,7 +8602,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 1,
+      "cognitiveComplexity": 2,
       "cyclomaticComplexity": 2,
       "endLine": 64,
       "fanIn": 2,

@@ -35,11 +35,13 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) ->
                 language_name,
             ) {
                 resolved_indexes.insert(resolved);
+                // Call occurrences, not unique edges: two calls to the same callee count twice
+                // here while internal_edge_count still counts them once (issue #22).
+                internal_call_count += 1;
             }
         }
 
         fan_out_by_index.insert(analysis.index, resolved_indexes.len());
-        internal_call_count += resolved_indexes.len();
         for callee_index in &resolved_indexes {
             *fan_in_by_index.entry(*callee_index).or_insert(0) += 1;
         }

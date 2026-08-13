@@ -237,6 +237,11 @@ describe('measureCode: line, complexity, and Halstead metrics', () => {
   });
 });
 
+// Issue #22 items 1-4: the SonarSource cognitive-complexity model, verified per rule.
+function cognitiveOf(code: string, language = 'javascript'): number | undefined {
+  return measureCode(code, { language }).functions[0]?.cognitiveComplexity;
+}
+
 describe('measureCode: cognitive complexity and nesting', () => {
   // classify(): for (+1) → if with `&&` (+2 nesting, +1 logical) → nested if (+3) with plain else
   // (+1). Cyclomatic complexity is 5 (base 1 + for + outer if + `&&` + inner if), which matches
@@ -256,6 +261,35 @@ describe('measureCode: cognitive complexity and nesting', () => {
     expect(classify?.cognitiveComplexity).toBeGreaterThan(classify?.cyclomaticComplexity ?? 0);
     expect(metrics.maxCognitiveComplexity).toBe(8);
     expect(metrics.nestingDepth).toBe(3);
+  });
+
+  it('counts a run of identical boolean operators once and each operator change once more', () => {
+    expect(cognitiveOf('function f(a,b){ if (a && b) return 1; }')).toBe(2);
+    expect(cognitiveOf('function f(a,b,c){ if (a && b && c) return 1; }')).toBe(2);
+    expect(cognitiveOf('function f(a,b,c){ if (a && (b && c)) return 1; }')).toBe(2);
+    expect(cognitiveOf('function f(a,b,c){ if (a && b || c) return 1; }')).toBe(3);
+    expect(cognitiveOf('function f(a,b,c,d){ if (a && b || c && d) return 1; }')).toBe(4);
+  });
+
+  it('adds one flat point for a plain else, without a nesting surcharge', () => {
+    expect(cognitiveOf('function f(a){ if (a) { return 1; } else { return 2; } }')).toBe(2);
+    expect(cognitiveOf('function f(a,b){ if (a) { return 1; } else if (b) { return 2; } else { return 3; } }')).toBe(3);
+    // The else is flat even when the if is nested (if +1, inner if +2, else +1, not +3).
+    expect(cognitiveOf('function f(a,b){ if (a) { if (b) { return 1; } else { return 2; } } }')).toBe(4);
+    expect(cognitiveOf('def f(a):\n    if a:\n        return 1\n    else:\n        return 2\n', 'python')).toBe(2);
+    expect(cognitiveOf('def f(a)\n  if a\n    1\n  else\n    2\n  end\nend\n', 'ruby')).toBe(2);
+  });
+
+  it('adds one point to each function in a recursion cycle', () => {
+    expect(cognitiveOf('function f(n){ if (n <= 1) return 1; return n * f(n - 1); }')).toBe(2);
+    const mutual = measureCode(
+      'function even(n){ return n === 0 || odd(n - 1); }\nfunction odd(n){ return n !== 0 && even(n - 1); }\n',
+      {
+        language: 'javascript',
+      }
+    );
+    expect(mutual.functions.map((fn) => fn.cognitiveComplexity)).toEqual([2, 2]);
+    expect(mutual.maxCognitiveComplexity).toBe(2);
   });
 });
 
@@ -389,11 +423,11 @@ describe('measureCode: call graph', () => {
     expect(byName.get('build')).toMatchObject({ recursive: false, fanOut: 2, callCount: 3, uniqueCalleeCount: 2 });
     expect(byName.get('combine')).toMatchObject({ fanIn: 1, fanOut: 0 });
 
-    // internalCallCount currently equals internalEdgeCount (unique caller→callee edges); it does not
-    // count call occurrences (which would be 4 here). This pins current behavior; see issue #22.
+    // internalCallCount counts internal call occurrences (build→factorial ×2, build→combine,
+    // factorial→factorial); internalEdgeCount counts unique caller→callee edges (issue #22).
     expect(metrics.callGraph).toMatchObject({
       callCount: 4,
-      internalCallCount: 3,
+      internalCallCount: 4,
       internalEdgeCount: 3,
       recursiveFunctionCount: 1,
       maxFanIn: 2,

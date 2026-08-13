@@ -6,7 +6,7 @@ import {
   type CrossFileDuplicateCandidate,
 } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
-import { commentNodeTypes, countFunctionNcss, countNcss, invalidateNcssSetsCache } from './ncss.js';
+import { commentNodeTypes, countNcss, getNcssSets, invalidateNcssSetsCache, ncssContribution } from './ncss.js';
 import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
 import type {
   CallGraphMetrics,
@@ -297,7 +297,7 @@ export class TreeMeasurer {
     );
     const structuralMetrics = measureStructuralMetrics(root, functions, language);
     const functionMetrics = structuralMetrics.functions;
-    const globalComplexity = measureComplexity(root, language, 0, false);
+    const globalComplexity = measureComplexity(root, language);
     const { lines, codeLineNumbers } = classifyLines(code, root);
     const halstead = measureHalstead(root, code);
 
@@ -431,26 +431,38 @@ function measureStructuralMetrics(
   language: LanguageDefinition
 ): StructuralMetrics {
   const constructedTypeNames = collectConstructedTypeNames(root, language);
-  const analyses = functions.map((node, index) => analyzeFunction(node, language, index, constructedTypeNames));
+  const bodyMetricsByNodeId = measureFunctionBodyMetrics(root, language);
+  const analyses = functions.map((node, index) => {
+    const bodyMetrics = bodyMetricsByNodeId.get(node.id);
+    if (!bodyMetrics) {
+      throw new Error(`missing body metrics for function node at line ${node.startPosition.row + 1}`);
+    }
+    return analyzeFunction(node, language, index, constructedTypeNames, bodyMetrics);
+  });
   const callGraph = measureCallGraph(analyses, language.name);
-  const functionsWithGraph = analyses.map((analysis) => ({
-    name: analysis.name,
-    nodeType: analysis.nodeType,
-    startLine: analysis.startLine,
-    startColumn: analysis.startColumn,
-    endLine: analysis.endLine,
-    returnsJsx: analysis.returnsJsx,
-    cyclomaticComplexity: analysis.cyclomaticComplexity,
-    cognitiveComplexity: analysis.cognitiveComplexity,
-    nestingDepth: analysis.nestingDepth,
-    ncss: analysis.ncss,
-    callCount: analysis.callCount,
-    uniqueCalleeCount: analysis.callees.size,
-    fanIn: callGraph.fanInByIndex.get(analysis.index) ?? 0,
-    fanOut: callGraph.fanOutByIndex.get(analysis.index) ?? 0,
-    parameterCount: analysis.parameterCount,
-    recursive: callGraph.recursiveIndexes.has(analysis.index),
-  }));
+  const functionsWithGraph = analyses.map((analysis) => {
+    const recursive = callGraph.recursiveIndexes.has(analysis.index);
+    return {
+      name: analysis.name,
+      nodeType: analysis.nodeType,
+      startLine: analysis.startLine,
+      startColumn: analysis.startColumn,
+      endLine: analysis.endLine,
+      returnsJsx: analysis.returnsJsx,
+      cyclomaticComplexity: analysis.cyclomaticComplexity,
+      // Sonar adds one flat point to each function in a recursion cycle; recursion is only known
+      // after call-graph analysis, so the adjustment lands here rather than in analyzeFunction.
+      cognitiveComplexity: analysis.cognitiveComplexity + (recursive ? 1 : 0),
+      nestingDepth: analysis.nestingDepth,
+      ncss: analysis.ncss,
+      callCount: analysis.callCount,
+      uniqueCalleeCount: analysis.callees.size,
+      fanIn: callGraph.fanInByIndex.get(analysis.index) ?? 0,
+      fanOut: callGraph.fanOutByIndex.get(analysis.index) ?? 0,
+      parameterCount: analysis.parameterCount,
+      recursive,
+    };
+  });
 
   return {
     functions: functionsWithGraph,
@@ -467,9 +479,9 @@ function analyzeFunction(
   node: Parser.SyntaxNode,
   language: LanguageDefinition,
   index: number,
-  constructedTypeNames: Set<string>
+  constructedTypeNames: Set<string>,
+  bodyMetrics: FunctionBodyMetrics
 ): FunctionAnalysis {
-  const complexity = measureComplexity(node, language, 0, true);
   const calls = collectCalls(node, language, constructedTypeNames);
   return {
     index,
@@ -481,10 +493,10 @@ function analyzeFunction(
     startColumn: node.startPosition.column,
     endLine: node.endPosition.row + 1,
     returnsJsx: returnsJsx(node, language),
-    cyclomaticComplexity: complexity.cyclomaticComplexity,
-    cognitiveComplexity: complexity.cognitiveComplexity,
-    nestingDepth: complexity.nestingDepth,
-    ncss: countFunctionNcss(node, language),
+    cyclomaticComplexity: bodyMetrics.cyclomaticComplexity,
+    cognitiveComplexity: bodyMetrics.cognitiveComplexity,
+    nestingDepth: bodyMetrics.nestingDepth,
+    ncss: bodyMetrics.ncss,
     callCount: calls.callCount,
     parameterCount: countParameters(node),
     callees: calls.callees,
@@ -666,12 +678,14 @@ function measureCallGraph(
       const resolved = resolveCallSite(site, analysis.scopeName, candidatesByName.get(site.name), languageName);
       if (resolved !== undefined) {
         resolvedIndexes.add(resolved);
+        // Call occurrences, not unique edges: two calls to the same callee count twice here while
+        // internalEdgeCount still counts them once (issue #22).
+        internalCallCount += 1;
       }
     }
 
     graph.set(analysis.index, resolvedIndexes);
     fanOutByIndex.set(analysis.index, resolvedIndexes.size);
-    internalCallCount += resolvedIndexes.size;
     for (const calleeIndex of resolvedIndexes) {
       fanInByIndex.set(calleeIndex, (fanInByIndex.get(calleeIndex) ?? 0) + 1);
     }
@@ -877,26 +891,67 @@ function getComplexityNodeSets(language: LanguageDefinition): ComplexityNodeSets
   return sets;
 }
 
-function measureComplexity(
-  node: Parser.SyntaxNode,
-  language: LanguageDefinition,
-  nesting: number,
-  stopAtNestedFunctions: boolean
-): ComplexityResult {
-  let cyclomaticComplexity = 1;
-  let cognitiveComplexity = 0;
-  let nestingDepth = nesting;
-  const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
+interface FunctionBodyMetrics {
+  cyclomaticComplexity: number;
+  cognitiveComplexity: number;
+  nestingDepth: number;
+  ncss: number;
+}
 
-  // Cyclomatic complexity and nesting depth describe the function's own body, so they stop at
-  // nested function boundaries; cognitive complexity follows the Sonar spec instead and charges
-  // nested function/lambda content to the enclosing function, one nesting level deeper.
+/** Accumulator for one function body during measureFunctionBodyMetrics' post-order pass. */
+interface FunctionBodyFrame {
+  cyclomaticComplexity: number;
+  cognitiveComplexity: number;
+  /** Count of `1 + nesting` cognitive increments, for re-basing on hoist into the parent frame. */
+  nestingSensitiveCount: number;
+  nestingDepth: number;
+  ncss: number;
+  hasOwnNcssContribution: boolean;
+  /** Cognitive nesting (structural nesting + function/class bonuses) carried into this body. */
+  entryCognitiveNesting: number;
+  /** Structural nesting carried into this body (bonuses excluded), for nesting depth. */
+  entryStructuralNesting: number;
+}
+
+function createFrame(entryCognitiveNesting: number, entryStructuralNesting: number): FunctionBodyFrame {
+  return {
+    cyclomaticComplexity: 1,
+    cognitiveComplexity: 0,
+    nestingSensitiveCount: 0,
+    nestingDepth: 0,
+    ncss: 0,
+    hasOwnNcssContribution: false,
+    entryCognitiveNesting,
+    entryStructuralNesting,
+  };
+}
+
+/**
+ * Per-function complexity and NCSS for every function boundary, in one post-order pass so each
+ * node is visited once instead of once per enclosing function (issue #35). A function's metrics
+ * are its own-body contributions plus, per directly nested function, that function's
+ * already-computed totals: NCSS hoists as-is; cognitive complexity re-bases the nested function's
+ * nesting-sensitive increments (each worth `1 + nesting`) by the nesting offset at the embedding
+ * site, while flat increments (else branches, boolean-operator sequences, chain continuations,
+ * jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
+ * only, so nothing hoists.
+ */
+function measureFunctionBodyMetrics(
+  root: Parser.SyntaxNode,
+  language: LanguageDefinition
+): Map<number, FunctionBodyMetrics> {
+  const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
+  const { countable, containers } = getNcssSets(language);
+  const results = new Map<number, FunctionBodyMetrics>();
+  // frames[0] is a sentinel for top-level code; its accumulation is discarded.
+  const frames: FunctionBodyFrame[] = [createFrame(0, 0)];
+
   function visit(
     current: Parser.SyntaxNode,
     currentNesting: number,
     functionNestingBonus: number,
     insideFunction: boolean,
-    insideNestedFunction: boolean,
+    insideNestedRegion: boolean,
     insideChargedClassBody: boolean
   ): void {
     // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
@@ -905,20 +960,22 @@ function measureComplexity(
     // directly inside a charged class body skip the function-boundary bonus.
     const isChargedClassBody = current.type === 'class_body' && insideFunction;
     if (isChargedClassBody) {
-      insideNestedFunction = true;
+      insideNestedRegion = true;
       functionNestingBonus += 1;
     }
-    if (isFunctionBoundary(current, functionNodes)) {
-      if (insideFunction) {
-        insideNestedFunction = true;
-        if (!insideChargedClassBody) {
-          functionNestingBonus += 1;
-        }
+    const opensFrame = isFunctionBoundary(current, functionNodes);
+    if (opensFrame) {
+      if (insideFunction && !insideChargedClassBody) {
+        functionNestingBonus += 1;
       }
       insideFunction = true;
     }
-    const cognitiveNesting = currentNesting + functionNestingBonus;
-    const countsForOwnBody = !(stopAtNestedFunctions && insideNestedFunction);
+    // The node's own increments target the frame it is embedded in, not the one it opens; a
+    // frame-opening or charged-class-body node contributes nothing to that frame's own body
+    // (cyclomatic/nesting), matching the per-function traversal this pass replaces.
+    const frame = frames.at(-1) as FunctionBodyFrame;
+    const relativeNesting = currentNesting + functionNestingBonus - frame.entryCognitiveNesting;
+    const countsForOwnBody = !insideNestedRegion && !opensFrame;
 
     // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
     // `if` keyword token), so only named nodes count as decisions.
@@ -937,6 +994,150 @@ function measureComplexity(
     const isContinuation = isDecision && isFlatChainContinuation(current);
 
     if (isDecision && countsForOwnBody) {
+      frame.cyclomaticComplexity += 1;
+    }
+    if (isDecision && !isCaseClause && !cyclomaticOnlyNodeTypes.has(current.type)) {
+      if (isContinuation) {
+        frame.cognitiveComplexity += 1;
+      } else {
+        frame.cognitiveComplexity += 1 + relativeNesting;
+        frame.nestingSensitiveCount += 1;
+      }
+    }
+    if (current.isNamed && switchLikeNodeTypes.has(current.type)) {
+      frame.cognitiveComplexity += 1 + relativeNesting;
+      frame.nestingSensitiveCount += 1;
+    }
+    // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
+    // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+    frame.cognitiveComplexity += countPlainElseBranches(current);
+    // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
+    if (isFlowBreakingJump(current)) {
+      frame.cognitiveComplexity += 1;
+    }
+
+    if (isBooleanOperator(current)) {
+      if (countsForOwnBody) {
+        frame.cyclomaticComplexity += 1;
+      }
+      // A sequence of identical boolean operators reads as one condition, so only the operator
+      // starting a sequence adds a cognitive point (Sonar spec); each operator stays one
+      // cyclomatic path.
+      if (startsBooleanOperatorSequence(current)) {
+        frame.cognitiveComplexity += 1;
+      }
+    }
+
+    // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
+    // add one independent execution path without nesting.
+    if (isPatternGuard(current)) {
+      if (countsForOwnBody) {
+        frame.cyclomaticComplexity += 1;
+      }
+      frame.cognitiveComplexity += 1;
+    }
+
+    const childNesting = isNesting && !isContinuation ? currentNesting + 1 : currentNesting;
+    if (countsForOwnBody) {
+      frame.nestingDepth = Math.max(frame.nestingDepth, childNesting - frame.entryStructuralNesting);
+    }
+
+    if (opensFrame) {
+      frames.push(createFrame(childNesting + functionNestingBonus, childNesting));
+    }
+    // The node's NCSS contribution belongs to the innermost frame whose subtree holds it — the
+    // frame the node opens, if any (per-function NCSS includes the declaration node itself).
+    const ownNcss = ncssContribution(current, countable, containers);
+    const ncssFrame = frames.at(-1) as FunctionBodyFrame;
+    ncssFrame.ncss += ownNcss;
+    if (opensFrame && ownNcss > 0) {
+      ncssFrame.hasOwnNcssContribution = true;
+    }
+
+    for (const child of current.children) {
+      visit(
+        child,
+        childNesting,
+        functionNestingBonus,
+        insideFunction,
+        opensFrame ? false : insideNestedRegion,
+        isChargedClassBody
+      );
+    }
+
+    if (opensFrame) {
+      const closed = frames.pop() as FunctionBodyFrame;
+      results.set(current.id, {
+        cyclomaticComplexity: closed.cyclomaticComplexity,
+        cognitiveComplexity: closed.cognitiveComplexity,
+        nestingDepth: closed.nestingDepth,
+        // A function node without a countable declaration of its own (arrow functions, lambdas,
+        // blocks) still counts 1 for the declaration itself.
+        ncss: closed.ncss + (closed.hasOwnNcssContribution ? 0 : 1),
+      });
+      const parent = frames.at(-1) as FunctionBodyFrame;
+      parent.cognitiveComplexity +=
+        closed.cognitiveComplexity +
+        closed.nestingSensitiveCount * (closed.entryCognitiveNesting - parent.entryCognitiveNesting);
+      parent.nestingSensitiveCount += closed.nestingSensitiveCount;
+      parent.ncss += closed.ncss;
+    }
+  }
+
+  visit(root, 0, 0, false, false, false);
+  return results;
+}
+
+/**
+ * File-level complexity over the whole tree. Cognitive complexity charges nested function/lambda
+ * content one nesting level deeper per function boundary crossed (Sonar spec); cyclomatic
+ * complexity and nesting depth count every node once.
+ */
+function measureComplexity(node: Parser.SyntaxNode, language: LanguageDefinition): ComplexityResult {
+  let cyclomaticComplexity = 1;
+  let cognitiveComplexity = 0;
+  let nestingDepth = 0;
+  const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
+
+  function visit(
+    current: Parser.SyntaxNode,
+    currentNesting: number,
+    functionNestingBonus: number,
+    insideFunction: boolean,
+    insideChargedClassBody: boolean
+  ): void {
+    // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
+    // level once for everything inside it — PMD charges the class body, not the methods it holds,
+    // so methods directly inside a charged class body skip the function-boundary bonus.
+    const isChargedClassBody = current.type === 'class_body' && insideFunction;
+    if (isChargedClassBody) {
+      functionNestingBonus += 1;
+    }
+    if (isFunctionBoundary(current, functionNodes)) {
+      if (insideFunction && !insideChargedClassBody) {
+        functionNestingBonus += 1;
+      }
+      insideFunction = true;
+    }
+    const cognitiveNesting = currentNesting + functionNestingBonus;
+
+    // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
+    // `if` keyword token), so only named nodes count as decisions.
+    const isDecision = current.isNamed && decisionNodes.has(current.type) && !isDefaultSwitchBranch(current);
+    const isCaseClause = current.isNamed && caseClauseNodeTypes.has(current.type);
+    // Ruby's `case ... else` arm is an `else` node; like every other language's default branch it
+    // nests its contents inside the switch (it cannot go in the Ruby nesting set because
+    // `if`/`begin` else branches would then double-nest under their already-nesting parent).
+    const isNesting =
+      current.isNamed &&
+      (nestingNodes.has(current.type) ||
+        (current.type === 'else' && (current.parent?.type === 'case' || current.parent?.type === 'case_match')));
+    // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
+    // surcharge, and their bodies stay at the chain's nesting level (Sonar cognitive-complexity
+    // semantics); genuinely nested conditionals inside those bodies still deepen.
+    const isContinuation = isDecision && isFlatChainContinuation(current);
+
+    if (isDecision) {
       cyclomaticComplexity += 1;
     }
     if (isDecision && !isCaseClause && !cyclomaticOnlyNodeTypes.has(current.type)) {
@@ -954,9 +1155,7 @@ function measureComplexity(
     }
 
     if (isBooleanOperator(current)) {
-      if (countsForOwnBody) {
-        cyclomaticComplexity += 1;
-      }
+      cyclomaticComplexity += 1;
       // A sequence of identical boolean operators reads as one condition, so only the operator
       // starting a sequence adds a cognitive point (Sonar spec); each operator stays one
       // cyclomatic path.
@@ -968,24 +1167,20 @@ function measureComplexity(
     // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
     // add one independent execution path without nesting.
     if (isPatternGuard(current)) {
-      if (countsForOwnBody) {
-        cyclomaticComplexity += 1;
-      }
+      cyclomaticComplexity += 1;
       cognitiveComplexity += 1;
     }
 
     const childNesting = isNesting && !isContinuation ? currentNesting + 1 : currentNesting;
-    if (countsForOwnBody) {
-      nestingDepth = Math.max(nestingDepth, childNesting);
-    }
+    nestingDepth = Math.max(nestingDepth, childNesting);
 
     for (const child of current.children) {
-      visit(child, childNesting, functionNestingBonus, insideFunction, insideNestedFunction, isChargedClassBody);
+      visit(child, childNesting, functionNestingBonus, insideFunction, isChargedClassBody);
     }
   }
 
   for (const child of node.children) {
-    visit(child, nesting, 0, stopAtNestedFunctions, false, false);
+    visit(child, 0, 0, false, false);
   }
 
   return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
