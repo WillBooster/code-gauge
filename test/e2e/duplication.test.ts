@@ -96,7 +96,8 @@ describe('duplication: gapped (Type-3) clones', () => {
     const metrics = measureCode(gapped, { language: 'javascript' });
 
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
-    expect(metrics.duplication.duplicateBlockCount).toBe(1);
+    // Each matched fragment still counts: merging consolidates the grouping, not the counting.
+    expect(metrics.duplication.duplicateBlockCount).toBe(2);
     const group = metrics.duplication.duplicateBlockGroups[0] ?? [];
     // Each merged occurrence spans a whole function body, gap included.
     expect(group.length).toBe(2);
@@ -181,6 +182,23 @@ if (second${suffix} > first${suffix}) {
   report(first${suffix} - second${suffix});
 }
 `;
+
+describe('duplication: fingerprint integrity', () => {
+  it('does not equate regions whose only difference is a djb2-colliding token', () => {
+    // hashText('p1v') === hashText('p70'): with a single shared per-token hash the whole-body
+    // fingerprints would collide and the two functions would match exactly (one group even with
+    // gap merging disabled). The correct result under maxGapTokens: 0 is the two exact halves
+    // around the differing member access, i.e. two groups.
+    const caller = (name: string, member: string): string =>
+      logicClone(name, `console.log("midpoint", total.${member});`);
+    const metrics = measureCode(caller('alpha', 'p1v') + caller('beta', 'p70'), {
+      language: 'javascript',
+      duplication: { maxGapTokens: 0 },
+    });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(2);
+  });
+});
 
 describe('duplication: detection options', () => {
   it('honors a raised minTokens', () => {

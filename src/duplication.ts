@@ -238,10 +238,17 @@ interface Token {
   /** Normalization target: identifiers to anonymize, literal kind tags, or the raw token text. */
   kind: 'id' | 'text';
   text: string;
-  /** djb2 hash of `text`, precomputed so fingerprinting nested regions never re-hashes a token. */
+  /**
+   * Two INDEPENDENT hashes of `text` (djb2 and FNV-1a), precomputed so fingerprinting nested
+   * regions never re-hashes a token. Feeding the same per-token hash to both fingerprint
+   * accumulators would collapse the key to 32 effective bits: one djb2 collision between two
+   * token texts would then equate whole regions.
+   */
   textHash: number;
-  /** Raw source text of a value-carrying literal, folded into fingerprints of data-like regions. */
+  textHash2: number;
+  /** Hash pair of a value-carrying literal's value, folded into data-like region fingerprints. */
   literalHash?: number;
+  literalHash2?: number;
   /** 0-based source rows the token occupies, so line coverage counts only matched-token lines. */
   startRow: number;
   endRow: number;
@@ -438,13 +445,13 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
     tokens.push(
       makeTextToken(node.text, undefined, startRow, endRow),
       makeTextToken(':', undefined, startRow, endRow),
-      { kind: 'id', text: node.text, textHash: 0, startRow, endRow }
+      { kind: 'id', text: node.text, textHash: 0, textHash2: 0, startRow, endRow }
     );
     return;
   }
 
   if (node.isNamed && anonymizedIdentifierTypes.has(node.type) && !isSemanticNameLeaf(node)) {
-    tokens.push({ kind: 'id', text: node.text, textHash: 0, startRow, endRow });
+    tokens.push({ kind: 'id', text: node.text, textHash: 0, textHash2: 0, startRow, endRow });
     return;
   }
 
@@ -459,9 +466,10 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
 }
 
 function makeTextToken(text: string, literalValueText: string | undefined, startRow: number, endRow: number): Token {
-  const token: Token = { kind: 'text', text, textHash: hashText(text), startRow, endRow };
+  const token: Token = { kind: 'text', text, textHash: hashText(text), textHash2: hashText2(text), startRow, endRow };
   if (literalValueText !== undefined && valueCarryingLiteralKinds.has(text)) {
     token.literalHash = hashText(literalValueText);
+    token.literalHash2 = hashText2(literalValueText);
   }
   return token;
 }
@@ -804,14 +812,24 @@ function toCandidate(
   };
 }
 
-/** Cache of hashText('$0'), hashText('$1'), ... so anonymized identifiers hash without allocating. */
+/** Caches of hashText/hashText2 over '$0', '$1', ... so anonymized identifiers hash without allocating. */
 const anonymizedIndexHashes: number[] = [];
+const anonymizedIndexHashes2: number[] = [];
 
 function anonymizedIndexHash(index: number): number {
   let hash = anonymizedIndexHashes[index];
   if (hash === undefined) {
     hash = hashText(`$${index}`);
     anonymizedIndexHashes[index] = hash;
+  }
+  return hash;
+}
+
+function anonymizedIndexHash2(index: number): number {
+  let hash = anonymizedIndexHashes2[index];
+  if (hash === undefined) {
+    hash = hashText2(`$${index}`);
+    anonymizedIndexHashes2[index] = hash;
   }
   return hash;
 }
@@ -862,7 +880,10 @@ function fingerprintHashPair(
     if (!token) {
       continue;
     }
+    // Each accumulator consumes its own independent per-token hash: sharing one would collapse
+    // the key to 32 effective bits (a single djb2 collision would equate whole regions).
     let part: number;
+    let part2: number;
     if (token.kind === 'id') {
       let identifierIndex = indexByIdentifier.get(token.text);
       if (identifierIndex === undefined) {
@@ -870,16 +891,18 @@ function fingerprintHashPair(
         indexByIdentifier.set(token.text, identifierIndex);
       }
       part = anonymizedIndexHash(identifierIndex);
+      part2 = anonymizedIndexHash2(identifierIndex);
     } else {
       part = token.textHash;
+      part2 = token.textHash2;
     }
     // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 (Math.trunc does not), which must match the native backend's wrapping i32 arithmetic.
     primary = (Math.imul(primary, 31) + part) | 0;
-    secondary = Math.imul(secondary, 37) ^ part;
-    if (foldLiteralValues && token.literalHash !== undefined) {
+    secondary = Math.imul(secondary, 37) ^ part2;
+    if (foldLiteralValues && token.literalHash !== undefined && token.literalHash2 !== undefined) {
       // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 (Math.trunc does not), which must match the native backend's wrapping i32 arithmetic.
       primary = (Math.imul(primary, 31) + token.literalHash) | 0;
-      secondary = Math.imul(secondary, 37) ^ token.literalHash;
+      secondary = Math.imul(secondary, 37) ^ token.literalHash2;
     }
   }
   return [primary, secondary];
@@ -891,6 +914,16 @@ function hashText(text: string): number {
   for (let index = 0; index < text.length; index += 1) {
     // oxlint-disable-next-line unicorn/prefer-code-point -- djb2 hashes UTF-16 code units; codePointAt would hash surrogate pairs twice (full code point, then the lone low surrogate).
     hash = Math.imul(hash, 33) ^ text.charCodeAt(index);
+  }
+  return hash;
+}
+
+/** FNV-1a over UTF-16 code units: independent of hashText so the two accumulators never share input. */
+function hashText2(text: string): number {
+  let hash = -2_128_831_035; // 2166136261 as int32 (the FNV-1a offset basis)
+  for (let index = 0; index < text.length; index += 1) {
+    // oxlint-disable-next-line unicorn/prefer-code-point -- hashes UTF-16 code units like hashText.
+    hash = Math.imul(hash ^ text.charCodeAt(index), 16_777_619);
   }
   return hash;
 }
@@ -1018,7 +1051,10 @@ function summarizeDuplicates(
   const duplicateBlockGroups: { startLine: number; endLine: number }[][] = [];
   const duplicatedLines = new Set<number>();
   for (const group of groups) {
-    duplicateBlockCount += group.length - 1;
+    // Each redundant occurrence contributes one count per matched fragment, so merging a gapped
+    // clone's fragments into one group does not halve the count a `duplicateBlock` threshold sees:
+    // an edited two-fragment pair still counts 2, exactly as its unmerged fragments did.
+    duplicateBlockCount += (group.length - 1) * (group[0]?.segments.length ?? 1);
     for (const occurrence of group) {
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, occurrence.tokenCount);
       // Only CODE lines carrying matched tokens count: comments and blank gaps inside an

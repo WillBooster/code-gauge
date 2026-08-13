@@ -153,7 +153,11 @@ export interface SyntaxFeatureMetrics {
  * consistently renamed copies match. Distinct from cross-file duplicate symbol names.
  */
 export interface DuplicationMetrics {
-  /** Number of redundant (extra) copies of duplicated regions, i.e. sum of (groupSize - 1). */
+  /**
+   * Number of redundant (extra) duplicated regions: sum over groups of (groupSize - 1) times the
+   * matched fragments per occurrence, so a gapped (merged) clone counts like its unmerged
+   * fragments and threshold semantics do not shift with merging.
+   */
   duplicateBlockCount: number;
   /** Number of distinct normalized token sequences that appear more than once. */
   duplicateBlockGroupCount: number;

@@ -524,12 +524,20 @@ async function measureFile(
 
     const code = await readFile(file, 'utf8');
     const measureOptions = { language, duplication: context.options.duplication };
-    context.files.push({
-      file,
-      metrics: measureCode(code, measureOptions),
-      // Only directory scans compare files against each other; a single-file target has no peers.
-      duplicationCandidates: mode === 'directory' ? collectDuplicationCandidates(code, measureOptions) : undefined,
-    });
+    const fileMetrics: FileMetrics = { file, metrics: measureCode(code, measureOptions) };
+    // Only directory scans compare files against each other; a single-file target has no peers.
+    // Candidate collection failing (it always parses with the JavaScript binding, which can give
+    // up where the native backend measured fine) must not discard the measured metrics.
+    if (mode === 'directory') {
+      try {
+        fileMetrics.duplicationCandidates = collectDuplicationCandidates(code, measureOptions);
+      } catch (error) {
+        context.errors.push(
+          `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates: ${formatError(error)}`
+        );
+      }
+    }
+    context.files.push(fileMetrics);
   } catch (error) {
     context.errors.push(`${formatPath(file, context.rootDirectory)}: ${formatError(error)}`);
   }

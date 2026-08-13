@@ -210,10 +210,12 @@ fn pascal_case_regex() -> &'static regex::Regex {
 struct Token<'a> {
     is_id: bool,
     text: Cow<'a, str>,
-    /// djb2 hash of `text`, precomputed so fingerprinting nested regions never re-hashes a token.
+    /// Two independent hashes of `text` (djb2 and FNV-1a); see the Token doc in duplication.ts.
     text_hash: i32,
-    /// Hash of the raw source text of a value-carrying literal, folded into data-like fingerprints.
+    text_hash2: i32,
+    /// Hash pair of a value-carrying literal's value, folded into data-like region fingerprints.
     literal_hash: Option<i32>,
+    literal_hash2: Option<i32>,
     start_row: usize,
     end_row: usize,
 }
@@ -382,7 +384,9 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
             is_id: true,
             text: Cow::Borrowed(text),
             text_hash: 0,
+            text_hash2: 0,
             literal_hash: None,
+            literal_hash2: None,
             start_row,
             end_row,
         });
@@ -397,7 +401,9 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
             is_id: true,
             text: Cow::Borrowed(node_text(node, code)),
             text_hash: 0,
+            text_hash2: 0,
             literal_hash: None,
+            literal_hash2: None,
             start_row,
             end_row,
         });
@@ -433,17 +439,20 @@ fn make_text_token<'a>(
     end_row: usize,
 ) -> Token<'a> {
     let text_hash = hash_text(&text);
-    let literal_hash = match literal_value_text {
+    let text_hash2 = hash_text2(&text);
+    let (literal_hash, literal_hash2) = match literal_value_text {
         Some(value) if VALUE_CARRYING_LITERAL_KINDS.contains(&text.as_ref()) => {
-            Some(hash_text(&value))
+            (Some(hash_text(&value)), Some(hash_text2(&value)))
         }
-        _ => None,
+        _ => (None, None),
     };
     Token {
         is_id: false,
         text,
         text_hash,
+        text_hash2,
         literal_hash,
+        literal_hash2,
         start_row,
         end_row,
     }
@@ -912,28 +921,33 @@ fn fingerprint_hash_pair(
 ) -> (i32, i32) {
     let clamped_end = end_token_index.min(tokens.len());
     let mut index_by_identifier: HashMap<&str, usize> = HashMap::new();
-    let mut index_hashes: Vec<i32> = Vec::new();
+    let mut index_hashes: Vec<(i32, i32)> = Vec::new();
     let mut primary: i32 = 5381;
     let mut secondary: i32 = 52_711;
     for token in &tokens[start_token_index..clamped_end] {
-        let part = if token.is_id {
+        // Each accumulator consumes its own independent per-token hash; see fingerprintHashPair
+        // in duplication.ts.
+        let (part, part2) = if token.is_id {
             let next_index = index_by_identifier.len();
             let identifier_index = *index_by_identifier
                 .entry(token.text.as_ref())
                 .or_insert(next_index);
             if identifier_index == index_hashes.len() {
-                index_hashes.push(hash_text(&format!("${identifier_index}")));
+                let name = format!("${identifier_index}");
+                index_hashes.push((hash_text(&name), hash_text2(&name)));
             }
             index_hashes[identifier_index]
         } else {
-            token.text_hash
+            (token.text_hash, token.text_hash2)
         };
         primary = primary.wrapping_mul(31).wrapping_add(part);
-        secondary = secondary.wrapping_mul(37) ^ part;
+        secondary = secondary.wrapping_mul(37) ^ part2;
         if fold_literal_values {
-            if let Some(literal_hash) = token.literal_hash {
+            if let (Some(literal_hash), Some(literal_hash2)) =
+                (token.literal_hash, token.literal_hash2)
+            {
                 primary = primary.wrapping_mul(31).wrapping_add(literal_hash);
-                secondary = secondary.wrapping_mul(37) ^ literal_hash;
+                secondary = secondary.wrapping_mul(37) ^ literal_hash2;
             }
         }
     }
@@ -945,6 +959,15 @@ fn hash_text(text: &str) -> i32 {
     let mut hash: i32 = 5381;
     for unit in text.encode_utf16() {
         hash = hash.wrapping_mul(33) ^ (unit as i32);
+    }
+    hash
+}
+
+/// FNV-1a over UTF-16 code units, matching hashText2 in duplication.ts exactly.
+fn hash_text2(text: &str) -> i32 {
+    let mut hash: i32 = -2_128_831_035; // 2166136261 as int32 (the FNV-1a offset basis)
+    for unit in text.encode_utf16() {
+        hash = (hash ^ (unit as i32)).wrapping_mul(16_777_619);
     }
     hash
 }
@@ -1180,7 +1203,9 @@ fn summarize_duplicates(
     let mut duplicate_block_groups: Vec<Vec<DuplicateBlockOccurrence>> = Vec::new();
     let mut duplicated_lines: HashSet<usize> = HashSet::new();
     for group in groups {
-        duplicate_block_count += group.len() - 1;
+        // Fragment-weighted like duplication.ts: merging must not halve what thresholds see.
+        duplicate_block_count +=
+            (group.len() - 1) * group.first().map(|first| first.segments.len()).unwrap_or(1);
         for occurrence in group {
             max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
             // Only CODE lines carrying matched tokens count; the unmatched gap of a merged clone
