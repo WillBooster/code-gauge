@@ -1299,7 +1299,9 @@ function lcsLength(a: Int32Array, b: Int32Array): number {
       positionMasks.set(symbol, mask);
     }
     const word = index >>> 5;
-    // The Uint32Array store wraps the signed int32 bit pattern to unsigned.
+    // The Uint32Array store wraps the signed int32 bit pattern to unsigned. The `?? 0` guards in
+    // this function are required by noUncheckedIndexedAccess (typed-array reads type as
+    // `number | undefined`), not redundancy: every index is in bounds.
     mask[word] = (mask[word] ?? 0) | (1 << (index & 31));
   }
 

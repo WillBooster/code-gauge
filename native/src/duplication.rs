@@ -1633,9 +1633,9 @@ fn count_shared_ngrams(ngram_sets: &[HashSet<i32>]) -> HashMap<(usize, usize), u
     let mut shared_counts: HashMap<(usize, usize), usize> = HashMap::new();
     for blocks in blocks_by_ngram.values() {
         for (position, &left_index) in blocks.iter().enumerate() {
+            // Bucket indices are appended in ascending block order, so left < right already.
             for &right_index in &blocks[position + 1..] {
-                let pair = (left_index.min(right_index), left_index.max(right_index));
-                *shared_counts.entry(pair).or_insert(0) += 1;
+                *shared_counts.entry((left_index, right_index)).or_insert(0) += 1;
             }
         }
     }
