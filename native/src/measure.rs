@@ -54,7 +54,7 @@ pub fn measure(
         .enumerate()
         .map(|(index, node)| analyze_function(*node, &sets, index, &constructed_type_names, code))
         .collect();
-    let call_graph = measure_call_graph(&analyses);
+    let call_graph = measure_call_graph(&analyses, sets.name);
     let function_metrics: Vec<FunctionMetrics> = analyses
         .iter()
         .map(|analysis| FunctionMetrics {

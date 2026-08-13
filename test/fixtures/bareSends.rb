@@ -1,0 +1,58 @@
+def helper
+  1
+end
+
+def run(seed)
+  helper
+  seed
+  total = helper
+  total
+end
+
+def shadowed
+  helper = 1
+  helper
+end
+
+def lexical_order
+  value
+  value = 2
+  value
+end
+
+def blocks(list)
+  outer = 0
+  list.each do |item|
+    outer
+    inner = item
+    helper
+  end
+  inner
+end
+
+def rescue_binding
+  helper
+rescue StandardError => error
+  error
+end
+
+def pattern_binding(input)
+  case input
+  in [head, *tail]
+    head
+  in { name: }
+    name
+  end
+  input => captured
+  captured
+end
+
+def regex_binding(text)
+  /(?<year>\d+)/ =~ text
+  year
+  month
+end
+
+def introspection
+  defined?(helper)
+end

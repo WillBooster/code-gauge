@@ -213,10 +213,25 @@ interface CommentSpan {
   endColumn: number;
 }
 
+/**
+ * How a call site addresses its callee: `none` is a bare call (`f()`), `self` goes through the
+ * caller's own instance (`this.f()`, `self.f()`), `other` has any other explicit receiver.
+ */
+type CallReceiver = 'none' | 'self' | 'other';
+
+interface CallSite {
+  name: string;
+  /** Undefined when the syntax carries no argument list (e.g. Rust macro token trees). */
+  argumentCount?: number;
+  receiver: CallReceiver;
+}
+
 interface FunctionAnalysis {
   index: number;
   name?: string;
   nodeType: string;
+  /** Name of the enclosing class-like scope, used to disambiguate same-named methods. */
+  scopeName?: string;
   /** False for bodyless signatures (Java abstract/interface methods), which resolve no calls. */
   hasImplementation: boolean;
   startLine: number;
@@ -230,6 +245,7 @@ interface FunctionAnalysis {
   callCount: number;
   parameterCount: number;
   callees: Set<string>;
+  callSites: CallSite[];
   identifiers: Set<string>;
 }
 
@@ -416,7 +432,7 @@ function measureStructuralMetrics(
 ): StructuralMetrics {
   const constructedTypeNames = collectConstructedTypeNames(root, language);
   const analyses = functions.map((node, index) => analyzeFunction(node, language, index, constructedTypeNames));
-  const callGraph = measureCallGraph(analyses);
+  const callGraph = measureCallGraph(analyses, language.name);
   const functionsWithGraph = analyses.map((analysis) => ({
     name: analysis.name,
     nodeType: analysis.nodeType,
@@ -459,6 +475,7 @@ function analyzeFunction(
     index,
     name: findFunctionName(node),
     nodeType: node.type,
+    scopeName: findFunctionScopeName(node),
     hasImplementation: hasImplementationBody(node),
     startLine: node.startPosition.row + 1,
     startColumn: node.startPosition.column,
@@ -471,8 +488,72 @@ function analyzeFunction(
     callCount: calls.callCount,
     parameterCount: countParameters(node),
     callees: calls.callees,
+    callSites: calls.callSites,
     identifiers: collectIdentifiers(node),
   };
+}
+
+/** Class-like nodes that scope their methods; namespaces are not scopes for bare-call resolution. */
+const scopeNodeTypes = new Set([
+  'class_declaration',
+  'class_definition',
+  'class_specifier',
+  'struct_specifier',
+  'union_specifier',
+  'interface_declaration',
+  'enum_declaration',
+  'record_declaration',
+  'annotation_type_declaration',
+  'object_creation_expression',
+  'class',
+  'module',
+  'singleton_class',
+  'struct_item',
+  'enum_item',
+  'union_item',
+  'trait_item',
+  'impl_item',
+]);
+
+/**
+ * Name of the nearest class-like scope enclosing a function, so same-named methods of different
+ * classes stay distinguishable in call-graph resolution. Go methods carry their scope on the
+ * receiver, and C++ out-of-line members (`void Widget::process()`) on the qualified declarator.
+ */
+function findFunctionScopeName(node: Parser.SyntaxNode): string | undefined {
+  for (let current = node.parent; current; current = current.parent) {
+    if (!scopeNodeTypes.has(current.type)) {
+      continue;
+    }
+    // A plain `new Foo(...)` scopes nothing; only an anonymous-class body opens a scope.
+    if (
+      current.type === 'object_creation_expression' &&
+      !current.namedChildren.some((child) => child.type === 'class_body')
+    ) {
+      continue;
+    }
+    // Rust `impl` blocks scope by the implementing type rather than a `name` field.
+    if (current.type === 'impl_item') {
+      return current.childForFieldName('type')?.text ?? anonymousScopeName(current);
+    }
+    return current.childForFieldName('name')?.text ?? anonymousScopeName(current);
+  }
+
+  if (node.type === 'method_declaration') {
+    const receiverTypeNode = node.childForFieldName('receiver')?.namedChildren[0]?.childForFieldName('type');
+    if (receiverTypeNode) {
+      return normalizeGoReceiverType(receiverTypeNode.text);
+    }
+  }
+
+  const qualifiedName = unwrapDeclaratorName(node.childForFieldName('declarator'), true);
+  const scopeEnd = qualifiedName?.lastIndexOf('::') ?? -1;
+  return scopeEnd > 0 ? qualifiedName?.slice(0, scopeEnd) : undefined;
+}
+
+/** Unnamed scopes (anonymous classes) get a per-node marker so they never cross-match. */
+function anonymousScopeName(node: Parser.SyntaxNode): string {
+  return `<anonymous:${node.startPosition.row}>`;
 }
 
 /** Counts declared parameters of a function/method, ignoring punctuation and comments. */
@@ -557,14 +638,16 @@ function findParametersNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefi
   return node.namedChildren.find((child) => child.type === 'formal_parameters' || child.type === 'parameter_list');
 }
 
-function measureCallGraph(analyses: FunctionAnalysis[]): {
+function measureCallGraph(
+  analyses: FunctionAnalysis[],
+  languageName: LanguageName
+): {
   fanInByIndex: Map<number, number>;
   fanOutByIndex: Map<number, number>;
   metrics: CallGraphMetrics;
   recursiveIndexes: Set<number>;
 } {
-  const indexesByName = mapUniqueFunctionIndexesByName(analyses);
-  const functionNames = new Set(indexesByName.keys());
+  const candidatesByName = mapCandidatesByName(analyses);
   const fanInByIndex = new Map<number, number>();
   const fanOutByIndex = new Map<number, number>();
   const graph = new Map<number, Set<number>>();
@@ -578,19 +661,18 @@ function measureCallGraph(analyses: FunctionAnalysis[]): {
       allCallees.add(callee);
     }
 
-    const internalCalleeNames = new Set([...analysis.callees].filter((callee) => functionNames.has(callee)));
-    const internalCalleeIndexes = new Set<number>();
-    for (const callee of internalCalleeNames) {
-      const calleeIndex = indexesByName.get(callee);
-      if (calleeIndex !== undefined) {
-        internalCalleeIndexes.add(calleeIndex);
+    const resolvedIndexes = new Set<number>();
+    for (const site of analysis.callSites) {
+      const resolved = resolveCallSite(site, analysis.scopeName, candidatesByName.get(site.name), languageName);
+      if (resolved !== undefined) {
+        resolvedIndexes.add(resolved);
       }
     }
 
-    graph.set(analysis.index, internalCalleeIndexes);
-    fanOutByIndex.set(analysis.index, internalCalleeNames.size);
-    internalCallCount += internalCalleeNames.size;
-    for (const calleeIndex of internalCalleeIndexes) {
+    graph.set(analysis.index, resolvedIndexes);
+    fanOutByIndex.set(analysis.index, resolvedIndexes.size);
+    internalCallCount += resolvedIndexes.size;
+    for (const calleeIndex of resolvedIndexes) {
       fanInByIndex.set(calleeIndex, (fanInByIndex.get(calleeIndex) ?? 0) + 1);
     }
   }
@@ -614,8 +696,14 @@ function measureCallGraph(analyses: FunctionAnalysis[]): {
   };
 }
 
-function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<string, number> {
-  const indexesByName = new Map<string, number | undefined>();
+interface CalleeCandidate {
+  index: number;
+  parameterCount: number;
+  scopeName?: string;
+}
+
+function mapCandidatesByName(analyses: FunctionAnalysis[]): Map<string, CalleeCandidate[]> {
+  const candidatesByName = new Map<string, CalleeCandidate[]>();
   for (const analysis of analyses) {
     // Bodyless signatures stay in functions[] for PMD-style aggregation, but they must not make
     // an implemented method's name ambiguous (an interface method and its implementation share a
@@ -623,10 +711,61 @@ function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<strin
     if (!analysis.name || !analysis.hasImplementation) {
       continue;
     }
-
-    indexesByName.set(analysis.name, indexesByName.has(analysis.name) ? undefined : analysis.index);
+    const candidates = candidatesByName.get(analysis.name) ?? [];
+    candidates.push({
+      index: analysis.index,
+      parameterCount: analysis.parameterCount,
+      scopeName: analysis.scopeName,
+    });
+    candidatesByName.set(analysis.name, candidates);
   }
-  return new Map([...indexesByName.entries()].filter((entry): entry is [string, number] => entry[1] !== undefined));
+  return candidatesByName;
+}
+
+/** Languages whose bare calls (`f()`) reach the enclosing class's methods, not only free functions. */
+const bareCallReachesMethodsLanguages = new Set<LanguageName>(['java', 'ruby', 'cpp']);
+
+/**
+ * Resolves a call site to a function index. A file-unique name resolves unconditionally (the
+ * long-standing behavior). Same-named functions are disambiguated by scope first — `this`/`self`
+ * calls and (language permitting) bare calls target the caller's own class, remaining bare calls
+ * target free functions — then by exact arity; a site matching more than one candidate stays
+ * unresolved rather than guessing (issue #19). Varargs/default arguments make the arity differ,
+ * so such calls also stay unresolved.
+ */
+function resolveCallSite(
+  site: CallSite,
+  callerScopeName: string | undefined,
+  candidates: CalleeCandidate[] | undefined,
+  languageName: LanguageName
+): number | undefined {
+  if (!candidates || candidates.length === 0) {
+    return undefined;
+  }
+  if (candidates.length === 1) {
+    return candidates[0]?.index;
+  }
+
+  let pool = candidates;
+  if (site.receiver === 'self') {
+    pool = candidates.filter((candidate) => candidate.scopeName === callerScopeName);
+  } else if (site.receiver === 'none') {
+    const sameScope = candidates.filter((candidate) => candidate.scopeName === callerScopeName);
+    const freeFunctions = candidates.filter((candidate) => candidate.scopeName === undefined);
+    pool =
+      bareCallReachesMethodsLanguages.has(languageName) && sameScope.length > 0 && callerScopeName !== undefined
+        ? sameScope
+        : freeFunctions;
+  }
+
+  if (pool.length === 1) {
+    return pool[0]?.index;
+  }
+  const arityMatches =
+    site.argumentCount === undefined
+      ? pool
+      : pool.filter((candidate) => candidate.parameterCount === site.argumentCount);
+  return arityMatches.length === 1 ? arityMatches[0]?.index : undefined;
 }
 
 /**
@@ -1047,10 +1186,17 @@ function collectCalls(
   root: Parser.SyntaxNode,
   language: LanguageDefinition,
   constructedTypeNames: Set<string> = new Set()
-): { callCount: number; callees: Set<string> } {
+): { callCount: number; callees: Set<string>; callSites: CallSite[] } {
   const callees = new Set<string>();
+  const callSites: CallSite[] = [];
   const functionNodeTypes = getComplexityNodeSets(language).functionNodes;
+  const rubyBindingsCache = new Map<number, Map<string, number>>();
   let callCount = 0;
+
+  function addCallee(name: string, argumentCount: number | undefined, receiver: CallReceiver): void {
+    callees.add(name);
+    callSites.push({ name, argumentCount, receiver });
+  }
 
   function visit(node: Parser.SyntaxNode, insideRoot: boolean): void {
     if (!insideRoot && isFunctionBoundary(node, functionNodeTypes)) {
@@ -1072,7 +1218,9 @@ function collectCalls(
             constructedTypeNames.has(cppBaseTypeName(node.childForFieldName('function')) ?? '')));
       const callee = isCppConstructorCall ? undefined : findCalleeName(node);
       if (callee) {
-        callees.add(callee);
+        // A Ruby setter send (`self.foo = x` resolves the callee to `foo=`) passes one argument.
+        const isRubySetterSend = language.name === 'ruby' && node.type === 'call' && callee.endsWith('=');
+        addCallee(callee, isRubySetterSend ? 1 : countCallArguments(node), classifyCallReceiver(node, language));
       }
       // Ruby abbreviated assignment on a receiver (`self.foo += 1`, `self.foo ||= x`) invokes the
       // getter (the call node itself) AND the setter, so the setter is one extra call.
@@ -1085,13 +1233,16 @@ function collectCalls(
         callCount += 1;
         const setterMethod = node.childForFieldName('method');
         if (setterMethod) {
-          callees.add(`${setterMethod.text}=`);
+          addCallee(`${setterMethod.text}=`, 1, classifyCallReceiver(node, language));
         }
       }
     } else if (isRubyImplicitCall(node, language) || isCppConstruction(node, constructedTypeNames)) {
       // `yield x` invokes the block, not its argument `x`, and constructors are overloaded by
       // definition, so neither adds a callee edge.
       callCount += 1;
+    } else if (language.name === 'ruby' && isRubyBareMethodSend(node, rubyBindingsCache)) {
+      callCount += 1;
+      addCallee(node.text, 0, 'none');
     }
 
     for (const child of node.namedChildren) {
@@ -1100,7 +1251,64 @@ function collectCalls(
   }
 
   visit(root, true);
-  return { callCount, callees };
+  return { callCount, callees, callSites };
+}
+
+/**
+ * Declared arguments at a call site, for arity-based overload resolution. Ruby block arguments
+ * (`&blk`) bind the block, not a positional parameter. Syntax without an argument list that can
+ * still be a counted call (Rust macros) reports no arity.
+ */
+function countCallArguments(node: Parser.SyntaxNode): number | undefined {
+  const argumentsNode = node.childForFieldName('arguments');
+  if (!argumentsNode) {
+    return node.type === 'macro_invocation' ? undefined : 0;
+  }
+  return argumentsNode.namedChildren.filter((child) => child.type !== 'comment' && child.type !== 'block_argument')
+    .length;
+}
+
+function classifyCallReceiver(node: Parser.SyntaxNode, language: LanguageDefinition): CallReceiver {
+  if (language.name === 'ruby' && node.type === 'call') {
+    const receiverNode = node.childForFieldName('receiver');
+    if (!receiverNode) {
+      return 'none';
+    }
+    return receiverNode.type === 'self' ? 'self' : 'other';
+  }
+
+  if (node.type === 'method_invocation') {
+    const objectNode = node.childForFieldName('object');
+    if (!objectNode) {
+      return 'none';
+    }
+    return objectNode.type === 'this' ? 'self' : 'other';
+  }
+
+  const calleeNode = node.childForFieldName('function');
+  if (calleeNode) {
+    const unwrapped = unwrapParenthesizedExpression(calleeNode);
+    if (unwrapped.type === 'identifier') {
+      return 'none';
+    }
+    const receiverNode =
+      unwrapped.type === 'member_expression'
+        ? unwrapped.childForFieldName('object')
+        : unwrapped.type === 'field_expression'
+          ? (unwrapped.childForFieldName('argument') ?? unwrapped.childForFieldName('value'))
+          : unwrapped.type === 'attribute'
+            ? unwrapped.childForFieldName('object')
+            : undefined;
+    if (receiverNode) {
+      return isSelfLikeReceiver(receiverNode) ? 'self' : 'other';
+    }
+  }
+  return 'other';
+}
+
+/** JS `this`, Rust/Ruby `self` nodes, and Python's conventional `self` identifier. */
+function isSelfLikeReceiver(node: Parser.SyntaxNode): boolean {
+  return node.type === 'this' || node.type === 'self' || (node.type === 'identifier' && node.text === 'self');
 }
 
 const cppNamedCasts = new Set(['static_cast', 'dynamic_cast', 'const_cast', 'reinterpret_cast']);
@@ -1212,15 +1420,291 @@ function collectConstructedTypeNames(root: Parser.SyntaxNode, language: Language
  * Ruby's bare `yield` and `super` invoke without a `call` node (only `super()` parses as `call`,
  * whose `super` child must not double-count), so they add to the call count without a callee edge.
  * Language-gated because Python `yield` and JS/Java `super` children are not extra calls.
- * Bare receiverless zero-argument sends (`helper` alone) are deliberately NOT counted: they parse
- * as plain identifiers, and telling them apart from local-variable reads requires Ruby's
- * lexically-ordered binding analysis — a static-analysis boundary this measurer does not cross.
  */
 function isRubyImplicitCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
   if (language.name !== 'ruby') {
     return false;
   }
   return node.type === 'yield' || (node.type === 'super' && node.parent?.type !== 'call');
+}
+
+/**
+ * A Ruby bare receiverless zero-argument send (`helper` in `def run; helper; end`) parses as a
+ * plain `identifier`. Mirroring the real parser's lexically-ordered binding rule, an identifier
+ * read is a method call iff no local variable of that name was bound earlier in its scope chain
+ * (issue #20). Bindings are over-approximated where the grammar is ambiguous, so unclear cases
+ * are missed calls rather than invented ones.
+ */
+function isRubyBareMethodSend(node: Parser.SyntaxNode, bindingsCache: Map<number, Map<string, number>>): boolean {
+  if (node.type !== 'identifier' || !isRubyExpressionIdentifier(node)) {
+    return false;
+  }
+  return !isRubyLocalVariable(node, bindingsCache);
+}
+
+/** Identifier positions that bind a local or belong to another construct rather than reading a value. */
+function isRubyExpressionIdentifier(node: Parser.SyntaxNode): boolean {
+  const parent = node.parent;
+  if (!parent) {
+    return false;
+  }
+
+  switch (parent.type) {
+    // The method name of a `call` is part of the already-counted call; a `method` definition's
+    // name (and `def obj.meth`'s object) defines rather than reads.
+    case 'call': {
+      if (parent.childForFieldName('method')?.id === node.id) {
+        return false;
+      }
+      break;
+    }
+    case 'method':
+    case 'singleton_method':
+    case 'setter': {
+      return false;
+    }
+    // Binding targets: `x = 1`, `x ||= 1`, `for x in ...`, `rescue => x`, and every parameter form.
+    case 'assignment':
+    case 'operator_assignment': {
+      if (parent.childForFieldName('left')?.id === node.id) {
+        return false;
+      }
+      break;
+    }
+    case 'left_assignment_list':
+    case 'destructured_left_assignment':
+    case 'rest_assignment':
+    case 'exception_variable':
+    case 'method_parameters':
+    case 'block_parameters':
+    case 'lambda_parameters':
+    case 'destructured_parameter':
+    case 'splat_parameter':
+    case 'optional_parameter':
+    case 'keyword_parameter':
+    case 'hash_splat_parameter':
+    case 'block_parameter': {
+      // An optional/keyword parameter's default value is a genuine read.
+      return parent.childForFieldName('value')?.id === node.id;
+    }
+    case 'for': {
+      if (parent.childForFieldName('pattern')?.id === node.id) {
+        return false;
+      }
+      break;
+    }
+    default: {
+      break;
+    }
+  }
+
+  // Pattern-matching positions bind (`in [head, *tail]`, `v => x`); pinned expressions inside
+  // patterns are reads, but skipping them only misses calls (conservative).
+  for (let current: Parser.SyntaxNode | null = node; current; current = current.parent) {
+    if (rubyPatternNodeTypes.has(current.type)) {
+      return false;
+    }
+    if (
+      (current.parent?.type === 'in_clause' || current.parent?.type === 'match_pattern') &&
+      current.parent.childForFieldName('pattern')?.id === current.id
+    ) {
+      return false;
+    }
+    if (rubyScopeNodeTypes.has(current.type)) {
+      break;
+    }
+  }
+
+  // `defined?(helper)` inspects without invoking.
+  let ancestor = parent;
+  while (ancestor.type === 'parenthesized_statements' && ancestor.parent) {
+    ancestor = ancestor.parent;
+  }
+  return !(ancestor.type === 'unary' && ancestor.child(0)?.text === 'defined?');
+}
+
+const rubyPatternNodeTypes = new Set([
+  'array_pattern',
+  'hash_pattern',
+  'find_pattern',
+  'keyword_pattern',
+  'as_pattern',
+  'alternative_pattern',
+]);
+
+/** Hard boundaries see no outer locals; soft scopes (blocks, lambdas) do. */
+const rubyHardScopeNodeTypes = new Set(['method', 'singleton_method', 'class', 'module', 'singleton_class', 'program']);
+const rubySoftScopeNodeTypes = new Set(['block', 'do_block', 'lambda']);
+const rubyScopeNodeTypes = new Set([...rubyHardScopeNodeTypes, ...rubySoftScopeNodeTypes]);
+
+function isRubyLocalVariable(node: Parser.SyntaxNode, bindingsCache: Map<number, Map<string, number>>): boolean {
+  const name = node.text;
+  for (
+    let scope = findEnclosingRubyScope(node.parent);
+    scope;
+    scope = rubyHardScopeNodeTypes.has(scope.type) ? undefined : findEnclosingRubyScope(scope.parent)
+  ) {
+    let bindings = bindingsCache.get(scope.id);
+    if (!bindings) {
+      bindings = collectRubyScopeBindings(scope);
+      bindingsCache.set(scope.id, bindings);
+    }
+    const bindingIndex = bindings.get(name);
+    if (bindingIndex !== undefined && bindingIndex < node.startIndex) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function findEnclosingRubyScope(node: Parser.SyntaxNode | null | undefined): Parser.SyntaxNode | undefined {
+  for (let current = node; current; current = current.parent) {
+    if (rubyScopeNodeTypes.has(current.type)) {
+      return current;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Earliest binding position of each local name a scope binds directly. Bindings inside nested
+ * scopes never escape them (block-local scoping), so nested scope subtrees are skipped; the
+ * nested scopes' own bindings are consulted when the walk in isRubyLocalVariable passes them.
+ */
+function collectRubyScopeBindings(scope: Parser.SyntaxNode): Map<string, number> {
+  const bindings = new Map<string, number>();
+  const add = (name: string, index: number): void => {
+    const existing = bindings.get(name);
+    if (existing === undefined || index < existing) {
+      bindings.set(name, index);
+    }
+  };
+
+  collectRubyParameterBindings(scope.childForFieldName('parameters'), add);
+
+  function visit(node: Parser.SyntaxNode): void {
+    for (const child of node.namedChildren) {
+      if (rubyScopeNodeTypes.has(child.type)) {
+        continue;
+      }
+      collectRubyNodeBindings(child, add);
+      visit(child);
+    }
+  }
+
+  visit(scope);
+  return bindings;
+}
+
+function collectRubyNodeBindings(node: Parser.SyntaxNode, add: (name: string, index: number) => void): void {
+  switch (node.type) {
+    case 'assignment': {
+      addRubyAssignmentTargets(node.childForFieldName('left'), add);
+      break;
+    }
+    case 'operator_assignment': {
+      const left = node.childForFieldName('left');
+      if (left?.type === 'identifier') {
+        add(left.text, left.startIndex);
+      }
+      break;
+    }
+    case 'for': {
+      addRubyAssignmentTargets(node.childForFieldName('pattern'), add);
+      break;
+    }
+    case 'exception_variable': {
+      const variable = node.namedChild(0);
+      if (variable?.type === 'identifier') {
+        add(variable.text, variable.startIndex);
+      }
+      break;
+    }
+    // `case/in` patterns and rightward assignment (`v => x`) bind their captures.
+    case 'in_clause':
+    case 'match_pattern': {
+      const pattern = node.childForFieldName('pattern');
+      if (pattern) {
+        addRubyPatternBindings(pattern, add);
+      }
+      break;
+    }
+    // `/(?<year>...)/ =~ value` binds each named capture as a local.
+    case 'binary': {
+      if (node.children.some((child) => !child.isNamed && child.text === '=~')) {
+        const regexNode = node.namedChildren.find((child) => child.type === 'regex');
+        if (regexNode) {
+          for (const match of regexNode.text.matchAll(/\(\?<([A-Za-z_][A-Za-z0-9_]*)>/gu)) {
+            const captureName = match[1];
+            if (captureName) {
+              add(captureName, node.startIndex);
+            }
+          }
+        }
+      }
+      break;
+    }
+    default: {
+      break;
+    }
+  }
+}
+
+function addRubyAssignmentTargets(target: Parser.SyntaxNode | null, add: (name: string, index: number) => void): void {
+  if (!target) {
+    return;
+  }
+  if (target.type === 'identifier') {
+    add(target.text, target.startIndex);
+    return;
+  }
+  if (
+    target.type === 'left_assignment_list' ||
+    target.type === 'destructured_left_assignment' ||
+    target.type === 'rest_assignment'
+  ) {
+    for (const child of target.namedChildren) {
+      addRubyAssignmentTargets(child, add);
+    }
+  }
+}
+
+/** Every identifier in a pattern binds; a valueless `in {name:}` key binds the key's name too. */
+function addRubyPatternBindings(pattern: Parser.SyntaxNode, add: (name: string, index: number) => void): void {
+  if (pattern.type === 'identifier') {
+    add(pattern.text, pattern.startIndex);
+    return;
+  }
+  if (pattern.type === 'keyword_pattern' && pattern.namedChildCount === 1) {
+    const key = pattern.childForFieldName('key');
+    if (key) {
+      add(key.text, key.startIndex);
+    }
+  }
+  for (const child of pattern.namedChildren) {
+    addRubyPatternBindings(child, add);
+  }
+}
+
+function collectRubyParameterBindings(
+  parameters: Parser.SyntaxNode | null | undefined,
+  add: (name: string, index: number) => void
+): void {
+  if (!parameters) {
+    return;
+  }
+  for (const child of parameters.namedChildren) {
+    if (child.type === 'identifier') {
+      add(child.text, child.startIndex);
+    } else if (child.type === 'destructured_parameter') {
+      collectRubyParameterBindings(child, add);
+    } else {
+      const nameNode = child.childForFieldName('name');
+      if (nameNode?.type === 'identifier') {
+        add(nameNode.text, nameNode.startIndex);
+      }
+    }
+  }
 }
 
 function collectIdentifiers(root: Parser.SyntaxNode): Set<string> {
@@ -1447,8 +1931,18 @@ function collectModuleDeclarations(root: Parser.SyntaxNode, language: LanguageDe
   const exportedNames = collectExportedNames(root);
   const scope = language.name === 'java' ? findJavaPackageScope(root) : '';
   return root.namedChildren
-    .flatMap((child) => collectTopLevelDeclarations(child, false, scope, language.name === 'cpp'))
-    .map((declaration) => (exportedNames.has(declaration.name) ? { ...declaration, exported: true } : declaration));
+    .flatMap((child) => collectTopLevelDeclarations(child, false, scope, language.name))
+    .map((declaration) =>
+      !declaration.exported &&
+      (exportedNames.has(declaration.name) || isGoExportedDeclarationName(declaration, language))
+        ? { ...declaration, exported: true }
+        : declaration
+    );
+}
+
+/** Go method declarations are named `Receiver.Method`; the method's own capitalization decides. */
+function isGoExportedDeclarationName(declaration: DeclarationMetrics, language: LanguageDefinition): boolean {
+  return language.name === 'go' && isGoExportedName(declaration.name.split('.').at(-1) ?? '');
 }
 
 /** Java top-level declarations are qualified by their package so simple names stay distinct. */
@@ -1466,10 +1960,11 @@ function collectTopLevelDeclarations(
   node: Parser.SyntaxNode,
   exported: boolean,
   scope = '',
-  isCpp = false
+  languageName = ''
 ): DeclarationMetrics[] {
+  const isCpp = languageName === 'cpp';
   if (isModuleExportNode(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true, scope, isCpp));
+    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true, scope, languageName));
   }
 
   // C++ namespaces qualify their contents so `Alpha::ServiceThing` and `Beta::ServiceThing` stay
@@ -1482,12 +1977,12 @@ function collectTopLevelDeclarations(
     }
     const bodyNode = node.childForFieldName('body');
     return (bodyNode?.namedChildren ?? []).flatMap((child) =>
-      collectTopLevelDeclarations(child, exported, `${scope}${name}::`, isCpp)
+      collectTopLevelDeclarations(child, exported, `${scope}${name}::`, languageName)
     );
   }
 
   if (isDeclarationContainer(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported, scope, isCpp));
+    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported, scope, languageName));
   }
 
   // C/C++ global variables live in `declaration` nodes with one or more declarators.
@@ -1512,7 +2007,14 @@ function collectTopLevelDeclarations(
     return qualifyDeclarations(rubyConstantDeclarations(node, exported), scope, true);
   }
 
-  return qualifyDeclarations(declarationFromNode(node, exported), scope);
+  // A Rust item is exported by its own `pub` modifier (any variant, incl. `pub(crate)`), not by a
+  // wrapping export statement.
+  const isExported = exported || (languageName === 'rust' && hasRustVisibilityModifier(node));
+  return qualifyDeclarations(declarationFromNode(node, isExported), scope);
+}
+
+function hasRustVisibilityModifier(node: Parser.SyntaxNode): boolean {
+  return node.namedChildren.some((child) => child.type === 'visibility_modifier');
 }
 
 /**
@@ -1956,8 +2458,11 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
       }
     }
 
-    if (isExportNode(node)) {
+    if (isExportNode(node, language)) {
       exportCount += 1;
+    }
+    if (language.name === 'go') {
+      exportCount += countGoExportedNames(node);
     }
 
     for (const child of node.namedChildren) {
@@ -2989,7 +3494,7 @@ function isImportSourceNode(node: Parser.SyntaxNode, language: LanguageDefinitio
     isCppModuleImport(node, language) ||
     isDynamicImportNode(node) ||
     isRubyRequireCall(node, language) ||
-    (isExportNode(node) && node.childForFieldName('source') !== null)
+    (isExportNode(node, language) && node.childForFieldName('source') !== null)
   );
 }
 
@@ -3387,12 +3892,50 @@ function unquote(value: string): string {
   return value.replaceAll(/^['"`<]|['"`>]$/gu, '');
 }
 
-function isExportNode(node: Parser.SyntaxNode): boolean {
+function isExportNode(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
+  // Rust visibility is a modifier, not an export statement: counting each `visibility_modifier`
+  // counts every `pub` item (all variants, `pub(crate)` included) exactly once — including pub
+  // fields/methods, matching how JS counts `public_field_definition` (issue #14).
+  if (language.name === 'rust') {
+    return node.type === 'visibility_modifier';
+  }
+  // Go exports by capitalization; each capitalized top-level declared name is one export.
+  if (language.name === 'go') {
+    return false;
+  }
   // Java's JPMS `exports com.example.api;` directive is module wiring, not a symbol export.
   return (
     (node.type.startsWith('export') && node.type !== 'exports_module_directive') ||
     node.type === 'public_field_definition'
   );
+}
+
+/** Capitalized names a top-level Go declaration exports (`var A, b = ...` exports only `A`). */
+function countGoExportedNames(node: Parser.SyntaxNode): number {
+  if (node.type === 'function_declaration' || node.type === 'method_declaration' || node.type === 'type_spec') {
+    const name = node.childForFieldName('name')?.text;
+    return name !== undefined && isGoExportedName(name) && isGoTopLevelDeclaration(node) ? 1 : 0;
+  }
+  if ((node.type === 'const_spec' || node.type === 'var_spec') && isGoTopLevelDeclaration(node)) {
+    return findChildrenByFieldName(node, 'name').filter((nameNode) => isGoExportedName(nameNode.text)).length;
+  }
+  return 0;
+}
+
+const goDeclarationWrapperTypes = new Set(['type_declaration', 'const_declaration', 'var_declaration']);
+
+/** Whether a Go spec/declaration sits at package level (possibly inside a grouped declaration). */
+function isGoTopLevelDeclaration(node: Parser.SyntaxNode): boolean {
+  let parent = node.parent;
+  while (parent && goDeclarationWrapperTypes.has(parent.type)) {
+    parent = parent.parent;
+  }
+  return parent?.type === 'source_file';
+}
+
+/** Go exports identifiers whose first character is an upper-case letter (Go spec, "Exported identifiers"). */
+function isGoExportedName(name: string): boolean {
+  return /^\p{Lu}/u.test(name);
 }
 
 function findRecursiveIndexes(graph: Map<number, Set<number>>): Set<number> {

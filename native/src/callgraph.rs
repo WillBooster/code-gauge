@@ -1,7 +1,7 @@
 use indexmap::{IndexMap, IndexSet};
 use std::collections::{HashMap, HashSet};
 
-use crate::functions::FunctionAnalysis;
+use crate::functions::{CallReceiver, CallSite, FunctionAnalysis};
 use crate::types::CallGraphMetrics;
 
 pub struct CallGraphResult {
@@ -11,8 +11,8 @@ pub struct CallGraphResult {
     pub metrics: CallGraphMetrics,
 }
 
-pub fn measure_call_graph(analyses: &[FunctionAnalysis]) -> CallGraphResult {
-    let indexes_by_name = map_unique_function_indexes_by_name(analyses);
+pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) -> CallGraphResult {
+    let candidates_by_name = map_candidates_by_name(analyses);
     let mut fan_in_by_index: HashMap<usize, usize> = HashMap::new();
     let mut fan_out_by_index: HashMap<usize, usize> = HashMap::new();
     let mut graph: IndexMap<usize, IndexSet<usize>> = IndexMap::new();
@@ -26,24 +26,24 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis]) -> CallGraphResult {
             all_callees.insert(callee);
         }
 
-        let internal_callee_names: Vec<&String> = analysis
-            .callees
-            .iter()
-            .filter(|callee| indexes_by_name.contains_key(callee.as_str()))
-            .collect();
-        let mut internal_callee_indexes: IndexSet<usize> = IndexSet::new();
-        for callee in &internal_callee_names {
-            if let Some(callee_index) = indexes_by_name.get(callee.as_str()).copied() {
-                internal_callee_indexes.insert(callee_index);
+        let mut resolved_indexes: IndexSet<usize> = IndexSet::new();
+        for site in &analysis.call_sites {
+            if let Some(resolved) = resolve_call_site(
+                site,
+                analysis.scope_name.as_deref(),
+                candidates_by_name.get(site.name.as_str()),
+                language_name,
+            ) {
+                resolved_indexes.insert(resolved);
             }
         }
 
-        fan_out_by_index.insert(analysis.index, internal_callee_names.len());
-        internal_call_count += internal_callee_names.len();
-        for callee_index in &internal_callee_indexes {
+        fan_out_by_index.insert(analysis.index, resolved_indexes.len());
+        internal_call_count += resolved_indexes.len();
+        for callee_index in &resolved_indexes {
             *fan_in_by_index.entry(*callee_index).or_insert(0) += 1;
         }
-        graph.insert(analysis.index, internal_callee_indexes);
+        graph.insert(analysis.index, resolved_indexes);
     }
 
     let recursive_indexes = find_recursive_indexes(&graph);
@@ -67,10 +67,16 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis]) -> CallGraphResult {
     }
 }
 
-/// Names mapping to exactly one function; ambiguous (repeated) names are dropped entirely, so
-/// they neither resolve to an index nor count toward fan-out, matching the filtered TS map.
-fn map_unique_function_indexes_by_name(analyses: &[FunctionAnalysis]) -> HashMap<&str, usize> {
-    let mut indexes_by_name: HashMap<&str, Option<usize>> = HashMap::new();
+struct CalleeCandidate<'a> {
+    index: usize,
+    parameter_count: usize,
+    scope_name: Option<&'a str>,
+}
+
+fn map_candidates_by_name<'a>(
+    analyses: &'a [FunctionAnalysis],
+) -> HashMap<&'a str, Vec<CalleeCandidate<'a>>> {
+    let mut candidates_by_name: HashMap<&str, Vec<CalleeCandidate<'_>>> = HashMap::new();
     for analysis in analyses {
         // Bodyless signatures stay in the function list for PMD-style aggregation, but they must
         // not make an implemented method's name ambiguous (an interface method and its
@@ -82,18 +88,74 @@ fn map_unique_function_indexes_by_name(analyses: &[FunctionAnalysis]) -> HashMap
         let Some(name) = analysis.name.as_deref().filter(|name| !name.is_empty()) else {
             continue;
         };
+        candidates_by_name
+            .entry(name)
+            .or_default()
+            .push(CalleeCandidate {
+                index: analysis.index,
+                parameter_count: analysis.parameter_count,
+                scope_name: analysis.scope_name.as_deref(),
+            });
+    }
+    candidates_by_name
+}
 
-        match indexes_by_name.get_mut(name) {
-            Some(existing) => *existing = None,
-            None => {
-                indexes_by_name.insert(name, Some(analysis.index));
+/// Languages whose bare calls (`f()`) reach the enclosing class's methods, not only free functions.
+const BARE_CALL_REACHES_METHODS_LANGUAGES: &[&str] = &["java", "ruby", "cpp"];
+
+/// Resolves a call site to a function index; see resolveCallSite in metrics.ts (issue #19).
+fn resolve_call_site(
+    site: &CallSite,
+    caller_scope_name: Option<&str>,
+    candidates: Option<&Vec<CalleeCandidate<'_>>>,
+    language_name: &str,
+) -> Option<usize> {
+    let candidates = candidates?;
+    if candidates.is_empty() {
+        return None;
+    }
+    if candidates.len() == 1 {
+        return candidates.first().map(|candidate| candidate.index);
+    }
+
+    let same_scope: Vec<&CalleeCandidate<'_>> = candidates
+        .iter()
+        .filter(|candidate| candidate.scope_name == caller_scope_name)
+        .collect();
+    let free_functions: Vec<&CalleeCandidate<'_>> = candidates
+        .iter()
+        .filter(|candidate| candidate.scope_name.is_none())
+        .collect();
+    let pool: Vec<&CalleeCandidate<'_>> = match site.receiver {
+        CallReceiver::SelfLike => same_scope,
+        CallReceiver::None => {
+            if BARE_CALL_REACHES_METHODS_LANGUAGES.contains(&language_name)
+                && !same_scope.is_empty()
+                && caller_scope_name.is_some()
+            {
+                same_scope
+            } else {
+                free_functions
             }
         }
+        CallReceiver::Other => candidates.iter().collect(),
+    };
+
+    if pool.len() == 1 {
+        return pool.first().map(|candidate| candidate.index);
     }
-    indexes_by_name
-        .into_iter()
-        .filter_map(|(name, index)| index.map(|index| (name, index)))
-        .collect()
+    let arity_matches: Vec<&&CalleeCandidate<'_>> = match site.argument_count {
+        None => pool.iter().collect(),
+        Some(argument_count) => pool
+            .iter()
+            .filter(|candidate| candidate.parameter_count == argument_count)
+            .collect(),
+    };
+    if arity_matches.len() == 1 {
+        arity_matches.first().map(|candidate| candidate.index)
+    } else {
+        None
+    }
 }
 
 fn find_recursive_indexes(graph: &IndexMap<usize, IndexSet<usize>>) -> HashSet<usize> {

@@ -401,6 +401,56 @@ describe('measureCode: call graph', () => {
       maxCallDepth: 2,
     });
   });
+
+  // Issue #19: overloaded and same-named functions previously dropped ALL their edges.
+  it('resolves Java overloads by arity and same-named methods by class scope', () => {
+    const metrics = measureCode(readFixture('overloads.java'), { language: 'java' });
+
+    const bySignature = new Map(metrics.functions.map((fn) => [`${fn.name}/${fn.parameterCount}@${fn.startLine}`, fn]));
+    // Alpha.run calls act(1) (resolved by arity) and this.act() (resolved by scope + arity).
+    expect(bySignature.get('run/0@6')).toMatchObject({ fanOut: 2 });
+    expect(bySignature.get('act/1@4')).toMatchObject({ fanIn: 1 });
+    expect(bySignature.get('act/0@2')).toMatchObject({ fanIn: 1 });
+    // Beta.go's bare act() resolves to Beta's own act, not Alpha's.
+    expect(bySignature.get('go/0@15')).toMatchObject({ fanOut: 1 });
+    expect(bySignature.get('act/0@13')).toMatchObject({ fanIn: 1 });
+    expect(metrics.callGraph).toMatchObject({ internalCallCount: 3, internalEdgeCount: 3, maxFanIn: 1 });
+  });
+
+  it('leaves genuinely ambiguous same-name same-arity calls unresolved', () => {
+    const code =
+      'class A {\n  void f() {}\n  void f(int x) {}\n}\nclass B {\n  void g(A a) { a.f(); }\n  void h(A a) { a.f(1); }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // a.f() has an explicit non-this receiver, so scope narrowing does not apply, but each arity
+    // still matches exactly one overload.
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+
+    const ambiguous = measureCode('class A {\n  void f(int x) {}\n  void f(long y) {}\n  void g() { f(1); }\n}\n', {
+      language: 'java',
+    });
+    expect(ambiguous.callGraph.internalEdgeCount).toBe(0);
+  });
+
+  // Issue #20: a Ruby bare receiverless zero-argument send parses as a plain identifier; it counts
+  // as a call exactly when no local variable of that name was bound lexically earlier.
+  it('counts Ruby bare receiverless sends but not local-variable reads', () => {
+    const metrics = measureCode(readFixture('bareSends.rb'), { language: 'ruby' });
+
+    const byName = new Map(metrics.functions.map((fn) => [fn.name, fn]));
+    // helper + helper (assignment RHS); `seed` and `total` are param/local reads.
+    expect(byName.get('run')).toMatchObject({ callCount: 2, fanOut: 1 });
+    expect(byName.get('shadowed')).toMatchObject({ callCount: 0 });
+    // `value` read before its assignment is a method send; afterwards it is a local.
+    expect(byName.get('lexical_order')).toMatchObject({ callCount: 1 });
+    // blocks see outer locals (`outer` is a read), but block-locals do not leak (`inner` is a send).
+    expect(byName.get('blocks')).toMatchObject({ callCount: 2 }); // list.each + trailing inner
+    // rescue => error binds; pattern matching and regex named captures bind too.
+    expect(byName.get('rescue_binding')).toMatchObject({ callCount: 1 });
+    expect(byName.get('pattern_binding')).toMatchObject({ callCount: 0 });
+    expect(byName.get('regex_binding')).toMatchObject({ callCount: 1 }); // `month` only; `year` is bound
+    expect(byName.get('introspection')).toMatchObject({ callCount: 0 }); // defined?(helper) does not invoke
+    expect(byName.get('helper')).toMatchObject({ fanIn: 3 }); // run, the each block, rescue_binding
+  });
 });
 
 describe('measureCode: within-file duplication', () => {
@@ -446,6 +496,39 @@ describe('measureCode: coupling and module structure', () => {
     expect(metrics.module.declarations).toEqual([
       { exported: true, name: 'root', startLine: 6 },
       { exported: true, name: 'load', startLine: 8 },
+    ]);
+  });
+
+  // Issue #14: visibility modifiers are exports — Rust `pub` (all variants) and Go capitalization.
+  it('treats Rust pub items as exported and counts them toward exportCount', () => {
+    const metrics = measureCode(readFixture('visibility.rs'), { language: 'rust' });
+
+    // pub use + LIMIT + Widget + pub id field + shared() + Kind = 6 `pub` modifiers.
+    expect(metrics.coupling.exportCount).toBe(6);
+    expect(metrics.module.declarations).toEqual([
+      { exported: true, name: 'LIMIT', startLine: 3 },
+      { exported: true, name: 'Widget', startLine: 5 },
+      { exported: true, name: 'shared', startLine: 10 },
+      { exported: false, name: 'internal', startLine: 14 },
+      { exported: true, name: 'Kind', startLine: 18 },
+    ]);
+  });
+
+  it('treats capitalized Go top-level names as exported and counts them toward exportCount', () => {
+    const metrics = measureCode(readFixture('visibility.go'), { language: 'go' });
+
+    // Limit + Counter + Widget + Widget.Describe + Shared = 5 capitalized top-level names.
+    expect(metrics.coupling.exportCount).toBe(5);
+    // `floor` shares Limit's const_spec, whose declaration keeps only the first name (pre-existing).
+    expect(metrics.module.declarations).toEqual([
+      { exported: true, name: 'Limit', startLine: 3 },
+      { exported: true, name: 'Counter', startLine: 5 },
+      { exported: true, name: 'Widget', startLine: 7 },
+      { exported: false, name: 'helper', startLine: 9 },
+      { exported: true, name: 'Widget.Describe', startLine: 11 },
+      { exported: false, name: 'helper.describe', startLine: 15 },
+      { exported: true, name: 'Shared', startLine: 19 },
+      { exported: false, name: 'internal', startLine: 23 },
     ]);
   });
 });
