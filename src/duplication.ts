@@ -1263,10 +1263,15 @@ function collectNgramSet(sequence: Int32Array): Set<number> {
 function countSharedNgrams(ngramSets: Set<number>[]): Map<number, number> {
   const blocksByNgram = new Map<number, number[]>();
   for (const [blockIndex, ngrams] of ngramSets.entries()) {
+    // Get-or-create: this loop runs once per distinct n-gram of every block, so the redundant
+    // `set` on already-present keys is worth avoiding here.
     for (const ngram of ngrams) {
-      const blocks = blocksByNgram.get(ngram) ?? [];
+      let blocks = blocksByNgram.get(ngram);
+      if (!blocks) {
+        blocks = [];
+        blocksByNgram.set(ngram, blocks);
+      }
       blocks.push(blockIndex);
-      blocksByNgram.set(ngram, blocks);
     }
   }
   const sharedCounts = new Map<number, number>();
