@@ -1608,10 +1608,11 @@ fn content_overlap(left: &NormalizedBlock, right: &NormalizedBlock) -> usize {
 
 /// The distinct 5-gram hashes of a normalized block sequence, matching collectNgramSet exactly.
 fn collect_ngram_set(sequence: &[i32]) -> HashSet<i32> {
-    let mut ngrams = HashSet::new();
     if sequence.len() < NEAR_MISS_NGRAM_SIZE {
-        return ngrams;
+        return HashSet::new();
     }
+    // Exact upper bound: one n-gram per window, and most windows hash distinctly.
+    let mut ngrams = HashSet::with_capacity(sequence.len() - NEAR_MISS_NGRAM_SIZE + 1);
     for window in sequence.windows(NEAR_MISS_NGRAM_SIZE) {
         let mut hash: i32 = 5381;
         for &value in window {
