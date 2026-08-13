@@ -186,6 +186,14 @@ const MAX_SEQUENCE_STATEMENT_COUNT: usize = 100;
 const MAX_SELECTION_RERUN_COUNT: usize = 20;
 /// Maximum normalized-token gap between adjacent duplicate groups merged into one gapped clone.
 const MAX_GAP_TOKEN_COUNT: usize = 30;
+/// Minimum LCS similarity percent for near-miss (Type-3) clone blocks; see duplication.ts.
+const MIN_SIMILARITY_PERCENT: usize = 70;
+/// N-gram size for the near-miss candidate index (NIL's default); see duplication.ts.
+const NEAR_MISS_NGRAM_SIZE: usize = 5;
+/// Filtration threshold: shared distinct n-grams over the smaller set; see duplication.ts.
+const NEAR_MISS_FILTRATION_PERCENT: usize = 10;
+/// Exclusive bound on shared content-bearing tokens (names and literal values); see duplication.ts.
+const MIN_CONTENT_SIMILARITY_PERCENT: usize = 50;
 
 /// See isLiteralDense in duplication.ts: >= 20% literal values marks a region as data-like.
 fn is_literal_dense(literal_count: usize, token_count: usize) -> bool {
@@ -216,6 +224,8 @@ struct Token<'a> {
     /// Hash pair of a value-carrying literal's value, folded into data-like region fingerprints.
     literal_hash: Option<i32>,
     literal_hash2: Option<i32>,
+    /// True for verbatim-kept NAMES (named grammar leaves); see the Token doc in duplication.ts.
+    is_name: bool,
     start_row: usize,
     end_row: usize,
 }
@@ -267,7 +277,12 @@ pub fn measure_duplication(
         &container_statement_ranges,
     ));
     let counted = select_maximal_duplicates(candidates);
-    let groups = merge_adjacent_groups(to_counted_groups(&counted), MAX_GAP_TOKEN_COUNT);
+    let mut groups = merge_adjacent_groups(to_counted_groups(&counted), MAX_GAP_TOKEN_COUNT);
+    let near_miss =
+        collect_near_miss_groups(&tokens, &literal_count_prefix, &block_ranges, &mut groups);
+    // Near-miss clustering can merge exact groups away, leaving empty entries behind.
+    groups.retain(|group| !group.is_empty());
+    groups.extend(near_miss);
     summarize_duplicates(&groups, code_line_numbers, &tokens)
 }
 
@@ -299,6 +314,7 @@ fn collect_tokens<'a>(
             tokens.push(make_text_token(
                 Cow::Borrowed(atomic_kind),
                 Some(literal_value_text(node, atomic_kind, code)),
+                false,
                 node.start_position().row,
                 node.end_position().row,
             ));
@@ -371,12 +387,14 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         tokens.push(make_text_token(
             Cow::Borrowed(text),
             None,
+            true,
             start_row,
             end_row,
         ));
         tokens.push(make_text_token(
             Cow::Borrowed(":"),
             None,
+            false,
             start_row,
             end_row,
         ));
@@ -387,6 +405,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
             text_hash2: 0,
             literal_hash: None,
             literal_hash2: None,
+            is_name: false,
             start_row,
             end_row,
         });
@@ -404,6 +423,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
             text_hash2: 0,
             literal_hash: None,
             literal_hash2: None,
+            is_name: false,
             start_row,
             end_row,
         });
@@ -420,12 +440,14 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         Some(kind) => make_text_token(
             Cow::Borrowed(kind),
             Some(literal_value_text(node, kind, code)),
+            false,
             start_row,
             end_row,
         ),
         None => make_text_token(
             Cow::Borrowed(node_text(node, code)),
             None,
+            node.is_named(),
             start_row,
             end_row,
         ),
@@ -435,6 +457,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
 fn make_text_token<'a>(
     text: Cow<'a, str>,
     literal_value_text: Option<Cow<'a, str>>,
+    is_name: bool,
     start_row: usize,
     end_row: usize,
 ) -> Token<'a> {
@@ -453,6 +476,7 @@ fn make_text_token<'a>(
         text_hash2,
         literal_hash,
         literal_hash2,
+        is_name,
         start_row,
         end_row,
     }
@@ -1193,6 +1217,472 @@ fn merge_groups(
     )
 }
 
+/// Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
+/// unreported; a faithful port of collectNearMissGroups in duplication.ts (NIL-style n-gram
+/// filtration, then token-level LCS with NiCad-style per-fragment similarity, then transitive
+/// clustering of verified pairs).
+fn collect_near_miss_groups(
+    tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
+    block_ranges: &[TokenRange],
+    reported_groups: &mut [Vec<CountedOccurrence>],
+) -> Vec<Vec<CountedOccurrence>> {
+    if MIN_SIMILARITY_PERCENT >= 100 {
+        return Vec::new();
+    }
+    let mut eligible: Vec<&TokenRange> = block_ranges
+        .iter()
+        .filter(|range| {
+            let token_count = range.end_token_index - range.start_token_index;
+            let literal_count = literal_count_prefix
+                .get(range.end_token_index)
+                .copied()
+                .unwrap_or(0)
+                - literal_count_prefix
+                    .get(range.start_token_index)
+                    .copied()
+                    .unwrap_or(0);
+            token_count >= MIN_DUPLICATE_TOKEN_COUNT
+                && !is_literal_dense(literal_count, token_count)
+        })
+        .collect();
+    eligible.sort_by_key(|range| (range.start_token_index, std::cmp::Reverse(range.end_token_index)));
+    let comparable = select_comparable_blocks(&eligible);
+    if comparable.len() < 2 {
+        return Vec::new();
+    }
+
+    // Reported-group indices whose occurrences overlap each comparable block: such blocks anchor
+    // near-miss comparisons but are never re-reported.
+    let touched_groups_by_block: Vec<Vec<usize>> = comparable
+        .iter()
+        .map(|range| {
+            reported_groups
+                .iter()
+                .enumerate()
+                .filter(|(_, group)| {
+                    group.iter().any(|occurrence| {
+                        occurrence.start_token_index < range.end_token_index
+                            && range.start_token_index < occurrence.end_token_index
+                    })
+                })
+                .map(|(group_index, _)| group_index)
+                .collect()
+        })
+        .collect();
+
+    // Interned per call so a file's symbol ids (and thus its n-gram hashes) match the TypeScript
+    // backend's first-encounter assignment order exactly.
+    let mut symbol_id_by_token_hashes: HashMap<(i32, i32, i32, i32), i32> = HashMap::new();
+    let sequences: Vec<NormalizedBlock> = comparable
+        .iter()
+        .map(|range| normalize_block_sequence(tokens, range, &mut symbol_id_by_token_hashes))
+        .collect();
+    let ngram_sets: Vec<HashSet<i32>> = sequences
+        .iter()
+        .map(|block| collect_ngram_set(&block.sequence))
+        .collect();
+    let shared_counts = count_shared_ngrams(&ngram_sets);
+
+    let mut parent: Vec<usize> = (0..comparable.len()).collect();
+    fn find(parent: &mut [usize], mut index: usize) -> usize {
+        let mut root = index;
+        while parent[root] != root {
+            root = parent[root];
+        }
+        while parent[index] != root {
+            let next = parent[index];
+            parent[index] = root;
+            index = next;
+        }
+        root
+    }
+    for (&(left_index, right_index), &shared) in &shared_counts {
+        let left = &sequences[left_index];
+        let right = &sequences[right_index];
+        // Two already-reported blocks have nothing new to contribute to each other.
+        if !touched_groups_by_block[left_index].is_empty()
+            && !touched_groups_by_block[right_index].is_empty()
+        {
+            continue;
+        }
+        let min_ngrams = ngram_sets[left_index].len().min(ngram_sets[right_index].len());
+        if shared * 100 < NEAR_MISS_FILTRATION_PERCENT * min_ngrams {
+            continue;
+        }
+        // A structural match must be backed by shared content (names and literal values); the
+        // bound is exclusive, matching duplication.ts.
+        if content_overlap(left, right) * 100
+            <= MIN_CONTENT_SIMILARITY_PERCENT * left.content_total.max(right.content_total)
+        {
+            continue;
+        }
+        // Per-fragment similarity against the larger block (NiCad semantics).
+        if lcs_length(&left.sequence, &right.sequence) * 100
+            >= MIN_SIMILARITY_PERCENT * left.sequence.len().max(right.sequence.len())
+        {
+            let left_root = find(&mut parent, left_index);
+            let right_root = find(&mut parent, right_index);
+            parent[left_root.max(right_root)] = left_root.min(right_root);
+        }
+    }
+
+    let mut members_by_root: IndexMap<usize, Vec<usize>> = IndexMap::new();
+    for index in 0..comparable.len() {
+        let root = find(&mut parent, index);
+        members_by_root.entry(root).or_default().push(index);
+    }
+    let to_occurrence = |range: &TokenRange| CountedOccurrence {
+        segments: vec![(range.start_token_index, range.end_token_index)],
+        token_count: range.end_token_index - range.start_token_index,
+        start_token_index: range.start_token_index,
+        end_token_index: range.end_token_index,
+        start_line: range.start_line,
+        end_line: range.end_line,
+    };
+    let mut groups: Vec<Vec<CountedOccurrence>> = Vec::new();
+    for members in members_by_root.values() {
+        if members.len() < 2 {
+            continue;
+        }
+        let uncovered: Vec<usize> = members
+            .iter()
+            .copied()
+            .filter(|&index| touched_groups_by_block[index].is_empty())
+            .collect();
+        let covered: Vec<usize> = members
+            .iter()
+            .copied()
+            .filter(|&index| !touched_groups_by_block[index].is_empty())
+            .collect();
+        if covered.is_empty() {
+            groups.push(
+                members
+                    .iter()
+                    .map(|&index| to_occurrence(comparable[index]))
+                    .collect(),
+            );
+            continue;
+        }
+        if uncovered.is_empty() {
+            continue;
+        }
+        // An anchored cluster extends a reported group only when that group lies entirely inside
+        // the cluster; see collectNearMissGroups in duplication.ts.
+        let overlaps_member = |occurrence: &CountedOccurrence| {
+            members.iter().any(|&index| {
+                let range = comparable[index];
+                occurrence.start_token_index < range.end_token_index
+                    && range.start_token_index < occurrence.end_token_index
+            })
+        };
+        // Ascending by construction: BTreeSet iteration is sorted and filter preserves order.
+        let fully_clustered: Vec<usize> = covered
+            .iter()
+            .flat_map(|&index| touched_groups_by_block[index].iter().copied())
+            .collect::<std::collections::BTreeSet<usize>>()
+            .into_iter()
+            .filter(|&group_index| {
+                let group = &reported_groups[group_index];
+                !group.is_empty() && group.iter().all(&overlaps_member)
+            })
+            .collect();
+        if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
+            // Rebuild the component as ONE group with one coalesced occurrence per member block;
+            // see collectNearMissGroups in duplication.ts.
+            let mut consumed: HashSet<(usize, usize)> = HashSet::new();
+            let mut merged: Vec<CountedOccurrence> = Vec::new();
+            for &member_index in members {
+                let range = comparable[member_index];
+                // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
+                // groups belong to the same copy. Consecutive position-order slices keep the
+                // coalesced spans disjoint; see collectNearMissGroups in duplication.ts.
+                let mut fragments: Vec<(CountedOccurrence, usize)> = Vec::new();
+                for &group_index in &fully_clustered {
+                    for (occurrence_index, occurrence) in
+                        reported_groups[group_index].iter().enumerate()
+                    {
+                        if !consumed.contains(&(group_index, occurrence_index))
+                            && occurrence.start_token_index < range.end_token_index
+                            && range.start_token_index < occurrence.end_token_index
+                        {
+                            consumed.insert((group_index, occurrence_index));
+                            fragments.push((occurrence.clone(), group_index));
+                        }
+                    }
+                }
+                fragments.sort_by_key(|(occurrence, _)| {
+                    (occurrence.start_token_index, occurrence.end_token_index)
+                });
+                let had_fragments = !fragments.is_empty();
+                let mut copy_parts: Vec<CountedOccurrence> = Vec::new();
+                let mut copy_groups: HashSet<usize> = HashSet::new();
+                for (occurrence, group_index) in fragments {
+                    if copy_groups.contains(&group_index) {
+                        merged.push(coalesce_occurrences(std::mem::take(&mut copy_parts)));
+                        copy_groups.clear();
+                    }
+                    copy_parts.push(occurrence);
+                    copy_groups.insert(group_index);
+                }
+                if !copy_parts.is_empty() {
+                    merged.push(coalesce_occurrences(copy_parts));
+                }
+                if !had_fragments && touched_groups_by_block[member_index].is_empty() {
+                    merged.push(to_occurrence(comparable[member_index]));
+                }
+            }
+            merged.sort_by_key(|occurrence| (occurrence.start_token_index, occurrence.end_token_index));
+            reported_groups[target_index] = merged;
+            for &source_index in source_indexes {
+                reported_groups[source_index].clear();
+            }
+        } else if uncovered.len() >= 2 {
+            groups.push(
+                uncovered
+                    .iter()
+                    .map(|&index| to_occurrence(comparable[index]))
+                    .collect(),
+            );
+        }
+    }
+    groups.sort_by_key(|group| group_sort_key(group));
+    groups
+}
+
+/// Keeps the block ranges the near-miss phase compares; a faithful port of selectComparableBlocks
+/// in duplication.ts (wrappers whose subtree branches into two or more disjoint eligible
+/// sub-blocks are descended through; linear chains keep their top).
+fn select_comparable_blocks<'a>(eligible: &[&'a TokenRange]) -> Vec<&'a TokenRange> {
+    struct ForestNode<'a> {
+        range: &'a TokenRange,
+        children: Vec<usize>,
+    }
+    // Index arena: nodes never move, so ancestor references on the stack stay valid.
+    let mut nodes: Vec<ForestNode<'a>> = Vec::new();
+    let mut roots: Vec<usize> = Vec::new();
+    let mut stack: Vec<usize> = Vec::new();
+    for &range in eligible {
+        while let Some(&top) = stack.last() {
+            if nodes[top].range.end_token_index <= range.start_token_index {
+                stack.pop();
+            } else {
+                break;
+            }
+        }
+        if let Some(&top) = stack.last() {
+            // Equal spans (two node types covering the same tokens) collapse into the first.
+            if nodes[top].range.start_token_index == range.start_token_index
+                && nodes[top].range.end_token_index == range.end_token_index
+            {
+                continue;
+            }
+        }
+        let id = nodes.len();
+        nodes.push(ForestNode {
+            range,
+            children: Vec::new(),
+        });
+        match stack.last() {
+            Some(&top) => nodes[top].children.push(id),
+            None => roots.push(id),
+        }
+        stack.push(id);
+    }
+
+    fn branches(nodes: &[ForestNode<'_>], id: usize) -> bool {
+        let children = &nodes[id].children;
+        children.len() >= 2 || (children.len() == 1 && branches(nodes, children[0]))
+    }
+    fn visit<'a>(nodes: &[ForestNode<'a>], id: usize, kept: &mut Vec<&'a TokenRange>) {
+        if branches(nodes, id) {
+            for &child in &nodes[id].children {
+                visit(nodes, child, kept);
+            }
+        } else {
+            kept.push(nodes[id].range);
+        }
+    }
+    let mut kept = Vec::new();
+    for &root in &roots {
+        visit(&nodes, root, &mut kept);
+    }
+    kept
+}
+
+/// One copy's fragments (an exact prefix and suffix split by a large edit) as one occurrence;
+/// mirrors coalesceOccurrences in duplication.ts.
+fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrence {
+    if occurrences.len() == 1 {
+        return occurrences.into_iter().next().expect("non-empty");
+    }
+    let mut segments: Vec<(usize, usize)> = occurrences
+        .iter()
+        .flat_map(|occurrence| occurrence.segments.iter().copied())
+        .collect();
+    segments.sort_by_key(|segment| segment.0);
+    CountedOccurrence {
+        token_count: occurrences.iter().map(|o| o.token_count).sum(),
+        start_token_index: occurrences
+            .iter()
+            .map(|o| o.start_token_index)
+            .min()
+            .unwrap_or(0),
+        end_token_index: occurrences
+            .iter()
+            .map(|o| o.end_token_index)
+            .max()
+            .unwrap_or(0),
+        start_line: occurrences.iter().map(|o| o.start_line).min().unwrap_or(0),
+        end_line: occurrences.iter().map(|o| o.end_line).max().unwrap_or(0),
+        segments,
+    }
+}
+
+struct NormalizedBlock {
+    sequence: Vec<i32>,
+    /// Occurrences per content-bearing symbol (names and literal values), for the content gate.
+    content_count_by_symbol: HashMap<i32, usize>,
+    content_total: usize,
+}
+
+/// A block's tokens as comparable integers; see normalizeBlockSequence in duplication.ts
+/// (literal VALUES are folded into the symbol, unlike the exact fingerprint's kind tags).
+fn normalize_block_sequence(
+    tokens: &[Token<'_>],
+    range: &TokenRange,
+    symbol_id_by_token_hashes: &mut HashMap<(i32, i32, i32, i32), i32>,
+) -> NormalizedBlock {
+    let mut sequence = Vec::with_capacity(range.end_token_index - range.start_token_index);
+    let mut index_by_identifier: HashMap<&str, i32> = HashMap::new();
+    let mut content_count_by_symbol: HashMap<i32, usize> = HashMap::new();
+    let mut content_total = 0usize;
+    for token in &tokens[range.start_token_index..range.end_token_index.min(tokens.len())] {
+        let value = if token.is_id {
+            let next_index = index_by_identifier.len() as i32;
+            let identifier_index = *index_by_identifier
+                .entry(token.text.as_ref())
+                .or_insert(next_index);
+            -(identifier_index + 1)
+        } else {
+            let next_id = symbol_id_by_token_hashes.len() as i32;
+            let id = *symbol_id_by_token_hashes
+                .entry((
+                    token.text_hash,
+                    token.text_hash2,
+                    token.literal_hash.unwrap_or(0),
+                    token.literal_hash2.unwrap_or(0),
+                ))
+                .or_insert(next_id);
+            if token.is_name || token.literal_hash.is_some() {
+                *content_count_by_symbol.entry(id).or_insert(0) += 1;
+                content_total += 1;
+            }
+            id
+        };
+        sequence.push(value);
+    }
+    NormalizedBlock {
+        sequence,
+        content_count_by_symbol,
+        content_total,
+    }
+}
+
+/// Multiset overlap of two blocks' content-bearing symbols, for the content gate.
+fn content_overlap(left: &NormalizedBlock, right: &NormalizedBlock) -> usize {
+    let (smaller, larger) = if left.content_count_by_symbol.len() <= right.content_count_by_symbol.len() {
+        (left, right)
+    } else {
+        (right, left)
+    };
+    smaller
+        .content_count_by_symbol
+        .iter()
+        .map(|(symbol, count)| {
+            (*count).min(
+                larger
+                    .content_count_by_symbol
+                    .get(symbol)
+                    .copied()
+                    .unwrap_or(0),
+            )
+        })
+        .sum()
+}
+
+/// The distinct 5-gram hashes of a normalized block sequence, matching collectNgramSet exactly.
+fn collect_ngram_set(sequence: &[i32]) -> HashSet<i32> {
+    if sequence.len() < NEAR_MISS_NGRAM_SIZE {
+        return HashSet::new();
+    }
+    // Exact upper bound: one n-gram per window, and most windows hash distinctly.
+    let mut ngrams = HashSet::with_capacity(sequence.len() - NEAR_MISS_NGRAM_SIZE + 1);
+    for window in sequence.windows(NEAR_MISS_NGRAM_SIZE) {
+        let mut hash: i32 = 5381;
+        for &value in window {
+            hash = hash.wrapping_mul(31).wrapping_add(value);
+        }
+        ngrams.insert(hash);
+    }
+    ngrams
+}
+
+/// Shared distinct-n-gram counts per block pair (left < right).
+fn count_shared_ngrams(ngram_sets: &[HashSet<i32>]) -> HashMap<(usize, usize), usize> {
+    let mut blocks_by_ngram: HashMap<i32, Vec<usize>> = HashMap::new();
+    for (block_index, ngrams) in ngram_sets.iter().enumerate() {
+        for &ngram in ngrams {
+            blocks_by_ngram.entry(ngram).or_default().push(block_index);
+        }
+    }
+    let mut shared_counts: HashMap<(usize, usize), usize> = HashMap::new();
+    for blocks in blocks_by_ngram.values() {
+        for (position, &left_index) in blocks.iter().enumerate() {
+            // Bucket indices are appended in ascending block order, so left < right already.
+            for &right_index in &blocks[position + 1..] {
+                *shared_counts.entry((left_index, right_index)).or_insert(0) += 1;
+            }
+        }
+    }
+    shared_counts
+}
+
+/// Longest-common-subsequence LENGTH via the Allison–Dix bit-parallel recurrence. Only the length
+/// is needed and LCS length is algorithm-independent, so u64 words are safe even though the
+/// TypeScript backend uses 32-bit words.
+fn lcs_length(a: &[i32], b: &[i32]) -> usize {
+    if a.is_empty() || b.is_empty() {
+        return 0;
+    }
+    let word_count = a.len().div_ceil(64);
+    let mut position_masks: HashMap<i32, Vec<u64>> = HashMap::new();
+    for (index, &symbol) in a.iter().enumerate() {
+        position_masks
+            .entry(symbol)
+            .or_insert_with(|| vec![0; word_count])[index / 64] |= 1u64 << (index % 64);
+    }
+
+    let mut v = vec![0u64; word_count];
+    for symbol in b {
+        let match_mask = position_masks.get(symbol);
+        // `(v << 1) | 1` shifts a carry bit across words; subtraction borrows across words.
+        let mut shift_carry = 1u64;
+        let mut borrow = 0u64;
+        for (word, slot) in v.iter_mut().enumerate() {
+            let previous = *slot;
+            let x = match_mask.map_or(0, |mask| mask[word]) | previous;
+            let shifted = (previous << 1) | shift_carry;
+            shift_carry = previous >> 63;
+            let (partial, underflow1) = x.overflowing_sub(shifted);
+            let (difference, underflow2) = partial.overflowing_sub(borrow);
+            borrow = u64::from(underflow1 || underflow2);
+            *slot = x & !difference;
+        }
+    }
+    v.iter().map(|word| word.count_ones() as usize).sum()
+}
+
 fn summarize_duplicates(
     groups: &[Vec<CountedOccurrence>],
     code_line_numbers: &HashSet<usize>,
@@ -1204,8 +1694,16 @@ fn summarize_duplicates(
     let mut duplicated_lines: HashSet<usize> = HashSet::new();
     for group in groups {
         // Fragment-weighted like duplication.ts: merging must not halve what thresholds see.
-        duplicate_block_count +=
-            (group.len() - 1) * group.first().map(|first| first.segments.len()).unwrap_or(1);
+        // Occurrence shapes can differ within one group (a gap-merged exact pair plus an appended
+        // whole-block near-miss copy), so every occurrence's fragments are summed and the largest
+        // is deducted, keeping the count independent of source order.
+        let total_segments: usize = group.iter().map(|occurrence| occurrence.segments.len()).sum();
+        let max_segments = group
+            .iter()
+            .map(|occurrence| occurrence.segments.len())
+            .max()
+            .unwrap_or(0);
+        duplicate_block_count += total_segments - max_segments;
         for occurrence in group {
             max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
             // Only CODE lines carrying matched tokens count; the unmatched gap of a merged clone

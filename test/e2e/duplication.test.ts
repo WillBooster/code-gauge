@@ -11,7 +11,8 @@ import { fixturesDir } from './fixtureCorpus.js';
 
 // End-to-end coverage of the duplication detector across every supported language, plus the
 // detector's semantic guarantees: rename tolerance, the literal-density (data-table) guard, gapped
-// (Type-3) clone merging, detection options, and cross-file clone detection. The per-language
+// (Type-3) clone merging, near-miss (Type-3) similarity matching, detection options, and
+// cross-file clone detection. The per-language
 // fixtures double as regression guards for the language-specific node-type catalogs in
 // duplication.ts: a grammar update or catalog omission that stops tokenizing a language correctly
 // surfaces here as a missed (or spurious) clone.
@@ -182,6 +183,275 @@ if (second${suffix} > first${suffix}) {
   report(first${suffix} - second${suffix});
 }
 `;
+
+const scatteredEditClone = (name: string, item: string, weightMember: string, operator: string): string => `
+function ${name}(entries, factor) {
+  let accumulated = 0;
+  for (const ${item} of entries) {
+    const scaled = ${item}.${weightMember} * ${item}.quantity;
+    if (${item}.special) {
+      accumulated ${operator} scaled * 0.5;
+    } else {
+      accumulated += scaled;
+    }
+  }
+  console.log('accumulated', accumulated, factor);
+  return accumulated * (1 + factor);
+}
+`;
+
+const pythonMethodClone = (name: string, weight: string, operator: string): string => `
+    def ${name}(self, entries, factor):
+        accumulated = 0
+        for item in entries:
+            scaled = item.${weight} * item.quantity
+            if item.special:
+                accumulated ${operator} scaled * 0.5
+            else:
+                accumulated += scaled
+        print('accumulated', accumulated, factor)
+        return accumulated * (1 + factor)
+`;
+
+const callRunClone = (name: string, first: string, second: string, argA: string, argB: string): string => `
+function ${name}(${argA}, ${argB}) {
+  ${first}(${argA}, ${argB});
+  ${second}(${argA}, ${argB});
+  validate${name}(${argA}, ${argB});
+  finish${name}(${argA}, ${argB});
+  log${name}(${argA}, ${argB});
+  emit${name}(${argA}, ${argB});
+}
+`;
+
+const dispatchPredicate = (name: string, values: string[]): string => `
+function ${name}(node) {
+  return (
+    ${values.map((value) => `node.kind === '${value}'`).join(' ||\n    ')}
+  );
+}
+`;
+
+const selfCloneRun = (suffix: string, argument: string): string => `
+  const first${suffix} = compute(alpha${suffix}, beta${suffix});
+  const second${suffix} = combine(first${suffix}, ${argument});
+  if (second${suffix} > first${suffix}) {
+    report(second${suffix} - first${suffix});
+  } else {
+    report(first${suffix} + second${suffix});
+  }
+  log('done', first${suffix}, second${suffix});
+`;
+
+const fragmentedCopy = (name: string, middle: string, plusOp: string, minusOp: string): string => `
+function ${name}(items) {
+  let total = 0;
+  let count = 0;
+  for (const item of items) {
+    if (item.status === 'paid') {
+      total = total ${plusOp} item.amount;
+      count = count + 1;
+    }
+  }
+  ${middle}
+  let big = 0;
+  let small = 0;
+  for (const item of items) {
+    if (item.amount > 100) {
+      big = big + 1;
+    } else {
+      small = small ${minusOp} 1;
+    }
+  }
+  return total + count + big - small;
+}
+`;
+
+const fragmentedMiddle = (name: string, level: string, bonus: string): string =>
+  `const ${name} = items.filter((item) => item.${level} > 3).map((item) => item.${bonus}).reduce((a, b) => a + b, 0);`;
+
+describe('duplication: near-miss (Type-3) clones', () => {
+  // The two copies differ in a member name, an operator, and scattered renames, so no exact
+  // fragment reaches minTokens and gap merging never fires: only the similarity pipeline
+  // (n-gram filtration + token-LCS verification) can pair them.
+  const nearMissPair =
+    scatteredEditClone('totalPrice', 'item', 'price', '+=') + scatteredEditClone('totalWeight', 'row', 'weight', '-=');
+
+  it('detects a clone with scattered small edits that the exact pipeline misses', () => {
+    const metrics = measureCode(nearMissPair, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockCount).toBe(1);
+    const group = metrics.duplication.duplicateBlockGroups[0] ?? [];
+    expect(group.length).toBe(2);
+    // Each occurrence spans its whole function body, edited tokens included.
+    expect((group[0]?.endLine ?? 0) - (group[0]?.startLine ?? 0)).toBeGreaterThan(10);
+    expect(metrics.duplication.duplicationRatio).toBeLessThanOrEqual(1);
+  });
+
+  it('reports exact matches only when minSimilarityPercent is 100', () => {
+    const metrics = measureCode(nearMissPair, {
+      language: 'javascript',
+      duplication: { minSimilarityPercent: 100 },
+    });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('clusters three similar copies into one group', () => {
+    const tripled = nearMissPair + scatteredEditClone('totalVolume', 'box', 'volume', '+=');
+    const metrics = measureCode(tripled, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+    expect(metrics.duplication.duplicateBlockCount).toBe(2);
+  });
+
+  it('does not pair structurally different functions', () => {
+    const different = `
+function firstShape(entries) {
+  const seen = new Map();
+  for (const entry of entries) {
+    seen.set(entry.key, (seen.get(entry.key) ?? 0) + entry.count);
+  }
+  return [...seen.values()].filter((value) => value > 10).map((value) => value * 2);
+}
+function secondShape(limit, step) {
+  let cursor = 0;
+  const results = [];
+  while (cursor < limit) {
+    try {
+      results.push(fetchChunk(cursor, step));
+    } catch (error) {
+      console.error('chunk failed', cursor, error);
+      break;
+    }
+    cursor += step;
+  }
+  return results;
+}
+`;
+    const metrics = measureCode(different, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('appends an edited third copy to the exact group of its two identical siblings', () => {
+    // Copy-paste-then-edit: two identical copies form an exact group; the edited copy must still
+    // be found by anchoring on a reported block instead of being suppressed by it.
+    const threeCopies =
+      scatteredEditClone('alpha', 'item', 'price', '+=') +
+      scatteredEditClone('beta', 'item', 'price', '+=') +
+      scatteredEditClone('gamma', 'row', 'weight', '-=');
+    const metrics = measureCode(threeCopies, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+    expect(metrics.duplication.duplicateBlockCount).toBe(2);
+  });
+
+  it('merges two exact pairs bridged by a fifth similar copy into one group', () => {
+    // The bridge copy is similar to both exact pairs, so the whole verified component must
+    // become ONE group instead of extending only the first pair.
+    const bridged =
+      scatteredEditClone('p1', 'item', 'price', '+=') +
+      scatteredEditClone('p2', 'item', 'price', '+=') +
+      scatteredEditClone('w1', 'row', 'weight', '-=') +
+      scatteredEditClone('w2', 'row', 'weight', '-=') +
+      scatteredEditClone('v1', 'box', 'volume', '+=');
+    const metrics = measureCode(bridged, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(5);
+    expect(metrics.duplication.duplicateBlockCount).toBe(4);
+  });
+
+  it('coalesces exact fragments per copy and counts mixed groups order-independently', () => {
+    // A and B share an exact prefix AND an exact suffix, split by over-large differing middles
+    // (two exact groups, multi-fragment copies); C carries scattered operator edits so only the
+    // near-miss phase finds it. The component must become ONE group with ONE occurrence per copy
+    // (A's and B's prefix+suffix fragments coalesce), and the fragment-weighted count must be 3
+    // in every source order: without the coalescing and sum-minus-max counting, the same family
+    // reported five occurrences and a source-order-dependent count.
+    const exactA = fragmentedCopy('alpha', fragmentedMiddle('bonusA', 'level', 'bonus'), '+', '+');
+    const exactB = fragmentedCopy('beta', fragmentedMiddle('bonusB', 'rank', 'extra'), '+', '+');
+    const edited = fragmentedCopy('gamma', fragmentedMiddle('bonusC', 'depth', 'weight'), '-', '-');
+
+    for (const code of [exactA + exactB + edited, edited + exactA + exactB]) {
+      const metrics = measureCode(code, { language: 'javascript' });
+      expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+      expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+      expect(metrics.duplication.duplicateBlockCount).toBe(3);
+    }
+  });
+
+  it('keeps a block-internal self-clone as separate copies when a near-miss sibling joins', () => {
+    // Two occurrences of the SAME exact group are distinct copies (a repeated run inside one
+    // function); anchoring a similar sibling must add a third occurrence, not collapse the two
+    // internal copies into one span.
+    const selfClone = `function alpha(input) {${selfCloneRun('A', 'input')}${selfCloneRun('B', 'input')}}\n`;
+    const sibling = `function beta(value) {${selfCloneRun('C', 'value')}${selfCloneRun('D', 'value')}}\n`
+      .replaceAll('report(secondC - firstC)', 'report(secondC * firstC)')
+      .replaceAll('report(firstD + secondD)', 'report(firstD * secondD)')
+      .replaceAll("log('done'", "log('finished'");
+    const alone = measureCode(selfClone, { language: 'javascript' });
+    const withSibling = measureCode(selfClone + sibling, { language: 'javascript' });
+
+    expect(alone.duplication.duplicateBlockGroups[0]?.length).toBe(2);
+    expect(withSibling.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(withSibling.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+    expect(withSibling.duplication.duplicateBlockCount).toBe(2);
+  });
+
+  it('detects clones nested inside a single enclosing wrapper', () => {
+    // A describe()/IIFE wrapper is itself an eligible block spanning the whole file; candidate
+    // selection must descend through it instead of comparing the lone wrapper to nothing.
+    const wrapped = `describe('suite', () => {${nearMissPair}});`;
+    const iife = `(function () {${nearMissPair}})();`;
+
+    expect(measureCode(wrapped, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(1);
+    expect(measureCode(iife, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('detects clones inside a single Python class body', () => {
+    const singleClass = `class Totals:${pythonMethodClone('total_price', 'price', '+=')}${pythonMethodClone('total_weight', 'weight', '-=')}`;
+
+    expect(measureCode(singleClass, { language: 'python' }).duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('does not pair same-skeleton functions calling entirely different APIs', () => {
+    // Punctuation and keywords dominate a token-level LCS, so without the content gate these two
+    // unrelated call runs would exceed 70% structural similarity.
+    const code =
+      callRunClone('One', 'parse', 'persist', 'record', 'ctx') +
+      callRunClone('Two', 'connect', 'upload', 'asset', 'session');
+
+    expect(measureCode(code, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('does not pair dispatch predicates differing in every literal value', () => {
+    // `x.kind === '...' || ...` chains sit below the literal-density bound yet reduce to a
+    // content-free skeleton; folding literal values plus the content gate must reject them. The
+    // branch counts differ so the exact pipeline (which abstracts literals by design) cannot
+    // match either: this pins the near-miss phase's rejection specifically.
+    const code =
+      dispatchPredicate('isLoop', ['for', 'while', 'do', 'for_in', 'for_of', 'loop', 'repeat', 'until']) +
+      dispatchPredicate('isJump', ['break', 'continue', 'return', 'throw', 'goto', 'yield', 'await', 'halt', 'exit']);
+    const metrics = measureCode(code, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('honors a stricter similarity threshold', () => {
+    // Consistent renames are anonymized away, so only the member name and the operator differ:
+    // the pair sits just below 99% similarity.
+    const strict = measureCode(nearMissPair, { language: 'javascript', duplication: { minSimilarityPercent: 99 } });
+    const lenient = measureCode(nearMissPair, { language: 'javascript', duplication: { minSimilarityPercent: 70 } });
+
+    expect(strict.duplication.duplicateBlockGroupCount).toBe(0);
+    expect(lenient.duplication.duplicateBlockGroupCount).toBe(1);
+  });
+});
 
 describe('duplication: fingerprint integrity', () => {
   it('does not equate regions whose only difference is a djb2-colliding token', () => {

@@ -210,7 +210,31 @@ const semanticNameFieldByParentType = new Map([
 export const defaultDuplicationOptions: Required<DuplicationOptions> = {
   minTokens: 40,
   maxGapTokens: 30,
+  minSimilarityPercent: 70,
 };
+
+/**
+ * N-gram size for the near-miss candidate index. 5 is NIL's published default (Nakagawa et al.,
+ * ESEC/FSE 2021): short enough that edited clones still share many n-grams, long enough that
+ * unrelated blocks rarely collide.
+ */
+const nearMissNgramSize = 5;
+/**
+ * Blocks sharing fewer than this percentage of the smaller block's distinct n-grams skip LCS
+ * verification entirely (NIL's filtration phase, default 10%): a pair below it cannot reach any
+ * useful similarity, and the cheap set-overlap check prunes the quadratic candidate space.
+ */
+const nearMissFiltrationPercent = 10;
+/**
+ * Token-level LCS over normalized code is dominated by punctuation and keywords, so a structural
+ * 70% match alone is weak evidence of copying: two same-skeleton functions calling entirely
+ * different APIs can exceed it. A near-miss pair must therefore also share at least half of the
+ * larger block's content-bearing tokens (verbatim-kept names and literal values — the tokens that
+ * distinguish WHAT the code does rather than how it is shaped). The bound is exclusive: a
+ * value-mapping predicate pair (`x.type === 'a' || ...` with equal branch counts and zero shared
+ * values) shares exactly half its content — the repeated member name — and must not pass.
+ */
+const minContentSimilarityPercent = 50;
 
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
 const minSequenceStatementCount = 2;
@@ -249,6 +273,12 @@ interface Token {
   /** Hash pair of a value-carrying literal's value, folded into data-like region fingerprints. */
   literalHash?: number;
   literalHash2?: number;
+  /**
+   * True for verbatim-kept NAMES (member/callee/type names, named grammar leaves): together with
+   * value-carrying literals these are the content-bearing tokens the near-miss content gate
+   * counts. Keywords, operators, and punctuation come from unnamed nodes and stay false.
+   */
+  isName?: boolean;
   /** 0-based source rows the token occupies, so line coverage counts only matched-token lines. */
   startRow: number;
   endRow: number;
@@ -309,7 +339,9 @@ export interface CrossFileDuplicateCandidate {
  * equal literal values. Candidates are whole block-like subtrees plus runs of consecutive sibling
  * statements, so a copy pasted into the middle of a longer block is still found. Only maximal,
  * non-overlapping regions are counted, and adjacent groups separated by a small token gap merge
- * into one gapped (Type-3) clone group.
+ * into one gapped (Type-3) clone group. Blocks the exact pipeline misses are additionally compared
+ * by similarity (n-gram filtration then token-level LCS, NiCad/NIL-style), so near-miss (Type-3)
+ * clones whose edits fragment them below `minTokens` are still reported.
  */
 export function measureDuplication(
   root: Parser.SyntaxNode,
@@ -318,6 +350,7 @@ export function measureDuplication(
 ): DuplicationMetrics {
   const minTokens = options?.minTokens ?? defaultDuplicationOptions.minTokens;
   const maxGapTokens = options?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens;
+  const minSimilarityPercent = options?.minSimilarityPercent ?? defaultDuplicationOptions.minSimilarityPercent;
   const tokens: Token[] = [];
   const blockRanges: TokenRange[] = [];
   const containerStatementRanges: TokenRange[][] = [];
@@ -330,7 +363,17 @@ export function measureDuplication(
   ];
   const counted = selectMaximalGroups(candidates, (group) => group.length >= 2);
   const groups = mergeAdjacentGroups(toCountedGroups(counted), maxGapTokens);
-  return summarizeDuplicates(groups, codeLineNumbers, tokens);
+  const nearMissGroups = collectNearMissGroups(
+    tokens,
+    literalCountPrefix,
+    blockRanges,
+    minTokens,
+    minSimilarityPercent,
+    groups
+  );
+  // Near-miss clustering can merge exact groups away, leaving empty entries behind.
+  const reportedGroups = [...groups.filter((group) => group.length > 0), ...nearMissGroups];
+  return summarizeDuplicates(reportedGroups, codeLineNumbers, tokens);
 }
 
 /**
@@ -443,7 +486,7 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
   const endRow = node.endPosition.row;
   if (node.isNamed && shorthandPropertyTypes.has(node.type)) {
     tokens.push(
-      makeTextToken(node.text, undefined, startRow, endRow),
+      makeTextToken(node.text, undefined, startRow, endRow, true),
       makeTextToken(':', undefined, startRow, endRow),
       { kind: 'id', text: node.text, textHash: 0, textHash2: 0, startRow, endRow }
     );
@@ -459,17 +502,26 @@ function appendLeafToken(node: Parser.SyntaxNode, tokens: Token[]): void {
   // `property_identifier`/`type_identifier`, which must distinguish otherwise-identical structures.
   const literalKind = node.isNamed ? literalKindByType.get(node.type) : undefined;
   if (literalKind === undefined) {
-    tokens.push(makeTextToken(node.text, undefined, startRow, endRow));
+    tokens.push(makeTextToken(node.text, undefined, startRow, endRow, node.isNamed));
   } else {
     tokens.push(makeTextToken(literalKind, literalValueText(node, literalKind), startRow, endRow));
   }
 }
 
-function makeTextToken(text: string, literalValueText: string | undefined, startRow: number, endRow: number): Token {
+function makeTextToken(
+  text: string,
+  literalValueText: string | undefined,
+  startRow: number,
+  endRow: number,
+  isName = false
+): Token {
   const token: Token = { kind: 'text', text, textHash: hashText(text), textHash2: hashText2(text), startRow, endRow };
   if (literalValueText !== undefined && valueCarryingLiteralKinds.has(text)) {
     token.literalHash = hashText(literalValueText);
     token.literalHash2 = hashText2(literalValueText);
+  }
+  if (isName) {
+    token.isName = true;
   }
   return token;
 }
@@ -793,6 +845,509 @@ function enumerateContainerWindows(tokens: Token[], statements: TokenRange[], mi
   return { windowKeysByStart, statementHashes };
 }
 
+/**
+ * Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
+ * unreported, following the locate-filter-verify design of NIL (ESEC/FSE 2021) with NiCad's
+ * per-fragment similarity semantics: an inverted index of 5-grams over normalized tokens proposes
+ * candidate pairs, a cheap shared-n-gram ratio prunes them, and token-level LCS verifies that the
+ * pair is at least `minSimilarityPercent` similar relative to the LARGER block (so a small block
+ * embedded in a big one does not count), with a content gate requiring shared names/literal values
+ * so same-skeleton code calling different APIs does not pair on punctuation alone. Verified pairs
+ * are clustered transitively; each cluster becomes one clone group whose occurrences span whole
+ * blocks. Only blocks that are not literal-dense (the data-table guard) participate, and wrappers
+ * containing several comparable sub-blocks (a `describe(...)` call, a class body) are descended
+ * through. Blocks already covered by an exactly-reported region still take part as ANCHORS — two
+ * identical copies plus one edited copy is the commonest copy-paste-then-edit shape, and without
+ * anchors the exact pair would swallow both comparison partners of the edited copy — but they are
+ * never re-reported: an edited copy verified against an anchor is appended to the anchor's
+ * fully-clustered exact group, so no reported region ever overlaps another. Reported occurrences
+ * cover their whole block: unlike exact matches, a near-miss occurrence includes its edited
+ * tokens, which is how NiCad-style detectors report Type-3 fragments.
+ */
+function collectNearMissGroups(
+  tokens: Token[],
+  literalCountPrefix: Int32Array,
+  blockRanges: TokenRange[],
+  minTokens: number,
+  minSimilarityPercent: number,
+  reportedGroups: CountedOccurrence[][]
+): CountedOccurrence[][] {
+  if (minSimilarityPercent >= 100) {
+    return [];
+  }
+  const eligible = blockRanges
+    .filter((range) => {
+      const tokenCount = range.endTokenIndex - range.startTokenIndex;
+      const literalCount =
+        (literalCountPrefix[range.endTokenIndex] ?? 0) - (literalCountPrefix[range.startTokenIndex] ?? 0);
+      return tokenCount >= minTokens && !isLiteralDense(literalCount, tokenCount);
+    })
+    .toSorted(
+      (left, right) => left.startTokenIndex - right.startTokenIndex || right.endTokenIndex - left.endTokenIndex
+    );
+  const comparable = selectComparableBlocks(eligible);
+  if (comparable.length < 2) {
+    return [];
+  }
+
+  // Reported-group indices whose occurrences overlap each comparable block: such blocks anchor
+  // near-miss comparisons but are never re-reported.
+  const touchedGroupsByBlock = comparable.map((range) => {
+    const touched: number[] = [];
+    for (const [groupIndex, group] of reportedGroups.entries()) {
+      if (
+        group.some(
+          (occurrence) =>
+            occurrence.startTokenIndex < range.endTokenIndex && range.startTokenIndex < occurrence.endTokenIndex
+        )
+      ) {
+        touched.push(groupIndex);
+      }
+    }
+    return touched;
+  });
+
+  // Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
+  // other files the process measured before it.
+  const symbolIdByTokenHashes = new Map<string, number>();
+  const sequences = comparable.map((range) => normalizeBlockSequence(tokens, range, symbolIdByTokenHashes));
+  const ngramSets = sequences.map(({ sequence }) => collectNgramSet(sequence));
+  const sharedNgramCounts = countSharedNgrams(ngramSets);
+
+  const parent = comparable.map((_, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) {
+      root = parent[root] ?? root;
+    }
+    while (parent[index] !== root) {
+      const next = parent[index] ?? root;
+      parent[index] = root;
+      index = next;
+    }
+    return root;
+  };
+  for (const [pairKey, shared] of sharedNgramCounts) {
+    // Decoded with the same modulus countSharedNgrams encodes with.
+    const leftIndex = Math.floor(pairKey / ngramSets.length);
+    const rightIndex = pairKey % ngramSets.length;
+    const left = sequences[leftIndex];
+    const right = sequences[rightIndex];
+    const leftNgrams = ngramSets[leftIndex];
+    const rightNgrams = ngramSets[rightIndex];
+    if (!left || !right || !leftNgrams || !rightNgrams) {
+      continue;
+    }
+    // Two already-reported blocks have nothing new to contribute to each other.
+    if ((touchedGroupsByBlock[leftIndex]?.length ?? 0) > 0 && (touchedGroupsByBlock[rightIndex]?.length ?? 0) > 0) {
+      continue;
+    }
+    if (shared * 100 < nearMissFiltrationPercent * Math.min(leftNgrams.size, rightNgrams.size)) {
+      continue;
+    }
+    // A structural match must be backed by shared content (names and literal values), or two
+    // same-skeleton blocks calling entirely different APIs would pair on punctuation alone.
+    if (
+      contentOverlap(left, right) * 100 <=
+      minContentSimilarityPercent * Math.max(left.contentTotal, right.contentTotal)
+    ) {
+      continue;
+    }
+    // Per-fragment similarity against the larger block (NiCad semantics): both blocks must be
+    // mostly covered by the common subsequence, which is stricter than NIL's min-denominator and
+    // keeps a generic small block from "matching" inside every big one.
+    if (
+      lcsLength(left.sequence, right.sequence) * 100 >=
+      minSimilarityPercent * Math.max(left.sequence.length, right.sequence.length)
+    ) {
+      const leftRoot = find(leftIndex);
+      const rightRoot = find(rightIndex);
+      parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
+    }
+  }
+
+  const membersByRoot = new Map<number, number[]>();
+  for (const index of comparable.keys()) {
+    const root = find(index);
+    const members = membersByRoot.get(root) ?? [];
+    members.push(index);
+    membersByRoot.set(root, members);
+  }
+  const groups: CountedOccurrence[][] = [];
+  for (const members of membersByRoot.values()) {
+    if (members.length < 2) {
+      continue;
+    }
+    const uncovered = members.filter((index) => (touchedGroupsByBlock[index]?.length ?? 0) === 0);
+    const covered = members.filter((index) => (touchedGroupsByBlock[index]?.length ?? 0) > 0);
+    if (covered.length === 0) {
+      groups.push(members.flatMap((index) => (comparable[index] ? [toNearMissOccurrence(comparable[index])] : [])));
+      continue;
+    }
+    if (uncovered.length === 0) {
+      continue;
+    }
+    // An anchored cluster extends a reported group only when that group lies entirely inside the
+    // cluster (every occurrence overlaps a member); appending the edited copies there keeps one
+    // group per clone family and keeps reported regions disjoint. A group that also has
+    // occurrences elsewhere is left untouched, and the uncovered copies stand alone if they can.
+    const overlapsMember = (occurrence: CountedOccurrence): boolean =>
+      members.some((index) => {
+        const range = comparable[index];
+        return (
+          range !== undefined &&
+          occurrence.startTokenIndex < range.endTokenIndex &&
+          range.startTokenIndex < occurrence.endTokenIndex
+        );
+      });
+    const fullyClustered = [...new Set(covered.flatMap((index) => touchedGroupsByBlock[index] ?? []))]
+      .filter((groupIndex) => {
+        const group = reportedGroups[groupIndex];
+        return group !== undefined && group.length > 0 && group.every(overlapsMember);
+      })
+      .toSorted((leftIndex, rightIndex) => leftIndex - rightIndex);
+    const [targetIndex, ...sourceIndexes] = fullyClustered;
+    if (targetIndex !== undefined) {
+      // Every fully-clustered group belongs to this verified component: rebuild them as ONE group
+      // with one occurrence per member block. Occurrences landing in the same member (a copy's
+      // exact prefix and suffix fragments, split by an over-large edited middle) coalesce into a
+      // single multi-segment occurrence — they are one copy, not two — and each uncovered member
+      // contributes its whole-block occurrence. Merged-away entries are left empty for the caller
+      // to drop.
+      const consumed = new Set<CountedOccurrence>();
+      const merged: CountedOccurrence[] = [];
+      for (const memberIndex of members) {
+        const range = comparable[memberIndex];
+        if (!range) {
+          continue;
+        }
+        // Occurrences of ONE group are distinct copies (a repeated run inside the block); only
+        // fragments from DIFFERENT groups (a copy's exact prefix in one group and its suffix in
+        // another) belong to the same copy. Walking the member's fragments in position order and
+        // starting a new copy whenever a source group repeats keeps same-group copies separate,
+        // and — because the fragments are disjoint and each copy takes a consecutive slice —
+        // guarantees the coalesced spans never overlap, even when groups contribute unequal
+        // fragment counts to this member.
+        const fragments: { occurrence: CountedOccurrence; groupIndex: number }[] = [];
+        for (const groupIndex of fullyClustered) {
+          for (const occurrence of reportedGroups[groupIndex] ?? []) {
+            if (
+              !consumed.has(occurrence) &&
+              occurrence.startTokenIndex < range.endTokenIndex &&
+              range.startTokenIndex < occurrence.endTokenIndex
+            ) {
+              consumed.add(occurrence);
+              fragments.push({ occurrence, groupIndex });
+            }
+          }
+        }
+        fragments.sort(
+          (left, right) =>
+            left.occurrence.startTokenIndex - right.occurrence.startTokenIndex ||
+            left.occurrence.endTokenIndex - right.occurrence.endTokenIndex
+        );
+        let copyParts: CountedOccurrence[] = [];
+        const copyGroups = new Set<number>();
+        for (const { occurrence, groupIndex } of fragments) {
+          if (copyGroups.has(groupIndex)) {
+            merged.push(coalesceOccurrences(copyParts));
+            copyParts = [];
+            copyGroups.clear();
+          }
+          copyParts.push(occurrence);
+          copyGroups.add(groupIndex);
+        }
+        if (copyParts.length > 0) {
+          merged.push(coalesceOccurrences(copyParts));
+        }
+        if (fragments.length === 0 && (touchedGroupsByBlock[memberIndex]?.length ?? 0) === 0) {
+          merged.push(toNearMissOccurrence(range));
+        }
+      }
+      merged.sort(
+        (left, right) => left.startTokenIndex - right.startTokenIndex || left.endTokenIndex - right.endTokenIndex
+      );
+      reportedGroups[targetIndex] = merged;
+      for (const sourceIndex of sourceIndexes) {
+        reportedGroups[sourceIndex] = [];
+      }
+    } else if (uncovered.length >= 2) {
+      groups.push(uncovered.flatMap((index) => (comparable[index] ? [toNearMissOccurrence(comparable[index])] : [])));
+    }
+  }
+  groups.sort(compareGroups);
+  return groups;
+}
+
+/**
+ * Keeps the block ranges the near-miss phase compares. Block ranges nest or are disjoint, so they
+ * form a forest; a candidate whose subtree branches into two or more disjoint eligible sub-blocks
+ * is a WRAPPER (a `describe(...)` statement, an IIFE, a class body) and is descended through —
+ * otherwise a file whose code sits inside one enclosing construct would yield a single candidate
+ * and silently disable near-miss detection. A linear chain keeps its top (the most context), and
+ * the kept set is an antichain, so reported near-miss occurrences stay disjoint by construction.
+ */
+function selectComparableBlocks(eligible: TokenRange[]): TokenRange[] {
+  const roots: ForestNode[] = [];
+  const stack: ForestNode[] = [];
+  for (const range of eligible) {
+    while (stack.length > 0 && (stack.at(-1) as ForestNode).range.endTokenIndex <= range.startTokenIndex) {
+      stack.pop();
+    }
+    const top = stack.at(-1);
+    // Equal spans (two node types covering the same tokens) collapse into the first.
+    if (top && top.range.startTokenIndex === range.startTokenIndex && top.range.endTokenIndex === range.endTokenIndex) {
+      continue;
+    }
+    const node: ForestNode = { range, children: [] };
+    if (top) {
+      top.children.push(node);
+    } else {
+      roots.push(node);
+    }
+    stack.push(node);
+  }
+
+  const kept: TokenRange[] = [];
+  const visit = (node: ForestNode): void => {
+    if (branches(node)) {
+      for (const child of node.children) {
+        visit(child);
+      }
+    } else {
+      kept.push(node.range);
+    }
+  };
+  for (const root of roots) {
+    visit(root);
+  }
+  return kept;
+}
+
+interface ForestNode {
+  range: TokenRange;
+  children: ForestNode[];
+}
+
+/** Whether the node's subtree splits into two or more disjoint eligible sub-blocks. */
+function branches(node: ForestNode): boolean {
+  const [firstChild] = node.children;
+  return node.children.length >= 2 || (firstChild !== undefined && branches(firstChild));
+}
+
+/** One copy's fragments (an exact prefix and suffix split by a large edit) as one occurrence. */
+function coalesceOccurrences(occurrences: CountedOccurrence[]): CountedOccurrence {
+  const first = occurrences[0];
+  if (!first || occurrences.length === 1) {
+    return first ?? toEmptyOccurrence();
+  }
+  return {
+    segments: occurrences
+      .flatMap((occurrence) => occurrence.segments)
+      .toSorted((left, right) => left.startTokenIndex - right.startTokenIndex),
+    tokenCount: occurrences.reduce((sum, occurrence) => sum + occurrence.tokenCount, 0),
+    startTokenIndex: Math.min(...occurrences.map((occurrence) => occurrence.startTokenIndex)),
+    endTokenIndex: Math.max(...occurrences.map((occurrence) => occurrence.endTokenIndex)),
+    startIndex: Math.min(...occurrences.map((occurrence) => occurrence.startIndex)),
+    endIndex: Math.max(...occurrences.map((occurrence) => occurrence.endIndex)),
+    startLine: Math.min(...occurrences.map((occurrence) => occurrence.startLine)),
+    endLine: Math.max(...occurrences.map((occurrence) => occurrence.endLine)),
+  };
+}
+
+/** Unreachable fallback keeping coalesceOccurrences total without a non-null assertion. */
+function toEmptyOccurrence(): CountedOccurrence {
+  return {
+    segments: [],
+    tokenCount: 0,
+    startTokenIndex: 0,
+    endTokenIndex: 0,
+    startIndex: 0,
+    endIndex: 0,
+    startLine: 0,
+    endLine: 0,
+  };
+}
+
+/** A near-miss occurrence spans its whole block as one segment, edited tokens included. */
+function toNearMissOccurrence(range: TokenRange): CountedOccurrence {
+  return {
+    segments: [{ startTokenIndex: range.startTokenIndex, endTokenIndex: range.endTokenIndex }],
+    tokenCount: range.endTokenIndex - range.startTokenIndex,
+    startTokenIndex: range.startTokenIndex,
+    endTokenIndex: range.endTokenIndex,
+    startIndex: range.node.startIndex,
+    endIndex: range.node.endIndex,
+    startLine: range.node.startPosition.row + 1,
+    endLine: range.node.endPosition.row + 1,
+  };
+}
+
+interface NormalizedBlock {
+  sequence: Int32Array;
+  /** Occurrences per content-bearing symbol (names and literal values), for the content gate. */
+  contentCountBySymbol: Map<number, number>;
+  contentTotal: number;
+}
+
+/**
+ * A block's tokens as comparable integers: anonymized identifiers become negative first-occurrence
+ * indexes (per block, mirroring the exact fingerprint's rename tolerance) and every other token
+ * becomes a non-negative id interned over BOTH 32-bit text hashes — with literal VALUES folded in,
+ * unlike the exact fingerprint's kind tags — so one hash collision cannot equate two different
+ * tokens and a fuzzy 70% match cannot mistake same-shape tables or dispatch predicates with
+ * entirely different values for copies.
+ */
+function normalizeBlockSequence(
+  tokens: Token[],
+  range: TokenRange,
+  symbolIdByTokenHashes: Map<string, number>
+): NormalizedBlock {
+  const sequence = new Int32Array(range.endTokenIndex - range.startTokenIndex);
+  const indexByIdentifier = new Map<string, number>();
+  const contentCountBySymbol = new Map<number, number>();
+  let contentTotal = 0;
+  for (let index = range.startTokenIndex; index < range.endTokenIndex; index += 1) {
+    const token = tokens[index];
+    if (!token) {
+      continue;
+    }
+    let value: number;
+    if (token.kind === 'id') {
+      let identifierIndex = indexByIdentifier.get(token.text);
+      if (identifierIndex === undefined) {
+        identifierIndex = indexByIdentifier.size;
+        indexByIdentifier.set(token.text, identifierIndex);
+      }
+      value = -(identifierIndex + 1);
+    } else {
+      const key = `${token.textHash}:${token.textHash2}:${token.literalHash ?? 0}:${token.literalHash2 ?? 0}`;
+      let id = symbolIdByTokenHashes.get(key);
+      if (id === undefined) {
+        id = symbolIdByTokenHashes.size;
+        symbolIdByTokenHashes.set(key, id);
+      }
+      value = id;
+      if (token.isName === true || token.literalHash !== undefined) {
+        contentCountBySymbol.set(value, (contentCountBySymbol.get(value) ?? 0) + 1);
+        contentTotal += 1;
+      }
+    }
+    sequence[index - range.startTokenIndex] = value;
+  }
+  return { sequence, contentCountBySymbol, contentTotal };
+}
+
+/** Multiset overlap of two blocks' content-bearing symbols, for the content gate. */
+function contentOverlap(left: NormalizedBlock, right: NormalizedBlock): number {
+  const [smaller, larger] =
+    left.contentCountBySymbol.size <= right.contentCountBySymbol.size ? [left, right] : [right, left];
+  let overlap = 0;
+  for (const [symbol, count] of smaller.contentCountBySymbol) {
+    overlap += Math.min(count, larger.contentCountBySymbol.get(symbol) ?? 0);
+  }
+  return overlap;
+}
+
+/** The distinct 5-gram hashes of a normalized block sequence, for the filtration set overlap. */
+function collectNgramSet(sequence: Int32Array): Set<number> {
+  const ngrams = new Set<number>();
+  for (let start = 0; start + nearMissNgramSize <= sequence.length; start += 1) {
+    let hash = 5381;
+    for (let offset = 0; offset < nearMissNgramSize; offset += 1) {
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 to match the native backend's wrapping i32 arithmetic.
+      hash = (Math.imul(hash, 31) + (sequence[start + offset] ?? 0)) | 0;
+    }
+    ngrams.add(hash);
+  }
+  return ngrams;
+}
+
+/** Shared distinct-n-gram counts per block pair, keyed `leftIndex * blockCount + rightIndex`. */
+function countSharedNgrams(ngramSets: Set<number>[]): Map<number, number> {
+  const blocksByNgram = new Map<number, number[]>();
+  for (const [blockIndex, ngrams] of ngramSets.entries()) {
+    // Get-or-create: this loop runs once per distinct n-gram of every block, so the redundant
+    // `set` on already-present keys is worth avoiding here.
+    for (const ngram of ngrams) {
+      let blocks = blocksByNgram.get(ngram);
+      if (!blocks) {
+        blocks = [];
+        blocksByNgram.set(ngram, blocks);
+      }
+      blocks.push(blockIndex);
+    }
+  }
+  const sharedCounts = new Map<number, number>();
+  for (const blocks of blocksByNgram.values()) {
+    // Index-based loops: slicing here would allocate per pair in what can be a hot loop.
+    for (let leftPosition = 0; leftPosition < blocks.length; leftPosition += 1) {
+      const leftIndex = blocks[leftPosition] ?? 0;
+      for (let rightPosition = leftPosition + 1; rightPosition < blocks.length; rightPosition += 1) {
+        const pairKey = leftIndex * ngramSets.length + (blocks[rightPosition] ?? 0);
+        sharedCounts.set(pairKey, (sharedCounts.get(pairKey) ?? 0) + 1);
+      }
+    }
+  }
+  return sharedCounts;
+}
+
+/**
+ * Longest-common-subsequence LENGTH of two symbol sequences via the Allison–Dix bit-parallel
+ * recurrence (O(|a|/32 · |b|) words): per symbol of `b`, `x = match | v` and
+ * `v = x & ~(x - ((v << 1) | 1))` over multi-word bit vectors; the set bits of `v` count the LCS.
+ * Only the length is needed (similarity is a ratio), and LCS length is algorithm-independent, so
+ * the native backend may use a different word size and still agree bit-for-bit.
+ */
+function lcsLength(a: Int32Array, b: Int32Array): number {
+  const wordCount = (a.length + 31) >>> 5;
+  const positionMasks = new Map<number, Uint32Array>();
+  for (const [index, symbol] of a.entries()) {
+    let mask = positionMasks.get(symbol);
+    if (!mask) {
+      mask = new Uint32Array(wordCount);
+      positionMasks.set(symbol, mask);
+    }
+    const word = index >>> 5;
+    // The Uint32Array store wraps the signed int32 bit pattern to unsigned. The `?? 0` guards in
+    // this function are required by noUncheckedIndexedAccess (typed-array reads type as
+    // `number | undefined`), not redundancy: every index is in bounds.
+    mask[word] = (mask[word] ?? 0) | (1 << (index & 31));
+  }
+
+  const v = new Uint32Array(wordCount);
+  for (const symbol of b) {
+    const matchMask = positionMasks.get(symbol);
+    // `(v << 1) | 1` shifts a carry bit across words; subtraction borrows across words.
+    let shiftCarry = 1;
+    let borrow = 0;
+    for (let word = 0; word < wordCount; word += 1) {
+      const previous = v[word] ?? 0;
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `>>> 0` reinterprets the signed int32 bit pattern as unsigned so the borrow subtraction below compares magnitudes; Math.trunc would keep it negative.
+      const x = ((matchMask?.[word] ?? 0) | previous) >>> 0;
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- same unsigned reinterpretation as `x`.
+      const shifted = ((previous << 1) | shiftCarry) >>> 0;
+      shiftCarry = previous >>> 31;
+      const difference = x - shifted - borrow;
+      borrow = difference < 0 ? 1 : 0;
+      // The Uint32Array store wraps the signed int32 bit pattern to unsigned.
+      v[word] = x & ~difference;
+    }
+  }
+
+  let length = 0;
+  for (const word of v) {
+    length += popCount(word);
+  }
+  return length;
+}
+
+function popCount(value: number): number {
+  let count = value - ((value >>> 1) & 0x55_55_55_55);
+  count = (count & 0x33_33_33_33) + ((count >>> 2) & 0x33_33_33_33);
+  return (Math.imul((count + (count >>> 4)) & 0x0F_0F_0F_0F, 0x01_01_01_01) >>> 24) & 0xFF;
+}
+
 function toCandidate(
   fingerprint: string,
   startTokenIndex: number,
@@ -1054,13 +1609,19 @@ function summarizeDuplicates(
     // Each redundant occurrence contributes one count per matched fragment, so merging a gapped
     // clone's fragments into one group does not halve the count a `duplicateBlock` threshold sees:
     // an edited two-fragment pair still counts 2, exactly as its unmerged fragments did.
-    duplicateBlockCount += (group.length - 1) * (group[0]?.segments.length ?? 1);
+    // Occurrence shapes can differ within one group (a gap-merged exact pair plus an appended
+    // whole-block near-miss copy), so every occurrence's fragments are summed and one
+    // representative — the largest — is deducted, keeping the count independent of source order.
+    const segmentCounts = group.map((occurrence) => occurrence.segments.length);
+    duplicateBlockCount += segmentCounts.reduce((sum, count) => sum + count, 0) - Math.max(...segmentCounts, 0);
     for (const occurrence of group) {
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, occurrence.tokenCount);
-      // Only CODE lines carrying matched tokens count: comments and blank gaps inside an
+      // Only CODE lines carrying segment tokens count: comments and blank gaps inside an
       // occurrence's bounding range — the unmatched gap of a merged clone, and blank rows inside a
       // multi-row token (heredocs, template literals) — are not duplicated content and would push
-      // the ratio past 1.
+      // the ratio past 1. A near-miss occurrence's single segment deliberately spans its WHOLE
+      // block, edited tokens included: an LCS has no canonical per-line attribution, and
+      // NiCad-style detectors treat the whole near-miss fragment as the clone.
       for (const segment of occurrence.segments) {
         for (let index = segment.startTokenIndex; index < segment.endTokenIndex; index += 1) {
           const token = tokens[index];

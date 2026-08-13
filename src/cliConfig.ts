@@ -146,6 +146,7 @@ export interface CliOptions {
   crossFileDuplicateBlockThreshold?: number;
   duplicationMinTokens?: number;
   duplicationMaxGapTokens?: number;
+  duplicationMinSimilarityPercent?: number;
   transitiveDependencyThreshold?: number;
   structuralBreadthThreshold?: number;
   structuralCoordinationThreshold?: number;
@@ -194,6 +195,10 @@ export function resolveOptions(cli: CliOptions, config: CodeGaugeConfig): Resolv
       minTokens: cli.duplicationMinTokens ?? config.duplication?.minTokens ?? defaultDuplicationOptions.minTokens,
       maxGapTokens:
         cli.duplicationMaxGapTokens ?? config.duplication?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens,
+      minSimilarityPercent:
+        cli.duplicationMinSimilarityPercent ??
+        config.duplication?.minSimilarityPercent ??
+        defaultDuplicationOptions.minSimilarityPercent,
     },
     profileThresholds: mergeProfileThresholds(defaultProfileThresholds, config.languageThresholds),
     maxFindings: cli.maxFindings ?? config.maxFindings ?? defaultMaxFindings,
@@ -366,9 +371,15 @@ function validateDuplicationObject(value: unknown, configFile: string): Duplicat
     } else if (key === 'maxGapTokens') {
       // 0 is meaningful: it disables gapped-clone merging.
       duplication.maxGapTokens = requireNonNegativeInteger(setting, 'duplication.maxGapTokens', configFile);
+    } else if (key === 'minSimilarityPercent') {
+      const parsed = requirePositiveInteger(setting, 'duplication.minSimilarityPercent', configFile);
+      if (parsed > 100) {
+        throw new Error(`Config file "${configFile}": "duplication.minSimilarityPercent" must be between 1 and 100.`);
+      }
+      duplication.minSimilarityPercent = parsed;
     } else {
       throw new Error(
-        `Config file "${configFile}": unknown setting "${key}" in "duplication" (expected minTokens or maxGapTokens).`
+        `Config file "${configFile}": unknown setting "${key}" in "duplication" (expected minTokens, maxGapTokens, or minSimilarityPercent).`
       );
     }
   }

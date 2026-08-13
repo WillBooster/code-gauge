@@ -927,13 +927,24 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         nonNullAssertionCount: 0,
         satisfiesExpressionCount: 0,
       },
+      // Near-miss (Type-3) clones: RunTLS/RunListener and RunUnix/RunFd share the same
+      // debugPrint + trusted-proxy warning + serve boilerplate with small edits.
       duplication: {
-        duplicateBlockCount: 0,
-        duplicateBlockGroupCount: 0,
-        duplicateBlockGroups: [],
-        duplicateLineCount: 0,
-        duplicationRatio: 0,
-        maxDuplicateBlockSize: 0,
+        duplicateBlockCount: 2,
+        duplicateBlockGroupCount: 2,
+        duplicateBlockGroups: [
+          [
+            { startLine: 496, endLine: 507 },
+            { startLine: 556, endLine: 567 },
+          ],
+          [
+            { startLine: 512, endLine: 530 },
+            { startLine: 535, endLine: 552 },
+          ],
+        ],
+        duplicateLineCount: 52,
+        duplicationRatio: 0.1068,
+        maxDuplicateBlockSize: 97,
       },
       halstead: {
         distinctOperators: 23,
@@ -1121,9 +1132,21 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         satisfiesExpressionCount: 0,
       },
       duplication: {
-        duplicateBlockCount: 1,
-        duplicateBlockGroupCount: 1,
+        duplicateBlockCount: 2,
+        duplicateBlockGroupCount: 2,
         duplicateBlockGroups: [
+          // Near-miss (Type-3) clone: Joiner's first-element and remaining-elements `while
+          // (parts.hasNext())` loops differ only in the `break` and the separator append.
+          [
+            {
+              endLine: 282,
+              startLine: 276,
+            },
+            {
+              endLine: 289,
+              startLine: 283,
+            },
+          ],
           [
             {
               endLine: 395,
@@ -1135,8 +1158,8 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             },
           ],
         ],
-        duplicateLineCount: 8,
-        duplicationRatio: 0.0313,
+        duplicateLineCount: 22,
+        duplicationRatio: 0.0859,
         maxDuplicateBlockSize: 53,
       },
       halstead: {
@@ -1420,9 +1443,31 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         satisfiesExpressionCount: 0,
       },
       duplication: {
-        duplicateBlockCount: 2,
-        duplicateBlockGroupCount: 1,
+        duplicateBlockCount: 4,
+        duplicateBlockGroupCount: 3,
         duplicateBlockGroups: [
+          // Near-miss (Type-3) clones: the loginId/password input-sync blocks, and the two
+          // copy-pasted form-group JSX elements (input vs LocalizedInput).
+          [
+            {
+              endLine: 205,
+              startLine: 200,
+            },
+            {
+              endLine: 213,
+              startLine: 208,
+            },
+          ],
+          [
+            {
+              endLine: 578,
+              startLine: 564,
+            },
+            {
+              endLine: 591,
+              startLine: 578,
+            },
+          ],
           [
             {
               endLine: 700,
@@ -1438,8 +1483,8 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             },
           ],
         ],
-        duplicateLineCount: 60,
-        duplicationRatio: 0.0765,
+        duplicateLineCount: 100,
+        duplicationRatio: 0.1276,
         maxDuplicateBlockSize: 74,
       },
       halstead: {
@@ -2358,13 +2403,20 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         nonNullAssertionCount: 0,
         satisfiesExpressionCount: 0,
       },
+      // Near-miss (Type-3) clone: the parse_excludes_file2/parse_excludes_file4 tests differ
+      // only in where .unwrap() is applied.
       duplication: {
-        duplicateBlockCount: 0,
-        duplicateBlockGroupCount: 0,
-        duplicateBlockGroups: [],
-        duplicateLineCount: 0,
-        duplicationRatio: 0,
-        maxDuplicateBlockSize: 0,
+        duplicateBlockCount: 1,
+        duplicateBlockGroupCount: 1,
+        duplicateBlockGroups: [
+          [
+            { startLine: 763, endLine: 767 },
+            { startLine: 776, endLine: 783 },
+          ],
+        ],
+        duplicateLineCount: 13,
+        duplicationRatio: 0.0231,
+        maxDuplicateBlockSize: 41,
       },
       halstead: {
         distinctOperators: 23,
