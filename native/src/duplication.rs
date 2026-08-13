@@ -278,12 +278,9 @@ pub fn measure_duplication(
     ));
     let counted = select_maximal_duplicates(candidates);
     let mut groups = merge_adjacent_groups(to_counted_groups(&counted), MAX_GAP_TOKEN_COUNT);
-    groups.extend(collect_near_miss_groups(
-        &tokens,
-        &literal_count_prefix,
-        &block_ranges,
-        &groups,
-    ));
+    let near_miss =
+        collect_near_miss_groups(&tokens, &literal_count_prefix, &block_ranges, &mut groups);
+    groups.extend(near_miss);
     summarize_duplicates(&groups, code_line_numbers, &tokens)
 }
 
@@ -1226,16 +1223,11 @@ fn collect_near_miss_groups(
     tokens: &[Token<'_>],
     literal_count_prefix: &[usize],
     block_ranges: &[TokenRange],
-    reported_groups: &[Vec<CountedOccurrence>],
+    reported_groups: &mut [Vec<CountedOccurrence>],
 ) -> Vec<Vec<CountedOccurrence>> {
     if MIN_SIMILARITY_PERCENT >= 100 {
         return Vec::new();
     }
-    let reported_regions: Vec<(usize, usize)> = reported_groups
-        .iter()
-        .flatten()
-        .map(|occurrence| (occurrence.start_token_index, occurrence.end_token_index))
-        .collect();
     let mut eligible: Vec<&TokenRange> = block_ranges
         .iter()
         .filter(|range| {
@@ -1250,9 +1242,6 @@ fn collect_near_miss_groups(
                     .unwrap_or(0);
             token_count >= MIN_DUPLICATE_TOKEN_COUNT
                 && !is_literal_dense(literal_count, token_count)
-                && !reported_regions.iter().any(|&(start, end)| {
-                    start < range.end_token_index && range.start_token_index < end
-                })
         })
         .collect();
     eligible.sort_by_key(|range| (range.start_token_index, std::cmp::Reverse(range.end_token_index)));
@@ -1260,6 +1249,25 @@ fn collect_near_miss_groups(
     if comparable.len() < 2 {
         return Vec::new();
     }
+
+    // Reported-group indices whose occurrences overlap each comparable block: such blocks anchor
+    // near-miss comparisons but are never re-reported.
+    let touched_groups_by_block: Vec<Vec<usize>> = comparable
+        .iter()
+        .map(|range| {
+            reported_groups
+                .iter()
+                .enumerate()
+                .filter(|(_, group)| {
+                    group.iter().any(|occurrence| {
+                        occurrence.start_token_index < range.end_token_index
+                            && range.start_token_index < occurrence.end_token_index
+                    })
+                })
+                .map(|(group_index, _)| group_index)
+                .collect()
+        })
+        .collect();
 
     // Interned per call so a file's symbol ids (and thus its n-gram hashes) match the TypeScript
     // backend's first-encounter assignment order exactly.
@@ -1290,6 +1298,12 @@ fn collect_near_miss_groups(
     for (&(left_index, right_index), &shared) in &shared_counts {
         let left = &sequences[left_index];
         let right = &sequences[right_index];
+        // Two already-reported blocks have nothing new to contribute to each other.
+        if !touched_groups_by_block[left_index].is_empty()
+            && !touched_groups_by_block[right_index].is_empty()
+        {
+            continue;
+        }
         let min_ngrams = ngram_sets[left_index].len().min(ngram_sets[right_index].len());
         if shared * 100 < NEAR_MISS_FILTRATION_PERCENT * min_ngrams {
             continue;
@@ -1311,29 +1325,75 @@ fn collect_near_miss_groups(
         }
     }
 
-    let mut members_by_root: IndexMap<usize, Vec<&TokenRange>> = IndexMap::new();
-    for (index, range) in comparable.iter().enumerate() {
+    let mut members_by_root: IndexMap<usize, Vec<usize>> = IndexMap::new();
+    for index in 0..comparable.len() {
         let root = find(&mut parent, index);
-        members_by_root.entry(root).or_default().push(range);
+        members_by_root.entry(root).or_default().push(index);
     }
+    let to_occurrence = |range: &TokenRange| CountedOccurrence {
+        segments: vec![(range.start_token_index, range.end_token_index)],
+        token_count: range.end_token_index - range.start_token_index,
+        start_token_index: range.start_token_index,
+        end_token_index: range.end_token_index,
+        start_line: range.start_line,
+        end_line: range.end_line,
+    };
     let mut groups: Vec<Vec<CountedOccurrence>> = Vec::new();
     for members in members_by_root.values() {
         if members.len() < 2 {
             continue;
         }
-        groups.push(
-            members
-                .iter()
-                .map(|range| CountedOccurrence {
-                    segments: vec![(range.start_token_index, range.end_token_index)],
-                    token_count: range.end_token_index - range.start_token_index,
-                    start_token_index: range.start_token_index,
-                    end_token_index: range.end_token_index,
-                    start_line: range.start_line,
-                    end_line: range.end_line,
-                })
-                .collect(),
-        );
+        let uncovered: Vec<usize> = members
+            .iter()
+            .copied()
+            .filter(|&index| touched_groups_by_block[index].is_empty())
+            .collect();
+        let covered: Vec<usize> = members
+            .iter()
+            .copied()
+            .filter(|&index| !touched_groups_by_block[index].is_empty())
+            .collect();
+        if covered.is_empty() {
+            groups.push(
+                members
+                    .iter()
+                    .map(|&index| to_occurrence(comparable[index]))
+                    .collect(),
+            );
+            continue;
+        }
+        if uncovered.is_empty() {
+            continue;
+        }
+        // An anchored cluster extends a reported group only when that group lies entirely inside
+        // the cluster; see collectNearMissGroups in duplication.ts.
+        let overlaps_member = |occurrence: &CountedOccurrence| {
+            members.iter().any(|&index| {
+                let range = comparable[index];
+                occurrence.start_token_index < range.end_token_index
+                    && range.start_token_index < occurrence.end_token_index
+            })
+        };
+        let mut fully_clustered: Vec<usize> = covered
+            .iter()
+            .flat_map(|&index| touched_groups_by_block[index].iter().copied())
+            .collect::<std::collections::BTreeSet<usize>>()
+            .into_iter()
+            .filter(|&group_index| reported_groups[group_index].iter().all(overlaps_member))
+            .collect();
+        fully_clustered.sort_unstable();
+        if let Some(&target_index) = fully_clustered.first() {
+            let target = &mut reported_groups[target_index];
+            target.extend(uncovered.iter().map(|&index| to_occurrence(comparable[index])));
+            target.sort_by_key(|occurrence| (occurrence.start_token_index, occurrence.end_token_index));
+        } else if uncovered.len() >= 2 {
+            groups.push(
+                uncovered
+                    .iter()
+                    .map(|&index| to_occurrence(comparable[index]))
+                    .collect(),
+            );
+        }
     }
     groups.sort_by_key(|group| group_sort_key(group));
     groups

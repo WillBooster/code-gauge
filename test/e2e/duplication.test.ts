@@ -298,6 +298,20 @@ function secondShape(limit, step) {
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
   });
 
+  it('appends an edited third copy to the exact group of its two identical siblings', () => {
+    // Copy-paste-then-edit: two identical copies form an exact group; the edited copy must still
+    // be found by anchoring on a reported block instead of being suppressed by it.
+    const threeCopies =
+      scatteredEditClone('alpha', 'item', 'price', '+=') +
+      scatteredEditClone('beta', 'item', 'price', '+=') +
+      scatteredEditClone('gamma', 'row', 'weight', '-=');
+    const metrics = measureCode(threeCopies, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+    expect(metrics.duplication.duplicateBlockCount).toBe(2);
+  });
+
   it('detects clones nested inside a single enclosing wrapper', () => {
     // A describe()/IIFE wrapper is itself an eligible block spanning the whole file; candidate
     // selection must descend through it instead of comparing the lone wrapper to nothing.

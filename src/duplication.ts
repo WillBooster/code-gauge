@@ -847,12 +847,15 @@ function enumerateContainerWindows(tokens: Token[], statements: TokenRange[], mi
  * embedded in a big one does not count), with a content gate requiring shared names/literal values
  * so same-skeleton code calling different APIs does not pair on punctuation alone. Verified pairs
  * are clustered transitively; each cluster becomes one clone group whose occurrences span whole
- * blocks. Only blocks that are not literal-dense (the data-table guard) and do not touch an
- * exactly-reported region participate, and wrappers containing several comparable sub-blocks
- * (a `describe(...)` call, a class body) are descended through, so near-miss groups never overlap
- * each other or exact ones. Reported occurrences cover their whole block: unlike exact matches, a
- * near-miss occurrence includes its edited tokens, which is how NiCad-style detectors report
- * Type-3 fragments.
+ * blocks. Only blocks that are not literal-dense (the data-table guard) participate, and wrappers
+ * containing several comparable sub-blocks (a `describe(...)` call, a class body) are descended
+ * through. Blocks already covered by an exactly-reported region still take part as ANCHORS — two
+ * identical copies plus one edited copy is the commonest copy-paste-then-edit shape, and without
+ * anchors the exact pair would swallow both comparison partners of the edited copy — but they are
+ * never re-reported: an edited copy verified against an anchor is appended to the anchor's
+ * fully-clustered exact group, so no reported region ever overlaps another. Reported occurrences
+ * cover their whole block: unlike exact matches, a near-miss occurrence includes its edited
+ * tokens, which is how NiCad-style detectors report Type-3 fragments.
  */
 function collectNearMissGroups(
   tokens: Token[],
@@ -865,17 +868,12 @@ function collectNearMissGroups(
   if (minSimilarityPercent >= 100) {
     return [];
   }
-  const reportedRegions = reportedGroups.flat();
-  const overlapsReported = (range: TokenRange): boolean =>
-    reportedRegions.some(
-      (region) => region.startTokenIndex < range.endTokenIndex && range.startTokenIndex < region.endTokenIndex
-    );
   const eligible = blockRanges
     .filter((range) => {
       const tokenCount = range.endTokenIndex - range.startTokenIndex;
       const literalCount =
         (literalCountPrefix[range.endTokenIndex] ?? 0) - (literalCountPrefix[range.startTokenIndex] ?? 0);
-      return tokenCount >= minTokens && !isLiteralDense(literalCount, tokenCount) && !overlapsReported(range);
+      return tokenCount >= minTokens && !isLiteralDense(literalCount, tokenCount);
     })
     .toSorted(
       (left, right) => left.startTokenIndex - right.startTokenIndex || right.endTokenIndex - left.endTokenIndex
@@ -884,6 +882,23 @@ function collectNearMissGroups(
   if (comparable.length < 2) {
     return [];
   }
+
+  // Reported-group indices whose occurrences overlap each comparable block: such blocks anchor
+  // near-miss comparisons but are never re-reported.
+  const touchedGroupsByBlock = comparable.map((range) => {
+    const touched: number[] = [];
+    for (const [groupIndex, group] of reportedGroups.entries()) {
+      if (
+        group.some(
+          (occurrence) =>
+            occurrence.startTokenIndex < range.endTokenIndex && range.startTokenIndex < occurrence.endTokenIndex
+        )
+      ) {
+        touched.push(groupIndex);
+      }
+    }
+    return touched;
+  });
 
   // Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
   // other files the process measured before it.
@@ -915,6 +930,10 @@ function collectNearMissGroups(
     if (!left || !right || !leftNgrams || !rightNgrams) {
       continue;
     }
+    // Two already-reported blocks have nothing new to contribute to each other.
+    if ((touchedGroupsByBlock[leftIndex]?.length ?? 0) > 0 && (touchedGroupsByBlock[rightIndex]?.length ?? 0) > 0) {
+      continue;
+    }
     if (shared * 100 < nearMissFiltrationPercent * Math.min(leftNgrams.size, rightNgrams.size)) {
       continue;
     }
@@ -939,11 +958,11 @@ function collectNearMissGroups(
     }
   }
 
-  const membersByRoot = new Map<number, TokenRange[]>();
-  for (const [index, range] of comparable.entries()) {
+  const membersByRoot = new Map<number, number[]>();
+  for (const index of comparable.keys()) {
     const root = find(index);
     const members = membersByRoot.get(root) ?? [];
-    members.push(range);
+    members.push(index);
     membersByRoot.set(root, members);
   }
   const groups: CountedOccurrence[][] = [];
@@ -951,18 +970,42 @@ function collectNearMissGroups(
     if (members.length < 2) {
       continue;
     }
-    groups.push(
-      members.map((range) => ({
-        segments: [{ startTokenIndex: range.startTokenIndex, endTokenIndex: range.endTokenIndex }],
-        tokenCount: range.endTokenIndex - range.startTokenIndex,
-        startTokenIndex: range.startTokenIndex,
-        endTokenIndex: range.endTokenIndex,
-        startIndex: range.node.startIndex,
-        endIndex: range.node.endIndex,
-        startLine: range.node.startPosition.row + 1,
-        endLine: range.node.endPosition.row + 1,
-      }))
-    );
+    const uncovered = members.filter((index) => (touchedGroupsByBlock[index]?.length ?? 0) === 0);
+    const covered = members.filter((index) => (touchedGroupsByBlock[index]?.length ?? 0) > 0);
+    if (covered.length === 0) {
+      groups.push(members.flatMap((index) => (comparable[index] ? [toNearMissOccurrence(comparable[index])] : [])));
+      continue;
+    }
+    if (uncovered.length === 0) {
+      continue;
+    }
+    // An anchored cluster extends a reported group only when that group lies entirely inside the
+    // cluster (every occurrence overlaps a member); appending the edited copies there keeps one
+    // group per clone family and keeps reported regions disjoint. A group that also has
+    // occurrences elsewhere is left untouched, and the uncovered copies stand alone if they can.
+    const overlapsMember = (occurrence: CountedOccurrence): boolean =>
+      members.some((index) => {
+        const range = comparable[index];
+        return (
+          range !== undefined &&
+          occurrence.startTokenIndex < range.endTokenIndex &&
+          range.startTokenIndex < occurrence.endTokenIndex
+        );
+      });
+    const fullyClustered = [...new Set(covered.flatMap((index) => touchedGroupsByBlock[index] ?? []))]
+      .filter((groupIndex) => (reportedGroups[groupIndex] ?? []).every(overlapsMember))
+      .toSorted((leftIndex, rightIndex) => leftIndex - rightIndex);
+    const target = fullyClustered[0] === undefined ? undefined : reportedGroups[fullyClustered[0]];
+    if (target) {
+      target.push(
+        ...uncovered.flatMap((index) => (comparable[index] ? [toNearMissOccurrence(comparable[index])] : []))
+      );
+      target.sort(
+        (left, right) => left.startTokenIndex - right.startTokenIndex || left.endTokenIndex - right.endTokenIndex
+      );
+    } else if (uncovered.length >= 2) {
+      groups.push(uncovered.flatMap((index) => (comparable[index] ? [toNearMissOccurrence(comparable[index])] : [])));
+    }
   }
   groups.sort(compareGroups);
   return groups;
@@ -1017,6 +1060,20 @@ function selectComparableBlocks(eligible: TokenRange[]): TokenRange[] {
     visit(root);
   }
   return kept;
+}
+
+/** A near-miss occurrence spans its whole block as one segment, edited tokens included. */
+function toNearMissOccurrence(range: TokenRange): CountedOccurrence {
+  return {
+    segments: [{ startTokenIndex: range.startTokenIndex, endTokenIndex: range.endTokenIndex }],
+    tokenCount: range.endTokenIndex - range.startTokenIndex,
+    startTokenIndex: range.startTokenIndex,
+    endTokenIndex: range.endTokenIndex,
+    startIndex: range.node.startIndex,
+    endIndex: range.node.endIndex,
+    startLine: range.node.startPosition.row + 1,
+    endLine: range.node.endPosition.row + 1,
+  };
 }
 
 interface NormalizedBlock {
