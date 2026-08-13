@@ -1023,11 +1023,13 @@ function collectNearMissGroups(
         }
         // Occurrences of ONE group are distinct copies (a repeated run inside the block); only
         // fragments from DIFFERENT groups (a copy's exact prefix in one group and its suffix in
-        // another) belong to the same copy. Bucket per source group and coalesce positionally
-        // across buckets, so same-group copies stay separate occurrences.
-        const buckets: CountedOccurrence[][] = [];
+        // another) belong to the same copy. Walking the member's fragments in position order and
+        // starting a new copy whenever a source group repeats keeps same-group copies separate,
+        // and — because the fragments are disjoint and each copy takes a consecutive slice —
+        // guarantees the coalesced spans never overlap, even when groups contribute unequal
+        // fragment counts to this member.
+        const fragments: { occurrence: CountedOccurrence; groupIndex: number }[] = [];
         for (const groupIndex of fullyClustered) {
-          const bucket: CountedOccurrence[] = [];
           for (const occurrence of reportedGroups[groupIndex] ?? []) {
             if (
               !consumed.has(occurrence) &&
@@ -1035,28 +1037,30 @@ function collectNearMissGroups(
               range.startTokenIndex < occurrence.endTokenIndex
             ) {
               consumed.add(occurrence);
-              bucket.push(occurrence);
+              fragments.push({ occurrence, groupIndex });
             }
           }
-          if (bucket.length > 0) {
-            buckets.push(bucket);
+        }
+        fragments.sort(
+          (left, right) =>
+            left.occurrence.startTokenIndex - right.occurrence.startTokenIndex ||
+            left.occurrence.endTokenIndex - right.occurrence.endTokenIndex
+        );
+        let copyParts: CountedOccurrence[] = [];
+        const copyGroups = new Set<number>();
+        for (const { occurrence, groupIndex } of fragments) {
+          if (copyGroups.has(groupIndex)) {
+            merged.push(coalesceOccurrences(copyParts));
+            copyParts = [];
+            copyGroups.clear();
           }
+          copyParts.push(occurrence);
+          copyGroups.add(groupIndex);
         }
-        let copyCount = 0;
-        for (const bucket of buckets) {
-          copyCount = Math.max(copyCount, bucket.length);
+        if (copyParts.length > 0) {
+          merged.push(coalesceOccurrences(copyParts));
         }
-        for (let copyIndex = 0; copyIndex < copyCount; copyIndex += 1) {
-          const parts: CountedOccurrence[] = [];
-          for (const bucket of buckets) {
-            const part = bucket[copyIndex];
-            if (part) {
-              parts.push(part);
-            }
-          }
-          merged.push(coalesceOccurrences(parts));
-        }
-        if (copyCount === 0 && (touchedGroupsByBlock[memberIndex]?.length ?? 0) === 0) {
+        if (fragments.length === 0 && (touchedGroupsByBlock[memberIndex]?.length ?? 0) === 0) {
           merged.push(toNearMissOccurrence(range));
         }
       }

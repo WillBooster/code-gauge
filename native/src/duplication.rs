@@ -1395,11 +1395,10 @@ fn collect_near_miss_groups(
             for &member_index in members {
                 let range = comparable[member_index];
                 // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
-                // groups belong to the same copy. Bucket per source group and coalesce
-                // positionally across buckets; see collectNearMissGroups in duplication.ts.
-                let mut buckets: Vec<Vec<CountedOccurrence>> = Vec::new();
+                // groups belong to the same copy. Consecutive position-order slices keep the
+                // coalesced spans disjoint; see collectNearMissGroups in duplication.ts.
+                let mut fragments: Vec<(CountedOccurrence, usize)> = Vec::new();
                 for &group_index in &fully_clustered {
-                    let mut bucket: Vec<CountedOccurrence> = Vec::new();
                     for (occurrence_index, occurrence) in
                         reported_groups[group_index].iter().enumerate()
                     {
@@ -1408,22 +1407,28 @@ fn collect_near_miss_groups(
                             && range.start_token_index < occurrence.end_token_index
                         {
                             consumed.insert((group_index, occurrence_index));
-                            bucket.push(occurrence.clone());
+                            fragments.push((occurrence.clone(), group_index));
                         }
                     }
-                    if !bucket.is_empty() {
-                        buckets.push(bucket);
+                }
+                fragments.sort_by_key(|(occurrence, _)| {
+                    (occurrence.start_token_index, occurrence.end_token_index)
+                });
+                let had_fragments = !fragments.is_empty();
+                let mut copy_parts: Vec<CountedOccurrence> = Vec::new();
+                let mut copy_groups: HashSet<usize> = HashSet::new();
+                for (occurrence, group_index) in fragments {
+                    if copy_groups.contains(&group_index) {
+                        merged.push(coalesce_occurrences(std::mem::take(&mut copy_parts)));
+                        copy_groups.clear();
                     }
+                    copy_parts.push(occurrence);
+                    copy_groups.insert(group_index);
                 }
-                let copy_count = buckets.iter().map(|bucket| bucket.len()).max().unwrap_or(0);
-                for copy_index in 0..copy_count {
-                    let parts: Vec<CountedOccurrence> = buckets
-                        .iter()
-                        .filter_map(|bucket| bucket.get(copy_index).cloned())
-                        .collect();
-                    merged.push(coalesce_occurrences(parts));
+                if !copy_parts.is_empty() {
+                    merged.push(coalesce_occurrences(copy_parts));
                 }
-                if copy_count == 0 && touched_groups_by_block[member_index].is_empty() {
+                if !had_fragments && touched_groups_by_block[member_index].is_empty() {
                     merged.push(to_occurrence(comparable[member_index]));
                 }
             }
