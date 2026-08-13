@@ -157,7 +157,10 @@ pub fn measure_complexity(
         if is_decision && counts_for_own_body {
             result.cyclomatic_complexity += 1;
         }
-        if is_decision && !is_case_clause && !CYCLOMATIC_ONLY_NODE_TYPES.contains(&current.kind()) {
+        if is_decision
+            && !is_case_clause
+            && !CYCLOMATIC_ONLY_NODE_TYPES.contains(&current.kind())
+        {
             result.cognitive_complexity += if is_continuation {
                 1
             } else {
