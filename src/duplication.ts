@@ -1265,9 +1265,11 @@ function countSharedNgrams(ngramSets: Set<number>[]): Map<number, number> {
   }
   const sharedCounts = new Map<number, number>();
   for (const blocks of blocksByNgram.values()) {
-    for (const [position, leftIndex] of blocks.entries()) {
-      for (const rightIndex of blocks.slice(position + 1)) {
-        const pairKey = leftIndex * ngramSets.length + rightIndex;
+    // Index-based loops: slicing here would allocate per pair in what can be a hot loop.
+    for (let leftPosition = 0; leftPosition < blocks.length; leftPosition += 1) {
+      const leftIndex = blocks[leftPosition] ?? 0;
+      for (let rightPosition = leftPosition + 1; rightPosition < blocks.length; rightPosition += 1) {
+        const pairKey = leftIndex * ngramSets.length + (blocks[rightPosition] ?? 0);
         sharedCounts.set(pairKey, (sharedCounts.get(pairKey) ?? 0) + 1);
       }
     }
