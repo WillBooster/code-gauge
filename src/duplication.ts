@@ -363,10 +363,17 @@ export function measureDuplication(
   ];
   const counted = selectMaximalGroups(candidates, (group) => group.length >= 2);
   const groups = mergeAdjacentGroups(toCountedGroups(counted), maxGapTokens);
-  groups.push(
-    ...collectNearMissGroups(tokens, literalCountPrefix, blockRanges, minTokens, minSimilarityPercent, groups)
+  const nearMissGroups = collectNearMissGroups(
+    tokens,
+    literalCountPrefix,
+    blockRanges,
+    minTokens,
+    minSimilarityPercent,
+    groups
   );
-  return summarizeDuplicates(groups, codeLineNumbers, tokens);
+  // Near-miss clustering can merge exact groups away, leaving empty entries behind.
+  const reportedGroups = [...groups.filter((group) => group.length > 0), ...nearMissGroups];
+  return summarizeDuplicates(reportedGroups, codeLineNumbers, tokens);
 }
 
 /**
@@ -993,10 +1000,24 @@ function collectNearMissGroups(
         );
       });
     const fullyClustered = [...new Set(covered.flatMap((index) => touchedGroupsByBlock[index] ?? []))]
-      .filter((groupIndex) => (reportedGroups[groupIndex] ?? []).every(overlapsMember))
+      .filter((groupIndex) => {
+        const group = reportedGroups[groupIndex];
+        return group !== undefined && group.length > 0 && group.every(overlapsMember);
+      })
       .toSorted((leftIndex, rightIndex) => leftIndex - rightIndex);
-    const target = fullyClustered[0] === undefined ? undefined : reportedGroups[fullyClustered[0]];
+    const [targetIndex, ...sourceIndexes] = fullyClustered;
+    const target = targetIndex === undefined ? undefined : reportedGroups[targetIndex];
     if (target) {
+      // Every fully-clustered group belongs to this verified component: merge them all into one
+      // (a bridge copy similar to two exact pairs must not leave the pairs as separate groups),
+      // leaving the merged-away entries empty for the caller to drop.
+      for (const sourceIndex of sourceIndexes) {
+        const source = reportedGroups[sourceIndex];
+        if (source) {
+          target.push(...source);
+          reportedGroups[sourceIndex] = [];
+        }
+      }
       target.push(
         ...uncovered.flatMap((index) => (comparable[index] ? [toNearMissOccurrence(comparable[index])] : []))
       );
@@ -1493,7 +1514,11 @@ function summarizeDuplicates(
     // Each redundant occurrence contributes one count per matched fragment, so merging a gapped
     // clone's fragments into one group does not halve the count a `duplicateBlock` threshold sees:
     // an edited two-fragment pair still counts 2, exactly as its unmerged fragments did.
-    duplicateBlockCount += (group.length - 1) * (group[0]?.segments.length ?? 1);
+    // Occurrence shapes can differ within one group (a gap-merged exact pair plus an appended
+    // whole-block near-miss copy), so every occurrence's fragments are summed and one
+    // representative — the largest — is deducted, keeping the count independent of source order.
+    const segmentCounts = group.map((occurrence) => occurrence.segments.length);
+    duplicateBlockCount += segmentCounts.reduce((sum, count) => sum + count, 0) - Math.max(...segmentCounts, 0);
     for (const occurrence of group) {
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, occurrence.tokenCount);
       // Only CODE lines carrying segment tokens count: comments and blank gaps inside an

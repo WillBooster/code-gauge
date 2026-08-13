@@ -312,6 +312,38 @@ function secondShape(limit, step) {
     expect(metrics.duplication.duplicateBlockCount).toBe(2);
   });
 
+  it('merges two exact pairs bridged by a fifth similar copy into one group', () => {
+    // The bridge copy is similar to both exact pairs, so the whole verified component must
+    // become ONE group instead of extending only the first pair.
+    const bridged =
+      scatteredEditClone('p1', 'item', 'price', '+=') +
+      scatteredEditClone('p2', 'item', 'price', '+=') +
+      scatteredEditClone('w1', 'row', 'weight', '-=') +
+      scatteredEditClone('w2', 'row', 'weight', '-=') +
+      scatteredEditClone('v1', 'box', 'volume', '+=');
+    const metrics = measureCode(bridged, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(5);
+    expect(metrics.duplication.duplicateBlockCount).toBe(4);
+  });
+
+  it('keeps duplicateBlockCount independent of source order for mixed groups', () => {
+    // A gap-merged exact pair (multi-fragment occurrences) plus an appended near-miss copy forms
+    // a heterogeneous group; the count must not depend on which occurrence sorts first.
+    const gapped1 = logicClone('alpha', 'console.log("mid", total);');
+    const gapped2 = logicClone('beta', 'console.warn("mid", total);');
+    const edited = logicClone('gamma', 'console.info("midpoint", count);').replace(
+      'return total + count + big - small;',
+      'return total - count + big + small;'
+    );
+    const editedLast = measureCode(gapped1 + gapped2 + edited, { language: 'javascript' });
+    const editedFirst = measureCode(edited + gapped1 + gapped2, { language: 'javascript' });
+
+    expect(editedLast.duplication.duplicateBlockCount).toBe(editedFirst.duplication.duplicateBlockCount);
+    expect(editedLast.duplication.duplicateBlockGroupCount).toBe(editedFirst.duplication.duplicateBlockGroupCount);
+  });
+
   it('detects clones nested inside a single enclosing wrapper', () => {
     // A describe()/IIFE wrapper is itself an eligible block spanning the whole file; candidate
     // selection must descend through it instead of comparing the lone wrapper to nothing.

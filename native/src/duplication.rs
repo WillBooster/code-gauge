@@ -280,6 +280,8 @@ pub fn measure_duplication(
     let mut groups = merge_adjacent_groups(to_counted_groups(&counted), MAX_GAP_TOKEN_COUNT);
     let near_miss =
         collect_near_miss_groups(&tokens, &literal_count_prefix, &block_ranges, &mut groups);
+    // Near-miss clustering can merge exact groups away, leaving empty entries behind.
+    groups.retain(|group| !group.is_empty());
     groups.extend(near_miss);
     summarize_duplicates(&groups, code_line_numbers, &tokens)
 }
@@ -1379,10 +1381,19 @@ fn collect_near_miss_groups(
             .flat_map(|&index| touched_groups_by_block[index].iter().copied())
             .collect::<std::collections::BTreeSet<usize>>()
             .into_iter()
-            .filter(|&group_index| reported_groups[group_index].iter().all(overlaps_member))
+            .filter(|&group_index| {
+                let group = &reported_groups[group_index];
+                !group.is_empty() && group.iter().all(&overlaps_member)
+            })
             .collect();
         fully_clustered.sort_unstable();
-        if let Some(&target_index) = fully_clustered.first() {
+        if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
+            // Every fully-clustered group belongs to this verified component; merge them all into
+            // one, leaving the merged-away entries empty for the caller to drop.
+            for &source_index in source_indexes {
+                let source = std::mem::take(&mut reported_groups[source_index]);
+                reported_groups[target_index].extend(source);
+            }
             let target = &mut reported_groups[target_index];
             target.extend(uncovered.iter().map(|&index| to_occurrence(comparable[index])));
             target.sort_by_key(|occurrence| (occurrence.start_token_index, occurrence.end_token_index));
@@ -1613,8 +1624,16 @@ fn summarize_duplicates(
     let mut duplicated_lines: HashSet<usize> = HashSet::new();
     for group in groups {
         // Fragment-weighted like duplication.ts: merging must not halve what thresholds see.
-        duplicate_block_count +=
-            (group.len() - 1) * group.first().map(|first| first.segments.len()).unwrap_or(1);
+        // Occurrence shapes can differ within one group (a gap-merged exact pair plus an appended
+        // whole-block near-miss copy), so every occurrence's fragments are summed and the largest
+        // is deducted, keeping the count independent of source order.
+        let total_segments: usize = group.iter().map(|occurrence| occurrence.segments.len()).sum();
+        let max_segments = group
+            .iter()
+            .map(|occurrence| occurrence.segments.len())
+            .max()
+            .unwrap_or(0);
+        duplicate_block_count += total_segments - max_segments;
         for occurrence in group {
             max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
             // Only CODE lines carrying matched tokens count; the unmatched gap of a merged clone
