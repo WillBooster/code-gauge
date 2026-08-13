@@ -1376,7 +1376,8 @@ fn collect_near_miss_groups(
                     && range.start_token_index < occurrence.end_token_index
             })
         };
-        let mut fully_clustered: Vec<usize> = covered
+        // Ascending by construction: BTreeSet iteration is sorted and filter preserves order.
+        let fully_clustered: Vec<usize> = covered
             .iter()
             .flat_map(|&index| touched_groups_by_block[index].iter().copied())
             .collect::<std::collections::BTreeSet<usize>>()
@@ -1386,7 +1387,6 @@ fn collect_near_miss_groups(
                 !group.is_empty() && group.iter().all(&overlaps_member)
             })
             .collect();
-        fully_clustered.sort_unstable();
         if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
             // Rebuild the component as ONE group with one coalesced occurrence per member block;
             // see collectNearMissGroups in duplication.ts.

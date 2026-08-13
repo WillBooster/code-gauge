@@ -1083,10 +1083,6 @@ function collectNearMissGroups(
  * the kept set is an antichain, so reported near-miss occurrences stay disjoint by construction.
  */
 function selectComparableBlocks(eligible: TokenRange[]): TokenRange[] {
-  interface ForestNode {
-    range: TokenRange;
-    children: ForestNode[];
-  }
   const roots: ForestNode[] = [];
   const stack: ForestNode[] = [];
   for (const range of eligible) {
@@ -1107,8 +1103,6 @@ function selectComparableBlocks(eligible: TokenRange[]): TokenRange[] {
     stack.push(node);
   }
 
-  const branches = (node: ForestNode): boolean =>
-    node.children.length >= 2 || (node.children.length === 1 && branches(node.children[0] as ForestNode));
   const kept: TokenRange[] = [];
   const visit = (node: ForestNode): void => {
     if (branches(node)) {
@@ -1123,6 +1117,17 @@ function selectComparableBlocks(eligible: TokenRange[]): TokenRange[] {
     visit(root);
   }
   return kept;
+}
+
+interface ForestNode {
+  range: TokenRange;
+  children: ForestNode[];
+}
+
+/** Whether the node's subtree splits into two or more disjoint eligible sub-blocks. */
+function branches(node: ForestNode): boolean {
+  const [firstChild] = node.children;
+  return node.children.length >= 2 || (firstChild !== undefined && branches(firstChild));
 }
 
 /** One copy's fragments (an exact prefix and suffix split by a large edit) as one occurrence. */
