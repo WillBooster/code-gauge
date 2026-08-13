@@ -1006,24 +1006,46 @@ function collectNearMissGroups(
       })
       .toSorted((leftIndex, rightIndex) => leftIndex - rightIndex);
     const [targetIndex, ...sourceIndexes] = fullyClustered;
-    const target = targetIndex === undefined ? undefined : reportedGroups[targetIndex];
-    if (target) {
-      // Every fully-clustered group belongs to this verified component: merge them all into one
-      // (a bridge copy similar to two exact pairs must not leave the pairs as separate groups),
-      // leaving the merged-away entries empty for the caller to drop.
-      for (const sourceIndex of sourceIndexes) {
-        const source = reportedGroups[sourceIndex];
-        if (source) {
-          target.push(...source);
-          reportedGroups[sourceIndex] = [];
+    if (targetIndex !== undefined) {
+      // Every fully-clustered group belongs to this verified component: rebuild them as ONE group
+      // with one occurrence per member block. Occurrences landing in the same member (a copy's
+      // exact prefix and suffix fragments, split by an over-large edited middle) coalesce into a
+      // single multi-segment occurrence — they are one copy, not two — and each uncovered member
+      // contributes its whole-block occurrence. Merged-away entries are left empty for the caller
+      // to drop.
+      const consumed = new Set<CountedOccurrence>();
+      const merged: CountedOccurrence[] = [];
+      for (const memberIndex of members) {
+        const range = comparable[memberIndex];
+        if (!range) {
+          continue;
+        }
+        const overlapping: CountedOccurrence[] = [];
+        for (const groupIndex of fullyClustered) {
+          for (const occurrence of reportedGroups[groupIndex] ?? []) {
+            if (
+              !consumed.has(occurrence) &&
+              occurrence.startTokenIndex < range.endTokenIndex &&
+              range.startTokenIndex < occurrence.endTokenIndex
+            ) {
+              consumed.add(occurrence);
+              overlapping.push(occurrence);
+            }
+          }
+        }
+        if (overlapping.length > 0) {
+          merged.push(coalesceOccurrences(overlapping));
+        } else if ((touchedGroupsByBlock[memberIndex]?.length ?? 0) === 0) {
+          merged.push(toNearMissOccurrence(range));
         }
       }
-      target.push(
-        ...uncovered.flatMap((index) => (comparable[index] ? [toNearMissOccurrence(comparable[index])] : []))
-      );
-      target.sort(
+      merged.sort(
         (left, right) => left.startTokenIndex - right.startTokenIndex || left.endTokenIndex - right.endTokenIndex
       );
+      reportedGroups[targetIndex] = merged;
+      for (const sourceIndex of sourceIndexes) {
+        reportedGroups[sourceIndex] = [];
+      }
     } else if (uncovered.length >= 2) {
       groups.push(uncovered.flatMap((index) => (comparable[index] ? [toNearMissOccurrence(comparable[index])] : [])));
     }
@@ -1081,6 +1103,40 @@ function selectComparableBlocks(eligible: TokenRange[]): TokenRange[] {
     visit(root);
   }
   return kept;
+}
+
+/** One copy's fragments (an exact prefix and suffix split by a large edit) as one occurrence. */
+function coalesceOccurrences(occurrences: CountedOccurrence[]): CountedOccurrence {
+  const first = occurrences[0];
+  if (!first || occurrences.length === 1) {
+    return first ?? toEmptyOccurrence();
+  }
+  return {
+    segments: occurrences
+      .flatMap((occurrence) => occurrence.segments)
+      .toSorted((left, right) => left.startTokenIndex - right.startTokenIndex),
+    tokenCount: occurrences.reduce((sum, occurrence) => sum + occurrence.tokenCount, 0),
+    startTokenIndex: Math.min(...occurrences.map((occurrence) => occurrence.startTokenIndex)),
+    endTokenIndex: Math.max(...occurrences.map((occurrence) => occurrence.endTokenIndex)),
+    startIndex: Math.min(...occurrences.map((occurrence) => occurrence.startIndex)),
+    endIndex: Math.max(...occurrences.map((occurrence) => occurrence.endIndex)),
+    startLine: Math.min(...occurrences.map((occurrence) => occurrence.startLine)),
+    endLine: Math.max(...occurrences.map((occurrence) => occurrence.endLine)),
+  };
+}
+
+/** Unreachable fallback keeping coalesceOccurrences total without a non-null assertion. */
+function toEmptyOccurrence(): CountedOccurrence {
+  return {
+    segments: [],
+    tokenCount: 0,
+    startTokenIndex: 0,
+    endTokenIndex: 0,
+    startIndex: 0,
+    endIndex: 0,
+    startLine: 0,
+    endLine: 0,
+  };
 }
 
 /** A near-miss occurrence spans its whole block as one segment, edited tokens included. */

@@ -232,6 +232,33 @@ function ${name}(node) {
 }
 `;
 
+const fragmentedCopy = (name: string, middle: string, plusOp: string, minusOp: string): string => `
+function ${name}(items) {
+  let total = 0;
+  let count = 0;
+  for (const item of items) {
+    if (item.status === 'paid') {
+      total = total ${plusOp} item.amount;
+      count = count + 1;
+    }
+  }
+  ${middle}
+  let big = 0;
+  let small = 0;
+  for (const item of items) {
+    if (item.amount > 100) {
+      big = big + 1;
+    } else {
+      small = small ${minusOp} 1;
+    }
+  }
+  return total + count + big - small;
+}
+`;
+
+const fragmentedMiddle = (name: string, level: string, bonus: string): string =>
+  `const ${name} = items.filter((item) => item.${level} > 3).map((item) => item.${bonus}).reduce((a, b) => a + b, 0);`;
+
 describe('duplication: near-miss (Type-3) clones', () => {
   // The two copies differ in a member name, an operator, and scattered renames, so no exact
   // fragment reaches minTokens and gap merging never fires: only the similarity pipeline
@@ -328,20 +355,23 @@ function secondShape(limit, step) {
     expect(metrics.duplication.duplicateBlockCount).toBe(4);
   });
 
-  it('keeps duplicateBlockCount independent of source order for mixed groups', () => {
-    // A gap-merged exact pair (multi-fragment occurrences) plus an appended near-miss copy forms
-    // a heterogeneous group; the count must not depend on which occurrence sorts first.
-    const gapped1 = logicClone('alpha', 'console.log("mid", total);');
-    const gapped2 = logicClone('beta', 'console.warn("mid", total);');
-    const edited = logicClone('gamma', 'console.info("midpoint", count);').replace(
-      'return total + count + big - small;',
-      'return total - count + big + small;'
-    );
-    const editedLast = measureCode(gapped1 + gapped2 + edited, { language: 'javascript' });
-    const editedFirst = measureCode(edited + gapped1 + gapped2, { language: 'javascript' });
+  it('coalesces exact fragments per copy and counts mixed groups order-independently', () => {
+    // A and B share an exact prefix AND an exact suffix, split by over-large differing middles
+    // (two exact groups, multi-fragment copies); C carries scattered operator edits so only the
+    // near-miss phase finds it. The component must become ONE group with ONE occurrence per copy
+    // (A's and B's prefix+suffix fragments coalesce), and the fragment-weighted count must be 3
+    // in every source order: without the coalescing and sum-minus-max counting, the same family
+    // reported five occurrences and a source-order-dependent count.
+    const exactA = fragmentedCopy('alpha', fragmentedMiddle('bonusA', 'level', 'bonus'), '+', '+');
+    const exactB = fragmentedCopy('beta', fragmentedMiddle('bonusB', 'rank', 'extra'), '+', '+');
+    const edited = fragmentedCopy('gamma', fragmentedMiddle('bonusC', 'depth', 'weight'), '-', '-');
 
-    expect(editedLast.duplication.duplicateBlockCount).toBe(editedFirst.duplication.duplicateBlockCount);
-    expect(editedLast.duplication.duplicateBlockGroupCount).toBe(editedFirst.duplication.duplicateBlockGroupCount);
+    for (const code of [exactA + exactB + edited, edited + exactA + exactB]) {
+      const metrics = measureCode(code, { language: 'javascript' });
+      expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+      expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+      expect(metrics.duplication.duplicateBlockCount).toBe(3);
+    }
   });
 
   it('detects clones nested inside a single enclosing wrapper', () => {

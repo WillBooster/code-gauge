@@ -1388,15 +1388,37 @@ fn collect_near_miss_groups(
             .collect();
         fully_clustered.sort_unstable();
         if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
-            // Every fully-clustered group belongs to this verified component; merge them all into
-            // one, leaving the merged-away entries empty for the caller to drop.
-            for &source_index in source_indexes {
-                let source = std::mem::take(&mut reported_groups[source_index]);
-                reported_groups[target_index].extend(source);
+            // Rebuild the component as ONE group with one coalesced occurrence per member block;
+            // see collectNearMissGroups in duplication.ts.
+            let mut consumed: HashSet<(usize, usize)> = HashSet::new();
+            let mut merged: Vec<CountedOccurrence> = Vec::new();
+            for &member_index in members {
+                let range = comparable[member_index];
+                let mut overlapping: Vec<CountedOccurrence> = Vec::new();
+                for &group_index in &fully_clustered {
+                    for (occurrence_index, occurrence) in
+                        reported_groups[group_index].iter().enumerate()
+                    {
+                        if !consumed.contains(&(group_index, occurrence_index))
+                            && occurrence.start_token_index < range.end_token_index
+                            && range.start_token_index < occurrence.end_token_index
+                        {
+                            consumed.insert((group_index, occurrence_index));
+                            overlapping.push(occurrence.clone());
+                        }
+                    }
+                }
+                if !overlapping.is_empty() {
+                    merged.push(coalesce_occurrences(overlapping));
+                } else if touched_groups_by_block[member_index].is_empty() {
+                    merged.push(to_occurrence(comparable[member_index]));
+                }
             }
-            let target = &mut reported_groups[target_index];
-            target.extend(uncovered.iter().map(|&index| to_occurrence(comparable[index])));
-            target.sort_by_key(|occurrence| (occurrence.start_token_index, occurrence.end_token_index));
+            merged.sort_by_key(|occurrence| (occurrence.start_token_index, occurrence.end_token_index));
+            reported_groups[target_index] = merged;
+            for &source_index in source_indexes {
+                reported_groups[source_index].clear();
+            }
         } else if uncovered.len() >= 2 {
             groups.push(
                 uncovered
@@ -1468,6 +1490,35 @@ fn select_comparable_blocks<'a>(eligible: &[&'a TokenRange]) -> Vec<&'a TokenRan
         visit(&nodes, root, &mut kept);
     }
     kept
+}
+
+/// One copy's fragments (an exact prefix and suffix split by a large edit) as one occurrence;
+/// mirrors coalesceOccurrences in duplication.ts.
+fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrence {
+    if occurrences.len() == 1 {
+        return occurrences.into_iter().next().expect("non-empty");
+    }
+    let mut segments: Vec<(usize, usize)> = occurrences
+        .iter()
+        .flat_map(|occurrence| occurrence.segments.iter().copied())
+        .collect();
+    segments.sort_by_key(|segment| segment.0);
+    CountedOccurrence {
+        token_count: occurrences.iter().map(|o| o.token_count).sum(),
+        start_token_index: occurrences
+            .iter()
+            .map(|o| o.start_token_index)
+            .min()
+            .unwrap_or(0),
+        end_token_index: occurrences
+            .iter()
+            .map(|o| o.end_token_index)
+            .max()
+            .unwrap_or(0),
+        start_line: occurrences.iter().map(|o| o.start_line).min().unwrap_or(0),
+        end_line: occurrences.iter().map(|o| o.end_line).max().unwrap_or(0),
+        segments,
+    }
 }
 
 struct NormalizedBlock {
