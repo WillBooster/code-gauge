@@ -15,11 +15,11 @@ import type { LanguageName } from '../../src/index.js';
  *   tree-sitter's; Java starts differ by annotation lines, joined via their unique end line).
  *   266 functions match across every language except Ruby-heavy constructs (see below).
  * - `gocognit` — gocognit v1.2.0, the standard Go implementation of SonarSource cognitive
- *   complexity. 36 of 38 functions match.
+ *   complexity. 37 of 38 functions match.
  * - `complexipy` — complexipy 7.0.0, a Rust implementation of SonarSource cognitive complexity
  *   for Python. 23 of 28 functions match.
  * - `sonarjs` — eslint-plugin-sonarjs 0.25.1 (SonarSource's own ESLint port of cognitive
- *   complexity) on ESLint 8.57.0 / @typescript-eslint/parser 7.18.0. 54 functions match across
+ *   complexity) on ESLint 8.57.0 / @typescript-eslint/parser 7.18.0. 57 functions match across
  *   JavaScript, TypeScript, JSX, and TSX.
  *
  * A handful of tool rows could not be attributed to exactly one code-gauge function and are in
@@ -48,18 +48,15 @@ import type { LanguageName } from '../../src/index.js';
  * - pmd/ncss: PMD's NCSS visitor does not descend into expression positions (anonymous classes
  *   returned from methods), while code-gauge counts statement-shaped content uniformly — the same
  *   deliberate divergence documented in pmdParity.test.ts.
- * - gocognit/cognitive: both tools charge SonarSource's +1 recursion increment, but code-gauge
- *   detects recursion through its file-local call graph, whose file-unique names resolve
- *   regardless of receiver — gin's `Use` and `addRoute` call same-named methods on other
- *   receivers, so code-gauge treats them as recursive where gocognit's syntactic check does not.
+ * - gocognit/cognitive: gocognit charges SonarSource's +1 recursion increment (gin's `iterate`);
+ *   code-gauge does not charge recursion (issue #22 — intentionally omitted, like PMD and the
+ *   SonarQube analyzers, and unsound under file-local receiver-blind call resolution).
  * - complexipy/cognitive: complexipy charges comprehensions and their internal `if`/`for` clauses;
  *   code-gauge counts only statement-level decisions (dialect difference among Sonar ports).
  * - sonarjs/cognitive: sonarjs attributes nested-closure content to the innermost enclosing
  *   function only, while code-gauge (like PMD) also attributes it to the enclosing declared
  *   function; a few remaining cases differ on JSX expressions, which sonarjs does not analyze,
- *   and on `??`/optional-chain handling in vscode's uri.ts; sonarjs also does not implement
- *   SonarSource's +1 recursion increment (express's `send`/`json`, vscode's
- *   `decodeURIComponentGraceful`), which code-gauge charges (issue #22).
+ *   and on `??`/optional-chain handling in vscode's uri.ts.
  * - lizard/cyclomatic: lizard folds anonymous-class methods into the enclosing Java method
  *   (guava's `iterable`), does not see JSX expression trees (jsx), Ruby modifier conditionals
  *   and multi-class `rescue` clauses (ruby), Python comprehension clauses (python), or Rust
@@ -278,7 +275,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       cyclomaticComplexity: 134,
       maxCyclomaticComplexity: 30,
       cognitiveComplexity: 187,
-      maxCognitiveComplexity: 40,
+      maxCognitiveComplexity: 39,
       nestingDepth: 4,
       ncssCount: 428,
       callGraph: {
@@ -508,7 +505,9 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ['status', 67, 73, 'cyclomatic', 'lizard', 5],
       ['(anonymous)', 90, 96, 'cyclomatic', 'lizard', 3],
       ['(anonymous)', 93, 95, 'cyclomatic', 'lizard', 1],
+      ['send', 111, 236, 'cognitive', 'sonarjs', 39],
       ['send', 111, 236, 'cyclomatic', 'lizard', 30],
+      ['json', 250, 279, 'cognitive', 'sonarjs', 5],
       ['json', 250, 279, 'cyclomatic', 'lizard', 4],
       ['jsonp', 293, 352, 'cognitive', 'sonarjs', 11],
       ['jsonp', 293, 352, 'cyclomatic', 'lizard', 9],
@@ -569,16 +568,14 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ['(anonymous)', 1153, 1165, 'cyclomatic', 'lizard', 4],
     ],
     knownDivergences: [
-      ['send', 111, 236, 'cognitive', 'sonarjs', 39, 40],
-      ['json', 250, 279, 'cognitive', 'sonarjs', 5, 6],
       ['(anonymous)', 90, 96, 'cognitive', 'sonarjs', 1, 2],
       ['sendFile', 419, 458, 'cognitive', 'sonarjs', 5, 14],
       ['(anonymous)', 501, 527, 'cognitive', 'sonarjs', 1, 10],
       ['download', 550, 599, 'cognitive', 'sonarjs', 14, 15],
-      ['render', 1016, 1040, 'cognitive', 'sonarjs', 2, 6],
+      ['render', 1016, 1040, 'cognitive', 'sonarjs', 2, 5],
       ['sendfile', 1043, 1131, 'cognitive', 'sonarjs', 1, 26],
       ['onfinish', 1087, 1102, 'cognitive', 'sonarjs', 4, 9],
-      ['stringify', 1145, 1169, 'cognitive', 'sonarjs', 4, 8],
+      ['stringify', 1145, 1169, 'cognitive', 'sonarjs', 4, 7],
     ],
   },
   {
@@ -993,15 +990,16 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ['NoRoute', 293, 296, 'cyclomatic', 'lizard', 1],
       ['NoMethod', 299, 302, 'cognitive', 'gocognit', 0],
       ['NoMethod', 299, 302, 'cyclomatic', 'lizard', 1],
+      ['Use', 307, 312, 'cognitive', 'gocognit', 0],
       ['Use', 307, 312, 'cyclomatic', 'lizard', 1],
       ['rebuild404Handlers', 314, 316, 'cognitive', 'gocognit', 0],
       ['rebuild404Handlers', 314, 316, 'cyclomatic', 'lizard', 1],
       ['rebuild405Handlers', 318, 320, 'cognitive', 'gocognit', 0],
       ['rebuild405Handlers', 318, 320, 'cyclomatic', 'lizard', 1],
+      ['addRoute', 322, 345, 'cognitive', 'gocognit', 3],
       ['addRoute', 322, 345, 'cyclomatic', 'lizard', 4],
       ['Routes', 349, 354, 'cognitive', 'gocognit', 1],
       ['Routes', 349, 354, 'cyclomatic', 'lizard', 2],
-      ['iterate', 356, 371, 'cognitive', 'gocognit', 3],
       ['iterate', 356, 371, 'cyclomatic', 'lizard', 3],
       ['Run', 376, 388, 'cognitive', 'gocognit', 1],
       ['Run', 376, 388, 'cyclomatic', 'lizard', 2],
@@ -1047,10 +1045,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ['redirectRequest', 699, 711, 'cognitive', 'gocognit', 1],
       ['redirectRequest', 699, 711, 'cyclomatic', 'lizard', 2],
     ],
-    knownDivergences: [
-      ['Use', 307, 312, 'cognitive', 'gocognit', 0, 1],
-      ['addRoute', 322, 345, 'cognitive', 'gocognit', 3, 4],
-    ],
+    knownDivergences: [['iterate', 356, 371, 'cognitive', 'gocognit', 3, 2]],
   },
   {
     file: 'guava-33.0.0-Joiner.java',
@@ -2287,7 +2282,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       cyclomaticComplexity: 60,
       maxCyclomaticComplexity: 14,
       cognitiveComplexity: 69,
-      maxCognitiveComplexity: 19,
+      maxCognitiveComplexity: 18,
       nestingDepth: 3,
       ncssCount: 360,
       callGraph: {
@@ -2735,6 +2730,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ['encodeURIComponentMinimal', 596, 612, 'cyclomatic', 'lizard', 7],
       ['_asFormatted', 647, 715, 'cognitive', 'sonarjs', 32],
       ['_asFormatted', 647, 715, 'cyclomatic', 'lizard', 22],
+      ['decodeURIComponentGraceful', 719, 729, 'cognitive', 'sonarjs', 4],
       ['decodeURIComponentGraceful', 719, 729, 'cyclomatic', 'lizard', 3],
       ['percentDecode', 733, 738, 'cognitive', 'sonarjs', 1],
       ['percentDecode', 733, 738, 'cyclomatic', 'lizard', 2],
@@ -2742,7 +2738,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
     ],
     knownDivergences: [
       ['revive', 404, 415, 'cognitive', 'sonarjs', 7, 5],
-      ['decodeURIComponentGraceful', 719, 729, 'cognitive', 'sonarjs', 4, 5],
       ['revive', 404, 415, 'cyclomatic', 'lizard', 8, 4],
       ['isUriComponents', 426, 435, 'cognitive', 'sonarjs', 10, 7],
       ['encodeURIComponentFast', 532, 594, 'cognitive', 'sonarjs', 36, 31],

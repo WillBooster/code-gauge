@@ -441,29 +441,29 @@ function measureStructuralMetrics(
     return analyzeFunction(node, language, index, constructedTypeNames, bodyMetrics);
   });
   const callGraph = measureCallGraph(analyses, language.name);
-  const functionsWithGraph = analyses.map((analysis) => {
-    const recursive = callGraph.recursiveIndexes.has(analysis.index);
-    return {
-      name: analysis.name,
-      nodeType: analysis.nodeType,
-      startLine: analysis.startLine,
-      startColumn: analysis.startColumn,
-      endLine: analysis.endLine,
-      returnsJsx: analysis.returnsJsx,
-      cyclomaticComplexity: analysis.cyclomaticComplexity,
-      // Sonar adds one flat point to each function in a recursion cycle; recursion is only known
-      // after call-graph analysis, so the adjustment lands here rather than in analyzeFunction.
-      cognitiveComplexity: analysis.cognitiveComplexity + (recursive ? 1 : 0),
-      nestingDepth: analysis.nestingDepth,
-      ncss: analysis.ncss,
-      callCount: analysis.callCount,
-      uniqueCalleeCount: analysis.callees.size,
-      fanIn: callGraph.fanInByIndex.get(analysis.index) ?? 0,
-      fanOut: callGraph.fanOutByIndex.get(analysis.index) ?? 0,
-      parameterCount: analysis.parameterCount,
-      recursive,
-    };
-  });
+  // Sonar's written spec adds +1 cognitive complexity per function in a recursion cycle, but this
+  // is intentionally not implemented (issue #22): mainstream implementations (PMD, SonarQube
+  // analyzers) omit it, and our file-local, receiver-blind call resolution would make it unsound
+  // (false positives on delegation like `len() { return this.inner.len(); }`, missed cross-file
+  // cycles). Recursion is still detected and reported via `recursive`.
+  const functionsWithGraph = analyses.map((analysis) => ({
+    name: analysis.name,
+    nodeType: analysis.nodeType,
+    startLine: analysis.startLine,
+    startColumn: analysis.startColumn,
+    endLine: analysis.endLine,
+    returnsJsx: analysis.returnsJsx,
+    cyclomaticComplexity: analysis.cyclomaticComplexity,
+    cognitiveComplexity: analysis.cognitiveComplexity,
+    nestingDepth: analysis.nestingDepth,
+    ncss: analysis.ncss,
+    callCount: analysis.callCount,
+    uniqueCalleeCount: analysis.callees.size,
+    fanIn: callGraph.fanInByIndex.get(analysis.index) ?? 0,
+    fanOut: callGraph.fanOutByIndex.get(analysis.index) ?? 0,
+    parameterCount: analysis.parameterCount,
+    recursive: callGraph.recursiveIndexes.has(analysis.index),
+  }));
 
   return {
     functions: functionsWithGraph,

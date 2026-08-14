@@ -15,12 +15,6 @@ import { fixturesDir } from './fixtureCorpus.js';
  * constructs in statement/initializer positions. code-gauge counts statement-shaped content
  * uniformly regardless of position, so `lam` below expects 4 where PMD reports 2, and Java files
  * using switch expressions or anonymous classes as arguments measure higher than PMD.
- *
- * Second deliberate divergence (issue #22): code-gauge implements the SonarSource recursion rule
- * (+1 cognitive per function in a recursion cycle), which PMD 7.26.0 does not. Recursion is
- * detected via the file-local call graph, whose file-unique names resolve regardless of receiver,
- * so `drawLine` below (whose body calls `g.drawLine(...)` on a Graphics object) is treated as
- * recursive and expects cognitive 1 where PMD reports 0.
  */
 const expectedByFixture: Record<string, Record<string, readonly [number, number, number]>> = {
   'ComplexCode.java': {
@@ -33,7 +27,7 @@ const expectedByFixture: Record<string, Record<string, readonly [number, number,
     mousePressed: [3, 2, 8],
     mouseDragged: [2, 1, 7],
     MyPanel: [1, 0, 8],
-    drawLine: [1, 1, 5],
+    drawLine: [1, 0, 5],
     fill: [13, 11, 18],
     paint: [1, 0, 2],
   },
@@ -126,11 +120,9 @@ describe('PMD parity (Java): per-method complexity and NCSS', () => {
 describe('PMD parity (Java): code-analyzer aggregate metrics', () => {
   // The expectations for ComplexCode.java are the golden values of code-analyzer's own E2E test
   // (packages/server/test/e2e/analyzeCode.test.ts): cognitive 14, cyclomatic 27, NCSS 86.
-  // Cognitive is 14 + 1: `drawLine` carries the SonarSource recursion increment PMD lacks (see
-  // the divergence note on expectedByFixture).
   it('reproduces code-analyzer analyzeCode results for ComplexCode.java', () => {
     expect(pmdStyleAggregate(measureFixture('ComplexCode.java'))).toEqual({
-      cognitiveComplexity: 15,
+      cognitiveComplexity: 14,
       cyclomaticComplexity: 27,
       ncssCount: 86,
     });
@@ -148,8 +140,7 @@ describe('PMD parity (Java): code-analyzer aggregate metrics', () => {
 
   it('matches PMD method sums for every PMD fixture', () => {
     const expectedAggregates: Record<string, [number, number, number]> = {
-      // Cognitive is PMD's 14 + 1: `drawLine` carries the recursion increment (see above).
-      'ComplexCode.java': [15, 27, 86],
+      'ComplexCode.java': [14, 27, 86],
       'ProbeStatements.java': [12, 13, 38],
       'ProbeTryForms.java': [2, 10, 25],
       // NCSS is PMD's 26 + 2: `lam` diverges from PMD by design (see expectedByFixture doc).

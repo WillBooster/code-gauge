@@ -280,16 +280,21 @@ describe('measureCode: cognitive complexity and nesting', () => {
     expect(cognitiveOf('def f(a)\n  if a\n    1\n  else\n    2\n  end\nend\n', 'ruby')).toBe(2);
   });
 
-  it('adds one point to each function in a recursion cycle', () => {
-    expect(cognitiveOf('function f(n){ if (n <= 1) return 1; return n * f(n - 1); }')).toBe(2);
+  // Sonar's written spec adds +1 per function in a recursion cycle, but code-gauge intentionally
+  // omits it (issue #22): mainstream implementations (PMD, SonarQube analyzers) do not charge
+  // recursion, and file-local receiver-blind call resolution would make the increment unsound
+  // (false positives on delegation, missed cross-file cycles). This pins the decided behavior.
+  it('does not add cognitive complexity for direct or mutual recursion', () => {
+    expect(cognitiveOf('function f(n){ if (n <= 1) return 1; return n * f(n - 1); }')).toBe(1);
     const mutual = measureCode(
       'function even(n){ return n === 0 || odd(n - 1); }\nfunction odd(n){ return n !== 0 && even(n - 1); }\n',
       {
         language: 'javascript',
       }
     );
-    expect(mutual.functions.map((fn) => fn.cognitiveComplexity)).toEqual([2, 2]);
-    expect(mutual.maxCognitiveComplexity).toBe(2);
+    expect(mutual.functions.map((fn) => fn.recursive)).toEqual([true, true]);
+    expect(mutual.functions.map((fn) => fn.cognitiveComplexity)).toEqual([1, 1]);
+    expect(mutual.maxCognitiveComplexity).toBe(1);
   });
 });
 

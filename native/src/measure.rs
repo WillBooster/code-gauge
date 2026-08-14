@@ -72,36 +72,36 @@ pub fn measure(
     let call_graph = measure_call_graph(&analyses, sets.name);
     let function_metrics: Vec<FunctionMetrics> = analyses
         .iter()
-        .map(|analysis| {
-            let recursive = call_graph.recursive_indexes.contains(&analysis.index);
-            FunctionMetrics {
-                name: analysis.name.clone(),
-                node_type: analysis.node_type.to_string(),
-                start_line: analysis.start_line,
-                start_column: analysis.start_column,
-                end_line: analysis.end_line,
-                returns_jsx: analysis.returns_jsx,
-                cyclomatic_complexity: analysis.cyclomatic_complexity,
-                // Sonar adds one flat point to each function in a recursion cycle; recursion is only
-                // known after call-graph analysis, so the adjustment lands here (issue #22).
-                cognitive_complexity: analysis.cognitive_complexity + u64::from(recursive),
-                nesting_depth: analysis.nesting_depth,
-                ncss: analysis.ncss,
-                call_count: analysis.call_count,
-                unique_callee_count: analysis.callees.len(),
-                fan_in: call_graph
-                    .fan_in_by_index
-                    .get(&analysis.index)
-                    .copied()
-                    .unwrap_or(0),
-                fan_out: call_graph
-                    .fan_out_by_index
-                    .get(&analysis.index)
-                    .copied()
-                    .unwrap_or(0),
-                parameter_count: analysis.parameter_count,
-                recursive,
-            }
+        .map(|analysis| FunctionMetrics {
+            name: analysis.name.clone(),
+            node_type: analysis.node_type.to_string(),
+            start_line: analysis.start_line,
+            start_column: analysis.start_column,
+            end_line: analysis.end_line,
+            returns_jsx: analysis.returns_jsx,
+            cyclomatic_complexity: analysis.cyclomatic_complexity,
+            // Sonar's written spec adds +1 cognitive complexity per function in a recursion
+            // cycle, but this is intentionally not implemented (issue #22): mainstream
+            // implementations (PMD, SonarQube analyzers) omit it, and file-local,
+            // receiver-blind call resolution would make it unsound (false positives on
+            // delegation, missed cross-file cycles). Recursion is still reported separately.
+            cognitive_complexity: analysis.cognitive_complexity,
+            nesting_depth: analysis.nesting_depth,
+            ncss: analysis.ncss,
+            call_count: analysis.call_count,
+            unique_callee_count: analysis.callees.len(),
+            fan_in: call_graph
+                .fan_in_by_index
+                .get(&analysis.index)
+                .copied()
+                .unwrap_or(0),
+            fan_out: call_graph
+                .fan_out_by_index
+                .get(&analysis.index)
+                .copied()
+                .unwrap_or(0),
+            parameter_count: analysis.parameter_count,
+            recursive: call_graph.recursive_indexes.contains(&analysis.index),
         })
         .collect();
 

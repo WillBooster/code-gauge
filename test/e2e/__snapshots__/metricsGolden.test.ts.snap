@@ -545,7 +545,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "functions": [
     {
       "callCount": 1,
-      "cognitiveComplexity": 2,
+      "cognitiveComplexity": 1,
       "cyclomaticComplexity": 2,
       "endLine": 4,
       "fanIn": 2,
@@ -619,7 +619,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     "total": 15,
   },
   "maintainabilityIndex": 61.065193975036564,
-  "maxCognitiveComplexity": 2,
+  "maxCognitiveComplexity": 1,
   "maxCyclomaticComplexity": 2,
   "module": {
     "declarations": [
@@ -4752,7 +4752,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 4,
-      "cognitiveComplexity": 1,
+      "cognitiveComplexity": 0,
       "cyclomaticComplexity": 1,
       "endLine": 133,
       "fanIn": 3,
@@ -6050,7 +6050,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 2,
+      "cognitiveComplexity": 1,
       "cyclomaticComplexity": 2,
       "endLine": 57,
       "fanIn": 1,
@@ -6434,7 +6434,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 2,
+      "cognitiveComplexity": 1,
       "cyclomaticComplexity": 2,
       "endLine": 76,
       "fanIn": 2,
@@ -6709,7 +6709,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 2,
+      "cognitiveComplexity": 1,
       "cyclomaticComplexity": 2,
       "endLine": 81,
       "fanIn": 1,
@@ -7083,7 +7083,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 2,
+      "cognitiveComplexity": 1,
       "cyclomaticComplexity": 2,
       "endLine": 92,
       "fanIn": 1,
@@ -7260,7 +7260,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 1,
-      "cognitiveComplexity": 4,
+      "cognitiveComplexity": 3,
       "cyclomaticComplexity": 4,
       "endLine": 56,
       "fanIn": 1,
@@ -7726,7 +7726,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 5,
+      "cognitiveComplexity": 4,
       "cyclomaticComplexity": 3,
       "endLine": 57,
       "fanIn": 1,
@@ -8295,7 +8295,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 1,
+      "cognitiveComplexity": 0,
       "cyclomaticComplexity": 1,
       "endLine": 30,
       "fanIn": 1,
@@ -8367,7 +8367,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 3,
+      "cognitiveComplexity": 2,
       "cyclomaticComplexity": 2,
       "endLine": 72,
       "fanIn": 1,
@@ -8602,7 +8602,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "callCount": 2,
-      "cognitiveComplexity": 2,
+      "cognitiveComplexity": 1,
       "cyclomaticComplexity": 2,
       "endLine": 64,
       "fanIn": 2,
