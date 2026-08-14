@@ -12,6 +12,15 @@ mod ncss;
 mod types;
 mod util;
 
+/// Version of the NativeMetrics payload schema. The TypeScript wrapper refuses a binding whose
+/// version differs from the one it expects, so a stale prebuilt addon falls back to the
+/// TypeScript backend instead of silently returning an incompatible payload. Bump on every
+/// payload-shape change, together with `expectedPayloadVersion` in src/nativeMetrics.ts.
+#[napi]
+pub fn payload_version() -> u32 {
+    2
+}
+
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON.
 /// The TypeScript wrapper derives the remaining float metrics (Halstead volume/effort/...) so
 /// results are bit-identical to the TypeScript backend.

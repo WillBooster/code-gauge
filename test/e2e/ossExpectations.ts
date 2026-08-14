@@ -18,6 +18,13 @@ import type { LanguageName } from '../../src/index.js';
  *   complexity) on ESLint 8.57.0 / @typescript-eslint/parser 7.18.0. 57 functions match across
  *   JavaScript, TypeScript, JSX, and TSX.
  *
+ * C, C++, Ruby, and Rust have NO per-function oracle: their only per-function reference tool
+ * (lizard) measured cyclomatic complexity, which code-gauge no longer reports, and no readily
+ * runnable open-source tool implements SonarSource cognitive complexity for them. Their
+ * `oracleFunctions` lists are empty, the per-function tests are skipped visibly for them, and
+ * only the aggregate expectations (regenerated from code-gauge itself) plus the cloc/tokei line
+ * oracle guard those files.
+ *
  * Line metrics in `aggregates` were verified against cloc 2.06 for all files (code/comment/blank
  * identical; code-gauge additionally counts the empty line after a trailing final newline as one
  * blank line, so `lines.total` and `lines.blank` are one higher than cloc's). Two files need a

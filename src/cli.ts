@@ -51,7 +51,7 @@ interface RankedFile {
   duplicatedLineCount: number;
   /** duplicatedLineCount / code lines (0 when the file has no code). */
   duplicatedLineRatio: number;
-  /** Other files sharing cross-file duplicate blocks with this file (capped for display). */
+  /** Other files sharing cross-file duplicate blocks; filled only for the reported top files. */
   crossFilePartners: string[];
   ncss: number;
   codeLines: number;
@@ -158,7 +158,7 @@ async function main(): Promise<void> {
     const options = resolveOptions(cliOptions, config);
     const result = await scanTarget(resolvedTarget, options);
     addCrossFileDuplication(result, options);
-    const rankedFiles = rankFiles(result);
+    const rankedFiles = rankFiles(result, options.top);
 
     if (options.json) {
       printJson(result, rankedFiles, options);
@@ -403,7 +403,7 @@ function addCrossFileDuplication(result: ScanResult, options: ResolvedOptions): 
   result.crossFileDuplication = measureCrossFileDuplication(sourceFiles, options.duplication);
 }
 
-function rankFiles(result: ScanResult): RankedFile[] {
+function rankFiles(result: ScanResult, top: number): RankedFile[] {
   const candidates = result.files.map(({ file, metrics }) => {
     const formattedFile = formatPath(file, result.displayRoot);
     const duplicatedLines = collectDuplicatedLines(metrics, result.crossFileDuplication, formattedFile);
@@ -412,7 +412,7 @@ function rankFiles(result: ScanResult): RankedFile[] {
       worstFunction: findWorstFunction(metrics.functions),
       duplicatedLineCount: duplicatedLines.size,
       duplicatedLineRatio: metrics.lines.code === 0 ? 0 : duplicatedLines.size / metrics.lines.code,
-      crossFilePartners: findCrossFilePartners(result.crossFileDuplication, formattedFile),
+      crossFilePartners: [] as string[],
       ncss: metrics.ncssCount,
       codeLines: metrics.lines.code,
     };
@@ -422,7 +422,7 @@ function rankFiles(result: ScanResult): RankedFile[] {
   const duplicationPercentile = makePercentile(candidates.map((c) => c.duplicatedLineCount));
   const ncssPercentile = makePercentile(candidates.map((c) => c.ncss));
 
-  return candidates
+  const ranked = candidates
     .map((candidate) => ({
       ...candidate,
       score:
@@ -433,6 +433,38 @@ function rankFiles(result: ScanResult): RankedFile[] {
     .toSorted(
       (left, right) => right.score - left.score || right.ncss - left.ncss || left.file.localeCompare(right.file)
     );
+  // Partner evidence is attached only to the files that will be reported: expanding partners for
+  // every scanned file first would retain TH(F^2) strings when one clone group spans F files, and
+  // rescanning all groups per file would be O(files x groups) on the post-scan ranking step.
+  attachCrossFilePartners(ranked.slice(0, top), result.crossFileDuplication);
+  return ranked;
+}
+
+/** One pass over the groups fills the reported files' partner lists (other files sharing a group). */
+function attachCrossFilePartners(
+  reportedFiles: RankedFile[],
+  crossFileDuplication: CrossFileDuplicationMetrics | undefined
+): void {
+  if (!crossFileDuplication) {
+    return;
+  }
+  const partnersByFile = new Map(reportedFiles.map((ranked) => [ranked.file, new Set<string>()]));
+  for (const group of crossFileDuplication.groups) {
+    for (const file of group.files) {
+      const partners = partnersByFile.get(file);
+      if (!partners) {
+        continue;
+      }
+      for (const partner of group.files) {
+        if (partner !== file) {
+          partners.add(partner);
+        }
+      }
+    }
+  }
+  for (const ranked of reportedFiles) {
+    ranked.crossFilePartners = [...(partnersByFile.get(ranked.file) ?? [])].toSorted();
+  }
 }
 
 /**
@@ -504,24 +536,6 @@ function collectDuplicatedLines(
     lines.add(line);
   }
   return lines;
-}
-
-function findCrossFilePartners(
-  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
-  formattedFile: string
-): string[] {
-  const partners = new Set<string>();
-  for (const group of crossFileDuplication?.groups ?? []) {
-    if (!group.files.includes(formattedFile)) {
-      continue;
-    }
-    for (const file of group.files) {
-      if (file !== formattedFile) {
-        partners.add(file);
-      }
-    }
-  }
-  return [...partners].toSorted();
 }
 
 function printJson(result: ScanResult, rankedFiles: RankedFile[], options: ResolvedOptions): void {

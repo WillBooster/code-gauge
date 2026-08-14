@@ -154,7 +154,9 @@ describe('measureCode: line, complexity, and Halstead metrics', () => {
     const metrics = measureCode(code, { language: 'javascript' });
 
     expect(metrics.functions.map((fn) => fn.name)).toEqual(['simple', 'complex']);
-    expect(metrics.maxCognitiveComplexity).toBe(Math.max(...metrics.functions.map((fn) => fn.cognitiveComplexity)));
+    // Pinned values: `complex` holds one `if` and one ternary (1 point each); `simple` has none.
+    expect(metrics.functions.map((fn) => fn.cognitiveComplexity)).toEqual([0, 2]);
+    expect(metrics.maxCognitiveComplexity).toBe(2);
   });
 });
 

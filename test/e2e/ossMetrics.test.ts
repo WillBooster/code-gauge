@@ -120,7 +120,10 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
         expect(roundFloats(metrics)).toEqual(expectation.aggregates);
       });
 
-      it('matches every tool-verified per-function value', () => {
+      // skipIf makes the absence of per-function oracle coverage visible in the report instead of
+      // green-lighting a zero-assertion loop (C/C++/Ruby/Rust lost their only per-function oracle
+      // with cyclomatic complexity; see the ossExpectations.ts header).
+      it.skipIf(expectation.oracleFunctions.length === 0)('matches every tool-verified per-function value', () => {
         const bySpan = keyFunctionsBySpan(metrics);
         for (const [name, startLine, endLine, metric, tool, value] of expectation.oracleFunctions) {
           const fn = lookupFunction(bySpan, name, startLine, endLine);
@@ -128,24 +131,29 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
         }
       });
 
-      it('stays on the documented side of every known tool divergence', () => {
-        const bySpan = keyFunctionsBySpan(metrics);
-        for (const [
-          name,
-          startLine,
-          endLine,
-          metric,
-          tool,
-          toolValue,
-          codeGaugeValue,
-        ] of expectation.knownDivergences) {
-          const fn = lookupFunction(bySpan, name, startLine, endLine);
-          const actual = fn[metricField[metric]];
-          expect(actual, `${metric} of ${name}@${startLine} (documented divergence from ${tool})`).toBe(codeGaugeValue);
-          // If this fails, code-gauge now agrees with the tool: move the entry to oracleFunctions.
-          expect(actual, `${metric} of ${name}@${startLine} unexpectedly matches ${tool}`).not.toBe(toolValue);
+      it.skipIf(expectation.knownDivergences.length === 0)(
+        'stays on the documented side of every known tool divergence',
+        () => {
+          const bySpan = keyFunctionsBySpan(metrics);
+          for (const [
+            name,
+            startLine,
+            endLine,
+            metric,
+            tool,
+            toolValue,
+            codeGaugeValue,
+          ] of expectation.knownDivergences) {
+            const fn = lookupFunction(bySpan, name, startLine, endLine);
+            const actual = fn[metricField[metric]];
+            expect(actual, `${metric} of ${name}@${startLine} (documented divergence from ${tool})`).toBe(
+              codeGaugeValue
+            );
+            // If this fails, code-gauge now agrees with the tool: move the entry to oracleFunctions.
+            expect(actual, `${metric} of ${name}@${startLine} unexpectedly matches ${tool}`).not.toBe(toolValue);
+          }
         }
-      });
+      );
     });
   }
 

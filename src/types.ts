@@ -101,13 +101,14 @@ export interface FunctionMetrics {
 /**
  * Within-file structural duplication: copy-pasted regions whose normalized token sequence repeats.
  * Identifiers are anonymized consistently by first-occurrence order and literals by kind, so
- * consistently renamed copies match. Distinct from cross-file duplicate symbol names.
+ * consistently renamed copies match.
  */
 export interface DuplicationMetrics {
   /**
    * Number of redundant (extra) duplicated regions: sum over groups of (groupSize - 1) times the
-   * matched fragments per occurrence, so a gapped (merged) clone counts like its unmerged
-   * fragments and threshold semantics do not shift with merging.
+   * matched fragments per occurrence, so merging a gapped clone's fragments into one group does
+   * not halve duplicateBlockCount — an edited two-fragment pair still counts 2, exactly as its
+   * unmerged fragments did.
    */
   duplicateBlockCount: number;
   /** Number of distinct normalized token sequences that appear more than once. */

@@ -1763,8 +1763,8 @@ function mergeGroups<T extends CountedOccurrence>(
 /**
  * Redundant copies one group adds to duplicateBlockCount. Each redundant occurrence contributes
  * one count per matched fragment, so merging a gapped clone's fragments into one group does not
- * halve the count a `duplicateBlock` threshold sees: an edited two-fragment pair still counts 2,
- * exactly as its unmerged fragments did. Occurrence shapes can differ within one group (a
+ * halve duplicateBlockCount: an edited two-fragment pair still counts 2, exactly as its unmerged
+ * fragments did. Occurrence shapes can differ within one group (a
  * gap-merged exact pair plus an appended whole-block near-miss copy), so every occurrence's
  * fragments are summed and one representative — the largest — is deducted, keeping the count
  * independent of source order. Occurrences a partial gapped merge also paired into a merged group

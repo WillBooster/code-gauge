@@ -21,7 +21,17 @@ export interface NativeMetricsPayload extends Omit<CodeMetrics, 'halstead' | 'sy
 
 interface NativeBinding {
   measureCodeNative(code: string, language: string, includeSyntaxTree: boolean): string;
+  /** Absent on stale builds that predate payload versioning. */
+  payloadVersion?(): number;
 }
+
+/**
+ * Must equal `payload_version` in native/src/lib.rs. A previously built addon survives a
+ * `git pull` untouched, so without this handshake it would silently return payloads missing
+ * newer fields (e.g. duplication.duplicateLineNumbers) instead of falling back to the
+ * TypeScript backend.
+ */
+const expectedPayloadVersion = 2;
 
 const defaultLanguageByName = new Map(defaultLanguages.map((language) => [language.name, language]));
 
@@ -86,7 +96,12 @@ function loadBinding(): NativeBinding | undefined {
   try {
     // Resolved relative to this file, so both src/ (tests) and dist/ (build) find native/.
     const requireNative = createRequire(import.meta.url);
-    cachedBinding = requireNative('../native/code-gauge.node') as NativeBinding;
+    const binding = requireNative('../native/code-gauge.node') as NativeBinding;
+    if (binding.payloadVersion?.() === expectedPayloadVersion) {
+      cachedBinding = binding;
+    }
+    // A version mismatch (or a build too old to report one) leaves the binding unused, like a
+    // missing addon: rebuild with `yarn build-native` to re-enable the native backend.
   } catch {
     // The addon has not been built (or this platform/module format cannot load it).
   }
