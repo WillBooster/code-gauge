@@ -69,6 +69,8 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) ->
 struct CalleeCandidate<'a> {
     index: usize,
     parameter_count: usize,
+    min_parameter_count: usize,
+    flexible_arity: bool,
     scope_name: Option<&'a str>,
 }
 
@@ -93,6 +95,8 @@ fn map_candidates_by_name<'a>(
             .push(CalleeCandidate {
                 index: analysis.index,
                 parameter_count: analysis.parameter_count,
+                min_parameter_count: analysis.min_parameter_count,
+                flexible_arity: analysis.flexible_arity,
                 scope_name: analysis.scope_name.as_deref(),
             });
     }
@@ -140,14 +144,20 @@ fn resolve_call_site(
         CallReceiver::Other => candidates.iter().collect(),
     };
 
-    if pool.len() == 1 {
-        return pool.first().map(|candidate| candidate.index);
-    }
+    // Arity is always validated, even for a scope-unique candidate: a fixed-arity candidate is
+    // viable only on an exact argument-count match, one with varargs/rest/splat or defaults when
+    // the count covers its required parameters (see resolveCallSite in metrics.ts).
     let arity_matches: Vec<&&CalleeCandidate<'_>> = match site.argument_count {
         None => pool.iter().collect(),
         Some(argument_count) => pool
             .iter()
-            .filter(|candidate| candidate.parameter_count == argument_count)
+            .filter(|candidate| {
+                if candidate.flexible_arity {
+                    argument_count >= candidate.min_parameter_count
+                } else {
+                    candidate.parameter_count == argument_count
+                }
+            })
             .collect(),
     };
     if arity_matches.len() == 1 {

@@ -493,10 +493,18 @@ describe('measureCode: call graph', () => {
     expect(byName.get('numbered_params')).toMatchObject({ callCount: 3 }); // 2x map + bare _1 outside a block
     // Each `{ _1.name }` / `{ it.label }` block counts only its member send, not `_1`/`it` itself.
     expect(metrics.functions.filter((fn) => fn.nodeType === 'block').map((fn) => fn.callCount)).toEqual([1, 1]);
-    // `alias c a` operands are method-name references, not calls.
+    // `alias c a` and `undef gone` operands are method-name references, not calls.
     expect(byName.get('aliasing')).toMatchObject({ callCount: 1 }); // helper only
+    expect(byName.get('undefining')).toMatchObject({ callCount: 1 }); // helper only
     expect(byName.get('introspection')).toMatchObject({ callCount: 0 }); // defined?(helper) does not invoke
-    expect(byName.get('helper')).toMatchObject({ fanIn: 4 }); // run, the each block, rescue_binding, aliasing
+    // __FILE__/__LINE__/__ENCODING__ are pseudo-variables, not sends: only the three `puts` count.
+    expect(byName.get('pseudo_variables')).toMatchObject({ callCount: 3 });
+    // The quoted capture syntax (?'year') binds like (?<year>).
+    expect(byName.get('quoted_regex_binding')).toMatchObject({ callCount: 0 });
+    // A named capture binds at the END of the `=~` expression: the RHS `year` is still an unbound
+    // send (Ruby raises NameError there); the read on the next line is a bound local.
+    expect(byName.get('rhs_before_binding')).toMatchObject({ callCount: 1 });
+    expect(byName.get('helper')).toMatchObject({ fanIn: 5 }); // run, the each block, rescue_binding, aliasing, undefining
   });
 
   // Same-named nested classes under different outers must not collapse into one scope, which
@@ -514,6 +522,75 @@ describe('measureCode: call graph', () => {
       'struct A;\nstruct B;\nimpl A {\n  fn helper() {}\n  fn run() { Self::helper(); }\n}\nimpl B {\n  fn helper() {}\n  fn run() { Self::helper(); }\n}\n';
     const metrics = measureCode(code, { language: 'rust' });
     expect(metrics.callGraph.internalEdgeCount).toBe(2);
+  });
+
+  // Namespace ancestors must qualify class scopes, or same-named classes in different namespaces
+  // collapse into one scope and their same-arity self-calls become ambiguous and edgeless.
+  it('distinguishes same-named C++ classes in different namespaces', () => {
+    const code =
+      'namespace X {\nclass A {\n public:\n  void helper() {}\n  void run() { helper(); }\n};\n}\n' +
+      'namespace Y {\nclass A {\n public:\n  void helper() {}\n  void run() { helper(); }\n};\n}\n';
+    const metrics = measureCode(code, { language: 'cpp' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.functions.filter((fn) => fn.name === 'run').map((fn) => fn.fanOut)).toEqual([1, 1]);
+  });
+
+  it('matches C++ out-of-line members defined inside their namespace to the in-class scope', () => {
+    const code =
+      'namespace X {\nclass A {\n public:\n  void helper();\n  void run() { helper(); }\n};\nvoid A::helper() { run(); }\n}\n';
+    const metrics = measureCode(code, { language: 'cpp' });
+    // run -> helper and helper -> run: the out-of-line `A::helper` shares the `X::A` scope.
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.callGraph.recursiveFunctionCount).toBe(2);
+  });
+
+  it('distinguishes same-named Rust types in different inline modules', () => {
+    const code =
+      'mod x {\n  pub struct A;\n  impl A {\n    fn helper(&self) {}\n    fn run(&self) { self.helper(); }\n  }\n}\n' +
+      'mod y {\n  pub struct A;\n  impl A {\n    fn helper(&self) {}\n    fn run(&self) { self.helper(); }\n  }\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+  });
+
+  it('distinguishes two same-line anonymous classes', () => {
+    const code =
+      'class Outer {\n' +
+      '  Runnable a = new Runnable() { public void run() { helper(); } void helper() {} }; Runnable b = new Runnable() { public void run() { helper(); } void helper() {} };\n' +
+      '}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // Each anonymous class's run() resolves to ITS OWN helper; a shared per-line marker would make
+    // both ambiguous and edgeless.
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.functions.filter((fn) => fn.name === 'run').map((fn) => fn.fanOut)).toEqual([1, 1]);
+  });
+
+  // A variadic overload stays viable for any argument count covering its required parameters, so
+  // a call matching both a varargs and a fixed-arity candidate must stay unresolved.
+  it('leaves calls ambiguous between varargs and fixed-arity same-name methods unresolved', () => {
+    const code =
+      'class A {\n  void f(int... xs) {}\n}\nclass B {\n  void f(int x, int y) {}\n  void call(A a) { a.f(1, 2); }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(0);
+  });
+
+  it('validates arity even when the scope filter leaves a single candidate', () => {
+    const code =
+      'class A {\n  void helper(int x) {}\n  void run() { this.helper(1, 2, 3); }\n}\nclass B {\n  void helper(int x, int y) {}\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // this.helper(1, 2, 3) matches no overload of A; the scope-unique candidate must not win.
+    expect(metrics.callGraph.internalEdgeCount).toBe(0);
+  });
+
+  it('treats calls through the Go receiver variable as self and scopes them to the receiver type', () => {
+    const code =
+      'package main\n\ntype A struct{}\ntype B struct{}\n\nfunc (a A) helper() {}\nfunc (a A) run() { a.helper() }\nfunc (b B) helper() {}\n';
+    const metrics = measureCode(code, { language: 'go' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+    const run = metrics.functions.find((fn) => fn.name === 'run');
+    expect(run).toMatchObject({ fanOut: 1 });
+    // The edge lands on A.helper (line 6), not B.helper (line 8).
+    expect(metrics.functions.find((fn) => fn.startLine === 6)).toMatchObject({ fanIn: 1 });
+    expect(metrics.functions.find((fn) => fn.startLine === 8)).toMatchObject({ fanIn: 0 });
   });
 });
 
@@ -587,8 +664,9 @@ describe('measureCode: coupling and module structure', () => {
   it('treats capitalized Go top-level names as exported and counts them toward exportCount', () => {
     const metrics = measureCode(readFixture('visibility.go'), { language: 'go' });
 
-    // Limit + Counter + Widget + Widget.Describe + Shared = 5 capitalized top-level names.
-    expect(metrics.coupling.exportCount).toBe(5);
+    // Limit + Counter + Widget + Widget.Describe + Shared + Grouped (grouped `var ( ... )`) +
+    // Alias (`type Alias = string`) = 7 capitalized top-level names.
+    expect(metrics.coupling.exportCount).toBe(7);
     // `floor` shares Limit's const_spec, whose declaration keeps only the first name (pre-existing).
     expect(metrics.module.declarations).toEqual([
       { exported: true, name: 'Limit', startLine: 3 },
@@ -599,6 +677,10 @@ describe('measureCode: coupling and module structure', () => {
       { exported: false, name: 'helper.describe', startLine: 15 },
       { exported: true, name: 'Shared', startLine: 19 },
       { exported: false, name: 'internal', startLine: 23 },
+      { exported: true, name: 'Grouped', startLine: 28 },
+      { exported: false, name: 'grouped', startLine: 29 },
+      { exported: true, name: 'Alias', startLine: 32 },
+      { exported: false, name: 'hiddenAlias', startLine: 34 },
     ]);
   });
 });

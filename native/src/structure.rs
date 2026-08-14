@@ -737,6 +737,8 @@ fn is_top_level_declaration_node(node: Node<'_>) -> bool {
             | "type_alias_declaration"
             | "type_declaration"
             | "type_spec"
+            // Go `type Alias = int`
+            | "type_alias"
             | "const_spec"
             | "var_spec"
             | "variable_declarator"
@@ -1426,9 +1428,10 @@ fn is_exported_rust_visibility(node: Node<'_>) -> bool {
 
 /// Capitalized names a top-level Go declaration exports (`var A, b = ...` exports only `A`).
 fn count_go_exported_names(node: Node<'_>, code: &Source<'_>) -> u64 {
+    // `type Alias = int` parses as `type_alias`, not `type_spec`.
     if matches!(
         node.kind(),
-        "function_declaration" | "method_declaration" | "type_spec"
+        "function_declaration" | "method_declaration" | "type_spec" | "type_alias"
     ) {
         let name = node
             .child_by_field_name("name")
@@ -1447,8 +1450,13 @@ fn count_go_exported_names(node: Node<'_>, code: &Source<'_>) -> u64 {
     0
 }
 
-const GO_DECLARATION_WRAPPER_TYPES: &[&str] =
-    &["type_declaration", "const_declaration", "var_declaration"];
+// Grouped `var ( ... )` wraps its specs in an extra `var_spec_list` level.
+const GO_DECLARATION_WRAPPER_TYPES: &[&str] = &[
+    "type_declaration",
+    "const_declaration",
+    "var_declaration",
+    "var_spec_list",
+];
 
 /// Whether a Go spec/declaration sits at package level (possibly inside a grouped declaration).
 fn is_go_top_level_declaration(node: Node<'_>) -> bool {

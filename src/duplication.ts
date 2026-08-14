@@ -314,6 +314,11 @@ interface DuplicateCandidate {
 export interface CountedOccurrence {
   /** Matched token runs; more than one once gapped groups are merged. */
   segments: TokenSegment[];
+  /**
+   * Set on a retained group's occurrences that a partial gapped merge also paired into a merged
+   * group: their spans are counted there, so block counting must not count them again.
+   */
+  sharedWithMergedGroup?: boolean;
   /** Sum of segment token counts (the gap tokens are not matched content). */
   tokenCount: number;
   startTokenIndex: number;
@@ -1144,6 +1149,11 @@ function collectNearMissGroups(
       merged.sort(
         (left, right) => left.startTokenIndex - right.startTokenIndex || left.endTokenIndex - right.endTokenIndex
       );
+      // The rebuild consumed every fully-clustered group, so shared-span marks from earlier
+      // partial merges no longer point at a separate merged group; the rebuilt group counts alone.
+      for (const occurrence of merged) {
+        occurrence.sharedWithMergedGroup = undefined;
+      }
       reportedGroups[targetIndex] = merged;
       for (const sourceIndex of sourceIndexes) {
         reportedGroups[sourceIndex] = [];
@@ -1646,6 +1656,13 @@ export function mergeAdjacentGroups<T extends CountedOccurrence>(groups: T[][], 
         } else {
           groups[leftIndex] = result.merged;
         }
+        // A partial merge retains the not-fully-consumed group with ALL its occurrences (line
+        // coverage must not shrink, and a reported group must keep >= 2 occurrences), so its
+        // paired occurrences now also live inside the merged group's occurrences: mark them so
+        // duplicateBlockCount counts each token span once.
+        for (const occurrence of result.pairedRetained) {
+          occurrence.sharedWithMergedGroup = true;
+        }
         groups.sort(compareGroups);
         restart = true;
         break;
@@ -1669,6 +1686,8 @@ interface MergeResult<T> {
   /** Whether every occurrence of the respective input group was paired into the merge. */
   firstConsumed: boolean;
   secondConsumed: boolean;
+  /** The retained (not fully consumed) group's occurrences that were paired into the merge. */
+  pairedRetained: T[];
 }
 
 /**
@@ -1715,13 +1734,44 @@ function mergeGroups<T extends CountedOccurrence>(
   }
   const merged = pairs.map(([leading, trailing]) => ({
     ...leading,
+    // A merged occurrence is a fresh span combination; it never inherits shared-span marks.
+    sharedWithMergedGroup: undefined,
     segments: [...leading.segments, ...trailing.segments],
     tokenCount: leading.tokenCount + trailing.tokenCount,
     endTokenIndex: trailing.endTokenIndex,
     endIndex: trailing.endIndex,
     endLine: trailing.endLine,
   }));
-  return { merged, firstConsumed, secondConsumed };
+  const pairedRetained =
+    firstConsumed === secondConsumed ? [] : pairs.map(([leading, trailing]) => (firstConsumed ? trailing : leading));
+  return { merged, firstConsumed, secondConsumed, pairedRetained };
+}
+
+/**
+ * Redundant copies one group adds to duplicateBlockCount. Each redundant occurrence contributes
+ * one count per matched fragment, so merging a gapped clone's fragments into one group does not
+ * halve the count a `duplicateBlock` threshold sees: an edited two-fragment pair still counts 2,
+ * exactly as its unmerged fragments did. Occurrence shapes can differ within one group (a
+ * gap-merged exact pair plus an appended whole-block near-miss copy), so every occurrence's
+ * fragments are summed and one representative — the largest — is deducted, keeping the count
+ * independent of source order. Occurrences a partial gapped merge also paired into a merged group
+ * are skipped: their spans are already counted there, and such a retained group deducts no
+ * representative of its own — the merged group's representative already stands for the shared
+ * content — so no token span contributes to the count twice.
+ */
+export function countRedundantFragments(group: CountedOccurrence[]): number {
+  let fragmentCount = 0;
+  let maxFragmentCount = 0;
+  let hasSharedOccurrence = false;
+  for (const occurrence of group) {
+    if (occurrence.sharedWithMergedGroup) {
+      hasSharedOccurrence = true;
+      continue;
+    }
+    fragmentCount += occurrence.segments.length;
+    maxFragmentCount = Math.max(maxFragmentCount, occurrence.segments.length);
+  }
+  return hasSharedOccurrence ? fragmentCount : fragmentCount - maxFragmentCount;
 }
 
 function summarizeDuplicates(
@@ -1734,19 +1784,7 @@ function summarizeDuplicates(
   const duplicateBlockGroups: { startLine: number; endLine: number }[][] = [];
   const duplicatedLines = new Set<number>();
   for (const group of groups) {
-    // Each redundant occurrence contributes one count per matched fragment, so merging a gapped
-    // clone's fragments into one group does not halve the count a `duplicateBlock` threshold sees:
-    // an edited two-fragment pair still counts 2, exactly as its unmerged fragments did.
-    // Occurrence shapes can differ within one group (a gap-merged exact pair plus an appended
-    // whole-block near-miss copy), so every occurrence's fragments are summed and one
-    // representative — the largest — is deducted, keeping the count independent of source order.
-    let fragmentCount = 0;
-    let maxFragmentCount = 0;
-    for (const occurrence of group) {
-      fragmentCount += occurrence.segments.length;
-      maxFragmentCount = Math.max(maxFragmentCount, occurrence.segments.length);
-    }
-    duplicateBlockCount += fragmentCount - maxFragmentCount;
+    duplicateBlockCount += countRedundantFragments(group);
     for (const occurrence of group) {
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, occurrence.tokenCount);
       // Only CODE lines carrying segment tokens count: comments and blank gaps inside an

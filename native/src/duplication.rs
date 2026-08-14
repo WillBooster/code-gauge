@@ -1106,6 +1106,9 @@ fn dedupe_by_region(group: Vec<DuplicateCandidate>) -> Vec<DuplicateCandidate> {
 #[derive(Clone)]
 struct CountedOccurrence {
     segments: Vec<(usize, usize)>,
+    /// Set on a retained group's occurrences that a partial gapped merge also paired into a
+    /// merged group: their spans are counted there, so block counting must not count them again.
+    shared_with_merged_group: bool,
     /// Sum of segment token counts (the gap tokens are not matched content).
     token_count: usize,
     start_token_index: usize,
@@ -1122,6 +1125,7 @@ fn to_counted_groups(
         let mut occurrences: Vec<CountedOccurrence> = group
             .iter()
             .map(|candidate| CountedOccurrence {
+                shared_with_merged_group: false,
                 segments: vec![(candidate.start_token_index, candidate.end_token_index)],
                 token_count: candidate.token_count,
                 start_token_index: candidate.start_token_index,
@@ -1168,13 +1172,22 @@ fn merge_adjacent_groups(
                 } else {
                     (result.first_consumed, result.second_consumed)
                 };
+                // A partial merge retains the not-fully-consumed group with ALL its occurrences,
+                // so its paired occurrences now also live inside the merged group's occurrences:
+                // mark them so duplicate_block_count counts each token span once.
                 if left_consumed && right_consumed {
                     groups[left_index] = result.merged;
                     groups.remove(right_index);
                 } else if right_consumed {
                     groups[right_index] = result.merged;
+                    for &occurrence_index in &result.paired_retained_indexes {
+                        groups[left_index][occurrence_index].shared_with_merged_group = true;
+                    }
                 } else {
                     groups[left_index] = result.merged;
+                    for &occurrence_index in &result.paired_retained_indexes {
+                        groups[right_index][occurrence_index].shared_with_merged_group = true;
+                    }
                 }
                 groups.sort_by_key(|group| group_sort_key(group));
                 restart = true;
@@ -1197,6 +1210,8 @@ struct MergeResult {
     /// Whether every occurrence of the respective input group was paired into the merge.
     first_consumed: bool,
     second_consumed: bool,
+    /// Indexes (into the retained, not fully consumed group) of the occurrences that were paired.
+    paired_retained_indexes: Vec<usize>,
 }
 
 /// Pairs `second` occurrences with gap-preceding `first` occurrences, greedily in source order;
@@ -1232,12 +1247,21 @@ fn merge_groups(
     if pairs.len() < 2 || (!first_consumed && !second_consumed) {
         return None;
     }
+    let paired_retained_indexes: Vec<usize> = if first_consumed == second_consumed {
+        Vec::new()
+    } else if first_consumed {
+        pairs.iter().map(|&(_, trailing)| trailing).collect()
+    } else {
+        pairs.iter().map(|&(leading, _)| leading).collect()
+    };
     let merged = pairs
         .iter()
         .map(|&(leading_index, trailing_index)| {
             let leading = &first[leading_index];
             let trailing = &second[trailing_index];
             CountedOccurrence {
+                // A merged occurrence is a fresh span combination; it inherits no shared marks.
+                shared_with_merged_group: false,
                 segments: [leading.segments.clone(), trailing.segments.clone()].concat(),
                 token_count: leading.token_count + trailing.token_count,
                 start_token_index: leading.start_token_index,
@@ -1251,6 +1275,7 @@ fn merge_groups(
         merged,
         first_consumed,
         second_consumed,
+        paired_retained_indexes,
     })
 }
 
@@ -1370,6 +1395,7 @@ fn collect_near_miss_groups(
         members_by_root.entry(root).or_default().push(index);
     }
     let to_occurrence = |range: &TokenRange| CountedOccurrence {
+        shared_with_merged_group: false,
         segments: vec![(range.start_token_index, range.end_token_index)],
         token_count: range.end_token_index - range.start_token_index,
         start_token_index: range.start_token_index,
@@ -1470,6 +1496,11 @@ fn collect_near_miss_groups(
                 }
             }
             merged.sort_by_key(|occurrence| (occurrence.start_token_index, occurrence.end_token_index));
+            // The rebuild consumed every fully-clustered group, so shared-span marks from earlier
+            // partial merges no longer point at a separate merged group.
+            for occurrence in &mut merged {
+                occurrence.shared_with_merged_group = false;
+            }
             reported_groups[target_index] = merged;
             for &source_index in source_indexes {
                 reported_groups[source_index].clear();
@@ -1569,6 +1600,7 @@ fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrenc
         }
     }
     CountedOccurrence {
+        shared_with_merged_group: false,
         token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
         start_token_index: occurrences
             .iter()
@@ -1730,6 +1762,31 @@ fn lcs_length(a: &[i32], b: &[i32]) -> usize {
     v.iter().map(|word| word.count_ones() as usize).sum()
 }
 
+/// Redundant copies one group adds to duplicate_block_count; a faithful port of
+/// countRedundantFragments in duplication.ts. Fragment-weighted (merging must not halve what
+/// thresholds see) with the largest occurrence deducted as the representative; occurrences a
+/// partial gapped merge shared into a merged group are skipped — their spans are counted there,
+/// and the merged group's representative already stands for the shared content — so no token span
+/// contributes to the count twice.
+fn count_redundant_fragments(group: &[CountedOccurrence]) -> usize {
+    let mut fragment_count = 0;
+    let mut max_fragment_count = 0;
+    let mut has_shared_occurrence = false;
+    for occurrence in group {
+        if occurrence.shared_with_merged_group {
+            has_shared_occurrence = true;
+            continue;
+        }
+        fragment_count += occurrence.segments.len();
+        max_fragment_count = max_fragment_count.max(occurrence.segments.len());
+    }
+    if has_shared_occurrence {
+        fragment_count
+    } else {
+        fragment_count - max_fragment_count
+    }
+}
+
 fn summarize_duplicates(
     groups: &[Vec<CountedOccurrence>],
     code_line_numbers: &HashSet<usize>,
@@ -1740,17 +1797,7 @@ fn summarize_duplicates(
     let mut duplicate_block_groups: Vec<Vec<DuplicateBlockOccurrence>> = Vec::new();
     let mut duplicated_lines: HashSet<usize> = HashSet::new();
     for group in groups {
-        // Fragment-weighted like duplication.ts: merging must not halve what thresholds see.
-        // Occurrence shapes can differ within one group (a gap-merged exact pair plus an appended
-        // whole-block near-miss copy), so every occurrence's fragments are summed and the largest
-        // is deducted, keeping the count independent of source order.
-        let total_segments: usize = group.iter().map(|occurrence| occurrence.segments.len()).sum();
-        let max_segments = group
-            .iter()
-            .map(|occurrence| occurrence.segments.len())
-            .max()
-            .unwrap_or(0);
-        duplicate_block_count += total_segments - max_segments;
+        duplicate_block_count += count_redundant_fragments(group);
         for occurrence in group {
             max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
             // Only CODE lines carrying matched tokens count; the unmatched gap of a merged clone

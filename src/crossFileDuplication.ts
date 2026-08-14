@@ -2,6 +2,7 @@ import { selectMaximalGroups } from './duplicateSelection.js';
 import {
   buildLiteralCountPrefix,
   collectSequenceWindowCandidates,
+  countRedundantFragments,
   defaultDuplicationOptions,
   mergeAdjacentGroups,
   type CountedOccurrence,
@@ -122,7 +123,14 @@ function mergeGapAdjacentGroups(
   let offset = 0;
   for (const { tokens, candidates } of files) {
     tokenOffsets.push(offset);
-    const tokenCount = tokens?.length ?? Math.max(0, ...candidates.map((candidate) => candidate.endTokenIndex));
+    // Accumulated in a loop: spreading a project-scale candidate array as call arguments would
+    // overflow V8's argument limit (~124k) and crash on Node.
+    let tokenCount = tokens?.length ?? 0;
+    if (!tokens) {
+      for (const candidate of candidates) {
+        tokenCount = Math.max(tokenCount, candidate.endTokenIndex);
+      }
+    }
     offset += tokenCount + maxGapTokens + 1;
   }
   const occurrenceGroups = groups.map((group) =>
@@ -155,14 +163,9 @@ function summarize(groups: CrossFileOccurrence[][]): CrossFileDuplicationMetrics
   let duplicateBlockCount = 0;
   for (const group of groups) {
     // Mirrors within-file counting: each redundant occurrence contributes one count per matched
-    // fragment, so gapped merging consolidates the grouping without halving the count.
-    let fragmentCount = 0;
-    let maxFragmentCount = 0;
-    for (const occurrence of group) {
-      fragmentCount += occurrence.segments.length;
-      maxFragmentCount = Math.max(maxFragmentCount, occurrence.segments.length);
-    }
-    duplicateBlockCount += fragmentCount - maxFragmentCount;
+    // fragment, gapped merging consolidates the grouping without halving the count, and spans a
+    // partial merge shares between a retained group and the merged group count once.
+    duplicateBlockCount += countRedundantFragments(group);
     const occurrences = group
       .map(({ file, startLine, endLine }) => ({ file, startLine, endLine }))
       .toSorted((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);

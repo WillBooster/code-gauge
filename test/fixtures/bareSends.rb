@@ -72,3 +72,24 @@ end
 def introspection
   defined?(helper)
 end
+
+def pseudo_variables
+  puts __FILE__
+  puts __LINE__
+  puts __ENCODING__
+end
+
+def undefining
+  undef gone
+  helper
+end
+
+def quoted_regex_binding(text)
+  /(?'year'\d+)/ =~ text
+  year
+end
+
+def rhs_before_binding
+  /(?<year>\d+)/ =~ year
+  year
+end

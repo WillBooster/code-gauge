@@ -167,8 +167,10 @@ describe('duplication: partial gapped-clone merging', () => {
       .map((group) => group.length)
       .toSorted((left, right) => left - right);
     expect(groupSizes).toEqual([2, 3]);
-    // Merged: 2 occurrences x 2 fragments - 2; retained prefix: 3 occurrences - 1.
-    expect(metrics.duplication.duplicateBlockCount).toBe(4);
+    // Merged: 2 occurrences x 2 fragments - 2. The retained prefix group's two paired occurrences
+    // are already counted inside the merged group, so it adds only its standalone leftover (1);
+    // the total matches the unmerged count — no token span is counted twice.
+    expect(metrics.duplication.duplicateBlockCount).toBe(3);
     const mergedGroup = metrics.duplication.duplicateBlockGroups.find((group) => group.length === 2) ?? [];
     // Each merged occurrence spans a whole function body, gap included.
     expect((mergedGroup[0]?.endLine ?? 0) - (mergedGroup[0]?.startLine ?? 0)).toBeGreaterThan(15);

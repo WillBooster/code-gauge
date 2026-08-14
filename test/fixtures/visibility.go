@@ -23,3 +23,12 @@ func Shared() int {
 func internal() int {
 	return Shared()
 }
+
+var (
+	Grouped = 2
+	grouped = 3
+)
+
+type Alias = string
+
+type hiddenAlias = string
