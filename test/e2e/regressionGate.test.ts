@@ -250,22 +250,38 @@ function makeMetrics(functions: FunctionMetrics[], overrides: Partial<CodeMetric
   };
 }
 
-function makeSyntheticInput(baseMetrics: CodeMetrics, headMetrics: CodeMetrics): GateFileInput {
+function makeSyntheticInput(
+  baseMetrics: CodeMetrics,
+  headMetrics: CodeMetrics,
+  tokens?: { base?: Int32Array[]; head?: Int32Array[] }
+): GateFileInput {
   return {
     file: 'src/synthetic.ts',
     baseMetrics,
     headMetrics,
+    baseFunctionTokens: tokens?.base,
+    headFunctionTokens: tokens?.head,
     baseDuplicatedLineCount: 0,
     headDuplicatedLineCount: 0,
     duplicationPartners: [],
   };
 }
 
+function tokenRange(start: number, count: number): number[] {
+  return Array.from({ length: count }, (_, index) => start + index);
+}
+
+// 50% similar to tokenRange(1, 20): below the 70% match threshold (so the functions stay
+// unmatched) but above the 30% split-evidence threshold (so the file backstops arm).
+const splitFragmentTokens = Int32Array.from([...tokenRange(1, 10), ...tokenRange(101, 10)]);
+const originalTokens = Int32Array.from(tokenRange(1, 20));
+
 describe('file-level backstops (synthetic aggregates)', () => {
-  it('ratchets the file max cognitive complexity when base functions disappeared', () => {
+  it('ratchets the file max cognitive complexity when a removed function reappears split', () => {
     const input = makeSyntheticInput(
       makeMetrics([makeFunction('f', { cognitiveComplexity: 10 })]),
-      makeMetrics([makeFunction('g', { cognitiveComplexity: 14 }), makeFunction('h', { cognitiveComplexity: 2 })])
+      makeMetrics([makeFunction('g', { cognitiveComplexity: 14 }), makeFunction('h', { cognitiveComplexity: 2 })]),
+      { base: [originalTokens], head: [splitFragmentTokens, Int32Array.from(tokenRange(201, 20))] }
     );
     const result = evaluateRegressionGate([input], defaultGateOptions);
     expect(result.violations.map((violation) => [violation.gate, violation.metric])).toStrictEqual([
@@ -274,10 +290,11 @@ describe('file-level backstops (synthetic aggregates)', () => {
     expect(result.violations[0]).toMatchObject({ baseValue: 10, headValue: 14, allowedValue: 12 });
   });
 
-  it('ratchets the file NCSS when base functions disappeared and the file grew', () => {
+  it('ratchets the file NCSS when a removed function reappears split and the file grew', () => {
     const input = makeSyntheticInput(
       makeMetrics([makeFunction('f', { ncss: 30 })]),
-      makeMetrics([makeFunction('g', { ncss: 36 }), makeFunction('h', { ncss: 20 })])
+      makeMetrics([makeFunction('g', { ncss: 36 }), makeFunction('h', { ncss: 20 })]),
+      { base: [originalTokens], head: [splitFragmentTokens, Int32Array.from(tokenRange(201, 20))] }
     );
     const result = evaluateRegressionGate([input], defaultGateOptions);
     expect(result.violations.map((violation) => [violation.gate, violation.metric])).toStrictEqual([
@@ -295,6 +312,44 @@ describe('file-level backstops (synthetic aggregates)', () => {
       ])
     );
     expect(evaluateRegressionGate([input], defaultGateOptions).violations).toStrictEqual([]);
+  });
+
+  it('leaves an unrelated delete-plus-add change ungated by the backstops', () => {
+    // The removed helper shares nothing with the new function, so no identity was reset: the new
+    // code is judged by the new-code thresholds alone (which cognitive 8 passes).
+    const input = makeSyntheticInput(
+      makeMetrics([
+        makeFunction('alpha', { cognitiveComplexity: 1 }),
+        makeFunction('beta', { cognitiveComplexity: 1 }),
+      ]),
+      makeMetrics([
+        makeFunction('alpha', { cognitiveComplexity: 1 }),
+        makeFunction('fresh', { cognitiveComplexity: 8, ncss: 32 }),
+      ]),
+      {
+        base: [Int32Array.from(tokenRange(1, 8)), Int32Array.from(tokenRange(50, 8))],
+        head: [Int32Array.from(tokenRange(1, 8)), Int32Array.from(tokenRange(300, 30))],
+      }
+    );
+    expect(evaluateRegressionGate([input], defaultGateOptions).violations).toStrictEqual([]);
+  });
+
+  it('reports the file maximum even when a smaller cognitive violation exists elsewhere in the file', () => {
+    // f (10) is split-rewritten into h (14) while unrelated g worsens 1 -> 4: the g violation must
+    // not suppress the file-max backstop, whose maximum comes from h.
+    const input = makeSyntheticInput(
+      makeMetrics([makeFunction('f', { cognitiveComplexity: 10 }), makeFunction('g', { cognitiveComplexity: 1 })]),
+      makeMetrics([makeFunction('g', { cognitiveComplexity: 4 }), makeFunction('h', { cognitiveComplexity: 14 })]),
+      {
+        base: [originalTokens, Int32Array.from(tokenRange(500, 4))],
+        head: [Int32Array.from(tokenRange(500, 4)), splitFragmentTokens],
+      }
+    );
+    const result = evaluateRegressionGate([input], defaultGateOptions);
+    expect(result.violations.map((violation) => [violation.gate, violation.metric])).toStrictEqual([
+      ['function-regression', 'cognitive complexity'],
+      ['file-regression', 'file max cognitive complexity'],
+    ]);
   });
 
   it('does not restate a function-level cognitive violation as a file violation', () => {

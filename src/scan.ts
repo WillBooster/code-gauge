@@ -161,6 +161,30 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
   return { displayRoot: canonicalTarget, files, errors, warnings };
 }
 
+/**
+ * Measures an explicit list of repository-relative files (the diff gate's git-visible allowlist)
+ * instead of walking the directory tree, so ignored artifact directories are never parsed. Paths
+ * outside the scan scope (ignored/test directories, unsupported or test file names) are skipped
+ * with the same rules as the walk.
+ */
+export async function scanListedFiles(
+  rootDirectory: string,
+  relativePaths: Iterable<string>,
+  options: ScanOptions
+): Promise<ScanResult> {
+  const files: FileMetrics[] = [];
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const context = makeScanContext(options, files, errors, warnings, rootDirectory);
+  for (const relativePath of relativePaths) {
+    const language = isScannedPath(relativePath, options) ? getLanguage(relativePath, options) : undefined;
+    if (language) {
+      await measureFile(path.join(rootDirectory, relativePath), language, 'directory', context);
+    }
+  }
+  return { displayRoot: rootDirectory, files, errors, warnings };
+}
+
 function makeScanContext(
   options: ScanOptions,
   files: FileMetrics[],

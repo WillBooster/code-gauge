@@ -27,7 +27,7 @@ import {
   getLanguage,
   isScannedPath,
   resolveTarget,
-  scanTarget,
+  scanListedFiles,
   writeStderr,
   writeStdout,
   type FileMetrics,
@@ -90,21 +90,19 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const mergeBase = await resolveMergeBase(repoRoot, cliOptions.base);
   const changedFiles = await listChangedFiles(repoRoot, mergeBase);
 
-  // The whole repository is scanned at head: it provides the head metrics of changed files and
-  // the project-wide duplication universe, so copy-paste from unchanged code into changed files
-  // is caught. Only git-visible files (tracked or untracked non-ignored) participate: a local
-  // ignored artifact exists in neither the base commit nor CI, so letting it into the universes
-  // would skew duplication counts. Unchanged files are byte-identical at both revisions, so the
-  // base universe is the same scan with the changed files' contents swapped for their merge-base
-  // blobs.
-  const scan = await scanTarget(repoRoot, options);
-  if (scan.fatalError) {
-    throw new Error(scan.fatalError);
-  }
+  // Every git-visible file (tracked or untracked non-ignored) is measured at head: that provides
+  // the head metrics of changed files and the project-wide duplication universe, so copy-paste
+  // from unchanged code into changed files is caught. Scanning the explicit git list (instead of
+  // walking the tree) keeps ignored artifact directories from ever being parsed: they exist in
+  // neither the base commit nor CI, so they would only cost time and skew duplication counts.
+  // Unchanged files are byte-identical at both revisions, so the base universe is the same scan
+  // with the changed files' contents swapped for their merge-base blobs.
   const repositoryFiles = await listRepositoryFiles(repoRoot);
-  const scannedFiles: ScannedFile[] = scan.files
-    .map((file) => ({ relativePath: formatPath(file.file, scan.displayRoot), file }))
-    .filter(({ relativePath }) => repositoryFiles.has(relativePath));
+  const scan = await scanListedFiles(repoRoot, repositoryFiles, options);
+  const scannedFiles: ScannedFile[] = scan.files.map((file) => ({
+    relativePath: formatPath(file.file, scan.displayRoot),
+    file,
+  }));
 
   // Only failures affecting gateable changed files force exit 2: a broken symlink or unreadable
   // directory elsewhere in the repository (or an unsupported changed path) must not turn every
@@ -124,16 +122,23 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
     }
   }
 
-  const canonicalTarget = await canonicalizeTarget(resolvedTarget);
+  const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
   const prepared = await prepareChangedFiles(
     changedFiles,
     { repoRoot, mergeBase, canonicalTarget, options, scannedFiles },
     errors,
     warnings
   );
+  // A gate must not fail open on a mistyped target: a nonexistent path is only acceptable when it
+  // still matches changed files (e.g. a fully deleted directory).
+  if (!targetExists && !prepared.some((file) => file.gated)) {
+    throw new Error(`target "${target}" does not exist and matches no changed file`);
+  }
 
+  // Non-gated files (outside the target, or renamed out of scan scope) still feed function
+  // matching and the duplication universes; the evaluator reports nothing for them.
   const { baseCross, headCross } = measureDuplicationUniverses(prepared, scannedFiles, options);
-  const inputs = prepared.filter((file) => file.gated).map((file) => toGateInput(file, baseCross, headCross));
+  const inputs = prepared.map((file) => toGateInput(file, baseCross, headCross));
   const result = evaluateRegressionGate(inputs, gateOptions);
 
   if (cliOptions.json) {
@@ -150,11 +155,11 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
 }
 
 /** The target may not exist (e.g. only deleted files under it); fall back to the resolved path. */
-async function canonicalizeTarget(resolvedTarget: string): Promise<string> {
+async function canonicalizeTarget(resolvedTarget: string): Promise<{ canonicalTarget: string; targetExists: boolean }> {
   try {
-    return await realpath(resolvedTarget);
+    return { canonicalTarget: await realpath(resolvedTarget), targetExists: true };
   } catch {
-    return resolvedTarget;
+    return { canonicalTarget: resolvedTarget, targetExists: false };
   }
 }
 
@@ -190,49 +195,73 @@ async function prepareChangedFile(
   errors: string[],
   warnings: string[]
 ): Promise<PreparedFile | undefined> {
-  const displayFile = changed.status === 'deleted' ? (changed.basePath as string) : changed.headPath;
-  if (!isScannedPath(displayFile, context.options)) {
+  const headScannable = changed.status !== 'deleted' && isScannedPath(changed.headPath, context.options);
+  // A base path outside the scan scope (renamed from a test/ignored directory, or an unsupported
+  // extension) was never measurable code: its content gates as new code instead of ratcheting
+  // against a blob the scanner would not have measured.
+  const baseScannable = changed.basePath !== undefined && isScannedPath(changed.basePath, context.options);
+  if (!headScannable && !baseScannable) {
     return undefined;
   }
-  const language = getLanguage(displayFile, context.options) as LanguageName;
 
-  const headFile = changed.status === 'deleted' ? undefined : headByPath.get(changed.headPath);
-  if (changed.status !== 'deleted' && !headFile) {
-    // Changed but not scanned: the scan itself failed on it (already an error) or it fell to an
-    // ignore rule the path check cannot see. Either way there is nothing to gate.
+  const displayFile = changed.status === 'deleted' ? (changed.basePath as string) : changed.headPath;
+  const headFile = headScannable ? headByPath.get(changed.headPath) : undefined;
+  if (headScannable && !headFile) {
+    reportUnmeasuredChangedFile(changed.headPath, errors);
     return undefined;
   }
 
   const file: PreparedFile = {
     changed,
     displayFile,
-    gated: isWithinTarget(path.join(context.repoRoot, displayFile), context.canonicalTarget),
+    // A file whose head left the scan scope still contributes its base functions to matching and
+    // its base blob to the base universe, but nothing about it is gated or reported.
+    gated:
+      headScannable || changed.status === 'deleted'
+        ? isWithinTarget(path.join(context.repoRoot, displayFile), context.canonicalTarget)
+        : false,
     headFile,
   };
 
-  // A base path outside the scan scope (renamed from a test/ignored directory, or an unsupported
-  // extension) was never measurable code: its content gates as new code instead of ratcheting
-  // against a blob the scanner would not have measured.
-  const basePath =
-    changed.basePath !== undefined && isScannedPath(changed.basePath, context.options) ? changed.basePath : undefined;
-  if (basePath !== undefined && !(await measureBaseRevision(file, basePath, context, errors, warnings))) {
+  if (baseScannable && !(await measureBaseRevision(file, changed.basePath as string, context, errors, warnings))) {
     return undefined;
   }
 
   if (headFile) {
-    try {
-      const headContent = await readFile(headFile.file, 'utf8');
-      file.headFunctionTokens = collectFunctionTokenSequences(headContent, {
-        language,
-        duplication: context.options.duplication,
-      });
-    } catch (error) {
-      // Only rename re-matching degrades without token sequences; the head metrics still gate.
-      warnings.push(`${displayFile}: function token sequences unavailable: ${formatError(error)}`);
-    }
+    await collectHeadFunctionTokens(file, headFile, context, warnings);
   }
 
   return file;
+}
+
+/**
+ * The scan covers exactly the git-visible list, so a scannable changed path can only be missing
+ * after a measurement failure (already recorded as an error) or a silent exclusion (an alias of
+ * an already-visited file, or absence from the git list). Failing loudly keeps the gate from
+ * passing with the file unchecked.
+ */
+function reportUnmeasuredChangedFile(headPath: string, errors: string[]): void {
+  if (!errors.some((error) => error.startsWith(`${headPath}:`))) {
+    errors.push(`${headPath}: changed file was not measured`);
+  }
+}
+
+async function collectHeadFunctionTokens(
+  file: PreparedFile,
+  headFile: FileMetrics,
+  context: GateContext,
+  warnings: string[]
+): Promise<void> {
+  try {
+    const headContent = await readFile(headFile.file, 'utf8');
+    file.headFunctionTokens = collectFunctionTokenSequences(headContent, {
+      language: getLanguage(file.changed.headPath, context.options) as LanguageName,
+      duplication: context.options.duplication,
+    });
+  } catch (error) {
+    // Only rename re-matching degrades without token sequences; the head metrics still gate.
+    warnings.push(`${file.displayFile}: function token sequences unavailable: ${formatError(error)}`);
+  }
 }
 
 /**
@@ -322,6 +351,7 @@ function toGateInput(
         ? 0
         : countDuplicatedLines(file.headFile?.metrics, headCross, file.changed.headPath),
     duplicationPartners: collectPartners(headCross, file.changed.headPath),
+    gated: file.gated,
   };
 }
 
@@ -446,19 +476,21 @@ function printJsonReport(
     warnings,
   };
   if (cliOptions.full) {
-    report.files = inputs.map((input) => ({
-      file: input.file,
-      baseFunctionCount: input.baseMetrics?.functions.length ?? 0,
-      headFunctionCount: input.headMetrics?.functions.length ?? 0,
-      baseNcss: input.baseMetrics?.ncssCount ?? 0,
-      headNcss: input.headMetrics?.ncssCount ?? 0,
-      baseMaxCognitiveComplexity: input.baseMetrics?.maxCognitiveComplexity ?? 0,
-      headMaxCognitiveComplexity: input.headMetrics?.maxCognitiveComplexity ?? 0,
-      baseDuplicatedLineCount: input.baseDuplicatedLineCount,
-      headDuplicatedLineCount: input.headDuplicatedLineCount,
-      duplicationPartners: input.duplicationPartners,
-      functions: result.checkedFunctions.filter((fn) => fn.file === input.file),
-    }));
+    report.files = inputs
+      .filter((input) => input.gated !== false)
+      .map((input) => ({
+        file: input.file,
+        baseFunctionCount: input.baseMetrics?.functions.length ?? 0,
+        headFunctionCount: input.headMetrics?.functions.length ?? 0,
+        baseNcss: input.baseMetrics?.ncssCount ?? 0,
+        headNcss: input.headMetrics?.ncssCount ?? 0,
+        baseMaxCognitiveComplexity: input.baseMetrics?.maxCognitiveComplexity ?? 0,
+        headMaxCognitiveComplexity: input.headMetrics?.maxCognitiveComplexity ?? 0,
+        baseDuplicatedLineCount: input.baseDuplicatedLineCount,
+        headDuplicatedLineCount: input.headDuplicatedLineCount,
+        duplicationPartners: input.duplicationPartners,
+        functions: result.checkedFunctions.filter((fn) => fn.file === input.file),
+      }));
   }
   writeStdout(JSON.stringify(report, undefined, 2) + '\n');
 }

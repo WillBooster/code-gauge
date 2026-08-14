@@ -44,13 +44,13 @@ export const defaultGateOptions: GateOptions = {
   // nesting saturates (Peitek et al. 2021); 60 matches PMD's NcssCount method default.
   newFunction: { maxCognitiveComplexity: 15, maxNcss: 60, maxNestingDepth: 4 },
   // The per-metric allowances are calibrated to admit roughly the same edit: ~5 added statements
-  // (ncss 5 ~ depDegree 10 ~ Halstead volume 150; the volume allowance additionally scales with
-  // the base value, see ratchetMetrics), so one ratchet cannot block an addition the others
-  // deliberately allow.
+  // or one added branch (cognitive 2 ~ nesting 1 ~ ncss 5 ~ depDegree 10 ~ Halstead volume 150;
+  // the volume allowance additionally scales with the base value, see ratchetMetrics), so one
+  // ratchet cannot block an addition the others deliberately allow.
   tolerance: {
     cognitiveComplexity: 2,
     ncss: 5,
-    nestingDepth: 0,
+    nestingDepth: 1,
     depDegree: 10,
     halsteadVolume: 150,
     fileNcss: 20,
@@ -75,6 +75,11 @@ export interface GateFileInput {
   headDuplicatedLineCount: number;
   /** Other files sharing cross-file duplicates with this file at head, as remediation evidence. */
   duplicationPartners: string[];
+  /**
+   * false: the file only feeds function matching and the duplication universes (it lies outside
+   * the gated target directory); no violations are evaluated or reported for it. Default true.
+   */
+  gated?: boolean;
 }
 
 export interface GateViolation {
@@ -217,15 +222,25 @@ export function evaluateRegressionGate(files: GateFileInput[], options: GateOpti
   const matching = matchAllFunctions(files, options.matchSimilarityPercent);
   const violations: GateViolation[] = [];
   const checkedFunctions: CheckedFunctionReport[] = [];
+  let checkedPairCount = 0;
   let newFunctionCount = 0;
 
   for (const pair of matching.pairs) {
-    const file = (files[pair.headFileIndex] as GateFileInput).file;
-    violations.push(...checkRatchets(file, pair.base, pair.head, options.tolerance));
-    checkedFunctions.push(toFunctionReport(file, pair.head, pair.base));
+    const file = files[pair.headFileIndex] as GateFileInput;
+    if (file.gated === false) {
+      continue;
+    }
+    checkedPairCount += 1;
+    violations.push(...checkRatchets(file.file, pair.base, pair.head, options.tolerance));
+    checkedFunctions.push(toFunctionReport(file.file, pair.head, pair.base));
   }
 
+  let gatedFileCount = 0;
   for (const [fileIndex, file] of files.entries()) {
+    if (file.gated === false) {
+      continue;
+    }
+    gatedFileCount += 1;
     const headFunctions = file.headMetrics?.functions ?? [];
     const headMatched = matching.headMatched[fileIndex] as boolean[];
     for (const [functionIndex, fn] of headFunctions.entries()) {
@@ -236,14 +251,7 @@ export function evaluateRegressionGate(files: GateFileInput[], options: GateOpti
       violations.push(...checkNewFunction(file.file, fn, options.newFunction));
       checkedFunctions.push(toFunctionReport(file.file, fn));
     }
-    // Only a NAMED base function disappearing arms the backstops: split-gaming necessarily
-    // removes the named original, while anonymous lambdas get rewritten (and lose their fragile
-    // token identity) in everyday edits that reset nothing.
-    const baseFunctions = file.baseMetrics?.functions ?? [];
-    const removedFunctionCount = (matching.baseMatched[fileIndex] as boolean[]).filter(
-      (matched, functionIndex) => !matched && baseFunctions[functionIndex]?.name !== undefined
-    ).length;
-    violations.push(...checkFileBackstops(file, removedFunctionCount, violations, options));
+    violations.push(...checkFileBackstops(file, hasSplitEvidence(file, fileIndex, matching), violations, options));
     violations.push(...checkDuplication(file, options.tolerance));
   }
 
@@ -251,11 +259,52 @@ export function evaluateRegressionGate(files: GateFileInput[], options: GateOpti
   checkedFunctions.sort((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);
   return {
     violations,
-    checkedFileCount: files.length,
-    checkedFunctionCount: matching.pairs.length + newFunctionCount,
+    checkedFileCount: gatedFileCount,
+    checkedFunctionCount: checkedPairCount + newFunctionCount,
     newFunctionCount,
     checkedFunctions,
   };
+}
+
+/**
+ * Similarity below the match threshold but above this marks a removed function's content as
+ * reappearing inside unmatched new code — the signature of a split or evasive rewrite.
+ */
+const splitEvidenceSimilarityPercent = 30;
+
+/**
+ * Whether a removed NAMED base function's content partially reappears in an unmatched head
+ * function of the same file. This is what arms the file-level backstops: splitting a function to
+ * hide a worsening behind the (laxer) new-code thresholds leaves its fragments partially similar
+ * to the removed original, while an ordinary "delete a helper, add an unrelated function" change
+ * shares nothing and must not have its brand-new code re-judged against the file's old aggregates.
+ */
+function hasSplitEvidence(file: GateFileInput, fileIndex: number, matching: FunctionMatching): boolean {
+  const baseFunctions = file.baseMetrics?.functions ?? [];
+  const baseMatchedFlags = matching.baseMatched[fileIndex] as boolean[];
+  const headMatchedFlags = matching.headMatched[fileIndex] as boolean[];
+  const removedNamed = baseFunctions.flatMap((fn, index) =>
+    !baseMatchedFlags[index] && fn.name !== undefined ? [index] : []
+  );
+  if (removedNamed.length === 0) {
+    return false;
+  }
+  const unmatchedHead = (file.headMetrics?.functions ?? []).flatMap((_, index) =>
+    headMatchedFlags[index] ? [] : [index]
+  );
+  if (removedNamed.length * unmatchedHead.length > maxSimilarityComparisons) {
+    return false;
+  }
+  return removedNamed.some((baseIndex) =>
+    unmatchedHead.some(
+      (headIndex) =>
+        tokenSimilarityPercent(
+          file.baseFunctionTokens?.[baseIndex],
+          file.headFunctionTokens?.[headIndex],
+          splitEvidenceSimilarityPercent
+        ) >= splitEvidenceSimilarityPercent
+    )
+  );
 }
 
 function toFunctionReport(file: string, head: FunctionMetrics, base?: FunctionMetrics): CheckedFunctionReport {
@@ -540,34 +589,35 @@ function checkNewFunction(file: string, fn: FunctionMetrics, thresholds: NewFunc
 
 /**
  * Anti-gaming backstops: splitting a function resets its entity identity and could hide a
- * worsening behind the (laxer) new-code thresholds, so when base functions disappeared (i.e. some
- * entity identity was reset) the file-level aggregates ratchet too — the max cognitive complexity
- * per file and the file's total NCSS. Purely additive changes keep every base function matched
- * and stay ungated, so adding a legitimately complex new function does not trip the file gate.
- * The max-cognitive backstop is also skipped when a function-level cognitive violation was
- * already reported in this file, since it would only restate it.
+ * worsening behind the (laxer) new-code thresholds, so when a removed named function's content
+ * reappears in unmatched new code (see hasSplitEvidence) the file-level aggregates ratchet too —
+ * the max cognitive complexity per file and the file's total NCSS. Purely additive changes and
+ * unrelated remove-plus-add changes stay ungated. The max-cognitive backstop is also skipped when
+ * a function-level cognitive violation already reports the file's maximum, since it would only
+ * restate it.
  */
 function checkFileBackstops(
   file: GateFileInput,
-  removedFunctionCount: number,
+  splitEvidence: boolean,
   reportedViolations: GateViolation[],
   options: GateOptions
 ): GateViolation[] {
   const { baseMetrics, headMetrics } = file;
-  if (!baseMetrics || !headMetrics || removedFunctionCount === 0) {
+  if (!baseMetrics || !headMetrics || !splitEvidence) {
     return [];
   }
   const violations: GateViolation[] = [];
   const tolerances = options.tolerance;
 
-  const cognitiveAlreadyReported = reportedViolations.some(
+  const maximumAlreadyReported = reportedViolations.some(
     (violation) =>
       violation.file === file.file &&
       violation.metric === 'cognitive complexity' &&
-      (violation.gate === 'function-regression' || violation.gate === 'new-function')
+      (violation.gate === 'function-regression' || violation.gate === 'new-function') &&
+      violation.headValue === headMetrics.maxCognitiveComplexity
   );
   const allowedMaxCognitive = baseMetrics.maxCognitiveComplexity + tolerances.cognitiveComplexity;
-  if (!cognitiveAlreadyReported && headMetrics.maxCognitiveComplexity > allowedMaxCognitive) {
+  if (!maximumAlreadyReported && headMetrics.maxCognitiveComplexity > allowedMaxCognitive) {
     const worst = findMostComplexFunction(headMetrics.functions);
     const startLine = worst?.startLine ?? 1;
     const endLine = worst?.endLine ?? headMetrics.lines.total;

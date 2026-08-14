@@ -93,13 +93,21 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
 }
 
 /**
- * Repository-relative paths git considers part of the project: tracked files plus untracked
- * non-ignored ones. The diff gate restricts its duplication universes to these so local ignored
- * artifacts (build output, generated copies) cannot skew base/head duplication counts.
+ * Repository-relative paths git considers part of the project AND that exist in the working tree:
+ * tracked files (minus worktree deletions) plus untracked non-ignored ones. The diff gate scans
+ * exactly these, so local ignored artifacts (build output, generated copies) are neither measured
+ * nor allowed to skew the duplication universes.
  */
 export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>> {
-  const output = await runGit(repoRoot, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
-  return new Set(output.split('\0').filter((path) => path !== ''));
+  const [listed, deleted] = await Promise.all([
+    runGit(repoRoot, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']),
+    runGit(repoRoot, ['ls-files', '--deleted', '-z']),
+  ]);
+  const files = new Set(listed.split('\0').filter((path) => path !== ''));
+  for (const path of deleted.split('\0')) {
+    files.delete(path);
+  }
+  return files;
 }
 
 /** The file's content at the given commit; the path is repository-relative with forward slashes. */

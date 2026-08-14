@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -115,7 +115,7 @@ beforeAll(() => {
 
 afterEach(() => {
   runGit(['checkout', '-q', '--', '.'], repoDir);
-  runGit(['clean', '-fdq'], repoDir);
+  runGit(['clean', '-fdxq'], repoDir);
   writeFileSync(path.join(repoDir, 'code-gauge.config.json'), '{}\n');
 });
 
@@ -195,13 +195,29 @@ describe('code-gauge diff --base', () => {
     expect(result.stdout).toMatch(/^Regression gate passed/u);
   });
 
-  it('tolerates scan errors outside the change set but reports them as warnings', () => {
+  it('ignores unsupported artifacts like broken symlinks instead of failing the gate', () => {
     symlinkSync('/nonexistent-code-gauge-target', path.join(repoDir, 'src', 'broken.link'));
     writeFileSync(path.join(repoDir, 'src', 'calc.ts'), baseCalc + 'export const extra = 1;\n');
     const result = runCli(['diff', '--base', 'main'], repoDir);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/^Regression gate passed/u);
-    expect(result.stderr).toContain('broken.link');
+  });
+
+  it('fails with exit 2 (and no pass claim) when a changed file cannot be measured', () => {
+    // An unreadable file is reported as modified by git, so its measurement failure must fail the
+    // gate closed instead of printing a vacuous pass.
+    const lockedPath = path.join(repoDir, 'src', 'report.ts');
+    chmodSync(lockedPath, 0o000);
+    let result: CliResult;
+    try {
+      result = runCli(['diff', '--base', 'main'], repoDir);
+    } finally {
+      chmodSync(lockedPath, 0o644);
+    }
+    expect(result.status).toBe(2);
+    expect(result.stdout).toMatch(/^Regression gate could not complete/u);
+    expect(result.stdout).not.toContain('passed');
+    expect(result.stderr).toContain('report.ts');
   });
 
   it('excludes git-ignored artifacts from the duplication universes', () => {
@@ -252,6 +268,39 @@ describe('code-gauge diff --base', () => {
     const result = runCli(['diff', '--base', 'main'], repoDir);
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('max nesting depth 1 exceeds the new-code limit 0');
+  });
+
+  it('fails with exit 2 on a nonexistent target instead of passing vacuously', () => {
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
+    const result = runCli(['diff', '--base', 'main', 'src-typo'], repoDir);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('does not exist and matches no changed file');
+    expect(result.stdout).not.toContain('passed');
+  });
+
+  it('matches a function moved from outside the gated target', () => {
+    // decide (cognitive 24) moves from src/legacy.ts into src/api/: a target-scoped run must still
+    // see the base counterpart, or the metric-neutral move would hit the new-code thresholds.
+    writeFileSync(path.join(repoDir, 'src', 'legacy.ts'), complexNewFile);
+    runGit(['add', '-A'], repoDir);
+    runGit(['commit', '-q', '-m', 'add legacy'], repoDir);
+    mkdirSync(path.join(repoDir, 'src', 'api'), { recursive: true });
+    writeFileSync(path.join(repoDir, 'src', 'legacy.ts'), 'export const gone = 1;\n');
+    writeFileSync(path.join(repoDir, 'src', 'api', 'moved.ts'), complexNewFile);
+    const result = runCli(['diff', '--base', 'HEAD', 'src/api'], repoDir);
+    runGit(['reset', '-q', '--hard', 'HEAD~1'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed: 1 changed files, 1 functions checked/u);
+  });
+
+  it('allows one added nesting level within the default tolerance', () => {
+    writeFileSync(
+      path.join(repoDir, 'src', 'calc.ts'),
+      baseCalc.replace('    sum += item;', '    if (item > 0) {\n      sum += item;\n    }')
+    );
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed/u);
   });
 
   it('rejects unknown gate settings loudly', () => {

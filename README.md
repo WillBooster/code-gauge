@@ -93,8 +93,9 @@ normalized-token LCS similarity, so renames and moves don't appear as delete+add
   the whole project, so copy-paste from unchanged code into new files is caught) must not exceed
   the base revision's count.
 - **Anti-gaming backstops.** Splitting a function resets its entity identity and could hide a
-  worsening behind the laxer new-code thresholds, so when base functions disappear from a file its
-  max cognitive complexity and total NCSS ratchet too; purely additive changes stay ungated.
+  worsening behind the laxer new-code thresholds, so when a removed named function's content
+  partially reappears in unmatched new code the file's max cognitive complexity and total NCSS
+  ratchet too; purely additive changes and unrelated remove-plus-add changes stay ungated.
 
 `--full` additionally prints the base → head values of every checked function; `--json` prints a
 machine-readable report. The duplication flags and `--include-tests` work like the ranking command.
@@ -125,7 +126,7 @@ with `--config`). The following config reproduces every built-in default:
     "tolerance": {
       "cognitiveComplexity": 2,
       "ncss": 5,
-      "nestingDepth": 0,
+      "nestingDepth": 1,
       "depDegree": 10,
       "halsteadVolume": 150,
       "fileNcss": 20,
