@@ -44,6 +44,9 @@ pub struct FunctionMetrics {
     pub nesting_depth: u64,
     pub ncss: u64,
     pub parameter_count: usize,
+    /// Base counts of the function's whole subtree; derived floats are computed in TypeScript.
+    pub halstead_counts: HalsteadCounts,
+    pub dep_degree: u64,
 }
 
 #[derive(Serialize)]

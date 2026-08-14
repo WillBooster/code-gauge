@@ -4,6 +4,7 @@ use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
 mod complexity;
+mod dep_degree;
 mod duplication;
 mod functions;
 mod languages;
@@ -18,7 +19,7 @@ mod util;
 /// payload-shape change, together with `expectedPayloadVersion` in src/nativeMetrics.ts.
 #[napi]
 pub fn payload_version() -> u32 {
-    2
+    3
 }
 
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON.
