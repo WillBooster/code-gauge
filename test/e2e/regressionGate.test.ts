@@ -370,6 +370,31 @@ describe('file-level backstops (synthetic aggregates)', () => {
     ]);
   });
 
+  it('keeps an exact pairing even when a rewritten sibling prefers the same head', () => {
+    // Same-name overloads: run#0 is byte-identical at both revisions while run#1 was rewritten and
+    // happens to share more tokens with run#0's head than with its own rewrite. The untouched
+    // function must stay paired with its identical counterpart, not be displaced onto the rewrite.
+    const anonymousRun = (cognitiveComplexity: number): FunctionMetrics => makeFunction('run', { cognitiveComplexity });
+    const input = makeSyntheticInput(
+      makeMetrics([anonymousRun(1), anonymousRun(20)]),
+      makeMetrics([anonymousRun(1), anonymousRun(20)]),
+      {
+        base: [Int32Array.from(tokenRange(1, 10)), Int32Array.from([...tokenRange(1, 9), 900])],
+        head: [Int32Array.from(tokenRange(1, 10)), Int32Array.from([1, 2, 3, ...tokenRange(500, 7)])],
+      }
+    );
+    expect(evaluateRegressionGate([input], defaultGateOptions).violations).toStrictEqual([]);
+  });
+
+  it('falls back to positional pairing for same-name groups without token sequences', () => {
+    const namedRun = (cognitiveComplexity: number): FunctionMetrics => makeFunction('run', { cognitiveComplexity });
+    const input = makeSyntheticInput(
+      makeMetrics([namedRun(1), namedRun(20)]),
+      makeMetrics([namedRun(1), namedRun(20)])
+    );
+    expect(evaluateRegressionGate([input], defaultGateOptions).violations).toStrictEqual([]);
+  });
+
   it('assigns similarity matches with maximum cardinality instead of best-edge greed', () => {
     // Anonymous functions with similarities A-A 90, A-B 70, B-A 70, B-B 60: a greedy walk would
     // take A-A and strand B (a false new-function violation for the cognitive-20 head); the

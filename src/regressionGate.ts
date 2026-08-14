@@ -484,10 +484,13 @@ function pairAcrossChangeSet(
 }
 
 /**
- * Maximum-cardinality assignment over the above-threshold candidate edges (Kuhn's augmenting
- * paths). A greedy best-edge-first walk could strand a function whose only counterpart was taken
- * by a slightly better pair, falsely gating it as new code; cardinality comes first, and the
- * similarity-descending adjacency order biases the assignment toward high-similarity pairs.
+ * Assignment over the candidate edges: a greedy best-similarity-first seed, then Kuhn's
+ * augmenting paths for the bases the seed left unmatched. The seed keeps every exact/strong pair
+ * (and the positional order of all-tied groups) exactly as taken, because augmentation runs only
+ * when it increases cardinality — a function whose only counterpart was taken by a slightly
+ * better pair is then re-matched by rewiring instead of being falsely gated as new code. This
+ * reaches maximum cardinality (augmenting from a maximal matching does) without letting the
+ * augmentation displace pairs it never needed to touch.
  */
 function takeMaximumMatches(
   candidates: SimilarityCandidate[],
@@ -504,29 +507,12 @@ function takeMaximumMatches(
       left.headPosition - right.headPosition
   );
   const adjacency = new Map<number, number[]>();
-  for (const candidate of candidates) {
-    const edges = adjacency.get(candidate.basePosition) ?? [];
-    edges.push(candidate.headPosition);
-    adjacency.set(candidate.basePosition, edges);
-  }
-
   const baseOfHead = new Map<number, number>();
-  const tryAugment = (basePosition: number, visitedHeads: Set<number>): boolean => {
-    for (const headPosition of adjacency.get(basePosition) ?? []) {
-      if (visitedHeads.has(headPosition)) {
-        continue;
-      }
-      visitedHeads.add(headPosition);
-      const currentBase = baseOfHead.get(headPosition);
-      if (currentBase === undefined || tryAugment(currentBase, visitedHeads)) {
-        baseOfHead.set(headPosition, basePosition);
-        return true;
-      }
-    }
-    return false;
-  };
+  const matchedBases = seedGreedyMatches(candidates, adjacency, baseOfHead);
   for (const basePosition of [...adjacency.keys()].toSorted((left, right) => left - right)) {
-    tryAugment(basePosition, new Set());
+    if (!matchedBases.has(basePosition)) {
+      tryAugment(basePosition, adjacency, baseOfHead, new Set());
+    }
   }
 
   for (const [headPosition, basePosition] of [...baseOfHead.entries()].toSorted((left, right) => left[0] - right[0])) {
@@ -536,6 +522,46 @@ function takeMaximumMatches(
     (headMatched[head.fileIndex] as boolean[])[head.functionIndex] = true;
     pairs.push({ base: base.fn, head: head.fn, headFileIndex: head.fileIndex });
   }
+}
+
+/** Fills the adjacency lists and takes each best edge whose endpoints are both still free. */
+function seedGreedyMatches(
+  candidates: SimilarityCandidate[],
+  adjacency: Map<number, number[]>,
+  baseOfHead: Map<number, number>
+): Set<number> {
+  const matchedBases = new Set<number>();
+  for (const candidate of candidates) {
+    const edges = adjacency.get(candidate.basePosition) ?? [];
+    edges.push(candidate.headPosition);
+    adjacency.set(candidate.basePosition, edges);
+    if (!matchedBases.has(candidate.basePosition) && !baseOfHead.has(candidate.headPosition)) {
+      baseOfHead.set(candidate.headPosition, candidate.basePosition);
+      matchedBases.add(candidate.basePosition);
+    }
+  }
+  return matchedBases;
+}
+
+/** One Kuhn augmentation step: rewires existing matches only when that frees a head for `basePosition`. */
+function tryAugment(
+  basePosition: number,
+  adjacency: Map<number, number[]>,
+  baseOfHead: Map<number, number>,
+  visitedHeads: Set<number>
+): boolean {
+  for (const headPosition of adjacency.get(basePosition) ?? []) {
+    if (visitedHeads.has(headPosition)) {
+      continue;
+    }
+    visitedHeads.add(headPosition);
+    const currentBase = baseOfHead.get(headPosition);
+    if (currentBase === undefined || tryAugment(currentBase, adjacency, baseOfHead, visitedHeads)) {
+      baseOfHead.set(headPosition, basePosition);
+      return true;
+    }
+  }
+  return false;
 }
 
 /** Token-LCS similarity of two sequences relative to the longer one, in percent (0 when unusable). */
