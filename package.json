@@ -57,8 +57,7 @@
     "tree-sitter-python": "^0.21.0",
     "tree-sitter-ruby": "^0.21.0",
     "tree-sitter-rust": "^0.21.0",
-    "tree-sitter-typescript": "^0.21.2",
-    "typescript": "7.0.2"
+    "tree-sitter-typescript": "^0.21.2"
   },
   "devDependencies": {
     "@tsconfig/bun": "1.0.10",
@@ -77,6 +76,7 @@
     "oxlint-tsgolint": "7.0.2001",
     "semantic-release": "25.0.5",
     "sort-package-json": "4.0.0",
+    "typescript": "7.0.2",
     "vitest": "4.1.9"
   },
   "engines": {

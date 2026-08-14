@@ -3,194 +3,44 @@ import path from 'node:path';
 import { defaultDuplicationOptions } from './duplication.js';
 import type { DuplicationOptions } from './types.js';
 
-/** Risk thresholds; a finding is reported when the measured value is greater than or equal to the threshold. */
-export interface Thresholds {
-  fileLoc: number;
-  functionLoc: number;
-  componentLoc: number;
-  cognitive: number;
-  cyclomatic: number;
-  call: number;
-  import: number;
-  fanOut: number;
-  parameter: number;
-  duplicateBlock: number;
-  /** Percentage (1-100) of a file's code lines (comments/blanks excluded) covered by duplicates. */
-  duplicationRatioPercent: number;
-  /** Number of cross-file duplicate block groups a file participates in. */
-  crossFileDuplicateBlock: number;
-  transitiveDependency: number;
-  structuralBreadth: number;
-  structuralCoordination: number;
-  stateMutation: number;
-  duplicateSymbolGroup: number;
-}
-
-// Defaults tuned against blind human labels across five representative WillBooster/WillBoosterLab
-// repositories to maximize F1 (precision without sacrificing recall); see PR for the evaluation.
-export const defaultThresholds: Thresholds = {
-  fileLoc: 500,
-  functionLoc: 120,
-  componentLoc: 350,
-  cognitive: 25,
-  cyclomatic: 20,
-  call: 50,
-  import: 25,
-  fanOut: 10,
-  parameter: 8,
-  duplicateBlock: 2,
-  duplicationRatioPercent: 30,
-  crossFileDuplicateBlock: 2,
-  transitiveDependency: 25,
-  structuralBreadth: 8,
-  structuralCoordination: 300,
-  stateMutation: 50,
-  duplicateSymbolGroup: 5,
-};
-
-export const defaultMaxFindings = 20;
 export const configFileName = 'code-gauge.config.json';
-
-/**
- * Profile keys for per-language and React-specific threshold overrides. A file resolves its
- * thresholds as base → its language profile → the `react` profile (when it contains a component).
- */
-export const profileKeys = [
-  'javascript',
-  'jsx',
-  'typescript',
-  'tsx',
-  'python',
-  'go',
-  'rust',
-  'java',
-  'ruby',
-  'c',
-  'cpp',
-  'react',
-] as const;
-export type ProfileKey = (typeof profileKeys)[number];
-
-/**
- * Built-in per-profile overrides, calibrated because some metric distributions differ sharply by
- * language/type: Python treats every binding as an assignment (so `stateMutation` runs ~10x higher)
- * and coordinates more per file, while React files import roughly twice as many sources as pure TS.
- */
-export const defaultProfileThresholds: Partial<Record<ProfileKey, Partial<Thresholds>>> = {
-  python: { stateMutation: 90, structuralCoordination: 350 },
-  // Ruby scores state mutation via assignments like Python (bindings are assignments).
-  ruby: { stateMutation: 90, structuralCoordination: 350 },
-  react: { import: 30 },
-};
+export const defaultTopFileCount = 10;
 
 /** Shape of the JSON configuration file. All fields are optional and fall back to the built-in defaults. */
 export interface CodeGaugeConfig {
-  thresholds?: Partial<Thresholds>;
   /** Duplication detection settings applied to every measured file. */
   duplication?: DuplicationOptions;
-  /** Per-profile overrides keyed by language name or `react`; merged over `thresholds` for matching files. */
-  languageThresholds?: Partial<Record<ProfileKey, Partial<Thresholds>>>;
-  maxFindings?: number;
-  largestFiles?: number;
+  /** Refactoring-candidate ranking settings. */
+  rank?: { top?: number };
   includeTests?: boolean;
-  failOnRisk?: boolean;
   failOnError?: boolean;
-  tsconfig?: string;
+}
+
+/** Raw command-line options; every field is undefined unless the user passed the flag. */
+export interface CliOptions {
+  config?: string;
+  top?: number;
+  duplicationMinTokens?: number;
+  duplicationMaxGapTokens?: number;
+  duplicationMinSimilarityPercent?: number;
+  includeTests?: boolean;
+  failOnError?: boolean;
+  json?: boolean;
 }
 
 /** Options after merging command-line flags, the configuration file, and the built-in defaults. */
 export interface ResolvedOptions {
-  thresholds: Thresholds;
   duplication: Required<DuplicationOptions>;
-  profileThresholds: Partial<Record<ProfileKey, Partial<Thresholds>>>;
-  maxFindings: number;
-  /** Number of largest files by code LOC to list; 0 disables the section. */
-  largestFiles: number;
+  /** Number of top-ranked files to report. */
+  top: number;
   includeTests: boolean;
-  failOnRisk: boolean;
   failOnError: boolean;
   json: boolean;
-  tsconfig?: string;
 }
-
-/**
- * Resolves the thresholds for a single file: the base thresholds overlaid with its language profile
- * and then, when the file contains a React component, the `react` profile.
- */
-export function resolveThresholds(options: ResolvedOptions, language: string, isReact: boolean): Thresholds {
-  let thresholds = options.thresholds;
-  const languageOverride = options.profileThresholds[language as ProfileKey];
-  if (languageOverride) {
-    thresholds = { ...thresholds, ...languageOverride };
-  }
-  if (isReact && options.profileThresholds.react) {
-    thresholds = { ...thresholds, ...options.profileThresholds.react };
-  }
-  return thresholds;
-}
-
-/** Raw command-line options; every threshold is undefined unless the user passed the flag. */
-export interface CliOptions {
-  config?: string;
-  fileLocThreshold?: number;
-  functionLocThreshold?: number;
-  componentLocThreshold?: number;
-  cognitiveThreshold?: number;
-  cyclomaticThreshold?: number;
-  callThreshold?: number;
-  importThreshold?: number;
-  fanOutThreshold?: number;
-  parameterThreshold?: number;
-  duplicateBlockThreshold?: number;
-  duplicationRatioPercentThreshold?: number;
-  crossFileDuplicateBlockThreshold?: number;
-  duplicationMinTokens?: number;
-  duplicationMaxGapTokens?: number;
-  duplicationMinSimilarityPercent?: number;
-  transitiveDependencyThreshold?: number;
-  structuralBreadthThreshold?: number;
-  structuralCoordinationThreshold?: number;
-  stateMutationThreshold?: number;
-  duplicateSymbolGroupThreshold?: number;
-  maxFindings?: number;
-  largestFiles?: number;
-  includeTests?: boolean;
-  failOnRisk?: boolean;
-  failOnError?: boolean;
-  json?: boolean;
-  tsconfig?: string;
-}
-
-/** Maps each threshold to the matching command-line flag; the config key equals the flag without the `-threshold` suffix. */
-const thresholdCliKeys: Record<keyof Thresholds, keyof CliOptions> = {
-  fileLoc: 'fileLocThreshold',
-  functionLoc: 'functionLocThreshold',
-  componentLoc: 'componentLocThreshold',
-  cognitive: 'cognitiveThreshold',
-  cyclomatic: 'cyclomaticThreshold',
-  call: 'callThreshold',
-  import: 'importThreshold',
-  fanOut: 'fanOutThreshold',
-  parameter: 'parameterThreshold',
-  duplicateBlock: 'duplicateBlockThreshold',
-  duplicationRatioPercent: 'duplicationRatioPercentThreshold',
-  crossFileDuplicateBlock: 'crossFileDuplicateBlockThreshold',
-  transitiveDependency: 'transitiveDependencyThreshold',
-  structuralBreadth: 'structuralBreadthThreshold',
-  structuralCoordination: 'structuralCoordinationThreshold',
-  stateMutation: 'stateMutationThreshold',
-  duplicateSymbolGroup: 'duplicateSymbolGroupThreshold',
-};
 
 /** Resolves options with precedence command-line flags > configuration file > built-in defaults. */
 export function resolveOptions(cli: CliOptions, config: CodeGaugeConfig): ResolvedOptions {
-  const thresholds = { ...defaultThresholds };
-  for (const key of Object.keys(thresholds) as (keyof Thresholds)[]) {
-    thresholds[key] = (cli[thresholdCliKeys[key]] as number | undefined) ?? config.thresholds?.[key] ?? thresholds[key];
-  }
-
   return {
-    thresholds,
     duplication: {
       minTokens: cli.duplicationMinTokens ?? config.duplication?.minTokens ?? defaultDuplicationOptions.minTokens,
       maxGapTokens:
@@ -200,30 +50,11 @@ export function resolveOptions(cli: CliOptions, config: CodeGaugeConfig): Resolv
         config.duplication?.minSimilarityPercent ??
         defaultDuplicationOptions.minSimilarityPercent,
     },
-    profileThresholds: mergeProfileThresholds(defaultProfileThresholds, config.languageThresholds),
-    maxFindings: cli.maxFindings ?? config.maxFindings ?? defaultMaxFindings,
-    largestFiles: cli.largestFiles ?? config.largestFiles ?? 0,
+    top: cli.top ?? config.rank?.top ?? defaultTopFileCount,
     includeTests: cli.includeTests ?? config.includeTests ?? false,
-    failOnRisk: cli.failOnRisk ?? config.failOnRisk ?? false,
     failOnError: cli.failOnError ?? config.failOnError ?? false,
     json: cli.json ?? false,
-    tsconfig: cli.tsconfig ?? config.tsconfig,
   };
-}
-
-/** Merges user-supplied per-profile overrides on top of the built-in ones, per profile. */
-function mergeProfileThresholds(
-  defaults: Partial<Record<ProfileKey, Partial<Thresholds>>>,
-  overrides: Partial<Record<ProfileKey, Partial<Thresholds>>> | undefined
-): Partial<Record<ProfileKey, Partial<Thresholds>>> {
-  const merged: Partial<Record<ProfileKey, Partial<Thresholds>>> = {};
-  for (const key of profileKeys) {
-    const combined = { ...defaults[key], ...overrides?.[key] };
-    if (Object.keys(combined).length > 0) {
-      merged[key] = combined;
-    }
-  }
-  return merged;
 }
 
 /**
@@ -287,77 +118,43 @@ function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
   }
 
   const raw = value as Record<string, unknown>;
-  const config: CodeGaugeConfig = {};
-
-  if (raw.thresholds !== undefined) {
-    config.thresholds = validateThresholdObject(raw.thresholds, 'thresholds', configFile);
+  const knownKeys = new Set(['duplication', 'rank', 'includeTests', 'failOnError']);
+  for (const key of Object.keys(raw)) {
+    if (!knownKeys.has(key)) {
+      throw new Error(`Config file "${configFile}": unknown setting "${key}" (expected ${[...knownKeys].join(', ')}).`);
+    }
   }
+  const config: CodeGaugeConfig = {};
 
   if (raw.duplication !== undefined) {
     config.duplication = validateDuplicationObject(raw.duplication, configFile);
   }
 
-  if (raw.languageThresholds !== undefined) {
-    if (
-      typeof raw.languageThresholds !== 'object' ||
-      raw.languageThresholds === null ||
-      Array.isArray(raw.languageThresholds)
-    ) {
-      throw new Error(`Config file "${configFile}": "languageThresholds" must be an object.`);
-    }
-    const languageThresholds: Partial<Record<ProfileKey, Partial<Thresholds>>> = {};
-    for (const [profile, thresholds] of Object.entries(raw.languageThresholds as Record<string, unknown>)) {
-      if (!(profileKeys as readonly string[]).includes(profile)) {
-        throw new Error(
-          `Config file "${configFile}": unknown language profile "${profile}" (expected one of ${profileKeys.join(', ')}).`
-        );
-      }
-      languageThresholds[profile as ProfileKey] = validateThresholdObject(
-        thresholds,
-        `languageThresholds.${profile}`,
-        configFile
-      );
-    }
-    config.languageThresholds = languageThresholds;
+  if (raw.rank !== undefined) {
+    config.rank = validateRankObject(raw.rank, configFile);
   }
 
-  if (raw.maxFindings !== undefined) {
-    config.maxFindings = requirePositiveInteger(raw.maxFindings, 'maxFindings', configFile);
-  }
-  if (raw.largestFiles !== undefined) {
-    config.largestFiles = requirePositiveInteger(raw.largestFiles, 'largestFiles', configFile);
-  }
-  for (const key of ['includeTests', 'failOnRisk', 'failOnError'] as const) {
+  for (const key of ['includeTests', 'failOnError'] as const) {
     if (raw[key] !== undefined) {
       config[key] = requireBoolean(raw[key], key, configFile);
     }
-  }
-  if (raw.tsconfig !== undefined) {
-    if (typeof raw.tsconfig !== 'string') {
-      throw new TypeError(`Config file "${configFile}": "tsconfig" must be a string.`);
-    }
-    config.tsconfig = raw.tsconfig;
   }
 
   return config;
 }
 
-function validateThresholdObject(value: unknown, label: string, configFile: string): Partial<Thresholds> {
+function validateRankObject(value: unknown, configFile: string): { top?: number } {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    throw new Error(`Config file "${configFile}": "${label}" must be an object.`);
+    throw new Error(`Config file "${configFile}": "rank" must be an object.`);
   }
-  const thresholds: Partial<Thresholds> = {};
-  for (const [key, threshold] of Object.entries(value as Record<string, unknown>)) {
-    if (!(key in defaultThresholds)) {
-      throw new Error(`Config file "${configFile}": unknown threshold "${key}" in "${label}".`);
+  const rank: { top?: number } = {};
+  for (const [key, setting] of Object.entries(value as Record<string, unknown>)) {
+    if (key !== 'top') {
+      throw new Error(`Config file "${configFile}": unknown setting "${key}" in "rank" (expected top).`);
     }
-    const parsed = requirePositiveInteger(threshold, `${label}.${key}`, configFile);
-    if (key === 'duplicationRatioPercent' && parsed > 100) {
-      throw new Error(`Config file "${configFile}": "${label}.${key}" must be between 1 and 100.`);
-    }
-    thresholds[key as keyof Thresholds] = parsed;
+    rank.top = requirePositiveInteger(setting, 'rank.top', configFile);
   }
-  return thresholds;
+  return rank;
 }
 
 function validateDuplicationObject(value: unknown, configFile: string): DuplicationOptions {

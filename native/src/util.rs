@@ -133,12 +133,6 @@ pub fn is_js_whitespace(character: char) -> bool {
     )
 }
 
-pub fn strip_js_whitespace(text: &str) -> String {
-    text.chars()
-        .filter(|character| !is_js_whitespace(*character))
-        .collect()
-}
-
 /// JavaScript ToInt32 for integer-valued numbers (all hash arithmetic stays below 2^53).
 pub fn to_int32(value: i64) -> i32 {
     value as i32

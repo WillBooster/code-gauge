@@ -16,11 +16,7 @@ export {
 } from './metrics.js';
 export { isNativeBackendAvailable } from './nativeMetrics.js';
 export type {
-  CallGraphMetrics,
   CodeMetrics,
-  CohesionMetrics,
-  CouplingMetrics,
-  DeclarationMetrics,
   DuplicationMetrics,
   DuplicationOptions,
   FunctionMetrics,
@@ -29,8 +25,5 @@ export type {
   LanguageName,
   LineMetrics,
   MeasureOptions,
-  ModuleMetrics,
   SupportedLanguage,
-  SyntaxFeatureMetrics,
-  TypeComplexityMetrics,
 } from './types.js';

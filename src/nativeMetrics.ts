@@ -3,7 +3,7 @@ import { defaultLanguages } from './languages.js';
 import type { CodeMetrics, LanguageDefinition } from './types.js';
 
 /**
- * Halstead counts measured natively; the derived float metrics (volume, difficulty, ...) are
+ * Halstead counts measured natively; the derived float metrics (volume, effort, ...) are
  * computed in TypeScript because V8 and Rust disagree on the last bit of log/log2 results, and
  * the native backend must be bit-identical to the TypeScript one.
  */
@@ -14,7 +14,7 @@ export interface NativeHalsteadCounts {
   totalOperands: number;
 }
 
-export interface NativeMetricsPayload extends Omit<CodeMetrics, 'halstead' | 'maintainabilityIndex' | 'syntaxTree'> {
+export interface NativeMetricsPayload extends Omit<CodeMetrics, 'halstead' | 'syntaxTree'> {
   halsteadCounts: NativeHalsteadCounts;
   syntaxTree?: string;
 }

@@ -5,9 +5,9 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 // These tests exercise the built CLI (dist/cli.js) as a real subprocess so the whole pipeline is
-// covered: file/directory scanning, ignore rules, risk findings, thresholds, exit codes, JSON, and
-// duplicate-symbol reporting. The CLI is rebuilt in beforeAll so it always reflects the current
-// source, and every fixture is generated in an isolated temp directory to keep the run hermetic.
+// covered: file/directory scanning, ignore rules, ranking, exit codes, and JSON output. The CLI is
+// rebuilt in beforeAll so it always reflects the current source, and every fixture is generated in
+// an isolated temp directory to keep the run hermetic.
 
 const repoRoot = path.join(import.meta.dirname, '..', '..');
 const cliPath = path.join(repoRoot, 'dist', 'cli.js');
@@ -33,8 +33,8 @@ function runCli(args: string[]): CliResult {
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
-// The `evaluate` function has cyclomatic complexity 11 and cognitive complexity 18 (verified against
-// lizard 1.23.0), which makes it a reliable risk-finding trigger under lowered thresholds.
+// The `evaluate` function has cognitive complexity 18 (SonarSource model), which makes it the
+// clear worst function of the generated project, so it must rank first.
 const riskyFile = `export function evaluate(kind: string, value: number): number {
   if (kind === 'a') {
     if (value > 0) { return 1; }
@@ -68,17 +68,16 @@ beforeAll(() => {
 
   // The CLI searches ancestor directories for code-gauge.config.json and stops at the first hit, so
   // an empty config at the project root bounds the search: an ambient config above the OS temp
-  // directory can no longer change thresholds and break these assertions.
+  // directory can no longer change settings and break these assertions.
   writeFileSync(path.join(projectDir, 'code-gauge.config.json'), '{}\n');
   writeFileSync(path.join(projectDir, 'src', 'risky.ts'), riskyFile);
-  // Two files declaring `helper` exercise cross-file duplicate-symbol detection.
   writeFileSync(
     path.join(projectDir, 'src', 'a.ts'),
     'export function helper(x: number): number { return x + 1; }\nexport const A = 1;\n'
   );
   writeFileSync(
     path.join(projectDir, 'src', 'b.ts'),
-    'export function helper(x: number): number { return x - 1; }\nexport const B = 2;\n'
+    'export function other(x: number): number { return x - 1; }\nexport const B = 2;\n'
   );
   // Files under node_modules and test/ must be ignored by default.
   writeFileSync(path.join(projectDir, 'node_modules', 'pkg', 'index.ts'), 'export const ignored = 1;\n');
@@ -98,17 +97,16 @@ describe('cli: text report', () => {
     expect(status).toBe(0);
     // risky.ts, a.ts, b.ts — node_modules/pkg/index.ts and test/sample.test.ts are excluded.
     expect(stdout).toMatch(/^Measured 3 files under /m);
-    expect(stdout).toContain('max cyclomatic 11');
-    expect(stdout).toContain('No high-risk findings found.');
+    expect(stdout).toContain('Refactoring candidates (top 3):');
     expect(stdout).not.toContain('ignored');
   });
 
-  it('reports cross-file duplicate symbols', () => {
+  it('ranks the file with the worst function first, with its evidence', () => {
     const { stdout } = runCli([projectDir]);
 
-    expect(stdout).toContain('Duplicate symbols (top 1):');
-    // The CLI prints `path.relative()` output, which uses `\` on Windows and `/` elsewhere.
-    expect(stdout).toMatch(/helper: src[\\/]a\.ts:1, src[\\/]b\.ts:1/);
+    expect(stdout).toMatch(
+      /1\. src[\\/]risky\.ts \(score [\d.]+\): worst function evaluate \(L1-14\) cognitive 18, NCSS \d+, nesting \d+; file NCSS \d+/
+    );
   });
 
   it('includes test files with --include-tests', () => {
@@ -117,49 +115,15 @@ describe('cli: text report', () => {
     expect(stdout).toMatch(/^Measured 4 files under /m);
   });
 
-  it('lists the largest files with --largest-files', () => {
-    const { stdout } = runCli([projectDir, '--largest-files', '2']);
+  it('limits the list with --top', () => {
+    const { stdout } = runCli([projectDir, '--top', '1']);
 
-    expect(stdout).toContain('Largest files by code LOC (top 2):');
-    expect(stdout).toMatch(/src[\\/]risky\.ts \(code LOC \d+\)/);
-  });
-});
-
-describe('cli: risk findings and thresholds', () => {
-  it('reports the risky function under lowered thresholds', () => {
-    const { stdout } = runCli([
-      path.join(projectDir, 'src', 'risky.ts'),
-      '--cyclomatic-threshold',
-      '5',
-      '--cognitive-threshold',
-      '5',
-    ]);
-
-    expect(stdout).toContain('High-risk findings (top 1):');
-    expect(stdout).toMatch(
-      /risky\.ts:1-\d+ function evaluate \(cognitive complexity 18 >= 5, cyclomatic complexity 11 >= 5; cyclomatic 11, cognitive 18\)/
-    );
+    expect(stdout).toContain('Refactoring candidates (top 1 of 3):');
+    expect(stdout).not.toMatch(/^2\./m);
   });
 
-  it('exits with code 1 when --fail-on-risk finds a risk', () => {
-    const { status } = runCli([
-      path.join(projectDir, 'src', 'risky.ts'),
-      '--cyclomatic-threshold',
-      '5',
-      '--fail-on-risk',
-    ]);
-
-    expect(status).toBe(1);
-  });
-
-  it('exits with code 0 when --fail-on-risk finds no risk', () => {
-    const { status } = runCli([path.join(projectDir, 'src', 'a.ts'), '--fail-on-risk']);
-
-    expect(status).toBe(0);
-  });
-
-  it('rejects non-positive threshold arguments', () => {
-    const { status, stderr } = runCli([projectDir, '--cyclomatic-threshold', '0']);
+  it('rejects non-positive --top arguments', () => {
+    const { status, stderr } = runCli([projectDir, '--top', '0']);
 
     expect(status).not.toBe(0);
     expect(stderr).toContain('Expected a positive integer.');
@@ -168,45 +132,41 @@ describe('cli: risk findings and thresholds', () => {
 
 describe('cli: JSON output', () => {
   it('emits a structured JSON report', () => {
-    const { stdout } = runCli([path.join(projectDir, 'src', 'risky.ts'), '--json', '--cyclomatic-threshold', '5']);
+    const { stdout } = runCli([path.join(projectDir, 'src', 'risky.ts'), '--json']);
     const report = JSON.parse(stdout);
 
     expect(report.summary.fileCount).toBe(1);
     expect(report.summary.functionCount).toBe(1);
-    expect(report.summary.maxCyclomaticComplexity).toBe(11);
-    expect(report.thresholds.cyclomatic).toBe(5);
-    expect(report.totalRisks).toBe(1);
-    expect(report.risks[0]).toMatchObject({ kind: 'function', name: 'evaluate', language: 'typescript' });
-    expect(report.risks[0].triggers).toEqual(
-      expect.arrayContaining([expect.objectContaining({ metric: 'cyclomatic complexity', value: 11, threshold: 5 })])
-    );
+    expect(report.summary.maxCognitiveComplexity).toBe(18);
+    expect(report.totalRankedFiles).toBe(1);
+    expect(report.files[0]).toMatchObject({
+      file: 'risky.ts',
+      worstFunction: expect.objectContaining({ name: 'evaluate', cognitiveComplexity: 18 }),
+    });
     expect(report.errors).toEqual([]);
   });
 
-  it('honors --max-findings and marks truncation', () => {
-    const { stdout } = runCli([projectDir, '--json', '--cyclomatic-threshold', '1', '--max-findings', '1']);
+  it('honors --top and marks truncation', () => {
+    const { stdout } = runCli([projectDir, '--json', '--top', '1']);
     const report = JSON.parse(stdout);
 
-    expect(report.risks.length).toBe(1);
-    expect(report.totalRisks).toBeGreaterThan(1);
+    expect(report.files.length).toBe(1);
+    expect(report.totalRankedFiles).toBe(3);
     expect(report.truncated).toBe(true);
   });
 });
 
 describe('cli: configuration', () => {
-  it('auto-detects code-gauge.config.json next to the target', () => {
+  it('reads rank.top from an auto-detected code-gauge.config.json', () => {
     const configDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-config-'));
     try {
       writeFileSync(path.join(configDir, 'risky.ts'), riskyFile);
-      writeFileSync(
-        path.join(configDir, 'code-gauge.config.json'),
-        JSON.stringify({ thresholds: { cyclomatic: 5, cognitive: 5 } })
-      );
+      writeFileSync(path.join(configDir, 'other.ts'), 'export const other = 1;\n');
+      writeFileSync(path.join(configDir, 'code-gauge.config.json'), JSON.stringify({ rank: { top: 1 } }));
 
-      const { stdout } = runCli([path.join(configDir, 'risky.ts')]);
+      const { stdout } = runCli([configDir]);
 
-      expect(stdout).toContain('High-risk findings');
-      expect(stdout).toContain('function evaluate');
+      expect(stdout).toContain('Refactoring candidates (top 1 of 2):');
     } finally {
       rmSync(configDir, { recursive: true, force: true });
     }
@@ -214,17 +174,21 @@ describe('cli: configuration', () => {
 
   it('lets a CLI flag override a --config value', () => {
     const configFile = path.join(projectDir, 'alt.config.json');
-    writeFileSync(configFile, JSON.stringify({ thresholds: { cyclomatic: 99 } }));
+    writeFileSync(configFile, JSON.stringify({ rank: { top: 1 } }));
 
-    const { stdout } = runCli([
-      path.join(projectDir, 'src', 'risky.ts'),
-      '--config',
-      configFile,
-      '--cyclomatic-threshold',
-      '5',
-    ]);
+    const { stdout } = runCli([projectDir, '--config', configFile, '--top', '2']);
 
-    expect(stdout).toMatch(/cyclomatic >= 5/);
+    expect(stdout).toContain('Refactoring candidates (top 2 of 3):');
+  });
+
+  it('rejects unknown config settings', () => {
+    const configFile = path.join(projectDir, 'bad.config.json');
+    writeFileSync(configFile, JSON.stringify({ thresholds: { cognitive: 5 } }));
+
+    const { status, stderr } = runCli([projectDir, '--config', configFile]);
+
+    expect(status).toBe(1);
+    expect(stderr).toContain('thresholds');
   });
 });
 
@@ -288,34 +252,27 @@ describe('cli: cross-file duplication', () => {
     }
   });
 
-  it('reports cross-file duplicate blocks in the text report', () => {
+  it('reports duplicated lines and their cross-file partners in the ranking', () => {
     const { stdout } = runCli([cloneDir]);
 
-    expect(stdout).toContain('Cross-file duplicate blocks (top 1):');
-    expect(stdout).toMatch(/\d+ tokens: src[\\/]orders\.ts:1-12, src[\\/]refunds\.ts:1-12/);
-  });
-
-  it('flags participating files once the threshold is met', () => {
-    const { stdout } = runCli([cloneDir, '--cross-file-duplicate-block-threshold', '1']);
-
     expect(stdout).toMatch(
-      /src[\\/]orders\.ts file \(cross-file duplicated blocks 1 >= 1 \[1-12 ~ src[\\/]refunds\.ts:1-12\]/
+      /src[\\/]orders\.ts \(score [\d.]+\):.*duplicated lines 12 \(100%, shared with src[\\/]refunds\.ts\)/
     );
   });
 
-  it('exposes cross-file duplication in the JSON report', () => {
+  it('exposes per-file duplication details in the JSON report', () => {
     const { stdout } = runCli([cloneDir, '--json']);
     const report = JSON.parse(stdout);
 
-    expect(report.crossFileDuplication.duplicateBlockCount).toBe(1);
-    expect(report.crossFileDuplication.groups).toHaveLength(1);
-    expect(report.crossFileDuplication.groups[0].occurrences).toHaveLength(2);
+    const orders = report.files.find((file: { file: string }) => file.file.endsWith('orders.ts'));
+    expect(orders).toMatchObject({ duplicatedLineCount: 12, duplicatedLineRatio: 1 });
+    expect(orders.crossFilePartners).toHaveLength(1);
   });
 
   it('honors --duplication-min-tokens for cross-file detection', () => {
     const { stdout } = runCli([cloneDir, '--duplication-min-tokens', '500']);
 
-    expect(stdout).not.toContain('Cross-file duplicate blocks');
+    expect(stdout).not.toContain('duplicated lines');
   });
 
   it('rejects a negative --duplication-max-gap-tokens but accepts 0', () => {
@@ -341,7 +298,7 @@ describe('cli: cross-file duplication', () => {
 
       const { stdout } = runCli([configuredDir]);
 
-      expect(stdout).not.toContain('Cross-file duplicate blocks');
+      expect(stdout).not.toContain('duplicated lines');
     } finally {
       rmSync(configuredDir, { recursive: true, force: true });
     }

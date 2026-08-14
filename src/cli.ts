@@ -4,20 +4,10 @@ import { readdir, readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
-import { measureArchitecture, type ArchitectureFileMetrics, type ArchitectureMetrics } from './architectureMetrics.js';
-import {
-  type CliOptions,
-  configFileName,
-  loadConfig,
-  type ResolvedOptions,
-  resolveOptions,
-  resolveThresholds,
-  type Thresholds,
-} from './cliConfig.js';
+import { type CliOptions, configFileName, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
 import { collectCrossFileDuplicationFileData, measureCode } from './metrics.js';
-import { measureTypeScriptProject, type TypeScriptProjectMetrics } from './typescriptProject.js';
 import type { CodeMetrics, FunctionMetrics, LanguageName } from './types.js';
 
 interface FileMetrics {
@@ -27,31 +17,7 @@ interface FileMetrics {
   duplicationCandidates?: CrossFileDuplicationFileData;
 }
 
-interface RiskTrigger {
-  /** Optional location hint (e.g. duplicated block line ranges) appended to the printed trigger. */
-  detail?: string;
-  metric: string;
-  score: number;
-  threshold: number;
-  value: number;
-}
-
-interface RiskFinding {
-  cognitiveComplexity: number;
-  cyclomaticComplexity: number;
-  endLine?: number;
-  file: string;
-  kind: 'component' | 'file' | 'function';
-  language: LanguageName;
-  name?: string;
-  score: number;
-  startLine?: number;
-  triggers: RiskTrigger[];
-}
-
 interface ScanResult {
-  architecture?: ArchitectureMetrics;
-  componentFunctionKeys?: Set<string>;
   crossFileDuplication?: CrossFileDuplicationMetrics;
   displayRoot: string;
   errors: string[];
@@ -59,8 +25,36 @@ interface ScanResult {
   warnings: string[];
   fatalError?: string;
   files: FileMetrics[];
-  namedComponentFunctionKeys?: Set<string>;
-  typeScriptProject?: TypeScriptProjectMetrics;
+}
+
+/** The worst (highest-cognitive-complexity) function of a file, reported as the ranking evidence. */
+interface WorstFunction {
+  name: string;
+  startLine: number;
+  endLine: number;
+  cognitiveComplexity: number;
+  ncss: number;
+  nestingDepth: number;
+}
+
+/**
+ * One ranked refactoring candidate. The score is the sum of the file's repo-relative percentile
+ * ranks (each in [0, 1)) over three dimensions: worst-function cognitive complexity, duplicated
+ * lines (within-file and cross-file combined), and file NCSS. Ranking is relative to the scanned
+ * project, so no absolute threshold is involved.
+ */
+interface RankedFile {
+  file: string;
+  score: number;
+  worstFunction?: WorstFunction;
+  /** Distinct lines covered by within-file duplicate blocks or cross-file duplicate occurrences. */
+  duplicatedLineCount: number;
+  /** duplicatedLineCount / code lines (0 when the file has no code). */
+  duplicatedLineRatio: number;
+  /** Other files sharing cross-file duplicate blocks with this file (capped for display). */
+  crossFilePartners: string[];
+  ncss: number;
+  codeLines: number;
 }
 
 const languageByExtension = new Map<string, LanguageName>([
@@ -117,12 +111,8 @@ const ignoredDirectoryNames = new Set([
   'venv',
 ]);
 
-/** Caps the `Duplicate symbols` section so large repositories do not flood the report. */
-const maxDuplicateSymbolGroupLines = 10;
-/** Caps the `Cross-file duplicate blocks` section so large repositories do not flood the report. */
-const maxCrossFileDuplicateGroupLines = 10;
-/** Caps how many cross-file group locations a single risk finding repeats as detail. */
-const maxCrossFileDuplicateDetailGroups = 3;
+/** Caps how many cross-file partners a ranked file lists so the report stays scannable. */
+const maxCrossFilePartners = 3;
 
 const testDirectoryNames = new Set(['__tests__', 'test', 'tests', 'spec']);
 const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-](?:test|spec))\.[^.]+$/iu;
@@ -139,37 +129,10 @@ void main().catch((error: unknown) => {
 async function main(): Promise<void> {
   const program = new Command()
     .name('code-gauge')
-    .description('Measure code metrics and list high-risk findings.')
+    .description('Rank the files of a project by refactoring priority.')
     .argument('[target]', 'file or directory to measure', '.')
     .option('--config <path>', `config file to use instead of the auto-detected ${configFileName}`)
-    .option('--file-loc-threshold <number>', 'minimum file code LOC to report', parsePositiveInteger)
-    .option('--function-loc-threshold <number>', 'minimum function physical LOC span to report', parsePositiveInteger)
-    .option(
-      '--component-loc-threshold <number>',
-      'minimum React component physical LOC span to report',
-      parsePositiveInteger
-    )
-    .option('--cognitive-threshold <number>', 'minimum cognitive complexity to report', parsePositiveInteger)
-    .option('--cyclomatic-threshold <number>', 'minimum cyclomatic complexity to report', parsePositiveInteger)
-    .option('--call-threshold <number>', 'minimum function call count to report', parsePositiveInteger)
-    .option('--import-threshold <number>', 'minimum unique import sources per file to report', parsePositiveInteger)
-    .option('--fan-out-threshold <number>', 'minimum intra-file fan-out per function to report', parsePositiveInteger)
-    .option('--parameter-threshold <number>', 'minimum function parameter count to report', parsePositiveInteger)
-    .option(
-      '--duplicate-block-threshold <number>',
-      'minimum count of duplicated code blocks per file to report',
-      parsePositiveInteger
-    )
-    .option(
-      '--duplication-ratio-percent-threshold <number>',
-      'minimum percentage (1-100) of duplicated lines per file to report',
-      parsePercentInteger
-    )
-    .option(
-      '--cross-file-duplicate-block-threshold <number>',
-      'minimum count of cross-file duplicate block groups per file to report',
-      parsePositiveInteger
-    )
+    .option('--top <number>', 'number of top-ranked files to report (default: 10)', parsePositiveInteger)
     .option(
       '--duplication-min-tokens <number>',
       'minimum normalized token count for a duplicate region (default 40)',
@@ -185,34 +148,9 @@ async function main(): Promise<void> {
       'minimum similarity percent (1-100) for near-miss (Type-3) clone blocks; 100 reports exact matches only (default 70)',
       parsePercentInteger
     )
-    .option(
-      '--transitive-dependency-threshold <number>',
-      'minimum transitively reachable local files to report',
-      parsePositiveInteger
-    )
-    .option(
-      '--structural-breadth-threshold <number>',
-      'minimum structural breadth score to report',
-      parsePositiveInteger
-    )
-    .option(
-      '--structural-coordination-threshold <number>',
-      'minimum structural coordination score to report',
-      parsePositiveInteger
-    )
-    .option('--state-mutation-threshold <number>', 'minimum state mutation score to report', parsePositiveInteger)
-    .option(
-      '--duplicate-symbol-group-threshold <number>',
-      'minimum duplicate symbol group count to report',
-      parsePositiveInteger
-    )
-    .option('--max-findings <number>', 'maximum number of risk findings to print', parsePositiveInteger)
-    .option('--largest-files <number>', 'number of largest files by code LOC to list', parsePositiveInteger)
     .option('--include-tests', 'include test files and test directories')
-    .option('--tsconfig <path>', 'TypeScript project file to use instead of auto-detected tsconfig.json')
     .option('--json', 'print JSON output')
-    .option('--fail-on-error', 'exit with code 1 when files or directories cannot be scanned')
-    .option('--fail-on-risk', 'exit with code 1 when high-risk findings are found');
+    .option('--fail-on-error', 'exit with code 1 when files or directories cannot be scanned');
 
   program.action(async (target: string, cliOptions: CliOptions) => {
     const resolvedTarget = resolveTarget(target);
@@ -220,29 +158,15 @@ async function main(): Promise<void> {
     const options = resolveOptions(cliOptions, config);
     const result = await scanTarget(resolvedTarget, options);
     addCrossFileDuplication(result, options);
-    await addArchitectureMetrics(result);
-    await addTypeScriptProjectMetrics(result, options, resolvedTarget);
-    const risks = findRiskyFunctions(
-      result.files,
-      result.architecture,
-      result.crossFileDuplication,
-      result.componentFunctionKeys,
-      result.namedComponentFunctionKeys,
-      options,
-      result.displayRoot
-    );
+    const rankedFiles = rankFiles(result);
 
     if (options.json) {
-      printJson(result, risks, options);
+      printJson(result, rankedFiles, options);
     } else {
-      printTextReport(resolvedTarget, result, risks, options);
+      printTextReport(resolvedTarget, result, rankedFiles, options);
     }
 
-    if (
-      result.fatalError ||
-      (options.failOnError && result.errors.length > 0) ||
-      (options.failOnRisk && risks.length > 0)
-    ) {
+    if (result.fatalError || (options.failOnError && result.errors.length > 0)) {
       process.exitCode = 1;
     }
   });
@@ -330,96 +254,6 @@ function makeScanContext(
   rootDirectory: string
 ): ScanContext {
   return { options, files, errors, warnings, visitedDirectories: new Set(), visitedFiles: new Set(), rootDirectory };
-}
-
-async function addTypeScriptProjectMetrics(
-  result: ScanResult,
-  options: ResolvedOptions,
-  resolvedTarget: string
-): Promise<void> {
-  if (result.fatalError) {
-    return;
-  }
-  if (result.files.length === 0) {
-    return;
-  }
-
-  const explicitConfigFile = options.tsconfig;
-  const isExplicitConfig = explicitConfigFile !== undefined;
-  if (!isExplicitConfig && !result.files.some(({ file }) => isTypeScriptProjectCandidateFile(file))) {
-    return;
-  }
-
-  const configFile = explicitConfigFile ? resolveTarget(explicitConfigFile) : await findNearestTsconfig(resolvedTarget);
-  if (!configFile) {
-    return;
-  }
-
-  try {
-    result.typeScriptProject = await measureTypeScriptProject(
-      configFile,
-      result.files.map(({ file }) => file)
-    );
-    result.componentFunctionKeys = new Set(
-      result.typeScriptProject.reactComponentFunctions.map((component) =>
-        functionLocationKey(component.file, component.startLine, component.startColumn)
-      )
-    );
-    result.namedComponentFunctionKeys = new Set(
-      result.typeScriptProject.reactComponentFunctions.flatMap((component) =>
-        component.name ? [functionNameLocationKey(component.file, component.name, component.startLine)] : []
-      )
-    );
-  } catch (error) {
-    if (isExplicitConfig) {
-      result.errors.push(`${formatPath(configFile, result.displayRoot)}: ${formatError(error)}`);
-    }
-  }
-}
-
-function isTypeScriptProjectCandidateFile(file: string): boolean {
-  return ['.cjs', '.cts', '.js', '.jsx', '.mjs', '.mts', '.ts', '.tsx'].includes(path.extname(file));
-}
-
-async function findNearestTsconfig(target: string): Promise<string | undefined> {
-  const targetStat = await stat(target);
-  let currentDirectory = targetStat.isDirectory() ? target : path.dirname(target);
-  while (true) {
-    const configFile = path.join(currentDirectory, 'tsconfig.json');
-    if (await fileExists(configFile)) {
-      return configFile;
-    }
-
-    const parentDirectory = path.dirname(currentDirectory);
-    if (parentDirectory === currentDirectory) {
-      return undefined;
-    }
-    currentDirectory = parentDirectory;
-  }
-}
-
-async function fileExists(file: string): Promise<boolean> {
-  try {
-    const fileStat = await stat(file);
-    return fileStat.isFile();
-  } catch {
-    return false;
-  }
-}
-
-async function addArchitectureMetrics(result: ScanResult): Promise<void> {
-  if (result.fatalError) {
-    return;
-  }
-
-  try {
-    result.architecture = measureArchitecture(
-      result.files.map(({ file, metrics }) => ({ file, metrics })),
-      result.displayRoot
-    );
-  } catch (error) {
-    result.errors.push(`architecture metrics: ${formatError(error)}`);
-  }
 }
 
 async function scanDirectory(directory: string, context: ScanContext): Promise<void> {
@@ -569,282 +403,144 @@ function addCrossFileDuplication(result: ScanResult, options: ResolvedOptions): 
   result.crossFileDuplication = measureCrossFileDuplication(sourceFiles, options.duplication);
 }
 
-function findRiskyFunctions(
-  files: FileMetrics[],
-  architecture: ArchitectureMetrics | undefined,
-  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
-  componentFunctionKeys: Set<string> | undefined,
-  namedComponentFunctionKeys: Set<string> | undefined,
-  options: ResolvedOptions,
-  displayRoot: string
-): RiskFinding[] {
-  const architectureByFile = new Map(architecture?.files.map((file) => [file.file, file]));
-  const findings = files.flatMap(({ file, metrics }) => {
-    const isReactFile = metrics.functions.some(
-      (fn) => fn.returnsJsx || isReactComponent(file, fn, componentFunctionKeys, namedComponentFunctionKeys)
-    );
-    const thresholds = resolveThresholds(options, metrics.language, isReactFile);
-    return [
-      ...findRiskyFileMetrics(
-        file,
-        metrics,
-        architectureByFile.get(formatPath(file, displayRoot)),
-        crossFileDuplication,
-        thresholds,
-        displayRoot
-      ),
-      ...metrics.functions.flatMap((fn) =>
-        findRiskyFunctionMetrics(
-          file,
-          metrics.language,
-          fn,
-          thresholds,
-          displayRoot,
-          componentFunctionKeys,
-          namedComponentFunctionKeys
-        )
-      ),
-    ];
+function rankFiles(result: ScanResult): RankedFile[] {
+  const candidates = result.files.map(({ file, metrics }) => {
+    const formattedFile = formatPath(file, result.displayRoot);
+    const duplicatedLines = collectDuplicatedLines(metrics, result.crossFileDuplication, formattedFile);
+    return {
+      file: formattedFile,
+      worstFunction: findWorstFunction(metrics.functions),
+      duplicatedLineCount: duplicatedLines.size,
+      duplicatedLineRatio: metrics.lines.code === 0 ? 0 : duplicatedLines.size / metrics.lines.code,
+      crossFilePartners: findCrossFilePartners(result.crossFileDuplication, formattedFile),
+      ncss: metrics.ncssCount,
+      codeLines: metrics.lines.code,
+    };
   });
 
-  findings.sort(compareRiskFindings);
-  return findings;
+  const cognitivePercentile = makePercentile(candidates.map((c) => c.worstFunction?.cognitiveComplexity ?? 0));
+  const duplicationPercentile = makePercentile(candidates.map((c) => c.duplicatedLineCount));
+  const ncssPercentile = makePercentile(candidates.map((c) => c.ncss));
+
+  return candidates
+    .map((candidate) => ({
+      ...candidate,
+      score:
+        cognitivePercentile(candidate.worstFunction?.cognitiveComplexity ?? 0) +
+        duplicationPercentile(candidate.duplicatedLineCount) +
+        ncssPercentile(candidate.ncss),
+    }))
+    .toSorted(
+      (left, right) => right.score - left.score || right.ncss - left.ncss || left.file.localeCompare(right.file)
+    );
 }
 
-function findRiskyFileMetrics(
-  file: string,
-  metrics: CodeMetrics,
-  architecture: ArchitectureFileMetrics | undefined,
-  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
-  thresholds: Thresholds,
-  displayRoot: string
-): RiskFinding[] {
-  const triggers: RiskTrigger[] = [];
-  const formattedFile = formatPath(file, displayRoot);
-  addTrigger(triggers, 'file LOC', metrics.lines.code, thresholds.fileLoc);
-  addTrigger(triggers, 'import sources', metrics.coupling.importSourceCount, thresholds.import);
-  const duplicateBlockDetail = formatDuplicateBlockGroups(metrics.duplication.duplicateBlockGroups);
-  addTrigger(
-    triggers,
-    'duplicated blocks',
-    metrics.duplication.duplicateBlockCount,
-    thresholds.duplicateBlock,
-    duplicateBlockDetail
-  );
-  // Maximal-region selection deliberately compresses adjacent clones into few blocks, so severity
-  // must track line coverage, not the block count. Flooring compares like the unrounded ratio
-  // against the integer threshold (29.5% must not trigger a >= 30 threshold). The block ranges are
-  // repeated as detail because this trigger can fire alone, and a percentage without locations is
-  // not actionable.
-  addTrigger(
-    triggers,
-    'duplicated lines (%)',
-    Math.floor(metrics.duplication.duplicationRatio * 100),
-    thresholds.duplicationRatioPercent,
-    duplicateBlockDetail
-  );
-  if (crossFileDuplication) {
-    // Object.hasOwn: a file named like an Object.prototype member must not read an inherited value.
-    addTrigger(
-      triggers,
-      'cross-file duplicated blocks',
-      Object.hasOwn(crossFileDuplication.duplicateBlockGroupCountByFile, formattedFile)
-        ? (crossFileDuplication.duplicateBlockGroupCountByFile[formattedFile] ?? 0)
-        : 0,
-      thresholds.crossFileDuplicateBlock,
-      formatCrossFileDuplicateDetail(crossFileDuplication, formattedFile)
-    );
-  }
-  if (architecture) {
-    const hasFileScaleRisk = metrics.lines.code >= 100 || architecture.directLocalDependencyCount >= 8;
-    if (hasFileScaleRisk) {
-      addTrigger(
-        triggers,
-        'transitive local dependencies',
-        architecture.transitiveLocalDependencyCount,
-        thresholds.transitiveDependency
-      );
+/**
+ * Percentile rank within the scanned project: the fraction of files with a strictly smaller
+ * value, in [0, 1). Relative ranking needs no absolute threshold, which sidesteps the metric
+ * calibration problem entirely — the top of the list is worth refactoring first regardless of
+ * where any cutoff would sit.
+ */
+function makePercentile(values: number[]): (value: number) => number {
+  const sorted = values.toSorted((left, right) => left - right);
+  return (value: number) => {
+    let low = 0;
+    let high = sorted.length;
+    while (low < high) {
+      const middle = (low + high) >> 1;
+      if ((sorted[middle] as number) < value) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
     }
+    return sorted.length === 0 ? 0 : low / sorted.length;
+  };
+}
+
+/** The highest-cognitive-complexity function; NCSS breaks ties so the larger body is reported. */
+function findWorstFunction(functions: FunctionMetrics[]): WorstFunction | undefined {
+  let worst: FunctionMetrics | undefined;
+  for (const fn of functions) {
     if (
-      triggers.length > 0 ||
-      architecture.directLocalDependencyCount >= 8 ||
-      architecture.structuralCoordination.score >= thresholds.structuralCoordination
+      !worst ||
+      fn.cognitiveComplexity > worst.cognitiveComplexity ||
+      (fn.cognitiveComplexity === worst.cognitiveComplexity && fn.ncss > worst.ncss)
     ) {
-      addTrigger(triggers, 'structural breadth', architecture.structuralBreadthScore, thresholds.structuralBreadth);
+      worst = fn;
     }
-    addTrigger(
-      triggers,
-      'structural coordination',
-      architecture.structuralCoordination.score,
-      thresholds.structuralCoordination
-    );
-    addTrigger(
-      triggers,
-      'state mutation',
-      architecture.structuralCoordination.stateMutationScore,
-      thresholds.stateMutation
-    );
-    addTrigger(
-      triggers,
-      'duplicate symbol groups',
-      architecture.duplicateSymbolGroupCount,
-      thresholds.duplicateSymbolGroup
-    );
   }
-  if (triggers.length === 0) {
-    return [];
+  if (!worst) {
+    return undefined;
   }
-
-  return [
-    {
-      file: formattedFile,
-      language: metrics.language,
-      kind: 'file',
-      cyclomaticComplexity: metrics.cyclomaticComplexity,
-      cognitiveComplexity: metrics.cognitiveComplexity,
-      triggers,
-      score: maxTriggerScore(triggers),
-    },
-  ];
+  return {
+    name: worst.name ?? '<anonymous>',
+    startLine: worst.startLine,
+    endLine: worst.endLine,
+    cognitiveComplexity: worst.cognitiveComplexity,
+    ncss: worst.ncss,
+    nestingDepth: worst.nestingDepth,
+  };
 }
 
-function findRiskyFunctionMetrics(
-  file: string,
-  language: LanguageName,
-  fn: FunctionMetrics,
-  thresholds: Thresholds,
-  displayRoot: string,
-  componentFunctionKeys?: Set<string>,
-  namedComponentFunctionKeys?: Set<string>
-): RiskFinding[] {
-  const loc = fn.endLine - fn.startLine + 1;
-  const isComponent = isReactComponent(file, fn, componentFunctionKeys, namedComponentFunctionKeys);
-  const kind = isComponent ? 'component' : 'function';
-  const triggers: RiskTrigger[] = [];
-  addTrigger(triggers, 'cognitive complexity', fn.cognitiveComplexity, thresholds.cognitive);
-  addTrigger(triggers, 'cyclomatic complexity', fn.cyclomaticComplexity, thresholds.cyclomatic);
-  addTrigger(triggers, isComponent ? 'component LOC' : 'function LOC', loc, getLocThreshold(isComponent, thresholds));
-  addTrigger(triggers, 'function calls', fn.callCount, thresholds.call);
-  addTrigger(triggers, 'fan-out', fn.fanOut, thresholds.fanOut);
-  addTrigger(triggers, 'parameters', fn.parameterCount, thresholds.parameter);
-  if (triggers.length === 0) {
-    return [];
-  }
-
-  return [
-    {
-      file: formatPath(file, displayRoot),
-      language,
-      kind,
-      name: fn.name ?? '<anonymous>',
-      startLine: fn.startLine,
-      endLine: fn.endLine,
-      cyclomaticComplexity: fn.cyclomaticComplexity,
-      cognitiveComplexity: fn.cognitiveComplexity,
-      triggers,
-      score: maxTriggerScore(triggers),
-    },
-  ];
-}
-
-function addTrigger(triggers: RiskTrigger[], metric: string, value: number, threshold: number, detail?: string): void {
-  if (value < threshold) {
-    return;
-  }
-
-  triggers.push({ metric, value, threshold, score: value / threshold, detail });
-}
-
-/** Formats the cross-file groups a file participates in as `12-34 ~ b.ts:56-78; ...` (capped). */
-function formatCrossFileDuplicateDetail(
-  crossFileDuplication: CrossFileDuplicationMetrics,
+/**
+ * Distinct 1-based line numbers covered by within-file duplicate blocks or by this file's
+ * occurrences in cross-file duplicate groups. Both sources are line ranges, so combining them as
+ * a set union keeps overlapping regions from double-counting.
+ */
+function collectDuplicatedLines(
+  metrics: CodeMetrics,
+  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
   formattedFile: string
-): string | undefined {
-  const involved = crossFileDuplication.groups.filter((group) => group.files.includes(formattedFile));
-  if (involved.length === 0) {
-    return undefined;
+): Set<number> {
+  const lines = new Set<number>();
+  const addRange = (startLine: number, endLine: number): void => {
+    for (let line = startLine; line <= endLine; line += 1) {
+      lines.add(line);
+    }
+  };
+  for (const group of metrics.duplication.duplicateBlockGroups) {
+    for (const occurrence of group) {
+      addRange(occurrence.startLine, occurrence.endLine);
+    }
   }
-  const formatted = involved
-    .slice(0, maxCrossFileDuplicateDetailGroups)
-    .map((group) =>
-      group.occurrences
-        .map(({ file, startLine, endLine }) =>
-          file === formattedFile ? `${startLine}-${endLine}` : `${file}:${startLine}-${endLine}`
-        )
-        .join(' ~ ')
-    )
-    .join('; ');
-  const truncatedSuffix = involved.length > maxCrossFileDuplicateDetailGroups ? '; ...' : '';
-  return `${formatted}${truncatedSuffix}`;
-}
-
-/** Formats duplicated block groups as `12-34 ~ 56-78; 90-99 ~ 100-109` (copies joined by ` ~ `, groups by `; `). */
-function formatDuplicateBlockGroups(groups: { endLine: number; startLine: number }[][]): string | undefined {
-  if (groups.length === 0) {
-    return undefined;
+  for (const group of crossFileDuplication?.groups ?? []) {
+    for (const occurrence of group.occurrences) {
+      if (occurrence.file === formattedFile) {
+        addRange(occurrence.startLine, occurrence.endLine);
+      }
+    }
   }
-
-  return groups.map((group) => group.map(({ startLine, endLine }) => `${startLine}-${endLine}`).join(' ~ ')).join('; ');
+  return lines;
 }
 
-function isReactComponent(
-  file: string,
-  fn: FunctionMetrics,
-  componentFunctionKeys: Set<string> | undefined,
-  namedComponentFunctionKeys: Set<string> | undefined
-): boolean {
-  return (
-    componentFunctionKeys?.has(functionLocationKey(file, fn.startLine, fn.startColumn)) ||
-    (fn.name ? namedComponentFunctionKeys?.has(functionNameLocationKey(file, fn.name, fn.startLine)) : false) ||
-    false
-  );
+function findCrossFilePartners(
+  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
+  formattedFile: string
+): string[] {
+  const partners = new Set<string>();
+  for (const group of crossFileDuplication?.groups ?? []) {
+    if (!group.files.includes(formattedFile)) {
+      continue;
+    }
+    for (const file of group.files) {
+      if (file !== formattedFile) {
+        partners.add(file);
+      }
+    }
+  }
+  return [...partners].toSorted();
 }
 
-function getLocThreshold(isComponent: boolean, thresholds: Thresholds): number {
-  return isComponent ? thresholds.componentLoc : thresholds.functionLoc;
-}
-
-function functionLocationKey(file: string, startLine: number, startColumn: number): string {
-  return `${path.resolve(file)}:${startLine}:${startColumn}`;
-}
-
-function functionNameLocationKey(file: string, name: string, startLine: number): string {
-  return `${path.resolve(file)}:${name}:${startLine}`;
-}
-
-function maxTriggerScore(triggers: RiskTrigger[]): number {
-  return Math.max(...triggers.map((trigger) => trigger.score));
-}
-
-function compareRiskFindings(left: RiskFinding, right: RiskFinding): number {
-  return (
-    right.score - left.score ||
-    left.file.localeCompare(right.file) ||
-    (left.startLine ?? 0) - (right.startLine ?? 0) ||
-    (left.endLine ?? 0) - (right.endLine ?? 0) ||
-    left.kind.localeCompare(right.kind)
-  );
-}
-
-function printJson(result: ScanResult, risks: RiskFinding[], options: ResolvedOptions): void {
-  const summary = summarize(result.files);
-  const reportedRisks = risks.slice(0, options.maxFindings);
+function printJson(result: ScanResult, rankedFiles: RankedFile[], options: ResolvedOptions): void {
+  const reportedFiles = rankedFiles.slice(0, options.top);
   writeStdout(
     JSON.stringify(
       {
-        summary,
-        thresholds: options.thresholds,
-        profileThresholds: options.profileThresholds,
-        totalRisks: risks.length,
-        truncated: reportedRisks.length < risks.length,
-        largestFiles:
-          options.largestFiles > 0
-            ? findLargestFiles(result.files, options.largestFiles, result.displayRoot)
-            : undefined,
-        architecture: result.architecture,
-        crossFileDuplication: result.crossFileDuplication,
-        typeScriptProject: result.typeScriptProject,
-        risks: reportedRisks,
+        summary: summarize(result.files),
+        totalRankedFiles: rankedFiles.length,
+        truncated: reportedFiles.length < rankedFiles.length,
+        files: reportedFiles,
         errors: result.errors,
         warnings: result.warnings,
       },
@@ -854,83 +550,30 @@ function printJson(result: ScanResult, risks: RiskFinding[], options: ResolvedOp
   );
 }
 
-function printTextReport(target: string, result: ScanResult, risks: RiskFinding[], options: ResolvedOptions): void {
+function printTextReport(
+  target: string,
+  result: ScanResult,
+  rankedFiles: RankedFile[],
+  options: ResolvedOptions
+): void {
   if (result.fatalError) {
     writeStderr(`Error: ${result.fatalError}\n`);
     return;
   }
 
-  const { thresholds } = options;
   const summary = summarize(result.files);
-  writeStdout(`Measured ${summary.fileCount} files under ${target}\n`);
   writeStdout(
-    `LOC ${summary.linesOfCode}, NCSS ${summary.ncssCount}, functions ${summary.functionCount}, max cyclomatic ${summary.maxCyclomaticComplexity}, max cognitive ${summary.maxCognitiveComplexity}\n`
+    `Measured ${summary.fileCount} files under ${target} (code LOC ${summary.linesOfCode}, NCSS ${summary.ncssCount}, functions ${summary.functionCount})\n`
   );
-  writeStdout(
-    `Calls ${summary.callCount}, internal edges ${summary.internalEdgeCount}, max call depth ${summary.maxCallDepth}, imports ${summary.importSourceCount}, exports ${summary.exportCount}\n`
-  );
-  writeStdout(
-    `Type annotations ${summary.typeAnnotationCount}, type aliases ${summary.typeAliasCount}, interfaces ${summary.interfaceCount}, avg cohesion ${summary.averageFunctionIdentifierOverlap.toFixed(2)}\n`
-  );
-  if (result.architecture) {
-    writeStdout(`${formatArchitectureMetrics(result.architecture)}\n`);
-  }
-  if (result.typeScriptProject) {
-    writeStdout(`${formatTypeScriptProjectMetrics(result.typeScriptProject)}\n`);
-  }
-  writeStdout(
-    `Risk thresholds: file LOC >= ${thresholds.fileLoc}, function LOC >= ${thresholds.functionLoc}, component LOC >= ${thresholds.componentLoc}, cognitive >= ${thresholds.cognitive}, cyclomatic >= ${thresholds.cyclomatic}, calls >= ${thresholds.call}, imports >= ${thresholds.import}, fan-out >= ${thresholds.fanOut}, parameters >= ${thresholds.parameter}, duplicated blocks >= ${thresholds.duplicateBlock}, duplicated lines (%) >= ${thresholds.duplicationRatioPercent}, cross-file duplicated blocks >= ${thresholds.crossFileDuplicateBlock}\n`
-  );
-  const profileOverrides = formatProfileOverrides(options.profileThresholds);
-  if (profileOverrides) {
-    writeStdout(`Per-language overrides: ${profileOverrides}\n`);
-  }
 
-  if (risks.length === 0) {
-    writeStdout('No high-risk findings found.\n');
+  if (rankedFiles.length === 0) {
+    writeStdout('No measurable files found.\n');
   } else {
-    const reportedRisks = risks.slice(0, options.maxFindings);
-    const totalSuffix = risks.length > reportedRisks.length ? ` of ${risks.length}` : '';
-    writeStdout(`\nHigh-risk findings (top ${reportedRisks.length}${totalSuffix}):\n`);
-    for (const risk of reportedRisks) {
-      writeStdout(`${formatRiskLocation(risk)} ${formatRiskName(risk)} ${formatRiskMetrics(risk)}\n`);
-    }
-  }
-
-  const crossFileGroups = result.crossFileDuplication?.groups ?? [];
-  if (crossFileGroups.length > 0) {
-    const reportedGroups = crossFileGroups.slice(0, maxCrossFileDuplicateGroupLines);
-    const totalSuffix = crossFileGroups.length > reportedGroups.length ? ` of ${crossFileGroups.length}` : '';
-    writeStdout(`\nCross-file duplicate blocks (top ${reportedGroups.length}${totalSuffix}):\n`);
-    for (const group of reportedGroups) {
-      writeStdout(
-        `${group.tokenCount} tokens: ${group.occurrences
-          .map(({ file, startLine, endLine }) => `${file}:${startLine}-${endLine}`)
-          .join(', ')}\n`
-      );
-    }
-  }
-
-  const duplicateSymbolGroups = result.architecture?.duplicateSymbolGroups ?? [];
-  if (duplicateSymbolGroups.length > 0) {
-    const reportedGroups = duplicateSymbolGroups
-      .toSorted((left, right) => right.files.length - left.files.length || left.name.localeCompare(right.name))
-      .slice(0, maxDuplicateSymbolGroupLines);
-    const totalSuffix =
-      duplicateSymbolGroups.length > reportedGroups.length ? ` of ${duplicateSymbolGroups.length}` : '';
-    writeStdout(`\nDuplicate symbols (top ${reportedGroups.length}${totalSuffix}):\n`);
-    for (const group of reportedGroups) {
-      writeStdout(
-        `${group.name}: ${group.declarations.map((declaration) => `${declaration.file}:${declaration.line}`).join(', ')}\n`
-      );
-    }
-  }
-
-  if (options.largestFiles > 0) {
-    const largestFiles = findLargestFiles(result.files, options.largestFiles, result.displayRoot);
-    writeStdout(`\nLargest files by code LOC (top ${largestFiles.length}):\n`);
-    for (const { file, codeLoc } of largestFiles) {
-      writeStdout(`${file} (code LOC ${codeLoc})\n`);
+    const reportedFiles = rankedFiles.slice(0, options.top);
+    const totalSuffix = rankedFiles.length > reportedFiles.length ? ` of ${rankedFiles.length}` : '';
+    writeStdout(`\nRefactoring candidates (top ${reportedFiles.length}${totalSuffix}):\n`);
+    for (const [index, ranked] of reportedFiles.entries()) {
+      writeStdout(`${index + 1}. ${formatRankedFile(ranked)}\n`);
     }
   }
 
@@ -955,62 +598,26 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
   }
 }
 
-function findLargestFiles(
-  files: FileMetrics[],
-  count: number,
-  displayRoot: string
-): { file: string; codeLoc: number }[] {
-  return files
-    .map(({ file, metrics }) => ({ file: formatPath(file, displayRoot), codeLoc: metrics.lines.code }))
-    .toSorted((left, right) => right.codeLoc - left.codeLoc || left.file.localeCompare(right.file))
-    .slice(0, count);
-}
-
-function formatProfileOverrides(profileThresholds: ResolvedOptions['profileThresholds']): string {
-  return Object.entries(profileThresholds)
-    .map(
-      ([profile, overrides]) =>
-        `${profile} { ${Object.entries(overrides)
-          .map(([metric, value]) => `${metric} ${value}`)
-          .join(', ')} }`
-    )
-    .join('; ');
-}
-
-function formatRiskLocation(risk: RiskFinding): string {
-  return risk.startLine === undefined || risk.endLine === undefined
-    ? risk.file
-    : `${risk.file}:${risk.startLine}-${risk.endLine}`;
-}
-
-function formatRiskName(risk: RiskFinding): string {
-  return risk.name ? `${risk.kind} ${risk.name}` : risk.kind;
-}
-
-function formatRiskMetrics(risk: RiskFinding): string {
-  const triggerText = risk.triggers
-    .map(
-      (trigger) =>
-        `${trigger.metric} ${formatMetricValue(trigger.value)} >= ${formatMetricValue(trigger.threshold)}${trigger.detail ? ` [${trigger.detail}]` : ''}`
-    )
-    .join(', ');
-  return `(${triggerText}; cyclomatic ${risk.cyclomaticComplexity}, cognitive ${risk.cognitiveComplexity})`;
-}
-
-function formatMetricValue(value: number): string {
-  return Number.isInteger(value) ? String(value) : value.toFixed(2);
-}
-
-function formatArchitectureMetrics(metrics: ArchitectureMetrics): string {
-  const maxStateMutationScore = Math.max(
-    0,
-    ...metrics.files.map((file) => file.structuralCoordination.stateMutationScore)
-  );
-  return `Architecture max reachable files ${metrics.maxTransitiveLocalDependencyCount}, max structural breadth ${metrics.maxStructuralBreadthScore}, max structural coordination ${metrics.maxStructuralCoordinationScore}, max state mutation ${maxStateMutationScore}, duplicate symbol groups ${metrics.duplicateSymbolGroups.length}`;
-}
-
-function formatTypeScriptProjectMetrics(metrics: TypeScriptProjectMetrics): string {
-  return `TypeScript project root files ${metrics.rootFileCount}, measured roots ${metrics.measuredRootFileCount}, semantic diagnostics ${metrics.semanticDiagnosticCount}, resolved calls ${metrics.resolvedCallExpressionCount}/${metrics.callExpressionCount} (${(metrics.resolvedCallExpressionRatio * 100).toFixed(1)}%)`;
+/** One ranked file as a single line: the location, the evidence, and where the duplication points. */
+function formatRankedFile(ranked: RankedFile): string {
+  const reasons: string[] = [];
+  if (ranked.worstFunction) {
+    const fn = ranked.worstFunction;
+    reasons.push(
+      `worst function ${fn.name} (L${fn.startLine}-${fn.endLine}) cognitive ${fn.cognitiveComplexity}, NCSS ${fn.ncss}, nesting ${fn.nestingDepth}`
+    );
+  }
+  if (ranked.duplicatedLineCount > 0) {
+    const partnersSuffix =
+      ranked.crossFilePartners.length > 0
+        ? `, shared with ${ranked.crossFilePartners.slice(0, maxCrossFilePartners).join(', ')}${ranked.crossFilePartners.length > maxCrossFilePartners ? ', ...' : ''}`
+        : '';
+    reasons.push(
+      `duplicated lines ${ranked.duplicatedLineCount} (${Math.round(ranked.duplicatedLineRatio * 100)}%${partnersSuffix})`
+    );
+  }
+  reasons.push(`file NCSS ${ranked.ncss}`);
+  return `${ranked.file} (score ${ranked.score.toFixed(2)}): ${reasons.join('; ')}`;
 }
 
 function summarize(files: FileMetrics[]): {
@@ -1018,79 +625,21 @@ function summarize(files: FileMetrics[]): {
   functionCount: number;
   linesOfCode: number;
   maxCognitiveComplexity: number;
-  maxCyclomaticComplexity: number;
   ncssCount: number;
-  callCount: number;
-  internalEdgeCount: number;
-  maxCallDepth: number;
-  importSourceCount: number;
-  relativeImportCount: number;
-  externalImportCount: number;
-  exportCount: number;
-  averageFunctionIdentifierOverlap: number;
-  typeAnnotationCount: number;
-  typeAliasCount: number;
-  interfaceCount: number;
-  genericParameterCount: number;
 } {
   let functionCount = 0;
   let linesOfCode = 0;
-  let maxCyclomaticComplexity = 0;
   let maxCognitiveComplexity = 0;
   let ncssCount = 0;
-  let callCount = 0;
-  let internalEdgeCount = 0;
-  let maxCallDepth = 0;
-  let importSourceCount = 0;
-  let relativeImportCount = 0;
-  let externalImportCount = 0;
-  let exportCount = 0;
-  let cohesionTotal = 0;
-  let typeAnnotationCount = 0;
-  let typeAliasCount = 0;
-  let interfaceCount = 0;
-  let genericParameterCount = 0;
 
   for (const file of files) {
-    functionCount += file.metrics.functionCount;
+    functionCount += file.metrics.functions.length;
     linesOfCode += file.metrics.lines.code;
-    maxCyclomaticComplexity = Math.max(maxCyclomaticComplexity, file.metrics.maxCyclomaticComplexity);
     maxCognitiveComplexity = Math.max(maxCognitiveComplexity, file.metrics.maxCognitiveComplexity);
     ncssCount += file.metrics.ncssCount;
-    callCount += file.metrics.callGraph.callCount;
-    internalEdgeCount += file.metrics.callGraph.internalEdgeCount;
-    maxCallDepth = Math.max(maxCallDepth, file.metrics.callGraph.maxCallDepth);
-    importSourceCount += file.metrics.coupling.importSourceCount;
-    relativeImportCount += file.metrics.coupling.relativeImportCount;
-    externalImportCount += file.metrics.coupling.externalImportCount;
-    exportCount += file.metrics.coupling.exportCount;
-    cohesionTotal += file.metrics.cohesion.averageFunctionIdentifierOverlap;
-    typeAnnotationCount += file.metrics.typeComplexity.typeAnnotationCount;
-    typeAliasCount += file.metrics.typeComplexity.typeAliasCount;
-    interfaceCount += file.metrics.typeComplexity.interfaceCount;
-    genericParameterCount += file.metrics.typeComplexity.genericParameterCount;
   }
 
-  return {
-    fileCount: files.length,
-    functionCount,
-    linesOfCode,
-    maxCyclomaticComplexity,
-    maxCognitiveComplexity,
-    ncssCount,
-    callCount,
-    internalEdgeCount,
-    maxCallDepth,
-    importSourceCount,
-    relativeImportCount,
-    externalImportCount,
-    exportCount,
-    averageFunctionIdentifierOverlap: files.length === 0 ? 0 : cohesionTotal / files.length,
-    typeAnnotationCount,
-    typeAliasCount,
-    interfaceCount,
-    genericParameterCount,
-  };
+  return { fileCount: files.length, functionCount, linesOfCode, maxCognitiveComplexity, ncssCount };
 }
 
 function shouldSkipDirectory(name: string, options: ResolvedOptions): boolean {

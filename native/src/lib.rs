@@ -3,21 +3,18 @@
 use napi::bindgen_prelude::*;
 use napi_derive::napi;
 
-mod callgraph;
 mod complexity;
 mod duplication;
-mod features;
 mod functions;
 mod languages;
 mod measure;
 mod ncss;
-mod structure;
 mod types;
 mod util;
 
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON.
-/// The TypeScript wrapper derives the remaining float metrics (Halstead volume/difficulty/...,
-/// maintainability index) so results are bit-identical to the TypeScript backend.
+/// The TypeScript wrapper derives the remaining float metrics (Halstead volume/effort/...) so
+/// results are bit-identical to the TypeScript backend.
 #[napi]
 pub fn measure_code_native(
     code: String,
