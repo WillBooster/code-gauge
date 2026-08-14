@@ -53,14 +53,8 @@ const riskyFile = `export function evaluate(kind: string, value: number): number
 
 let projectDir: string;
 
+// The CLI itself is built once for every worker by test/helpers/globalSetup.ts.
 beforeAll(() => {
-  const build = spawnSync('bun', ['run', 'build'], { cwd: repoRoot, encoding: 'utf8', timeout: 100_000 });
-  if (build.status !== 0) {
-    throw new Error(
-      `Failed to build the CLI before running E2E tests:\n${build.error?.message ?? ''}\n${build.stdout}\n${build.stderr}`
-    );
-  }
-
   projectDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-cli-'));
   mkdirSync(path.join(projectDir, 'src'), { recursive: true });
   mkdirSync(path.join(projectDir, 'node_modules', 'pkg'), { recursive: true });

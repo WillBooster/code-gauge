@@ -1406,7 +1406,7 @@ function countSharedNgrams(ngramSets: Set<number>[]): Map<number, number> {
  * Only the length is needed (similarity is a ratio), and LCS length is algorithm-independent, so
  * the native backend may use a different word size and still agree bit-for-bit.
  */
-function lcsLength(a: Int32Array, b: Int32Array): number {
+export function lcsLength(a: Int32Array, b: Int32Array): number {
   const wordCount = (a.length + 31) >>> 5;
   const positionMasks = new Map<number, Uint32Array>();
   for (const [index, symbol] of a.entries()) {
@@ -1571,7 +1571,7 @@ function fingerprintHashPair(
 }
 
 /** djb2-style hash; XOR keeps the value in signed 32-bit range, which is fine for a grouping key. */
-function hashText(text: string): number {
+export function hashText(text: string): number {
   let hash = 5381;
   for (let index = 0; index < text.length; index += 1) {
     // oxlint-disable-next-line unicorn/prefer-code-point -- djb2 hashes UTF-16 code units; codePointAt would hash surrogate pairs twice (full code point, then the lone low surrogate).

@@ -1,31 +1,23 @@
 #!/usr/bin/env node
 
-import { readdir, readFile, realpath, stat } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { Command, InvalidArgumentError } from 'commander';
 import { type CliOptions, configFileName, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
-import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
-import type { CrossFileDuplicationFileData } from './duplication.js';
-import { collectCrossFileDuplicationFileData, measureCode } from './metrics.js';
-import type { CodeMetrics, FunctionMetrics, LanguageName } from './types.js';
-
-interface FileMetrics {
-  file: string;
-  metrics: CodeMetrics;
-  /** Cross-file duplicate candidates and token/statement data, collected only for directory scans. */
-  duplicationCandidates?: CrossFileDuplicationFileData;
-}
-
-interface ScanResult {
-  crossFileDuplication?: CrossFileDuplicationMetrics;
-  displayRoot: string;
-  errors: string[];
-  /** Non-fatal degradations (e.g. cross-file candidates unavailable); the file is still measured. */
-  warnings: string[];
-  fatalError?: string;
-  files: FileMetrics[];
-}
+import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
+import { runDiffCommand, type DiffCliOptions } from './diffCommand.js';
+import {
+  addCrossFileDuplication,
+  collectDuplicatedLineNumbers,
+  configSearchDirectory,
+  formatError,
+  formatPath,
+  resolveTarget,
+  scanTarget,
+  writeStderr,
+  writeStdout,
+  type FileMetrics,
+  type ScanResult,
+} from './scan.js';
+import type { FunctionMetrics } from './types.js';
 
 /** The worst (highest-cognitive-complexity) function of a file, reported as the ranking evidence. */
 interface WorstFunction {
@@ -57,68 +49,8 @@ interface RankedFile {
   codeLines: number;
 }
 
-const languageByExtension = new Map<string, LanguageName>([
-  ['.c', 'c'],
-  ['.c++', 'cpp'],
-  ['.cc', 'cpp'],
-  ['.cjs', 'javascript'],
-  ['.cp', 'cpp'],
-  ['.cpp', 'cpp'],
-  ['.tcc', 'cpp'],
-  ['.cts', 'typescript'],
-  ['.cxx', 'cpp'],
-  ['.go', 'go'],
-  // Headers may be C or C++; the C++ grammar parses both.
-  ['.h', 'cpp'],
-  ['.hh', 'cpp'],
-  ['.hpp', 'cpp'],
-  ['.hxx', 'cpp'],
-  ['.java', 'java'],
-  ['.js', 'javascript'],
-  ['.jsx', 'jsx'],
-  ['.mjs', 'javascript'],
-  ['.mts', 'typescript'],
-  ['.py', 'python'],
-  ['.rb', 'ruby'],
-  ['.rs', 'rust'],
-  ['.ts', 'typescript'],
-  ['.tsx', 'tsx'],
-]);
-
-const ignoredDirectoryNames = new Set([
-  '.agents',
-  '.claude',
-  '.cursor',
-  '.git',
-  '.next',
-  '.playwright-cli',
-  '.tox',
-  '.tmp',
-  '.turbo',
-  '.venv',
-  '.yarn',
-  '__fixtures__',
-  '__generated__',
-  '__pycache__',
-  'coverage',
-  'dist',
-  'fixtures',
-  'generated',
-  'node_modules',
-  'target',
-  'test-fixtures',
-  'vendor',
-  'venv',
-]);
-
 /** Caps how many cross-file partners a ranked file lists so the report stays scannable. */
 const maxCrossFilePartners = 3;
-
-const testDirectoryNames = new Set(['__tests__', 'test', 'tests', 'spec']);
-const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-](?:test|spec))\.[^.]+$/iu;
-// JUnit tests use a case-sensitive `Test.java` suffix; case-insensitive matching would catch
-// production files like `contest.java`.
-const javaTestFilePattern = /Test\.java$/u;
 
 // oxlint-disable-next-line unicorn/prefer-top-level-await -- CommonJS build output cannot preserve top-level await.
 void main().catch((error: unknown) => {
@@ -126,13 +58,10 @@ void main().catch((error: unknown) => {
   process.exitCode = 1;
 });
 
-async function main(): Promise<void> {
-  const program = new Command()
-    .name('code-gauge')
-    .description('Rank the files of a project by refactoring priority.')
-    .argument('[target]', 'file or directory to measure', '.')
+/** Registers the options shared by the ranking command and the diff gate. */
+function addSharedOptions(command: Command): Command {
+  return command
     .option('--config <path>', `config file to use instead of the auto-detected ${configFileName}`)
-    .option('--top <number>', 'number of top-ranked files to report (default: 10)', parsePositiveInteger)
     .option(
       '--duplication-min-tokens <number>',
       'minimum normalized token count for a duplicate region (default 40)',
@@ -149,7 +78,17 @@ async function main(): Promise<void> {
       parsePercentInteger
     )
     .option('--include-tests', 'include test files and test directories')
-    .option('--json', 'print JSON output')
+    .option('--json', 'print JSON output');
+}
+
+async function main(): Promise<void> {
+  const program = addSharedOptions(
+    new Command()
+      .name('code-gauge')
+      .description('Rank the files of a project by refactoring priority.')
+      .argument('[target]', 'file or directory to measure', '.')
+  )
+    .option('--top <number>', 'number of top-ranked files to report (default: 10)', parsePositiveInteger)
     .option('--fail-on-error', 'exit with code 1 when files or directories cannot be scanned');
 
   program.action(async (target: string, cliOptions: CliOptions) => {
@@ -171,242 +110,29 @@ async function main(): Promise<void> {
     }
   });
 
+  addSharedOptions(
+    program
+      .command('diff')
+      .description(
+        'Gate the working tree against a base ref: report only metric regressions in changed files (exit 1 on violations)'
+      )
+      .argument('[target]', 'directory whose changed files are gated', '.')
+      .requiredOption('--base <ref>', 'base git ref; changes are measured against its merge-base with HEAD')
+  )
+    .option('--full', 'also print the passing gate values of every checked function and file')
+    .action(async (target: string, _cliOptions: DiffCliOptions, command: Command) => {
+      // Options sharing a name with a root option (--json, --config, ...) land in the root's
+      // option store, so the merged view is required to see them.
+      await runDiffCommand(target, command.optsWithGlobals() as DiffCliOptions);
+    });
+
   await program.parseAsync();
-}
-
-function resolveTarget(target: string): string {
-  if (target === '~') {
-    return os.homedir();
-  }
-
-  if (target.startsWith('~/')) {
-    return path.join(os.homedir(), target.slice(2));
-  }
-
-  return path.resolve(target);
-}
-
-/** Returns the directory from which the config file search should start (the target itself if it is a directory). */
-async function configSearchDirectory(target: string): Promise<string> {
-  try {
-    const targetStat = await stat(target);
-    return targetStat.isDirectory() ? target : path.dirname(target);
-  } catch {
-    return path.dirname(target);
-  }
-}
-
-/** Shared state of one scan, threaded through the directory walk instead of positional plumbing. */
-interface ScanContext {
-  options: ResolvedOptions;
-  files: FileMetrics[];
-  errors: string[];
-  warnings: string[];
-  visitedDirectories: Set<string>;
-  visitedFiles: Set<string>;
-  /** Scan root: paths are displayed relative to it, and symbolic links may not escape it. */
-  rootDirectory: string;
-}
-
-async function scanTarget(target: string, options: ResolvedOptions): Promise<ScanResult> {
-  const files: FileMetrics[] = [];
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  let canonicalTarget = target;
-  try {
-    canonicalTarget = await realpath(target);
-  } catch {
-    // stat below reports missing targets with the original path.
-  }
-
-  const fallbackDisplayRoot = path.dirname(canonicalTarget);
-  let targetStat;
-
-  try {
-    targetStat = await stat(canonicalTarget);
-  } catch (error) {
-    const fatalError = `${formatPath(canonicalTarget, fallbackDisplayRoot)}: ${formatError(error)}`;
-    return { displayRoot: fallbackDisplayRoot, files, errors: [fatalError], warnings, fatalError };
-  }
-
-  if (targetStat.isFile()) {
-    const displayRoot = path.dirname(canonicalTarget);
-    const language = getLanguage(canonicalTarget, options, true);
-    if (!language) {
-      const fatalError = `${formatPath(canonicalTarget, displayRoot)}: unsupported file type`;
-      return { displayRoot, files, errors: [fatalError], warnings, fatalError };
-    }
-
-    const context = makeScanContext(options, files, errors, warnings, displayRoot);
-    await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
-    return { displayRoot, files, errors, warnings };
-  }
-
-  await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, warnings, canonicalTarget));
-  return { displayRoot: canonicalTarget, files, errors, warnings };
-}
-
-function makeScanContext(
-  options: ResolvedOptions,
-  files: FileMetrics[],
-  errors: string[],
-  warnings: string[],
-  rootDirectory: string
-): ScanContext {
-  return { options, files, errors, warnings, visitedDirectories: new Set(), visitedFiles: new Set(), rootDirectory };
-}
-
-async function scanDirectory(directory: string, context: ScanContext): Promise<void> {
-  let resolvedDirectory;
-  try {
-    resolvedDirectory = await realpath(directory);
-  } catch (error) {
-    context.errors.push(`${formatPath(directory, context.rootDirectory)}: ${formatError(error)}`);
-    return;
-  }
-
-  if (!isWithinDirectory(resolvedDirectory, context.rootDirectory)) {
-    return;
-  }
-
-  if (context.visitedDirectories.has(resolvedDirectory)) {
-    return;
-  }
-  context.visitedDirectories.add(resolvedDirectory);
-
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch (error) {
-    context.errors.push(`${formatPath(directory, context.rootDirectory)}: ${formatError(error)}`);
-    return;
-  }
-
-  for (const entry of entries) {
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isSymbolicLink()) {
-      await scanSymbolicLink(entry.name, entryPath, context);
-      continue;
-    }
-
-    if (entry.isDirectory()) {
-      if (shouldSkipDirectory(entry.name, context.options)) {
-        continue;
-      }
-      await scanDirectory(entryPath, context);
-      continue;
-    }
-
-    if (entry.isFile()) {
-      await measureScannableFile(entryPath, context);
-    }
-  }
-}
-
-async function scanSymbolicLink(name: string, entryPath: string, context: ScanContext): Promise<void> {
-  let resolvedPath;
-  try {
-    resolvedPath = await realpath(entryPath);
-  } catch (error) {
-    context.errors.push(`${formatPath(entryPath, context.rootDirectory)}: ${formatError(error)}`);
-    return;
-  }
-
-  if (!isWithinDirectory(resolvedPath, context.rootDirectory)) {
-    return;
-  }
-
-  let entryStat;
-  try {
-    entryStat = await stat(entryPath);
-  } catch (error) {
-    context.errors.push(`${formatPath(entryPath, context.rootDirectory)}: ${formatError(error)}`);
-    return;
-  }
-
-  if (entryStat.isDirectory()) {
-    if (
-      shouldSkipDirectory(name, context.options) ||
-      shouldSkipDirectory(path.basename(resolvedPath), context.options)
-    ) {
-      return;
-    }
-    await scanDirectory(entryPath, context);
-    return;
-  }
-
-  if (entryStat.isFile()) {
-    await measureScannableFile(entryPath, context, resolvedPath, resolvedPath);
-  }
-}
-
-async function measureScannableFile(
-  file: string,
-  context: ScanContext,
-  languageFile = file,
-  realFile?: string
-): Promise<void> {
-  const language = getLanguage(languageFile, context.options);
-  if (language) {
-    await measureFile(file, language, 'directory', context, realFile);
-  }
-}
-
-async function measureFile(
-  file: string,
-  language: LanguageName,
-  mode: 'single-file' | 'directory',
-  context: ScanContext,
-  realFile?: string
-): Promise<void> {
-  try {
-    const resolvedFile = realFile ?? (await realpath(file));
-    if (context.visitedFiles.has(resolvedFile)) {
-      return;
-    }
-    context.visitedFiles.add(resolvedFile);
-
-    const code = await readFile(file, 'utf8');
-    const measureOptions = { language, duplication: context.options.duplication };
-    const fileMetrics: FileMetrics = { file, metrics: measureCode(code, measureOptions) };
-    // Only directory scans compare files against each other; a single-file target has no peers.
-    // Candidate collection failing (it always parses with the JavaScript binding, which can give
-    // up where the native backend measured fine) must not discard the measured metrics.
-    if (mode === 'directory') {
-      try {
-        fileMetrics.duplicationCandidates = collectCrossFileDuplicationFileData(code, measureOptions);
-      } catch (error) {
-        // A warning, not an error: the file's metrics are complete, only its participation in
-        // cross-file matching is lost, so it is not "skipped" and must not fail --fail-on-error.
-        context.warnings.push(
-          `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates unavailable: ${formatError(error)}`
-        );
-      }
-    }
-    context.files.push(fileMetrics);
-  } catch (error) {
-    context.errors.push(`${formatPath(file, context.rootDirectory)}: ${formatError(error)}`);
-  }
-}
-
-/** Runs after the scan so every measured file's candidates participate. */
-function addCrossFileDuplication(result: ScanResult, options: ResolvedOptions): void {
-  if (result.fatalError || result.files.length < 2) {
-    return;
-  }
-  const sourceFiles = result.files.flatMap(({ file, duplicationCandidates }) =>
-    duplicationCandidates ? [{ file: formatPath(file, result.displayRoot), ...duplicationCandidates }] : []
-  );
-  if (sourceFiles.length < 2) {
-    return;
-  }
-  result.crossFileDuplication = measureCrossFileDuplication(sourceFiles, options.duplication);
 }
 
 function rankFiles(result: ScanResult, top: number): RankedFile[] {
   const candidates = result.files.map(({ file, metrics }) => {
     const formattedFile = formatPath(file, result.displayRoot);
-    const duplicatedLines = collectDuplicatedLines(metrics, result.crossFileDuplication, formattedFile);
+    const duplicatedLines = collectDuplicatedLineNumbers(metrics, result.crossFileDuplication, formattedFile);
     return {
       file: formattedFile,
       worstFunction: findWorstFunction(metrics.functions),
@@ -513,29 +239,6 @@ function findWorstFunction(functions: FunctionMetrics[]): WorstFunction | undefi
     ncss: worst.ncss,
     nestingDepth: worst.nestingDepth,
   };
-}
-
-/**
- * Distinct 1-based code lines covered by within-file or cross-file duplicated content. Both
- * sources expose the exact lines carrying matched tokens (never block bounding ranges, which
- * would over-count comment/blank lines and the unmatched gap of a merged clone), so the union is
- * a subset of the file's code lines and the derived ratio can never exceed 1.
- */
-function collectDuplicatedLines(
-  metrics: CodeMetrics,
-  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
-  formattedFile: string
-): Set<number> {
-  const lines = new Set(metrics.duplication.duplicateLineNumbers);
-  // Object.hasOwn: a file named like an Object.prototype member must not read an inherited value.
-  const crossFileLines =
-    crossFileDuplication && Object.hasOwn(crossFileDuplication.duplicateLineNumbersByFile, formattedFile)
-      ? (crossFileDuplication.duplicateLineNumbersByFile[formattedFile] ?? [])
-      : [];
-  for (const line of crossFileLines) {
-    lines.add(line);
-  }
-  return lines;
 }
 
 function printJson(result: ScanResult, rankedFiles: RankedFile[], options: ResolvedOptions): void {
@@ -648,52 +351,6 @@ function summarize(files: FileMetrics[]): {
   return { fileCount: files.length, functionCount, linesOfCode, maxCognitiveComplexity, ncssCount };
 }
 
-function shouldSkipDirectory(name: string, options: ResolvedOptions): boolean {
-  if (ignoredDirectoryNames.has(name)) {
-    return true;
-  }
-
-  if (options.includeTests) {
-    return false;
-  }
-
-  return testDirectoryNames.has(name);
-}
-
-function isWithinDirectory(candidate: string, directory: string): boolean {
-  const relative = path.relative(directory, candidate);
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
-}
-
-function getLanguage(file: string, options: ResolvedOptions, explicitTarget = false): LanguageName | undefined {
-  const lowerFile = file.toLowerCase();
-  if (
-    !explicitTarget &&
-    (lowerFile.endsWith('.d.ts') ||
-      lowerFile.endsWith('.d.mts') ||
-      lowerFile.endsWith('.d.cts') ||
-      lowerFile.endsWith('.min.js') ||
-      lowerFile.endsWith('.pnp.cjs'))
-  ) {
-    return undefined;
-  }
-
-  if (
-    !explicitTarget &&
-    !options.includeTests &&
-    (testFilePattern.test(path.basename(file)) || javaTestFilePattern.test(path.basename(file)))
-  ) {
-    return undefined;
-  }
-
-  // GCC treats an uppercase `.C` as C++; lowercasing first would misparse it with the C grammar.
-  if (path.extname(file) === '.C') {
-    return 'cpp';
-  }
-
-  return languageByExtension.get(path.extname(lowerFile));
-}
-
 function parsePercentInteger(value: string): number {
   const parsed = parsePositiveInteger(value);
   if (parsed > 100) {
@@ -724,20 +381,4 @@ function parsePositiveInteger(value: string): number {
     throw new InvalidArgumentError('Expected a positive integer.');
   }
   return parsed;
-}
-
-function formatPath(file: string, base: string): string {
-  return path.relative(base, file) || path.basename(file);
-}
-
-function writeStdout(message: string): void {
-  process.stdout.write(message);
-}
-
-function writeStderr(message: string): void {
-  process.stderr.write(message);
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

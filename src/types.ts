@@ -96,6 +96,19 @@ export interface FunctionMetrics {
    */
   ncss: number;
   parameterCount: number;
+  /**
+   * Halstead metrics of the function's whole subtree. Nested function bodies are included, so
+   * summing over functions counts shared regions more than once (like ncss).
+   */
+  halstead: HalsteadMetrics;
+  /**
+   * Approximate def-use dependency degree (DepDegree, Beyer & Fararooy 2010): the number of
+   * variable reads whose name has a preceding definition (declaration, assignment, or parameter)
+   * within the same function. A file-local single-assignment approximation — each read is charged
+   * one reaching definition — which is stable enough for regression ratcheting where only the
+   * delta matters.
+   */
+  depDegree: number;
 }
 
 /**

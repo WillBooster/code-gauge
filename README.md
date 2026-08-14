@@ -5,11 +5,13 @@
 [![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
 [![wbfy](https://img.shields.io/badge/wbfy-18.3.0-1e90ff.svg)](https://github.com/WillBooster/shared/tree/main/packages/wbfy)
 
-A command-line tool that ranks the files of a project by refactoring priority, built for AI-agent
-workflows: an agent asked to "refactor this repository" runs `code-gauge` and starts from the top of
-the list. Measurement uses tree-sitter, and the output is deliberately small — only the metrics that
-tell an agent _what to change_ are measured and reported, so nothing in the output anchors an agent
-toward out-of-scope "improvements". A [programmatic API](#programmatic-api) is also available.
+A command-line tool that ranks the files of a project by refactoring priority and gates changes
+against metric regressions, built for AI-agent workflows: an agent asked to "refactor this
+repository" runs `code-gauge` and starts from the top of the list, and a PR pipeline runs
+`code-gauge diff --base main` to force the agent to self-correct a change that made the code worse.
+Measurement uses tree-sitter, and the output is deliberately small — only the metrics that tell an
+agent _what to change_ are measured and reported, so nothing in the output anchors an agent toward
+out-of-scope "improvements". A [programmatic API](#programmatic-api) is also available.
 
 ## Getting started
 
@@ -64,6 +66,44 @@ an agent can act on it directly.
 | `--duplication-max-gap-tokens <n>`         | Maximum token gap merged into one gapped clone group; 0 disables (default 30).  |
 | `--duplication-min-similarity-percent <n>` | Minimum similarity percent for near-miss clones; 100 = exact only (default 70). |
 
+## Regression gate (`code-gauge diff`)
+
+```sh
+code-gauge diff --base main          # gate the working tree against the merge-base with main
+code-gauge diff --base main src/api  # gate only the changed files under src/api
+```
+
+`code-gauge diff --base <ref>` measures every changed file at both revisions (working tree vs. the
+merge-base of `<ref>` and `HEAD`, read with `git cat-file` — no checkout, no persisted baseline, so
+it works identically in CI and locally) and reports **only violations**. When every gate passes it
+prints a single line and exits 0; violations print one line each — metric, base → head values, the
+`file:line` span, and a remediation direction — and exit 1 (2 when files cannot be measured).
+
+Functions are matched across revisions by name and arity, then by name alone, and finally by
+normalized-token LCS similarity, so renames and moves don't appear as delete+add. The gates:
+
+- **Existing functions — no worsening.** A matched function must not worsen its cognitive
+  complexity, NCSS, max nesting depth, DepDegree (approximate def-use pairs, Beyer & Fararooy
+  2010), or Halstead volume beyond a small configurable tolerance. No absolute threshold is
+  involved: "your change made this function worse" is defensible regardless of metric calibration.
+- **New functions — absolute thresholds.** Functions with no base counterpart are the one place
+  absolutes are required (SonarQube-style "Clean as You Code"): cognitive complexity ≤ 15, NCSS
+  ≤ 60, nesting depth ≤ 4 by default.
+- **No new duplication.** A changed file's duplicated lines (within-file plus cross-file against
+  the whole project, so copy-paste from unchanged code into new files is caught) must not exceed
+  the base revision's count.
+- **Anti-gaming backstops.** Splitting a function resets its entity identity and could hide a
+  worsening behind the laxer new-code thresholds, so when a removed named function's content
+  partially reappears in unmatched new code the file's max cognitive complexity and total NCSS
+  ratchet too; purely additive changes and unrelated remove-plus-add changes stay ungated.
+
+`--full` additionally prints the base → head values of every checked function; `--json` prints a
+machine-readable report. The duplication flags and `--include-tests` work like the ranking command.
+The duplication universes contain only git-visible files (tracked or untracked non-ignored), so
+local ignored artifacts cannot skew the counts, and the Halstead volume allowance scales with the
+base value (25%, floored at the configured tolerance) so it admits the same ~5-statement edit at
+every function size.
+
 ## Configuration
 
 `code-gauge` looks for `code-gauge.config.json` by walking up from the target directory (override
@@ -77,6 +117,23 @@ with `--config`). The following config reproduces every built-in default:
     "minSimilarityPercent": 70
   },
   "rank": { "top": 10 },
+  "gate": {
+    "newFunction": {
+      "maxCognitiveComplexity": 15,
+      "maxNcss": 60,
+      "maxNestingDepth": 4
+    },
+    "tolerance": {
+      "cognitiveComplexity": 2,
+      "ncss": 5,
+      "nestingDepth": 1,
+      "depDegree": 10,
+      "halsteadVolume": 150,
+      "fileNcss": 20,
+      "duplicateLines": 0
+    },
+    "matchSimilarityPercent": 70
+  },
   "includeTests": false,
   "failOnError": false
 }
@@ -124,7 +181,11 @@ defaults only.
   near-miss (Type-3) clones matched by token-LCS similarity, plus duplicated line count and ratio
 - Cross-file duplication (via `measureCrossFileDuplication`): copy-pasted blocks shared between
   files, matched with the same normalization and reported as groups with their file locations
-- Halstead base counts, vocabulary, length, volume, and effort
+- Halstead base counts, vocabulary, length, volume, and effort, per function and per file — the
+  strongest correlates of measured cognitive load in the EEG/fMRI validation literature
+- Per-function DepDegree (Beyer & Fararooy 2010), approximated as the number of variable reads
+  with a preceding same-name definition (declaration, assignment, or parameter) in the function —
+  a file-local single-assignment approximation that is stable enough for regression ratcheting
 
 Metrics that the validation literature shows to be weakly grounded or that invite misdirected
 "improvements" (cyclomatic complexity, call-graph fan-in/fan-out, coupling and cohesion counts,

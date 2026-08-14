@@ -5,6 +5,7 @@ use tree_sitter::Node;
 use crate::complexity::{
     is_lambda_body_block, measure_complexity, measure_function_body_metrics, LanguageSets,
 };
+use crate::dep_degree::measure_dep_degree;
 use crate::duplication::measure_duplication;
 use crate::functions::{
     collect_nodes, count_parameters, find_function_name, is_implemented_function,
@@ -65,6 +66,8 @@ pub fn measure(
                 nesting_depth: body_metrics.nesting_depth,
                 ncss: body_metrics.ncss,
                 parameter_count: count_parameters(*node, code),
+                halstead_counts: measure_halstead(*node, code),
+                dep_degree: measure_dep_degree(*node, code, &sets.function_nodes),
             }
         })
         .collect();

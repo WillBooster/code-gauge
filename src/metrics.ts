@@ -1,7 +1,9 @@
 import Parser from 'tree-sitter';
+import { measureDepDegree } from './depDegree.js';
 import {
   collectCrossFileDuplicateCandidates,
   defaultDuplicationOptions,
+  hashText,
   measureDuplication,
   type CrossFileDuplicateCandidate,
   type CrossFileDuplicationFileData,
@@ -242,7 +244,7 @@ export class TreeMeasurer {
     const functions = collectNodes(root, new Set(language.functionNodeTypes)).filter(
       (node) => !isLambdaBodyBlock(node) && isImplementedFunction(node)
     );
-    const functionMetrics = collectFunctionMetrics(root, functions, language);
+    const functionMetrics = collectFunctionMetrics(root, functions, language, code);
     const globalComplexity = measureComplexity(root, language);
     const { lines, codeLineNumbers } = classifyLines(code, root);
 
@@ -267,21 +269,40 @@ export class TreeMeasurer {
   }
 
   /**
+   * Normalized token hash sequences of every function, index-parallel to the functions array of
+   * measure(): identifiers are anonymized by first occurrence within the function, literals by
+   * kind, and keywords/operators kept verbatim, so the regression gate can re-match renamed or
+   * moved functions across two revisions by token-LCS similarity. Always measured by the
+   * TypeScript backend.
+   */
+  collectFunctionTokenSequences(code: string, options: MeasureOptions): Int32Array[] {
+    const { language, root } = this.parse(code, options);
+    const functions = collectNodes(root, new Set(language.functionNodeTypes)).filter(
+      (node) => !isLambdaBodyBlock(node) && isImplementedFunction(node)
+    );
+    return functions.map((node) => tokenizeFunction(node));
+  }
+
+  /**
    * Collects one file's duplicate candidates, normalized tokens, and statement structure for
    * cross-file clone detection with measureCrossFileDuplication. Always measured by the
    * TypeScript backend.
    */
   collectCrossFileDuplicationFileData(code: string, options: MeasureOptions): CrossFileDuplicationFileData {
-    const language = this.registry.get(options.language);
-    if (!language) {
-      throw new Error(`Unsupported language: ${options.language}`);
-    }
-    const root = parseRoot(code, language);
+    const { root } = this.parse(code, options);
     return {
       ...collectCrossFileDuplicateCandidates(root, options.duplication),
       // Lets cross-file line coverage count only code lines, like within-file coverage.
       codeLineNumbers: classifyLines(code, root).codeLineNumbers,
     };
+  }
+
+  private parse(code: string, options: MeasureOptions): { language: LanguageDefinition; root: Parser.SyntaxNode } {
+    const language = this.registry.get(options.language);
+    if (!language) {
+      throw new Error(`Unsupported language: ${options.language}`);
+    }
+    return { language, root: parseRoot(code, language) };
   }
 }
 
@@ -313,6 +334,11 @@ export function collectDuplicationCandidates(code: string, options: MeasureOptio
 }
 
 /** Standalone helper mirroring measureCode for the default measurer. */
+export function collectFunctionTokenSequences(code: string, options: MeasureOptions): Int32Array[] {
+  return defaultMeasurer.collectFunctionTokenSequences(code, options);
+}
+
+/** Standalone helper mirroring measureCode for the default measurer. */
 export function collectCrossFileDuplicationFileData(
   code: string,
   options: MeasureOptions
@@ -340,6 +366,8 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
       nestingDepth: fn.nestingDepth,
       ncss: fn.ncss,
       parameterCount: fn.parameterCount,
+      halstead: deriveHalsteadMetrics(fn.halsteadCounts),
+      depDegree: fn.depDegree,
     })),
     cognitiveComplexity: payload.cognitiveComplexity,
     maxCognitiveComplexity: payload.maxCognitiveComplexity,
@@ -354,9 +382,11 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
 function collectFunctionMetrics(
   root: Parser.SyntaxNode,
   functions: Parser.SyntaxNode[],
-  language: LanguageDefinition
+  language: LanguageDefinition,
+  code: string
 ): FunctionMetrics[] {
   const bodyMetricsByNodeId = measureFunctionBodyMetrics(root, language);
+  const { functionNodes } = getComplexityNodeSets(language);
   return functions.map((node) => {
     const bodyMetrics = bodyMetricsByNodeId.get(node.id);
     if (!bodyMetrics) {
@@ -372,6 +402,8 @@ function collectFunctionMetrics(
       nestingDepth: bodyMetrics.nestingDepth,
       ncss: bodyMetrics.ncss,
       parameterCount: countParameters(node),
+      halstead: measureHalstead(node, code),
+      depDegree: measureDepDegree(node, (nested) => isFunctionBoundary(nested, functionNodes)),
     };
   });
 }
@@ -1180,6 +1212,53 @@ function deriveHalsteadMetrics(counts: NativeHalsteadCounts): HalsteadMetrics {
     volume,
     effort,
   };
+}
+
+/** Name-carrying leaf types anonymized by tokenizeFunction so consistent renames still match. */
+const identifierLeafNodeTypes = new Set([
+  'identifier',
+  'property_identifier',
+  'field_identifier',
+  'type_identifier',
+  'constant',
+  'instance_variable',
+  'class_variable',
+  'global_variable',
+]);
+
+/** See TreeMeasurer.collectFunctionTokenSequences. */
+function tokenizeFunction(functionNode: Parser.SyntaxNode): Int32Array {
+  const symbols: number[] = [];
+  collectTokenSymbols(functionNode, symbols, new Map());
+  return Int32Array.from(symbols);
+}
+
+function collectTokenSymbols(node: Parser.SyntaxNode, symbols: number[], idIndexByName: Map<string, number>): void {
+  if (node.type === 'comment' || node.type === 'line_comment' || node.type === 'block_comment') {
+    return;
+  }
+  if (atomicOperandNodeTypes.has(node.type)) {
+    symbols.push(hashText(node.type));
+    return;
+  }
+  if (node.childCount > 0) {
+    for (const child of node.children) {
+      collectTokenSymbols(child, symbols, idIndexByName);
+    }
+    return;
+  }
+  if (identifierLeafNodeTypes.has(node.type)) {
+    let index = idIndexByName.get(node.text);
+    if (index === undefined) {
+      index = idIndexByName.size;
+      idIndexByName.set(node.text, index);
+    }
+    symbols.push(hashText(`id${index}`));
+    return;
+  }
+  // Remaining operand leaves are literals, normalized by kind; everything else (keywords,
+  // operators, punctuation) is kept verbatim.
+  symbols.push(hashText(operandNodeTypes.has(node.type) ? node.type : node.text));
 }
 
 function findFunctionName(node: Parser.SyntaxNode): string | undefined {

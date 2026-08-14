@@ -422,3 +422,71 @@ describe('measureCode: options and edge cases', () => {
     ]);
   });
 });
+
+describe('per-function Halstead and DepDegree', () => {
+  const tsCode = `export function total(items: number[]): number {
+  let sum = 0;
+  for (const item of items) {
+    sum += item;
+  }
+  return sum;
+}
+`;
+
+  it('measures the function subtree, matching the file-level Halstead for a single-function file', () => {
+    const metrics = measureCode(tsCode, { language: 'typescript' });
+    expect(metrics.functions[0]?.halstead).toStrictEqual(metrics.halstead);
+    expect(metrics.functions[0]?.halstead.vocabulary).toBe(9);
+    expect(metrics.functions[0]?.halstead.length).toBe(14);
+  });
+
+  it('counts def-use pairs: parameters and declarations define, later reads pair up', () => {
+    // Defs: items (parameter), sum (`let sum = 0`), item (for-of binding).
+    // Uses with a preceding def: items, sum (compound assignment reads it), item, sum (return).
+    expect(measureCode(tsCode, { language: 'typescript' }).functions[0]?.depDegree).toBe(4);
+  });
+
+  it('does not pair reads that precede the definition', () => {
+    // `y` is read before `const y = x` defines it: only x (in the initializer), y and x (in the
+    // return) have a preceding definition.
+    const code = 'function g(x) { y; const y = x; return y + x; }';
+    expect(measureCode(code, { language: 'javascript' }).functions[0]?.depDegree).toBe(3);
+  });
+
+  it('recognizes annotated definitions and loop bindings across languages', () => {
+    // Semantically identical code: defs items/factor (parameters), total_sum, item (loop binding),
+    // scaled (annotated assignment); uses items, total_sum (+=), item, factor, total_sum, scaled,
+    // total_sum -> 7 pairs in each language.
+    const python =
+      'def total(items, factor):\n' +
+      '    total_sum = 0\n' +
+      '    for item in items:\n' +
+      '        total_sum += item * factor\n' +
+      '    scaled: int = total_sum * 2\n' +
+      '    return scaled + total_sum\n';
+    expect(measureCode(python, { language: 'python' }).functions[0]?.depDegree).toBe(7);
+
+    const go =
+      'package main\n' +
+      'func total(items []int, factor int) int {\n' +
+      '\tsum := 0\n' +
+      '\tfor _, item := range items {\n' +
+      '\t\tsum += item * factor\n' +
+      '\t}\n' +
+      '\tvar scaled int = sum * 2\n' +
+      '\treturn scaled + sum\n' +
+      '}\n';
+    expect(measureCode(go, { language: 'go' }).functions[0]?.depDegree).toBe(7);
+
+    const rust =
+      'fn total(items: &[i64], factor: i64) -> i64 {\n' +
+      '    let mut sum: i64 = 0;\n' +
+      '    for item in items {\n' +
+      '        sum += item * factor;\n' +
+      '    }\n' +
+      '    let scaled = sum * 2;\n' +
+      '    scaled + sum\n' +
+      '}\n';
+    expect(measureCode(rust, { language: 'rust' }).functions[0]?.depDegree).toBe(7);
+  });
+});

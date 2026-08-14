@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { defaultLanguages } from './languages.js';
-import type { CodeMetrics, LanguageDefinition } from './types.js';
+import type { CodeMetrics, FunctionMetrics, LanguageDefinition } from './types.js';
 
 /**
  * Halstead counts measured natively; the derived float metrics (volume, effort, ...) are
@@ -14,7 +14,12 @@ export interface NativeHalsteadCounts {
   totalOperands: number;
 }
 
-export interface NativeMetricsPayload extends Omit<CodeMetrics, 'halstead' | 'syntaxTree'> {
+export interface NativeFunctionMetricsPayload extends Omit<FunctionMetrics, 'halstead'> {
+  halsteadCounts: NativeHalsteadCounts;
+}
+
+export interface NativeMetricsPayload extends Omit<CodeMetrics, 'halstead' | 'functions' | 'syntaxTree'> {
+  functions: NativeFunctionMetricsPayload[];
   halsteadCounts: NativeHalsteadCounts;
   syntaxTree?: string;
 }
@@ -31,7 +36,7 @@ interface NativeBinding {
  * newer fields (e.g. duplication.duplicateLineNumbers) instead of falling back to the
  * TypeScript backend.
  */
-const expectedPayloadVersion = 2;
+const expectedPayloadVersion = 3;
 
 const defaultLanguageByName = new Map(defaultLanguages.map((language) => [language.name, language]));
 
