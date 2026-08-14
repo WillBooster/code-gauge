@@ -18,3 +18,19 @@ fn internal() -> usize {
 pub(super) enum Kind {
     Simple,
 }
+
+mod hidden {
+    pub fn tucked() -> usize {
+        2
+    }
+}
+
+pub mod surface {
+    pub fn reachable() -> usize {
+        3
+    }
+
+    pub(crate) fn shallow() -> usize {
+        4
+    }
+}

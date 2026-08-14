@@ -273,16 +273,17 @@ fn collect_top_level_declarations(
         );
     }
 
-    // A Rust item is exported by its own `pub` modifier (any variant, incl. `pub(crate)`), not by
-    // a wrapping export statement.
-    let is_exported = exported || (language_name == "rust" && has_rust_visibility_modifier(node));
+    // A Rust item is exported by its own `pub` modifier, not by a wrapping export statement. Only
+    // unrestricted `pub` counts — see is_exported_rust_visibility (issue #14).
+    let is_exported = exported || (language_name == "rust" && has_unrestricted_rust_pub(node));
     qualify_declarations(declaration_from_node(node, is_exported, code), scope, false)
 }
 
-fn has_rust_visibility_modifier(node: Node<'_>) -> bool {
+/// The item carries a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction).
+fn has_unrestricted_rust_pub(node: Node<'_>) -> bool {
     named_children(node)
         .iter()
-        .any(|child| child.kind() == "visibility_modifier")
+        .any(|child| child.kind() == "visibility_modifier" && child.named_child_count() == 0)
 }
 
 /// Prefixes declarations with the enclosing scope; `skip_qualified` protects already-qualified
@@ -1388,11 +1389,11 @@ fn unquote(value: &str) -> String {
 }
 
 pub fn is_export_node(node: Node<'_>, sets: &LanguageSets) -> bool {
-    // Rust visibility is a modifier, not an export statement: counting each `visibility_modifier`
-    // counts every `pub` item (all variants, `pub(crate)` included) exactly once — including pub
-    // fields/methods, matching how JS counts `public_field_definition` (issue #14).
+    // Rust visibility is a modifier, not an export statement; each exported `visibility_modifier`
+    // counts once — including pub fields/methods, matching how JS counts `public_field_definition`
+    // (issue #14). See is_exported_rust_visibility for what "exported" means.
     if sets.name == "rust" {
-        return node.kind() == "visibility_modifier";
+        return node.kind() == "visibility_modifier" && is_exported_rust_visibility(node);
     }
     // Go exports by capitalization; each capitalized top-level declared name is one export.
     if sets.name == "go" {
@@ -1401,6 +1402,26 @@ pub fn is_export_node(node: Node<'_>, sets: &LanguageSets) -> bool {
     // Java's JPMS `exports com.example.api;` directive is module wiring, not a symbol export.
     (node.kind().starts_with("export") && node.kind() != "exports_module_directive")
         || node.kind() == "public_field_definition"
+}
+
+/// Rust's exported surface is the unrestricted-`pub` API reachable from the crate root — the
+/// convention rustdoc, cargo-public-api, and rustc's `unreachable_pub` lint agree on (issue #14).
+/// File-local approximation: a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction) whose
+/// enclosing inline `mod`s in this file are all bare-`pub` themselves.
+fn is_exported_rust_visibility(node: Node<'_>) -> bool {
+    // Restricted variants (`pub(crate)` etc.) carry the restriction as a named child; bare `pub`
+    // has none.
+    if node.named_child_count() > 0 {
+        return false;
+    }
+    let mut ancestor = node.parent();
+    while let Some(current) = ancestor {
+        if current.kind() == "mod_item" && !has_unrestricted_rust_pub(current) {
+            return false;
+        }
+        ancestor = current.parent();
+    }
+    true
 }
 
 /// Capitalized names a top-level Go declaration exports (`var A, b = ...` exports only `A`).

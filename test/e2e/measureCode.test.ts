@@ -538,18 +538,24 @@ describe('measureCode: coupling and module structure', () => {
     ]);
   });
 
-  // Issue #14: visibility modifiers are exports — Rust `pub` (all variants) and Go capitalization.
-  it('treats Rust pub items as exported and counts them toward exportCount', () => {
+  // Issue #14: exports are Rust unrestricted `pub` (reachable through all-pub inline mods, the
+  // rustdoc/cargo-public-api/unreachable_pub convention) and Go capitalization. `pub(crate)`,
+  // `pub(super)`, and pub items buried in private mods are not exported.
+  it('treats Rust unrestricted pub items as exported and counts them toward exportCount', () => {
     const metrics = measureCode(readFixture('visibility.rs'), { language: 'rust' });
 
-    // pub use + LIMIT + Widget + pub id field + shared() + Kind = 6 `pub` modifiers.
+    // pub use + LIMIT + pub id field + shared() + pub mod surface + surface::reachable = 6 bare
+    // `pub` modifiers with all-pub mod ancestors. Excluded: pub(crate) Widget, pub(super) Kind,
+    // hidden::tucked (private mod), surface::shallow (pub(crate)).
     expect(metrics.coupling.exportCount).toBe(6);
     expect(metrics.module.declarations).toEqual([
       { exported: true, name: 'LIMIT', startLine: 3 },
-      { exported: true, name: 'Widget', startLine: 5 },
+      { exported: false, name: 'Widget', startLine: 5 },
       { exported: true, name: 'shared', startLine: 10 },
       { exported: false, name: 'internal', startLine: 14 },
-      { exported: true, name: 'Kind', startLine: 18 },
+      { exported: false, name: 'Kind', startLine: 18 },
+      { exported: false, name: 'hidden', startLine: 22 },
+      { exported: true, name: 'surface', startLine: 28 },
     ]);
   });
 

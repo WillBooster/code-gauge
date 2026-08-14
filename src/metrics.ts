@@ -2203,14 +2203,15 @@ function collectTopLevelDeclarations(
     return qualifyDeclarations(rubyConstantDeclarations(node, exported), scope, true);
   }
 
-  // A Rust item is exported by its own `pub` modifier (any variant, incl. `pub(crate)`), not by a
-  // wrapping export statement.
-  const isExported = exported || (languageName === 'rust' && hasRustVisibilityModifier(node));
+  // A Rust item is exported by its own `pub` modifier, not by a wrapping export statement. Only
+  // unrestricted `pub` counts — see isExportedRustVisibility (issue #14).
+  const isExported = exported || (languageName === 'rust' && hasUnrestrictedRustPub(node));
   return qualifyDeclarations(declarationFromNode(node, isExported), scope);
 }
 
-function hasRustVisibilityModifier(node: Parser.SyntaxNode): boolean {
-  return node.namedChildren.some((child) => child.type === 'visibility_modifier');
+/** The item carries a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction). */
+function hasUnrestrictedRustPub(node: Parser.SyntaxNode): boolean {
+  return node.namedChildren.some((child) => child.type === 'visibility_modifier' && child.namedChildCount === 0);
 }
 
 /**
@@ -4089,11 +4090,11 @@ function unquote(value: string): string {
 }
 
 function isExportNode(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  // Rust visibility is a modifier, not an export statement: counting each `visibility_modifier`
-  // counts every `pub` item (all variants, `pub(crate)` included) exactly once — including pub
-  // fields/methods, matching how JS counts `public_field_definition` (issue #14).
+  // Rust visibility is a modifier, not an export statement; each exported `visibility_modifier`
+  // counts once — including pub fields/methods, matching how JS counts `public_field_definition`
+  // (issue #14). See isExportedRustVisibility for what "exported" means.
   if (language.name === 'rust') {
-    return node.type === 'visibility_modifier';
+    return node.type === 'visibility_modifier' && isExportedRustVisibility(node);
   }
   // Go exports by capitalization; each capitalized top-level declared name is one export.
   if (language.name === 'go') {
@@ -4104,6 +4105,26 @@ function isExportNode(node: Parser.SyntaxNode, language: LanguageDefinition): bo
     (node.type.startsWith('export') && node.type !== 'exports_module_directive') ||
     node.type === 'public_field_definition'
   );
+}
+
+/**
+ * Rust's exported surface is the unrestricted-`pub` API reachable from the crate root — the
+ * convention rustdoc, cargo-public-api, and rustc's `unreachable_pub` lint agree on (issue #14).
+ * File-local approximation: a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction) whose
+ * enclosing inline `mod`s in this file are all bare-`pub` themselves.
+ */
+function isExportedRustVisibility(node: Parser.SyntaxNode): boolean {
+  // Restricted variants (`pub(crate)` etc.) carry the restriction as a named child; bare `pub`
+  // has none.
+  if (node.namedChildCount > 0) {
+    return false;
+  }
+  for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
+    if (ancestor.type === 'mod_item' && !hasUnrestrictedRustPub(ancestor)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Capitalized names a top-level Go declaration exports (`var A, b = ...` exports only `A`). */
