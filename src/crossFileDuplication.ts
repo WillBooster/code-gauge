@@ -40,7 +40,9 @@ export interface CrossFileDuplicationMetrics {
    * Per file, the 1-based code lines covered by matched tokens of its cross-file occurrences,
    * sorted ascending. Exact like within-file duplicateLineNumbers: the unmatched gap of a merged
    * clone and comment/blank lines inside an occurrence's bounding range are excluded (blank rows
-   * inside multi-row tokens only when the file supplied codeLineNumbers).
+   * inside multi-row tokens only when the file supplied codeLineNumbers). A file that supplied
+   * only candidates (no `tokens`) has no entry — without its token stream the matched lines are
+   * unknowable, and an approximate bounding range would break this field's exactness.
    */
   duplicateLineNumbersByFile: Record<string, number[]>;
   groups: CrossFileDuplicateBlockGroup[];
@@ -221,7 +223,8 @@ function summarize(
 /**
  * Adds the code lines an occurrence's matched tokens cover to its file's line set, mapping the
  * project-wide token segments back into the file's own token stream. A file that supplied only
- * candidates (no token stream) falls back to the occurrence's bounding line range.
+ * candidates (no token stream) is skipped rather than approximated from the bounding line range,
+ * which would include gap and comment/blank lines and break the field's exactness contract.
  */
 function collectOccurrenceLines(
   occurrence: CrossFileOccurrence,
@@ -232,16 +235,13 @@ function collectOccurrenceLines(
   lineNumbersByFile: Map<string, Set<number>>
 ): void {
   const fileData = fileDataByName.get(occurrence.file);
+  if (!fileData?.tokens) {
+    return;
+  }
   let lines = lineNumbersByFile.get(occurrence.file);
   if (!lines) {
     lines = new Set();
     lineNumbersByFile.set(occurrence.file, lines);
-  }
-  if (!fileData?.tokens) {
-    for (let line = occurrence.startLine; line <= occurrence.endLine; line += 1) {
-      lines.add(line);
-    }
-    return;
   }
   for (const segment of occurrence.segments) {
     collectSegmentLines(
