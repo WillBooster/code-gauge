@@ -69,8 +69,11 @@ pub fn measure_coupling(root: Node<'_>, sets: &LanguageSets, code: &Source<'_>) 
             }
         }
 
-        if is_export_node(node) {
+        if is_export_node(node, sets, code) {
             *export_count += 1;
+        }
+        if sets.name == "go" {
+            *export_count += count_go_exported_names(node, code);
         }
 
         for child in named_children(node) {
@@ -149,11 +152,12 @@ fn collect_module_declarations(
     };
     named_children(root)
         .into_iter()
-        .flat_map(|child| {
-            collect_top_level_declarations(child, false, &scope, sets.name == "cpp", code)
-        })
+        .flat_map(|child| collect_top_level_declarations(child, false, &scope, sets.name, code))
         .map(|declaration| {
-            if exported_names.contains(&declaration.name) {
+            if !declaration.exported
+                && (exported_names.contains(&declaration.name)
+                    || is_go_exported_declaration_name(&declaration, sets))
+            {
                 DeclarationMetrics {
                     exported: true,
                     ..declaration
@@ -163,6 +167,11 @@ fn collect_module_declarations(
             }
         })
         .collect()
+}
+
+/// Go method declarations are named `Receiver.Method`; the method's own capitalization decides.
+fn is_go_exported_declaration_name(declaration: &DeclarationMetrics, sets: &LanguageSets) -> bool {
+    sets.name == "go" && is_go_exported_name(declaration.name.split('.').next_back().unwrap_or(""))
 }
 
 /// Java top-level declarations are qualified by their package so simple names stay distinct.
@@ -187,13 +196,16 @@ fn collect_top_level_declarations(
     node: Node<'_>,
     exported: bool,
     scope: &str,
-    is_cpp: bool,
+    language_name: &str,
     code: &Source<'_>,
 ) -> Vec<DeclarationMetrics> {
+    let is_cpp = language_name == "cpp";
     if is_module_export_node(node) {
         return named_children(node)
             .into_iter()
-            .flat_map(|child| collect_top_level_declarations(child, true, scope, is_cpp, code))
+            .flat_map(|child| {
+                collect_top_level_declarations(child, true, scope, language_name, code)
+            })
             .collect();
     }
 
@@ -215,7 +227,7 @@ fn collect_top_level_declarations(
         return body_children
             .into_iter()
             .flat_map(|child| {
-                collect_top_level_declarations(child, exported, &child_scope, is_cpp, code)
+                collect_top_level_declarations(child, exported, &child_scope, language_name, code)
             })
             .collect();
     }
@@ -223,7 +235,9 @@ fn collect_top_level_declarations(
     if is_declaration_container(node) {
         return named_children(node)
             .into_iter()
-            .flat_map(|child| collect_top_level_declarations(child, exported, scope, is_cpp, code))
+            .flat_map(|child| {
+                collect_top_level_declarations(child, exported, scope, language_name, code)
+            })
             .collect();
     }
 
@@ -259,7 +273,17 @@ fn collect_top_level_declarations(
         );
     }
 
-    qualify_declarations(declaration_from_node(node, exported, code), scope, false)
+    // A Rust item is exported by its own `pub` modifier, not by a wrapping export statement. Only
+    // unrestricted `pub` counts — see is_exported_rust_visibility (issue #14).
+    let is_exported = exported || (language_name == "rust" && has_unrestricted_rust_pub(node));
+    qualify_declarations(declaration_from_node(node, is_exported, code), scope, false)
+}
+
+/// The item carries a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction).
+fn has_unrestricted_rust_pub(node: Node<'_>) -> bool {
+    named_children(node)
+        .iter()
+        .any(|child| child.kind() == "visibility_modifier" && child.named_child_count() == 0)
 }
 
 /// Prefixes declarations with the enclosing scope; `skip_qualified` protects already-qualified
@@ -713,6 +737,8 @@ fn is_top_level_declaration_node(node: Node<'_>) -> bool {
             | "type_alias_declaration"
             | "type_declaration"
             | "type_spec"
+            // Go `type Alias = int`
+            | "type_alias"
             | "const_spec"
             | "var_spec"
             | "variable_declarator"
@@ -837,7 +863,7 @@ fn is_import_source_node(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>)
         || is_cpp_module_import(node, sets, code)
         || is_dynamic_import_node(node, code)
         || is_ruby_require_call(node, sets, code)
-        || (is_export_node(node) && node.child_by_field_name("source").is_some())
+        || (is_export_node(node, sets, code) && node.child_by_field_name("source").is_some())
 }
 
 /// C++20 imports misparse without grammar module support; see isCppModuleImport in metrics.ts.
@@ -1364,10 +1390,162 @@ fn unquote(value: &str) -> String {
     result.to_string()
 }
 
-pub fn is_export_node(node: Node<'_>) -> bool {
+pub fn is_export_node(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
+    // Rust visibility is a modifier, not an export statement; each exported `visibility_modifier`
+    // counts once — including pub fields/methods, matching how JS counts `public_field_definition`
+    // (issue #14). See is_exported_rust_visibility for what "exported" means.
+    if sets.name == "rust" {
+        return node.kind() == "visibility_modifier" && is_exported_rust_visibility(node, code);
+    }
+    // Go exports by capitalization; each capitalized top-level declared name is one export.
+    if sets.name == "go" {
+        return false;
+    }
     // Java's JPMS `exports com.example.api;` directive is module wiring, not a symbol export.
     (node.kind().starts_with("export") && node.kind() != "exports_module_directive")
         || node.kind() == "public_field_definition"
+}
+
+/// Container items whose non-`pub` visibility blocks reachability of everything inside them.
+const RUST_CONTAINER_ITEM_TYPES: &[&str] =
+    &["struct_item", "enum_item", "union_item", "trait_item"];
+
+/// Rust's exported surface is the unrestricted-`pub` API reachable from the crate root — the
+/// convention rustdoc, cargo-public-api, and rustc's `unreachable_pub` lint agree on (issue #14).
+/// File-local approximation: a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction) whose
+/// enclosing inline `mod`s and container items (struct/enum/union/trait) in this file are all
+/// bare-`pub` themselves, whose enclosing `impl`s target a file-locally exported (or file-locally
+/// undeclared, assumed reachable) type, and which sits in no function body.
+fn is_exported_rust_visibility(node: Node<'_>, code: &Source<'_>) -> bool {
+    // Restricted variants (`pub(crate)` etc.) carry the restriction as a named child; bare `pub`
+    // has none.
+    if node.named_child_count() > 0 {
+        return false;
+    }
+    // Skip the item carrying this modifier: its own reachability is judged by its ancestors (and
+    // the modifier under test IS its unrestricted `pub`).
+    let mut ancestor = node.parent().and_then(|owner| owner.parent());
+    while let Some(current) = ancestor {
+        // Items inside a function body (`fn outer() { pub fn nested() {} }`) are never reachable.
+        if current.kind() == "block" || current.kind() == "function_item" {
+            return false;
+        }
+        if (current.kind() == "mod_item" || RUST_CONTAINER_ITEM_TYPES.contains(&current.kind()))
+            && !has_unrestricted_rust_pub(current)
+        {
+            return false;
+        }
+        if current.kind() == "impl_item" && !is_rust_impl_target_exported(current, code) {
+            return false;
+        }
+        ancestor = current.parent();
+    }
+    true
+}
+
+/// Whether an `impl` block's items can be externally reachable: judged by the implemented type's
+/// own visibility when that type is declared in this file. A type not declared here (another
+/// module's type, a generic instantiation of one) is assumed reachable — the conservative side of
+/// the file-local approximation, counting possibly-exported items rather than dropping them.
+fn is_rust_impl_target_exported(impl_node: Node<'_>, code: &Source<'_>) -> bool {
+    let Some(type_name_node) = find_rust_type_base_name(impl_node.child_by_field_name("type"))
+    else {
+        return true;
+    };
+    let mut root = impl_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let Some(declaration) = find_rust_type_declaration(root, node_text(type_name_node, code), code)
+    else {
+        return true;
+    };
+    named_children(declaration)
+        .into_iter()
+        .find(|child| child.kind() == "visibility_modifier")
+        .is_some_and(|visibility| is_exported_rust_visibility(visibility, code))
+}
+
+fn find_rust_type_declaration<'t>(
+    root: Node<'t>,
+    type_name: &str,
+    code: &Source<'_>,
+) -> Option<Node<'t>> {
+    let declaration_types: HashSet<&'static str> = RUST_CONTAINER_ITEM_TYPES
+        .iter()
+        .copied()
+        .chain(std::iter::once("type_item"))
+        .collect();
+    collect_nodes(root, &declaration_types)
+        .into_iter()
+        .find(|node| {
+            node.child_by_field_name("name")
+                .is_some_and(|name| node_text(name, code) == type_name)
+        })
+}
+
+/// The base identifier of an impl target (`Foo` in `Foo<T>`, `crate::a::Foo`, `&mut Foo`).
+fn find_rust_type_base_name(node: Option<Node<'_>>) -> Option<Node<'_>> {
+    let mut current = node;
+    while let Some(current_node) = current {
+        if current_node.kind() == "type_identifier" {
+            return Some(current_node);
+        }
+        current = current_node
+            .child_by_field_name("name")
+            .or_else(|| current_node.child_by_field_name("type"))
+            .or_else(|| named_children(current_node).last().copied());
+    }
+    None
+}
+
+/// Capitalized names a top-level Go declaration exports (`var A, b = ...` exports only `A`).
+fn count_go_exported_names(node: Node<'_>, code: &Source<'_>) -> u64 {
+    // `type Alias = int` parses as `type_alias`, not `type_spec`.
+    if matches!(
+        node.kind(),
+        "function_declaration" | "method_declaration" | "type_spec" | "type_alias"
+    ) {
+        let name = node
+            .child_by_field_name("name")
+            .map(|name_node| node_text(name_node, code));
+        return match name {
+            Some(name) if is_go_exported_name(name) && is_go_top_level_declaration(node) => 1,
+            _ => 0,
+        };
+    }
+    if matches!(node.kind(), "const_spec" | "var_spec") && is_go_top_level_declaration(node) {
+        return find_children_by_field_name(node, "name")
+            .iter()
+            .filter(|name_node| is_go_exported_name(node_text(**name_node, code)))
+            .count() as u64;
+    }
+    0
+}
+
+// Grouped `var ( ... )` wraps its specs in an extra `var_spec_list` level.
+const GO_DECLARATION_WRAPPER_TYPES: &[&str] = &[
+    "type_declaration",
+    "const_declaration",
+    "var_declaration",
+    "var_spec_list",
+];
+
+/// Whether a Go spec/declaration sits at package level (possibly inside a grouped declaration).
+fn is_go_top_level_declaration(node: Node<'_>) -> bool {
+    let mut parent = node.parent();
+    while parent
+        .is_some_and(|parent_node| GO_DECLARATION_WRAPPER_TYPES.contains(&parent_node.kind()))
+    {
+        parent = parent.and_then(|parent_node| parent_node.parent());
+    }
+    parent.is_some_and(|parent_node| parent_node.kind() == "source_file")
+}
+
+/// Go exports identifiers whose first character is an upper-case letter (`\p{Lu}` in metrics.ts;
+/// valid Go identifiers can only start with Lu/Ll/Lt/Lm/Lo or `_`, on which the sets agree).
+fn is_go_exported_name(name: &str) -> bool {
+    name.chars().next().is_some_and(char::is_uppercase)
 }
 
 /// A base-type `const` freezes a plain binding but not a pointer binding; see isCMutableBinding.

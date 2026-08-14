@@ -15,16 +15,16 @@ import {
   type Thresholds,
 } from './cliConfig.js';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
-import type { CrossFileDuplicateCandidate } from './duplication.js';
-import { collectDuplicationCandidates, measureCode } from './metrics.js';
+import type { CrossFileDuplicationFileData } from './duplication.js';
+import { collectCrossFileDuplicationFileData, measureCode } from './metrics.js';
 import { measureTypeScriptProject, type TypeScriptProjectMetrics } from './typescriptProject.js';
 import type { CodeMetrics, FunctionMetrics, LanguageName } from './types.js';
 
 interface FileMetrics {
   file: string;
   metrics: CodeMetrics;
-  /** Cross-file duplicate candidates, collected only for directory scans. */
-  duplicationCandidates?: CrossFileDuplicateCandidate[];
+  /** Cross-file duplicate candidates and token/statement data, collected only for directory scans. */
+  duplicationCandidates?: CrossFileDuplicationFileData;
 }
 
 interface RiskTrigger {
@@ -219,7 +219,7 @@ async function main(): Promise<void> {
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
     const result = await scanTarget(resolvedTarget, options);
-    addCrossFileDuplication(result);
+    addCrossFileDuplication(result, options);
     await addArchitectureMetrics(result);
     await addTypeScriptProjectMetrics(result, options, resolvedTarget);
     const risks = findRiskyFunctions(
@@ -540,7 +540,7 @@ async function measureFile(
     // up where the native backend measured fine) must not discard the measured metrics.
     if (mode === 'directory') {
       try {
-        fileMetrics.duplicationCandidates = collectDuplicationCandidates(code, measureOptions);
+        fileMetrics.duplicationCandidates = collectCrossFileDuplicationFileData(code, measureOptions);
       } catch (error) {
         // A warning, not an error: the file's metrics are complete, only its participation in
         // cross-file matching is lost, so it is not "skipped" and must not fail --fail-on-error.
@@ -556,17 +556,17 @@ async function measureFile(
 }
 
 /** Runs after the scan so every measured file's candidates participate. */
-function addCrossFileDuplication(result: ScanResult): void {
+function addCrossFileDuplication(result: ScanResult, options: ResolvedOptions): void {
   if (result.fatalError || result.files.length < 2) {
     return;
   }
   const sourceFiles = result.files.flatMap(({ file, duplicationCandidates }) =>
-    duplicationCandidates ? [{ file: formatPath(file, result.displayRoot), candidates: duplicationCandidates }] : []
+    duplicationCandidates ? [{ file: formatPath(file, result.displayRoot), ...duplicationCandidates }] : []
   );
   if (sourceFiles.length < 2) {
     return;
   }
-  result.crossFileDuplication = measureCrossFileDuplication(sourceFiles);
+  result.crossFileDuplication = measureCrossFileDuplication(sourceFiles, options.duplication);
 }
 
 function findRiskyFunctions(
@@ -867,7 +867,7 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     `LOC ${summary.linesOfCode}, NCSS ${summary.ncssCount}, functions ${summary.functionCount}, max cyclomatic ${summary.maxCyclomaticComplexity}, max cognitive ${summary.maxCognitiveComplexity}\n`
   );
   writeStdout(
-    `Calls ${summary.callCount}, internal edges ${summary.internalCallCount}, max call depth ${summary.maxCallDepth}, imports ${summary.importSourceCount}, exports ${summary.exportCount}\n`
+    `Calls ${summary.callCount}, internal edges ${summary.internalEdgeCount}, max call depth ${summary.maxCallDepth}, imports ${summary.importSourceCount}, exports ${summary.exportCount}\n`
   );
   writeStdout(
     `Type annotations ${summary.typeAnnotationCount}, type aliases ${summary.typeAliasCount}, interfaces ${summary.interfaceCount}, avg cohesion ${summary.averageFunctionIdentifierOverlap.toFixed(2)}\n`
@@ -1021,7 +1021,7 @@ function summarize(files: FileMetrics[]): {
   maxCyclomaticComplexity: number;
   ncssCount: number;
   callCount: number;
-  internalCallCount: number;
+  internalEdgeCount: number;
   maxCallDepth: number;
   importSourceCount: number;
   relativeImportCount: number;
@@ -1039,7 +1039,7 @@ function summarize(files: FileMetrics[]): {
   let maxCognitiveComplexity = 0;
   let ncssCount = 0;
   let callCount = 0;
-  let internalCallCount = 0;
+  let internalEdgeCount = 0;
   let maxCallDepth = 0;
   let importSourceCount = 0;
   let relativeImportCount = 0;
@@ -1058,7 +1058,7 @@ function summarize(files: FileMetrics[]): {
     maxCognitiveComplexity = Math.max(maxCognitiveComplexity, file.metrics.maxCognitiveComplexity);
     ncssCount += file.metrics.ncssCount;
     callCount += file.metrics.callGraph.callCount;
-    internalCallCount += file.metrics.callGraph.internalCallCount;
+    internalEdgeCount += file.metrics.callGraph.internalEdgeCount;
     maxCallDepth = Math.max(maxCallDepth, file.metrics.callGraph.maxCallDepth);
     importSourceCount += file.metrics.coupling.importSourceCount;
     relativeImportCount += file.metrics.coupling.relativeImportCount;
@@ -1079,7 +1079,7 @@ function summarize(files: FileMetrics[]): {
     maxCognitiveComplexity,
     ncssCount,
     callCount,
-    internalCallCount,
+    internalEdgeCount,
     maxCallDepth,
     importSourceCount,
     relativeImportCount,

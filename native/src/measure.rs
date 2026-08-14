@@ -3,12 +3,14 @@ use std::sync::OnceLock;
 use tree_sitter::Node;
 
 use crate::callgraph::measure_call_graph;
-use crate::complexity::{is_lambda_body_block, measure_complexity, LanguageSets};
+use crate::complexity::{
+    is_lambda_body_block, measure_complexity, measure_function_body_metrics, LanguageSets,
+};
 use crate::duplication::measure_duplication;
 use crate::features::measure_syntax_features;
 use crate::functions::{
-    analyze_function, collect_constructed_type_names, collect_nodes, count_classes,
-    is_implemented_function,
+    analyze_function, collect_base_scopes, collect_constructed_type_names, collect_nodes,
+    count_classes, is_implemented_function,
 };
 use crate::languages::LanguageDefinition;
 use crate::structure::{measure_coupling, measure_module};
@@ -49,12 +51,26 @@ pub fn measure(
         .collect();
 
     let constructed_type_names = collect_constructed_type_names(root, &sets, code);
+    let body_metrics_by_node_id = measure_function_body_metrics(root, &sets, code);
     let analyses: Vec<_> = functions
         .iter()
         .enumerate()
-        .map(|(index, node)| analyze_function(*node, &sets, index, &constructed_type_names, code))
+        .map(|(index, node)| {
+            let body_metrics = body_metrics_by_node_id
+                .get(&node.id())
+                .expect("every collected function node opens a frame in the body-metrics pass");
+            analyze_function(
+                *node,
+                &sets,
+                index,
+                &constructed_type_names,
+                body_metrics,
+                code,
+            )
+        })
         .collect();
-    let call_graph = measure_call_graph(&analyses);
+    let base_scopes_by_scope = collect_base_scopes(root, &sets, code);
+    let call_graph = measure_call_graph(&analyses, sets.name, &base_scopes_by_scope);
     let function_metrics: Vec<FunctionMetrics> = analyses
         .iter()
         .map(|analysis| FunctionMetrics {
@@ -65,6 +81,11 @@ pub fn measure(
             end_line: analysis.end_line,
             returns_jsx: analysis.returns_jsx,
             cyclomatic_complexity: analysis.cyclomatic_complexity,
+            // Sonar's written spec adds +1 cognitive complexity per function in a recursion
+            // cycle, but this is intentionally not implemented (issue #22): mainstream
+            // implementations (PMD, SonarQube analyzers) omit it, and file-local,
+            // receiver-blind call resolution would make it unsound (false positives on
+            // delegation, missed cross-file cycles). Recursion is still reported separately.
             cognitive_complexity: analysis.cognitive_complexity,
             nesting_depth: analysis.nesting_depth,
             ncss: analysis.ncss,
@@ -85,7 +106,7 @@ pub fn measure(
         })
         .collect();
 
-    let global_complexity = measure_complexity(root, &sets, 0, false, code);
+    let global_complexity = measure_complexity(root, &sets, code);
     let (lines, code_line_numbers) = classify_lines(code, root);
     let halstead_counts = measure_halstead(root, code);
 

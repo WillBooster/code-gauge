@@ -237,6 +237,11 @@ describe('measureCode: line, complexity, and Halstead metrics', () => {
   });
 });
 
+// Issue #22 items 1-4: the SonarSource cognitive-complexity model, verified per rule.
+function cognitiveOf(code: string, language = 'javascript'): number | undefined {
+  return measureCode(code, { language }).functions[0]?.cognitiveComplexity;
+}
+
 describe('measureCode: cognitive complexity and nesting', () => {
   // classify(): for (+1) → if with `&&` (+2 nesting, +1 logical) → nested if (+3) with plain else
   // (+1). Cyclomatic complexity is 5 (base 1 + for + outer if + `&&` + inner if), which matches
@@ -256,6 +261,40 @@ describe('measureCode: cognitive complexity and nesting', () => {
     expect(classify?.cognitiveComplexity).toBeGreaterThan(classify?.cyclomaticComplexity ?? 0);
     expect(metrics.maxCognitiveComplexity).toBe(8);
     expect(metrics.nestingDepth).toBe(3);
+  });
+
+  it('counts a run of identical boolean operators once and each operator change once more', () => {
+    expect(cognitiveOf('function f(a,b){ if (a && b) return 1; }')).toBe(2);
+    expect(cognitiveOf('function f(a,b,c){ if (a && b && c) return 1; }')).toBe(2);
+    expect(cognitiveOf('function f(a,b,c){ if (a && (b && c)) return 1; }')).toBe(2);
+    expect(cognitiveOf('function f(a,b,c){ if (a && b || c) return 1; }')).toBe(3);
+    expect(cognitiveOf('function f(a,b,c,d){ if (a && b || c && d) return 1; }')).toBe(4);
+  });
+
+  it('adds one flat point for a plain else, without a nesting surcharge', () => {
+    expect(cognitiveOf('function f(a){ if (a) { return 1; } else { return 2; } }')).toBe(2);
+    expect(cognitiveOf('function f(a,b){ if (a) { return 1; } else if (b) { return 2; } else { return 3; } }')).toBe(3);
+    // The else is flat even when the if is nested (if +1, inner if +2, else +1, not +3).
+    expect(cognitiveOf('function f(a,b){ if (a) { if (b) { return 1; } else { return 2; } } }')).toBe(4);
+    expect(cognitiveOf('def f(a):\n    if a:\n        return 1\n    else:\n        return 2\n', 'python')).toBe(2);
+    expect(cognitiveOf('def f(a)\n  if a\n    1\n  else\n    2\n  end\nend\n', 'ruby')).toBe(2);
+  });
+
+  // Sonar's written spec adds +1 per function in a recursion cycle, but code-gauge intentionally
+  // omits it (issue #22): mainstream implementations (PMD, SonarQube analyzers) do not charge
+  // recursion, and file-local receiver-blind call resolution would make the increment unsound
+  // (false positives on delegation, missed cross-file cycles). This pins the decided behavior.
+  it('does not add cognitive complexity for direct or mutual recursion', () => {
+    expect(cognitiveOf('function f(n){ if (n <= 1) return 1; return n * f(n - 1); }')).toBe(1);
+    const mutual = measureCode(
+      'function even(n){ return n === 0 || odd(n - 1); }\nfunction odd(n){ return n !== 0 && even(n - 1); }\n',
+      {
+        language: 'javascript',
+      }
+    );
+    expect(mutual.functions.map((fn) => fn.recursive)).toEqual([true, true]);
+    expect(mutual.functions.map((fn) => fn.cognitiveComplexity)).toEqual([1, 1]);
+    expect(mutual.maxCognitiveComplexity).toBe(1);
   });
 });
 
@@ -378,7 +417,7 @@ describe('measureCode: call graph', () => {
     expect(metrics.functions).toHaveLength(2);
     expect(metrics.functions.filter((fn) => fn.recursive)).toHaveLength(1);
     expect(metrics.callGraph.recursiveFunctionCount).toBe(1);
-    expect(metrics.callGraph.internalCallCount).toBeGreaterThan(0);
+    expect(metrics.callGraph.internalEdgeCount).toBeGreaterThan(0);
   });
 
   it('tracks recursion, fan-in/fan-out, and call depth across a small call graph', () => {
@@ -389,17 +428,285 @@ describe('measureCode: call graph', () => {
     expect(byName.get('build')).toMatchObject({ recursive: false, fanOut: 2, callCount: 3, uniqueCalleeCount: 2 });
     expect(byName.get('combine')).toMatchObject({ fanIn: 1, fanOut: 0 });
 
-    // internalCallCount currently equals internalEdgeCount (unique caller→callee edges); it does not
-    // count call occurrences (which would be 4 here). This pins current behavior; see issue #22.
+    // internalEdgeCount counts unique caller→callee edges (build→factorial, build→combine,
+    // factorial→factorial), not call occurrences (issue #22).
     expect(metrics.callGraph).toMatchObject({
       callCount: 4,
-      internalCallCount: 3,
       internalEdgeCount: 3,
       recursiveFunctionCount: 1,
       maxFanIn: 2,
       maxFanOut: 2,
       maxCallDepth: 2,
     });
+  });
+
+  // Issue #19: overloaded and same-named functions previously dropped ALL their edges.
+  it('resolves Java overloads by arity and same-named methods by class scope', () => {
+    const metrics = measureCode(readFixture('overloads.java'), { language: 'java' });
+
+    const bySignature = new Map(metrics.functions.map((fn) => [`${fn.name}/${fn.parameterCount}@${fn.startLine}`, fn]));
+    // Alpha.run calls act(1) (resolved by arity) and this.act() (resolved by scope + arity).
+    expect(bySignature.get('run/0@6')).toMatchObject({ fanOut: 2 });
+    expect(bySignature.get('act/1@4')).toMatchObject({ fanIn: 1 });
+    expect(bySignature.get('act/0@2')).toMatchObject({ fanIn: 1 });
+    // Beta.go's bare act() resolves to Beta's own act, not Alpha's.
+    expect(bySignature.get('go/0@15')).toMatchObject({ fanOut: 1 });
+    expect(bySignature.get('act/0@13')).toMatchObject({ fanIn: 1 });
+    expect(metrics.callGraph).toMatchObject({ internalEdgeCount: 3, maxFanIn: 1 });
+  });
+
+  it('leaves genuinely ambiguous same-name same-arity calls unresolved', () => {
+    const code =
+      'class A {\n  void f() {}\n  void f(int x) {}\n}\nclass B {\n  void g(A a) { a.f(); }\n  void h(A a) { a.f(1); }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // a.f() has an explicit non-this receiver, so scope narrowing does not apply, but each arity
+    // still matches exactly one overload.
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+
+    const ambiguous = measureCode('class A {\n  void f(int x) {}\n  void f(long y) {}\n  void g() { f(1); }\n}\n', {
+      language: 'java',
+    });
+    expect(ambiguous.callGraph.internalEdgeCount).toBe(0);
+  });
+
+  // Issue #20: a Ruby bare receiverless zero-argument send parses as a plain identifier; it counts
+  // as a call exactly when no local variable of that name was bound lexically earlier.
+  it('counts Ruby bare receiverless sends but not local-variable reads', () => {
+    const metrics = measureCode(readFixture('bareSends.rb'), { language: 'ruby' });
+
+    const byName = new Map(metrics.functions.map((fn) => [fn.name, fn]));
+    // helper + helper (assignment RHS); `seed` and `total` are param/local reads.
+    expect(byName.get('run')).toMatchObject({ callCount: 2, fanOut: 1 });
+    expect(byName.get('shadowed')).toMatchObject({ callCount: 0 });
+    // `value` read before its assignment is a method send; afterwards it is a local.
+    expect(byName.get('lexical_order')).toMatchObject({ callCount: 1 });
+    // blocks see outer locals (`outer` is a read), but block-locals do not leak (`inner` is a send).
+    expect(byName.get('blocks')).toMatchObject({ callCount: 2 }); // list.each + trailing inner
+    // rescue => error binds; pattern matching and regex named captures bind too.
+    expect(byName.get('rescue_binding')).toMatchObject({ callCount: 1 });
+    expect(byName.get('pattern_binding')).toMatchObject({ callCount: 0 });
+    expect(byName.get('regex_binding')).toMatchObject({ callCount: 1 }); // `month` only; `year` is bound
+    // The regexp literal must be the LEFT operand of =~ to bind named captures; the reversed form
+    // binds nothing, so the bare `year` read stays a method send.
+    expect(byName.get('reversed_regex_binding')).toMatchObject({ callCount: 1 });
+    // Parameter-less blocks bind `_1`..`_9` and `it` implicitly; outside such blocks they are sends.
+    expect(byName.get('numbered_params')).toMatchObject({ callCount: 3 }); // 2x map + bare _1 outside a block
+    // Each `{ _1.name }` / `{ it.label }` block counts only its member send, not `_1`/`it` itself.
+    expect(metrics.functions.filter((fn) => fn.nodeType === 'block').map((fn) => fn.callCount)).toEqual([1, 1]);
+    // `alias c a` and `undef gone` operands are method-name references, not calls.
+    expect(byName.get('aliasing')).toMatchObject({ callCount: 1 }); // helper only
+    expect(byName.get('undefining')).toMatchObject({ callCount: 1 }); // helper only
+    expect(byName.get('introspection')).toMatchObject({ callCount: 0 }); // defined?(helper) does not invoke
+    // __FILE__/__LINE__/__ENCODING__ are pseudo-variables, not sends: only the three `puts` count.
+    expect(byName.get('pseudo_variables')).toMatchObject({ callCount: 3 });
+    // The quoted capture syntax (?'year') binds like (?<year>).
+    expect(byName.get('quoted_regex_binding')).toMatchObject({ callCount: 0 });
+    // A named capture binds at the END of the `=~` expression: the RHS `year` is still an unbound
+    // send (Ruby raises NameError there); the read on the next line is a bound local.
+    expect(byName.get('rhs_before_binding')).toMatchObject({ callCount: 1 });
+    // An endless method's body expression is a direct child of the method node; the bare `helper`
+    // there is still a send (only the definition's name/object positions are rejected).
+    expect(byName.get('endless')).toMatchObject({ callCount: 1, fanOut: 1 });
+    expect(byName.get('endless_s')).toMatchObject({ callCount: 1, fanOut: 1 });
+    expect(byName.get('helper')).toMatchObject({ fanIn: 6 }); // run, the each block, rescue_binding, aliasing, undefining, endless
+  });
+
+  // Same-named nested classes under different outers must not collapse into one scope, which
+  // would leave their same-arity self-calls ambiguous and edgeless.
+  it('distinguishes same-named nested classes by their enclosing scope chain', () => {
+    const code =
+      'class OuterA {\n  static class Worker {\n    void helper() {}\n    void run() { helper(); }\n  }\n}\nclass OuterB {\n  static class Worker {\n    void helper() {}\n    void run() { helper(); }\n  }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.functions.filter((fn) => fn.name === 'run').map((fn) => fn.fanOut)).toEqual([1, 1]);
+  });
+
+  it('resolves Rust Self:: associated-function calls within their own impl', () => {
+    const code =
+      'struct A;\nstruct B;\nimpl A {\n  fn helper() {}\n  fn run() { Self::helper(); }\n}\nimpl B {\n  fn helper() {}\n  fn run() { Self::helper(); }\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+  });
+
+  // Namespace ancestors must qualify class scopes, or same-named classes in different namespaces
+  // collapse into one scope and their same-arity self-calls become ambiguous and edgeless.
+  it('distinguishes same-named C++ classes in different namespaces', () => {
+    const code =
+      'namespace X {\nclass A {\n public:\n  void helper() {}\n  void run() { helper(); }\n};\n}\n' +
+      'namespace Y {\nclass A {\n public:\n  void helper() {}\n  void run() { helper(); }\n};\n}\n';
+    const metrics = measureCode(code, { language: 'cpp' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.functions.filter((fn) => fn.name === 'run').map((fn) => fn.fanOut)).toEqual([1, 1]);
+  });
+
+  it('matches C++ out-of-line members defined inside their namespace to the in-class scope', () => {
+    const code =
+      'namespace X {\nclass A {\n public:\n  void helper();\n  void run() { helper(); }\n};\nvoid A::helper() { run(); }\n}\n';
+    const metrics = measureCode(code, { language: 'cpp' });
+    // run -> helper and helper -> run: the out-of-line `A::helper` shares the `X::A` scope.
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.callGraph.recursiveFunctionCount).toBe(2);
+  });
+
+  it('distinguishes same-named Rust types in different inline modules', () => {
+    const code =
+      'mod x {\n  pub struct A;\n  impl A {\n    fn helper(&self) {}\n    fn run(&self) { self.helper(); }\n  }\n}\n' +
+      'mod y {\n  pub struct A;\n  impl A {\n    fn helper(&self) {}\n    fn run(&self) { self.helper(); }\n  }\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+  });
+
+  it('distinguishes two same-line anonymous classes', () => {
+    const code =
+      'class Outer {\n' +
+      '  Runnable a = new Runnable() { public void run() { helper(); } void helper() {} }; Runnable b = new Runnable() { public void run() { helper(); } void helper() {} };\n' +
+      '}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // Each anonymous class's run() resolves to ITS OWN helper; a shared per-line marker would make
+    // both ambiguous and edgeless.
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.functions.filter((fn) => fn.name === 'run').map((fn) => fn.fanOut)).toEqual([1, 1]);
+  });
+
+  // A variadic overload stays viable for any argument count covering its required parameters, so
+  // a call matching both a varargs and a fixed-arity candidate must stay unresolved.
+  it('leaves calls ambiguous between varargs and fixed-arity same-name methods unresolved', () => {
+    const code =
+      'class A {\n  void f(int... xs) {}\n}\nclass B {\n  void f(int x, int y) {}\n  void call(A a) { a.f(1, 2); }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(0);
+  });
+
+  it('validates arity even when the scope filter leaves a single candidate', () => {
+    const code =
+      'class A {\n  void helper(int x) {}\n  void run() { this.helper(1, 2, 3); }\n}\nclass B {\n  void helper(int x, int y) {}\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    // this.helper(1, 2, 3) matches no overload of A; the scope-unique candidate must not win.
+    expect(metrics.callGraph.internalEdgeCount).toBe(0);
+  });
+
+  // Local classes exist per enclosing function: same-named local classes in different methods are
+  // unrelated scopes, so each run() must resolve to its own helper().
+  it('distinguishes same-named local classes declared in different functions', () => {
+    const code =
+      'class Outer {\n' +
+      '  void first() {\n    class Worker {\n      void helper() {}\n      void run() { helper(); }\n    }\n  }\n' +
+      '  void second() {\n    class Worker {\n      void helper() {}\n      void run() { helper(); }\n    }\n  }\n' +
+      '}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.functions.filter((fn) => fn.name === 'run').map((fn) => fn.fanOut)).toEqual([1, 1]);
+  });
+
+  // Generic scope spellings are alpha-normalized: differently named type parameters name the same
+  // scope, while genuine specializations stay distinct.
+  it('matches Rust impls of one generic type across type-parameter renames', () => {
+    const code =
+      'struct Foo<T> { v: T }\nstruct Bar;\n' +
+      'impl<T> Foo<T> {\n  fn helper(&self) {}\n}\n' +
+      'impl<U> Foo<U> {\n  fn run(&self) { self.helper(); }\n}\n' +
+      'impl Bar {\n  fn helper(&self) {}\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  it('keeps genuinely distinct Rust impl specializations distinct', () => {
+    const code =
+      'struct Foo<T> { v: T }\n' +
+      'impl Foo<u32> {\n  fn helper(&self) {}\n}\n' +
+      'impl Foo<String> {\n  fn helper(&self) {}\n}\n' +
+      'impl<T> Foo<T> {\n  fn run(&self) { self.helper(); }\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    // The generic impl's scope matches neither specialization, so the call stays unresolved.
+    expect(metrics.callGraph.internalEdgeCount).toBe(0);
+  });
+
+  it('matches Go generic receivers across type-parameter renames', () => {
+    const code =
+      'package p\n\ntype Pair[A any, B any] struct{ a A; b B }\ntype Other struct{}\n\n' +
+      'func (p Pair[A, B]) helper() {}\nfunc (p Pair[X, Y]) run() { p.helper() }\nfunc (o Other) helper() {}\n';
+    const metrics = measureCode(code, { language: 'go' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  it('matches C++ out-of-line template members to the in-class template scope', () => {
+    const code =
+      'template <class T>\nclass A {\n public:\n  void helper();\n  void run() { helper(); }\n};\n' +
+      'template <class T>\nvoid A<T>::helper() { run(); }\n' +
+      'class B {\n public:\n  void helper() {}\n};\n';
+    const metrics = measureCode(code, { language: 'cpp' });
+    // run -> helper and helper -> run: `A<T>::helper` shares the in-class `A` scope.
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.callGraph.recursiveFunctionCount).toBe(2);
+  });
+
+  // Every `class << self` block of one class reopens the same eigenclass scope.
+  it('resolves Ruby calls across separate eigenclass blocks of one class', () => {
+    const code =
+      'class Outer\n  class << self\n    def helper\n    end\n  end\n  class << self\n    def run\n      helper\n    end\n  end\nend\n' +
+      'class Other\n  def helper\n  end\nend\n';
+    const metrics = measureCode(code, { language: 'ruby' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  // A Python bound method receives `self` implicitly, so `self.helper()` passes one argument
+  // fewer than `def helper(self)` declares; arity matching must be receiver-adjusted.
+  it('resolves Python self-calls to bound methods with receiver-adjusted arity', () => {
+    const code =
+      'class A:\n    def helper(self):\n        pass\n    def run(self):\n        self.helper()\n\n' +
+      'class B:\n    def helper(self):\n        pass\n';
+    const metrics = measureCode(code, { language: 'python' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+    // The reported parameter count keeps the declared `self`.
+    expect(metrics.functions.find((fn) => fn.name === 'helper')?.parameterCount).toBe(1);
+  });
+
+  // Self-like calls search the caller's file-local base classes, nearest scope first.
+  it('resolves inherited method calls through file-local base classes', () => {
+    const code =
+      'class Parent {\n  void helper() {}\n}\nclass Child extends Parent {\n  void run() { this.helper(); }\n}\n' +
+      'class Other {\n  void helper() {}\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+    expect(metrics.functions.find((fn) => fn.startLine === 2)).toMatchObject({ fanIn: 1 });
+  });
+
+  // A defaulted parameter widens the accepted range only up to the declared count; it is not
+  // unbounded varargs, so f(1, 2, 3) matches neither overload.
+  it('rejects argument counts beyond the declared parameters of a defaulted signature', () => {
+    const code = 'void f(int a, int b = 0) {}\nvoid f(int a, int b, int c, int d) {}\nvoid g() { f(1, 2, 3); }\n';
+    const metrics = measureCode(code, { language: 'cpp' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(0);
+
+    const within = measureCode(
+      'void f(int a, int b = 0) {}\nvoid f(int a, int b, int c, int d) {}\nvoid g() { f(1); }\n',
+      {
+        language: 'cpp',
+      }
+    );
+    expect(within.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  // A Ruby block parameter (`&blk`) binds the block, which call sites pass outside the argument
+  // list, so it counts toward no arity.
+  it('resolves Ruby calls to methods declaring only a block parameter', () => {
+    const code =
+      'class A\n  def helper(&blk)\n  end\n  def run\n    helper { 1 }\n  end\nend\n' +
+      'class B\n  def helper(&blk)\n  end\nend\n';
+    const metrics = measureCode(code, { language: 'ruby' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  it('treats calls through the Go receiver variable as self and scopes them to the receiver type', () => {
+    const code =
+      'package main\n\ntype A struct{}\ntype B struct{}\n\nfunc (a A) helper() {}\nfunc (a A) run() { a.helper() }\nfunc (b B) helper() {}\n';
+    const metrics = measureCode(code, { language: 'go' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+    const run = metrics.functions.find((fn) => fn.name === 'run');
+    expect(run).toMatchObject({ fanOut: 1 });
+    // The edge lands on A.helper (line 6), not B.helper (line 8).
+    expect(metrics.functions.find((fn) => fn.startLine === 6)).toMatchObject({ fanIn: 1 });
+    expect(metrics.functions.find((fn) => fn.startLine === 8)).toMatchObject({ fanIn: 0 });
   });
 });
 
@@ -446,6 +753,54 @@ describe('measureCode: coupling and module structure', () => {
     expect(metrics.module.declarations).toEqual([
       { exported: true, name: 'root', startLine: 6 },
       { exported: true, name: 'load', startLine: 8 },
+    ]);
+  });
+
+  // Issue #14: exports are Rust unrestricted `pub` (reachable through all-pub inline mods, the
+  // rustdoc/cargo-public-api/unreachable_pub convention) and Go capitalization. `pub(crate)`,
+  // `pub(super)`, and pub items buried in private mods are not exported.
+  it('treats Rust unrestricted pub items as exported and counts them toward exportCount', () => {
+    const metrics = measureCode(readFixture('visibility.rs'), { language: 'rust' });
+
+    // pub use + LIMIT + shared() + pub mod surface + surface::reachable = 5 bare `pub` modifiers
+    // whose whole ancestor chain is reachable. Excluded: pub(crate) Widget, pub(super) Kind,
+    // hidden::tucked (private mod), surface::shallow (pub(crate)), the pub `id` field (its struct
+    // is pub(crate)), Private::helper and Widget::tag (impls of non-exported types), and nested()
+    // (inside a function body).
+    expect(metrics.coupling.exportCount).toBe(5);
+    expect(metrics.module.declarations).toEqual([
+      { exported: true, name: 'LIMIT', startLine: 3 },
+      { exported: false, name: 'Widget', startLine: 5 },
+      { exported: true, name: 'shared', startLine: 10 },
+      { exported: false, name: 'internal', startLine: 14 },
+      { exported: false, name: 'Kind', startLine: 18 },
+      { exported: false, name: 'hidden', startLine: 22 },
+      { exported: true, name: 'surface', startLine: 28 },
+      { exported: false, name: 'Private', startLine: 38 },
+      { exported: false, name: 'outer', startLine: 52 },
+    ]);
+  });
+
+  it('treats capitalized Go top-level names as exported and counts them toward exportCount', () => {
+    const metrics = measureCode(readFixture('visibility.go'), { language: 'go' });
+
+    // Limit + Counter + Widget + Widget.Describe + Shared + Grouped (grouped `var ( ... )`) +
+    // Alias (`type Alias = string`) = 7 capitalized top-level names.
+    expect(metrics.coupling.exportCount).toBe(7);
+    // `floor` shares Limit's const_spec, whose declaration keeps only the first name (pre-existing).
+    expect(metrics.module.declarations).toEqual([
+      { exported: true, name: 'Limit', startLine: 3 },
+      { exported: true, name: 'Counter', startLine: 5 },
+      { exported: true, name: 'Widget', startLine: 7 },
+      { exported: false, name: 'helper', startLine: 9 },
+      { exported: true, name: 'Widget.Describe', startLine: 11 },
+      { exported: false, name: 'helper.describe', startLine: 15 },
+      { exported: true, name: 'Shared', startLine: 19 },
+      { exported: false, name: 'internal', startLine: 23 },
+      { exported: true, name: 'Grouped', startLine: 28 },
+      { exported: false, name: 'grouped', startLine: 29 },
+      { exported: true, name: 'Alias', startLine: 32 },
+      { exported: false, name: 'hiddenAlias', startLine: 34 },
     ]);
   });
 });

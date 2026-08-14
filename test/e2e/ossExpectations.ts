@@ -49,7 +49,8 @@ import type { LanguageName } from '../../src/index.js';
  *   returned from methods), while code-gauge counts statement-shaped content uniformly — the same
  *   deliberate divergence documented in pmdParity.test.ts.
  * - gocognit/cognitive: gocognit charges SonarSource's +1 recursion increment (gin's `iterate`);
- *   code-gauge does not charge recursion.
+ *   code-gauge does not charge recursion (issue #22 — intentionally omitted, like PMD and the
+ *   SonarQube analyzers, and unsound under file-local receiver-blind call resolution).
  * - complexipy/cognitive: complexipy charges comprehensions and their internal `if`/`for` clauses;
  *   code-gauge counts only statement-level decisions (dialect difference among Sonar ports).
  * - sonarjs/cognitive: sonarjs attributes nested-closure content to the innermost enclosing
@@ -144,7 +145,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 113,
         uniqueCalleeCount: 23,
-        internalCallCount: 16,
         internalEdgeCount: 16,
         recursiveFunctionCount: 0,
         maxFanIn: 3,
@@ -280,7 +280,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 184,
         uniqueCalleeCount: 70,
-        internalCallCount: 21,
         internalEdgeCount: 21,
         recursiveFunctionCount: 4,
         maxFanIn: 6,
@@ -598,7 +597,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 158,
         uniqueCalleeCount: 82,
-        internalCallCount: 40,
         internalEdgeCount: 40,
         recursiveFunctionCount: 3,
         maxFanIn: 5,
@@ -610,7 +608,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         importSourceCount: 13,
         relativeImportCount: 0,
         externalImportCount: 13,
-        exportCount: 0,
+        exportCount: 29,
       },
       module: {
         declarations: [
@@ -650,42 +648,42 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             startLine: 45,
           },
           {
-            exported: false,
+            exported: true,
             name: 'HandlerFunc',
             startLine: 48,
           },
           {
-            exported: false,
+            exported: true,
             name: 'HandlersChain',
             startLine: 51,
           },
           {
-            exported: false,
+            exported: true,
             name: 'HandlersChain.Last',
             startLine: 54,
           },
           {
-            exported: false,
+            exported: true,
             name: 'RouteInfo',
             startLine: 62,
           },
           {
-            exported: false,
+            exported: true,
             name: 'RoutesInfo',
             startLine: 70,
           },
           {
-            exported: false,
+            exported: true,
             name: 'PlatformGoogleAppEngine',
             startLine: 76,
           },
           {
-            exported: false,
+            exported: true,
             name: 'PlatformCloudflare',
             startLine: 79,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine',
             startLine: 84,
           },
@@ -695,17 +693,17 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             startLine: 173,
           },
           {
-            exported: false,
+            exported: true,
             name: 'New',
             startLine: 183,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Default',
             startLine: 216,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.Handler',
             startLine: 223,
           },
@@ -715,47 +713,47 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             startLine: 232,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.Delims',
             startLine: 239,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.SecureJsonPrefix',
             startLine: 245,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.LoadHTMLGlob',
             startLine: 252,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.LoadHTMLFiles',
             startLine: 268,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.SetHTMLTemplate',
             startLine: 279,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.SetFuncMap',
             startLine: 288,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.NoRoute',
             startLine: 293,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.NoMethod',
             startLine: 299,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.Use',
             startLine: 307,
           },
@@ -775,7 +773,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             startLine: 322,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.Routes',
             startLine: 349,
           },
@@ -785,7 +783,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             startLine: 356,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.Run',
             startLine: 376,
           },
@@ -795,7 +793,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             startLine: 390,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.SetTrustedProxies',
             startLine: 427,
           },
@@ -825,32 +823,32 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             startLine: 481,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.RunTLS',
             startLine: 496,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.RunUnix',
             startLine: 512,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.RunFd',
             startLine: 535,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.RunListener',
             startLine: 556,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.ServeHTTP',
             startLine: 570,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Engine.HandleContext',
             startLine: 584,
           },
@@ -1067,8 +1065,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 103,
         uniqueCalleeCount: 23,
-        internalCallCount: 5,
-        internalEdgeCount: 5,
+        internalEdgeCount: 6,
         recursiveFunctionCount: 0,
         maxFanIn: 3,
         maxFanOut: 1,
@@ -1365,7 +1362,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 119,
         uniqueCalleeCount: 41,
-        internalCallCount: 0,
         internalEdgeCount: 0,
         recursiveFunctionCount: 0,
         maxFanIn: 0,
@@ -1561,7 +1557,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 57,
         uniqueCalleeCount: 37,
-        internalCallCount: 4,
         internalEdgeCount: 4,
         recursiveFunctionCount: 0,
         maxFanIn: 2,
@@ -1734,9 +1729,8 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       nestingDepth: 2,
       ncssCount: 99,
       callGraph: {
-        callCount: 102,
-        uniqueCalleeCount: 53,
-        internalCallCount: 12,
+        callCount: 111,
+        uniqueCalleeCount: 54,
         internalEdgeCount: 12,
         recursiveFunctionCount: 0,
         maxFanIn: 3,
@@ -1852,7 +1846,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 252,
         uniqueCalleeCount: 35,
-        internalCallCount: 38,
         internalEdgeCount: 38,
         recursiveFunctionCount: 0,
         maxFanIn: 7,
@@ -2059,15 +2052,18 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       maxCognitiveComplexity: 26,
       nestingDepth: 3,
       ncssCount: 294,
+      // Python `self.helper()` sends resolve to bound methods (receiver-adjusted arity), and
+      // self-calls search file-local base classes: `request` is invoked by the seven HTTP verb
+      // helpers (maxFanIn 7), and `Session.send` and `SessionRedirectMixin.resolve_redirects`
+      // call each other through the mixin base (recursiveFunctionCount 2).
       callGraph: {
         callCount: 137,
         uniqueCalleeCount: 90,
-        internalCallCount: 4,
-        internalEdgeCount: 4,
-        recursiveFunctionCount: 0,
-        maxFanIn: 3,
-        maxFanOut: 2,
-        maxCallDepth: 2,
+        internalEdgeCount: 24,
+        recursiveFunctionCount: 2,
+        maxFanIn: 7,
+        maxFanOut: 5,
+        maxCallDepth: 5,
       },
       coupling: {
         importCount: 16,
@@ -2287,11 +2283,10 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 265,
         uniqueCalleeCount: 94,
-        internalCallCount: 61,
-        internalEdgeCount: 61,
+        internalEdgeCount: 63,
         recursiveFunctionCount: 7,
         maxFanIn: 7,
-        maxFanOut: 5,
+        maxFanOut: 6,
         maxCallDepth: 5,
       },
       coupling: {
@@ -2299,27 +2294,27 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         importSourceCount: 15,
         relativeImportCount: 7,
         externalImportCount: 8,
-        exportCount: 0,
+        exportCount: 25,
       },
       module: {
         declarations: [
           {
-            exported: false,
+            exported: true,
             name: 'Glob',
             startLine: 32,
           },
           {
-            exported: false,
+            exported: true,
             name: 'Gitignore',
             startLine: 81,
           },
           {
-            exported: false,
+            exported: true,
             name: 'GitignoreBuilder',
             startLine: 306,
           },
           {
-            exported: false,
+            exported: true,
             name: 'gitconfig_excludes_path',
             startLine: 537,
           },
@@ -2501,7 +2496,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 92,
         uniqueCalleeCount: 28,
-        internalCallCount: 14,
         internalEdgeCount: 14,
         recursiveFunctionCount: 1,
         maxFanIn: 3,

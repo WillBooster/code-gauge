@@ -4,9 +4,10 @@ import {
   defaultDuplicationOptions,
   measureDuplication,
   type CrossFileDuplicateCandidate,
+  type CrossFileDuplicationFileData,
 } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
-import { commentNodeTypes, countFunctionNcss, countNcss, invalidateNcssSetsCache } from './ncss.js';
+import { commentNodeTypes, countNcss, getNcssSets, invalidateNcssSetsCache, ncssContribution } from './ncss.js';
 import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
 import type {
   CallGraphMetrics,
@@ -213,10 +214,25 @@ interface CommentSpan {
   endColumn: number;
 }
 
+/**
+ * How a call site addresses its callee: `none` is a bare call (`f()`), `self` goes through the
+ * caller's own instance (`this.f()`, `self.f()`), `other` has any other explicit receiver.
+ */
+type CallReceiver = 'none' | 'self' | 'other';
+
+interface CallSite {
+  name: string;
+  /** Undefined when the syntax carries no argument list (e.g. Rust macro token trees). */
+  argumentCount?: number;
+  receiver: CallReceiver;
+}
+
 interface FunctionAnalysis {
   index: number;
   name?: string;
   nodeType: string;
+  /** Name of the enclosing class-like scope, used to disambiguate same-named methods. */
+  scopeName?: string;
   /** False for bodyless signatures (Java abstract/interface methods), which resolve no calls. */
   hasImplementation: boolean;
   startLine: number;
@@ -229,7 +245,17 @@ interface FunctionAnalysis {
   ncss: number;
   callCount: number;
   parameterCount: number;
+  /**
+   * Largest argument count a call site can pass (receiver-adjusted for Python bound methods);
+   * meaningless when unboundedArity is set.
+   */
+  callableParameterCount: number;
+  /** Required (neither variadic/rest/splat nor defaulted) parameters, receiver-adjusted likewise. */
+  callableMinParameterCount: number;
+  /** Whether the signature accepts unboundedly many arguments (true varargs/rest/splat only). */
+  unboundedArity: boolean;
   callees: Set<string>;
+  callSites: CallSite[];
   identifiers: Set<string>;
 }
 
@@ -281,7 +307,7 @@ export class TreeMeasurer {
     );
     const structuralMetrics = measureStructuralMetrics(root, functions, language);
     const functionMetrics = structuralMetrics.functions;
-    const globalComplexity = measureComplexity(root, language, 0, false);
+    const globalComplexity = measureComplexity(root, language);
     const { lines, codeLineNumbers } = classifyLines(code, root);
     const halstead = measureHalstead(root, code);
 
@@ -315,11 +341,17 @@ export class TreeMeasurer {
     };
   }
 
-  /**
-   * Collects duplicate-candidate fingerprints of one file for cross-file clone detection with
-   * measureCrossFileDuplication. Always measured by the TypeScript backend.
-   */
+  /** Collects one file's duplicate candidates for cross-file clone detection. */
   collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
+    return this.collectCrossFileDuplicationFileData(code, options).candidates;
+  }
+
+  /**
+   * Collects one file's duplicate candidates, normalized tokens, and statement structure for
+   * cross-file clone detection with measureCrossFileDuplication. Always measured by the
+   * TypeScript backend.
+   */
+  collectCrossFileDuplicationFileData(code: string, options: MeasureOptions): CrossFileDuplicationFileData {
     const language = this.registry.get(options.language);
     if (!language) {
       throw new Error(`Unsupported language: ${options.language}`);
@@ -353,6 +385,14 @@ export function measureCode(code: string, options: MeasureOptions): CodeMetrics 
 /** Standalone helper mirroring measureCode for the default measurer. */
 export function collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
   return defaultMeasurer.collectDuplicationCandidates(code, options);
+}
+
+/** Standalone helper mirroring measureCode for the default measurer. */
+export function collectCrossFileDuplicationFileData(
+  code: string,
+  options: MeasureOptions
+): CrossFileDuplicationFileData {
+  return defaultMeasurer.collectCrossFileDuplicationFileData(code, options);
 }
 
 /**
@@ -415,8 +455,20 @@ function measureStructuralMetrics(
   language: LanguageDefinition
 ): StructuralMetrics {
   const constructedTypeNames = collectConstructedTypeNames(root, language);
-  const analyses = functions.map((node, index) => analyzeFunction(node, language, index, constructedTypeNames));
-  const callGraph = measureCallGraph(analyses);
+  const bodyMetricsByNodeId = measureFunctionBodyMetrics(root, language);
+  const analyses = functions.map((node, index) => {
+    const bodyMetrics = bodyMetricsByNodeId.get(node.id);
+    if (!bodyMetrics) {
+      throw new Error(`missing body metrics for function node at line ${node.startPosition.row + 1}`);
+    }
+    return analyzeFunction(node, language, index, constructedTypeNames, bodyMetrics);
+  });
+  const callGraph = measureCallGraph(analyses, language.name, collectBaseScopes(root, language));
+  // Sonar's written spec adds +1 cognitive complexity per function in a recursion cycle, but this
+  // is intentionally not implemented (issue #22): mainstream implementations (PMD, SonarQube
+  // analyzers) omit it, and our file-local, receiver-blind call resolution would make it unsound
+  // (false positives on delegation like `len() { return this.inner.len(); }`, missed cross-file
+  // cycles). Recursion is still detected and reported via `recursive`.
   const functionsWithGraph = analyses.map((analysis) => ({
     name: analysis.name,
     nodeType: analysis.nodeType,
@@ -451,75 +503,397 @@ function analyzeFunction(
   node: Parser.SyntaxNode,
   language: LanguageDefinition,
   index: number,
-  constructedTypeNames: Set<string>
+  constructedTypeNames: Set<string>,
+  bodyMetrics: FunctionBodyMetrics
 ): FunctionAnalysis {
-  const complexity = measureComplexity(node, language, 0, true);
-  const calls = collectCalls(node, language, constructedTypeNames);
+  const calls = collectCalls(node, language, constructedTypeNames, findGoReceiverName(node));
+  const parameters = countParameters(node);
+  // Python bound methods receive `self`/`cls` implicitly, so a call site passes one argument
+  // fewer than the declaration lists; the reported parameterCount keeps the declared count.
+  const receiverOffset = language.name === 'python' ? countPythonBoundReceiverParameters(node) : 0;
   return {
     index,
     name: findFunctionName(node),
     nodeType: node.type,
+    scopeName: findFunctionScopeName(node, language),
     hasImplementation: hasImplementationBody(node),
     startLine: node.startPosition.row + 1,
     startColumn: node.startPosition.column,
     endLine: node.endPosition.row + 1,
     returnsJsx: returnsJsx(node, language),
-    cyclomaticComplexity: complexity.cyclomaticComplexity,
-    cognitiveComplexity: complexity.cognitiveComplexity,
-    nestingDepth: complexity.nestingDepth,
-    ncss: countFunctionNcss(node, language),
+    cyclomaticComplexity: bodyMetrics.cyclomaticComplexity,
+    cognitiveComplexity: bodyMetrics.cognitiveComplexity,
+    nestingDepth: bodyMetrics.nestingDepth,
+    ncss: bodyMetrics.ncss,
     callCount: calls.callCount,
-    parameterCount: countParameters(node),
+    parameterCount: parameters.count,
+    callableParameterCount: Math.max(parameters.count - receiverOffset, 0),
+    callableMinParameterCount: Math.max(parameters.minCount - receiverOffset, 0),
+    unboundedArity: parameters.unbounded,
     callees: calls.callees,
+    callSites: calls.callSites,
     identifiers: collectIdentifiers(node),
   };
 }
 
+/** Class-like nodes that scope their methods; namespaces are not scopes for bare-call resolution. */
+const scopeNodeTypes = new Set([
+  'class_declaration',
+  'class_definition',
+  'class_specifier',
+  'struct_specifier',
+  'union_specifier',
+  'interface_declaration',
+  'enum_declaration',
+  'record_declaration',
+  'annotation_type_declaration',
+  'object_creation_expression',
+  'class',
+  'module',
+  'singleton_class',
+  'struct_item',
+  'enum_item',
+  'union_item',
+  'trait_item',
+  'impl_item',
+]);
+
+/**
+ * Namespace-like ancestors qualify class scopes (`ns::Widget`) so same-named classes in different
+ * namespaces/modules stay distinguishable, but on their own they open no scope: a free function
+ * inside a namespace still resolves as a free function.
+ */
+const namespaceScopeNodeTypes = new Set(['namespace_definition', 'mod_item']);
+
+/**
+ * Qualified name of the class-like scope chain enclosing a function (`Outer::Worker`), so
+ * same-named methods of different classes — including same-named NESTED classes under different
+ * outers or namespaces — stay distinguishable in call-graph resolution. Go methods carry their
+ * scope on the receiver, and C++ out-of-line members (`void Widget::process()`) on the qualified
+ * declarator; namespace ancestors prefix the declarator-derived scope the same way, so
+ * `namespace X { void A::f() {} }` matches the in-class definition's `X::A`.
+ */
+function findFunctionScopeName(node: Parser.SyntaxNode, language: LanguageDefinition): string | undefined {
+  const { segments, hasClassScope } = collectScopeSegments(node.parent, language);
+  if (hasClassScope) {
+    return segments.join('::');
+  }
+
+  if (node.type === 'method_declaration') {
+    const receiverTypeNode = node.childForFieldName('receiver')?.namedChildren[0]?.childForFieldName('type');
+    if (receiverTypeNode) {
+      // Go receiver type arguments always DECLARE fresh type parameters, so `Pair[A, B]` and
+      // `Pair[X, Y]` name the same scope; stripping them makes the spellings match.
+      return normalizeGoReceiverType(receiverTypeNode.text).replace(/\[.*\]$/su, '');
+    }
+  }
+
+  const qualifiedName = unwrapDeclaratorName(node.childForFieldName('declarator'), true);
+  const scopeEnd = qualifiedName?.lastIndexOf('::') ?? -1;
+  if (qualifiedName !== undefined && scopeEnd > 0) {
+    // Out-of-line C++ members spell their class's template parameters (`void A<T>::method()`);
+    // canonicalizing them makes the scope match the in-class spelling `A` (H3).
+    const scope = canonicalizeGenericScope(qualifiedName.slice(0, scopeEnd), collectCppTemplateParameterNames(node));
+    return [...segments, scope].join('::');
+  }
+  return undefined;
+}
+
+interface ScopeSegments {
+  segments: string[];
+  hasClassScope: boolean;
+}
+
+/** Walks class-like (and qualifying namespace) ancestors of `start`; see findFunctionScopeName. */
+function collectScopeSegments(start: Parser.SyntaxNode | null, language: LanguageDefinition): ScopeSegments {
+  const functionNodeTypes = getComplexityNodeSets(language).functionNodes;
+  const segments: string[] = [];
+  let hasClassScope = false;
+  for (let current = start; current; current = current.parent) {
+    if (namespaceScopeNodeTypes.has(current.type)) {
+      // Anonymous namespaces add no segment: in C++ they reopen the same unnamed namespace.
+      const namespaceName = current.childForFieldName('name')?.text;
+      if (namespaceName) {
+        segments.unshift(namespaceName);
+      }
+      continue;
+    }
+    // A class LOCAL to a function exists per enclosing function, so a stable per-function marker
+    // keeps same-named local classes in different functions from cross-matching (issue: two
+    // methods each declaring a local `Worker` are unrelated scopes).
+    if (hasClassScope && isFunctionBoundary(current, functionNodeTypes)) {
+      segments.unshift(`<fn:${current.startIndex}>`);
+      continue;
+    }
+    if (!scopeNodeTypes.has(current.type)) {
+      continue;
+    }
+    // A plain `new Foo(...)` scopes nothing; only an anonymous-class body opens a scope.
+    if (
+      current.type === 'object_creation_expression' &&
+      !current.namedChildren.some((child) => child.type === 'class_body')
+    ) {
+      continue;
+    }
+    segments.unshift(scopeSegmentName(current));
+    hasClassScope = true;
+  }
+  return { segments, hasClassScope };
+}
+
+/** One scope segment for a class-like node (`Worker`, canonicalized `Foo` for `impl<T> Foo<T>`). */
+function scopeSegmentName(node: Parser.SyntaxNode): string {
+  // Rust `impl` blocks scope by the implementing type rather than a `name` field; declared type
+  // parameters are canonicalized so `impl<T> Foo<T>` and `impl<U> Foo<U>` name the same scope
+  // while genuinely distinct specializations (`impl Foo<u32>`) stay distinct.
+  if (node.type === 'impl_item') {
+    const typeText = node.childForFieldName('type')?.text;
+    if (typeText === undefined) {
+      return anonymousScopeName(node);
+    }
+    return canonicalizeGenericScope(typeText, declaredTypeParameterNames(node.childForFieldName('type_parameters')));
+  }
+  // A Ruby eigenclass (`class << self`) reopens the same scope every time for a given target, so
+  // it keys on the target text under the enclosing scope (`Outer::<<self`) rather than getting a
+  // per-node anonymous marker.
+  if (node.type === 'singleton_class') {
+    const valueText = node.childForFieldName('value')?.text;
+    return valueText === undefined ? anonymousScopeName(node) : `<<${valueText.replaceAll(/\s+/gu, '')}`;
+  }
+  return node.childForFieldName('name')?.text ?? anonymousScopeName(node);
+}
+
+/** Unnamed scopes (anonymous classes) get a per-node marker so they never cross-match. */
+function anonymousScopeName(node: Parser.SyntaxNode): string {
+  // The start CHARACTER index: two anonymous classes on one line must still get distinct markers.
+  return `<anonymous:${node.startIndex}>`;
+}
+
+/**
+ * Alpha-normalizes a generic scope spelling: declared type parameters are renamed positionally
+ * (`Foo<U,T>` with `<T,U>` declared becomes `Foo<$1,$0>`) so equivalent spellings match, and an
+ * argument list that is exactly the sequential parameter list (`Foo<$0,$1>`) is dropped so the
+ * scope also matches spellings that omit it (an in-class C++ template scope is plain `A`).
+ * Arguments that are NOT declared parameters (`Foo<u32>`) survive untouched, keeping genuine
+ * specializations distinct.
+ */
+function canonicalizeGenericScope(scope: string, parameterNames: string[]): string {
+  let text = scope.replaceAll(/\s+/gu, '');
+  if (parameterNames.length === 0) {
+    return text;
+  }
+  for (const [index, name] of parameterNames.entries()) {
+    const escaped = name.replaceAll(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
+    text = text.replaceAll(new RegExp(String.raw`(?<![\w'])${escaped}(?![\w])`, 'gu'), () => `$${index}`);
+  }
+  return text.replaceAll(/<\$\d+(?:,\$\d+)*>/gu, (list) => {
+    const indexes = [...list.matchAll(/\$(\d+)/gu)].map((match) => Number(match[1]));
+    return indexes.every((value, position) => value === position) ? '' : list;
+  });
+}
+
+/**
+ * Names the type parameters a `type_parameters`/`template_parameter_list` node declares, in
+ * declaration order. The first identifier-like descendant of each parameter is its name (`T` in
+ * `class T = int`, `N` in `const N: usize`, `'a` as a whole lifetime).
+ */
+function declaredTypeParameterNames(parametersNode: Parser.SyntaxNode | null): string[] {
+  const names: string[] = [];
+  for (const child of parametersNode?.namedChildren ?? []) {
+    if (child.type === 'comment') {
+      continue;
+    }
+    const name = findFirstTypeParameterName(child);
+    if (name !== undefined) {
+      names.push(name);
+    }
+  }
+  return names;
+}
+
+function findFirstTypeParameterName(node: Parser.SyntaxNode): string | undefined {
+  if (node.type === 'type_identifier' || node.type === 'identifier' || node.type === 'lifetime') {
+    return node.text;
+  }
+  for (const child of node.namedChildren) {
+    const name = findFirstTypeParameterName(child);
+    if (name !== undefined) {
+      return name;
+    }
+  }
+  return undefined;
+}
+
+/** Template parameters declared by the `template_declaration`s wrapping an out-of-line member. */
+function collectCppTemplateParameterNames(node: Parser.SyntaxNode): string[] {
+  const names: string[] = [];
+  for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
+    if (ancestor.type === 'template_declaration') {
+      names.unshift(...declaredTypeParameterNames(ancestor.childForFieldName('parameters')));
+    }
+  }
+  return names;
+}
+
+/** The receiver variable of a Go method (`a` in `func (a A) run()`); reads through it are `self`. */
+function findGoReceiverName(node: Parser.SyntaxNode): string | undefined {
+  if (node.type !== 'method_declaration') {
+    return undefined;
+  }
+  const nameNode = node.childForFieldName('receiver')?.namedChildren[0]?.childForFieldName('name');
+  return nameNode?.type === 'identifier' ? nameNode.text : undefined;
+}
+
+interface ParameterCounts {
+  /** All declared parameters, matching what the function metrics report. */
+  count: number;
+  /** Only required parameters: variadic/rest/splat and defaulted parameters are excluded. */
+  minCount: number;
+  /** Whether the signature accepts unboundedly many arguments (true varargs/rest/splat only). */
+  unbounded: boolean;
+}
+
+/**
+ * Parameter kinds that accept unboundedly many arguments: varargs/rest/splat (Java `int... xs`,
+ * JS/TS `...rest`, Python `*args`/`**kwargs`, Ruby `*rest`/`**opts`, Go `xs ...int`, C `...`).
+ * Defaulted parameters are NOT here: they widen the accepted range only up to the declared
+ * parameter count (`f(int, int = 0)` never takes three arguments).
+ */
+const unboundedParameterTypes = new Set([
+  'spread_parameter',
+  'variadic_parameter_declaration',
+  'variadic_parameter',
+  'rest_pattern',
+  'list_splat_pattern',
+  'dictionary_splat_pattern',
+  'splat_parameter',
+  'hash_splat_parameter',
+]);
+
+/**
+ * Parameter kinds a call site may omit because they carry a default: C++ `int b = 1`
+ * (`optional_parameter_declaration`), JS `b = 1`, TS `c?`, Python `b=1`, Ruby `b = 1`. Rust has
+ * none.
+ */
+const optionalParameterTypes = new Set([
+  'optional_parameter_declaration',
+  'assignment_pattern',
+  'optional_parameter',
+  'default_parameter',
+  'typed_default_parameter',
+]);
+
+/** Whether one declared parameter is a true varargs/rest/splat (see unboundedParameterTypes). */
+function isUnboundedParameter(node: Parser.SyntaxNode): boolean {
+  if (unboundedParameterTypes.has(node.type)) {
+    return true;
+  }
+  // TS wraps rest params (`...rest: T[]`, a `rest_pattern` in the `pattern` field) in
+  // `required_parameter`.
+  return node.type === 'required_parameter' && node.childForFieldName('pattern')?.type === 'rest_pattern';
+}
+
+/** Whether one declared parameter is defaulted/omittable (see optionalParameterTypes). */
+function isOptionalParameter(node: Parser.SyntaxNode): boolean {
+  if (optionalParameterTypes.has(node.type)) {
+    return true;
+  }
+  // TS wraps defaults (`b = 1`, a `value` field) in `required_parameter`; Ruby `k2: 2` is a
+  // `keyword_parameter` with a `value`.
+  return (
+    (node.type === 'required_parameter' || node.type === 'keyword_parameter') &&
+    node.childForFieldName('value') !== null
+  );
+}
+
 /** Counts declared parameters of a function/method, ignoring punctuation and comments. */
-function countParameters(node: Parser.SyntaxNode): number {
+function countParameters(node: Parser.SyntaxNode): ParameterCounts {
   // An unparenthesized arrow-function parameter (`x => x + 1`) is a bare `parameter` field.
   if (node.childForFieldName('parameter')) {
-    return 1;
+    return { count: 1, minCount: 1, unbounded: false };
   }
 
   const parametersNode = findParametersNode(node);
   if (!parametersNode) {
-    return 0;
+    return { count: 0, minCount: 0, unbounded: false };
   }
 
   // A Java bare lambda parameter (`x -> x + 1`) puts a lone identifier in the `parameters` field.
   if (parametersNode.type === 'identifier') {
-    return 1;
+    return { count: 1, minCount: 1, unbounded: false };
   }
 
   // Ruby block-locals after `;` (`{ |x; memo| ... }`) occupy `locals` fields and receive no arguments.
   const blockLocalIds = new Set(findChildrenByFieldName(parametersNode, 'locals').map((child) => child.id));
   // Rust's `self` and Java's explicit receiver (`void f(X this)`) are not declared parameters, and
-  // C/C++ `f(void)` declares none.
-  const namedCount = sum(
-    parametersNode.namedChildren
-      .filter(
-        (child) =>
-          child.type !== 'comment' &&
-          child.type !== 'self_parameter' &&
-          child.type !== 'receiver_parameter' &&
-          // Python's PEP 570/3102 markers (`/`, `*`) separate parameter kinds but bind nothing.
-          child.type !== 'positional_separator' &&
-          child.type !== 'keyword_separator' &&
-          !blockLocalIds.has(child.id) &&
-          !isVoidParameter(child)
-      )
-      // Go declares several names per declaration (`a, b int`); each name is a parameter.
-      .map((child) =>
-        child.type === 'parameter_declaration' ? Math.max(1, findChildrenByFieldName(child, 'name').length) : 1
-      )
-  );
+  // C/C++ `f(void)` declares none. A Ruby block parameter (`&blk`) binds the block, which call
+  // sites pass outside the argument list, so it counts toward no arity.
+  let count = 0;
+  let minCount = 0;
+  let unbounded = false;
+  for (const child of parametersNode.namedChildren) {
+    if (
+      child.type === 'comment' ||
+      child.type === 'self_parameter' ||
+      child.type === 'receiver_parameter' ||
+      child.type === 'block_parameter' ||
+      // Python's PEP 570/3102 markers (`/`, `*`) separate parameter kinds but bind nothing.
+      child.type === 'positional_separator' ||
+      child.type === 'keyword_separator' ||
+      blockLocalIds.has(child.id) ||
+      isVoidParameter(child)
+    ) {
+      continue;
+    }
+    // Go declares several names per declaration (`a, b int`); each name is a parameter.
+    const weight =
+      child.type === 'parameter_declaration' ? Math.max(1, findChildrenByFieldName(child, 'name').length) : 1;
+    count += weight;
+    if (isUnboundedParameter(child)) {
+      unbounded = true;
+    } else if (!isOptionalParameter(child)) {
+      minCount += weight;
+    }
+  }
   // C++ C-style varargs (`int f(int a, ...)`) leave `...` as an anonymous token, unlike C's named
   // `variadic_parameter`.
   const anonymousVariadicCount = parametersNode.children.filter(
     (child) => !child.isNamed && child.text === '...'
   ).length;
-  return namedCount + anonymousVariadicCount;
+  if (anonymousVariadicCount > 0) {
+    unbounded = true;
+  }
+  return { count: count + anonymousVariadicCount, minCount, unbounded };
+}
+
+/**
+ * 1 when a Python method's leading `self`/`cls` parameter is bound implicitly (so call sites pass
+ * one argument fewer than declared), 0 otherwise. `@staticmethod`s bind no receiver.
+ */
+function countPythonBoundReceiverParameters(node: Parser.SyntaxNode): number {
+  if (node.type !== 'function_definition') {
+    return 0;
+  }
+  const definition = node.parent?.type === 'decorated_definition' ? node.parent : node;
+  if (definition.parent?.type !== 'block' || definition.parent.parent?.type !== 'class_definition') {
+    return 0;
+  }
+  if (
+    definition.type === 'decorated_definition' &&
+    definition.namedChildren.some(
+      (child) => child.type === 'decorator' && child.text.replace(/^@/u, '') === 'staticmethod'
+    )
+  ) {
+    return 0;
+  }
+  const firstParameter = node.childForFieldName('parameters')?.namedChildren.find((child) => child.type !== 'comment');
+  const receiverName =
+    firstParameter?.type === 'identifier'
+      ? firstParameter.text
+      : firstParameter?.type === 'typed_parameter'
+        ? firstParameter.namedChild(0)?.text
+        : undefined;
+  return receiverName === 'self' || receiverName === 'cls' ? 1 : 0;
 }
 
 /** C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator. */
@@ -557,19 +931,143 @@ function findParametersNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefi
   return node.namedChildren.find((child) => child.type === 'formal_parameters' || child.type === 'parameter_list');
 }
 
-function measureCallGraph(analyses: FunctionAnalysis[]): {
+/** Languages whose file-local class base relationships inform self-call resolution. */
+const baseClassLanguages = new Set<LanguageName>([
+  'java',
+  'javascript',
+  'jsx',
+  'typescript',
+  'tsx',
+  'cpp',
+  'python',
+  'ruby',
+]);
+
+const baseClassNodeTypes = new Set([
+  'class_declaration',
+  'interface_declaration',
+  'class_specifier',
+  'struct_specifier',
+  'class_definition',
+  'class',
+]);
+
+/**
+ * File-local base-class relationships, keyed and valued by scope names, letting self-like calls
+ * search the caller's ancestor chain (Java/TS/JS `extends`, C++ base clauses, Python bases, Ruby
+ * `<`; Rust and Go have no class inheritance). An unqualified base name is resolved against the
+ * classes declared in this file, preferring the innermost shared enclosing scope; a base that
+ * resolves nowhere keeps its written spelling and simply matches no candidate scope.
+ */
+function collectBaseScopes(root: Parser.SyntaxNode, language: LanguageDefinition): Map<string, string[]> {
+  const baseScopesByScope = new Map<string, string[]>();
+  if (!baseClassLanguages.has(language.name)) {
+    return baseScopesByScope;
+  }
+
+  const knownScopes = new Set<string>();
+  const entries: { scope: string; enclosingSegments: string[]; baseNames: string[] }[] = [];
+  for (const node of collectNodes(root, baseClassNodeTypes)) {
+    const { segments } = collectScopeSegments(node.parent, language);
+    const scope = [...segments, scopeSegmentName(node)].join('::');
+    knownScopes.add(scope);
+    const baseNames = findBaseClassNames(node, language.name);
+    if (baseNames.length > 0) {
+      entries.push({ scope, enclosingSegments: segments, baseNames });
+    }
+  }
+
+  for (const { scope, enclosingSegments, baseNames } of entries) {
+    const resolved = baseNames.map((base) => resolveBaseScope(base, enclosingSegments, knownScopes));
+    // Reopened/partial classes (Ruby) may contribute bases from several definitions of one scope.
+    const existing = baseScopesByScope.get(scope) ?? [];
+    baseScopesByScope.set(scope, [...existing, ...resolved.filter((base) => !existing.includes(base))]);
+  }
+  return baseScopesByScope;
+}
+
+/** An unqualified base written beside the child resolves under their shared enclosing scopes. */
+function resolveBaseScope(baseName: string, enclosingSegments: string[], knownScopes: Set<string>): string {
+  for (let depth = enclosingSegments.length; depth > 0; depth -= 1) {
+    const candidate = [...enclosingSegments.slice(0, depth), baseName].join('::');
+    if (knownScopes.has(candidate)) {
+      return candidate;
+    }
+  }
+  return baseName;
+}
+
+/** Normalized base-class names one class-like definition declares. */
+function findBaseClassNames(node: Parser.SyntaxNode, languageName: LanguageName): string[] {
+  const names: string[] = [];
+  // Java `extends Parent` and Ruby `class Child < Parent` wrap the base in a `superclass` node.
+  const superclassNode = node.childForFieldName('superclass');
+  if (superclassNode) {
+    const base = superclassNode.type === 'superclass' ? superclassNode.namedChildren[0] : superclassNode;
+    if (base) {
+      names.push(base.text);
+    }
+  }
+  // TS puts an `extends_clause` (with `value` fields) inside `class_heritage`; JS puts the
+  // extended expression there directly.
+  const heritageNode = node.namedChildren.find((child) => child.type === 'class_heritage');
+  if (heritageNode) {
+    const extendsClause = heritageNode.namedChildren.find((child) => child.type === 'extends_clause');
+    const bases = extendsClause ? findChildrenByFieldName(extendsClause, 'value') : heritageNode.namedChildren;
+    names.push(...bases.map((base) => base.text));
+  }
+  // C++ `class Child : public Parent, Mixin` lists bases (with access specifiers) in a clause.
+  const baseClauseNode = node.namedChildren.find((child) => child.type === 'base_class_clause');
+  if (baseClauseNode) {
+    names.push(
+      ...baseClauseNode.namedChildren
+        .filter(
+          (child) =>
+            child.type === 'type_identifier' || child.type === 'template_type' || child.type === 'qualified_identifier'
+        )
+        .map((base) => base.text)
+    );
+  }
+  // Python `class Child(Parent, metaclass=Meta)` lists bases as superclass arguments.
+  const superclassesNode = node.childForFieldName('superclasses');
+  if (superclassesNode) {
+    names.push(
+      ...superclassesNode.namedChildren
+        .filter((child) => child.type === 'identifier' || child.type === 'attribute' || child.type === 'subscript')
+        .map((base) => base.text)
+    );
+  }
+  return names.map((name) => normalizeBaseClassName(name, languageName)).filter((name) => name.length > 0);
+}
+
+/** Strips generic arguments and rewrites qualifiers so a base spelling can match a scope name. */
+function normalizeBaseClassName(name: string, languageName: LanguageName): string {
+  let text = name.replaceAll(/\s+/gu, '');
+  if (languageName !== 'cpp' && languageName !== 'ruby') {
+    text = text.replaceAll('.', '::');
+  }
+  const genericStart = ['<', '['].map((open) => text.indexOf(open)).filter((index) => index >= 0);
+  if (genericStart.length > 0) {
+    text = text.slice(0, Math.min(...genericStart));
+  }
+  return text;
+}
+
+function measureCallGraph(
+  analyses: FunctionAnalysis[],
+  languageName: LanguageName,
+  baseScopesByScope: Map<string, string[]>
+): {
   fanInByIndex: Map<number, number>;
   fanOutByIndex: Map<number, number>;
   metrics: CallGraphMetrics;
   recursiveIndexes: Set<number>;
 } {
-  const indexesByName = mapUniqueFunctionIndexesByName(analyses);
-  const functionNames = new Set(indexesByName.keys());
+  const candidatesByName = mapCandidatesByName(analyses);
   const fanInByIndex = new Map<number, number>();
   const fanOutByIndex = new Map<number, number>();
   const graph = new Map<number, Set<number>>();
   let callCount = 0;
-  let internalCallCount = 0;
   const allCallees = new Set<string>();
 
   for (const analysis of analyses) {
@@ -578,19 +1076,23 @@ function measureCallGraph(analyses: FunctionAnalysis[]): {
       allCallees.add(callee);
     }
 
-    const internalCalleeNames = new Set([...analysis.callees].filter((callee) => functionNames.has(callee)));
-    const internalCalleeIndexes = new Set<number>();
-    for (const callee of internalCalleeNames) {
-      const calleeIndex = indexesByName.get(callee);
-      if (calleeIndex !== undefined) {
-        internalCalleeIndexes.add(calleeIndex);
+    const resolvedIndexes = new Set<number>();
+    for (const site of analysis.callSites) {
+      const resolved = resolveCallSite(
+        site,
+        analysis.scopeName,
+        candidatesByName.get(site.name),
+        languageName,
+        baseScopesByScope
+      );
+      if (resolved !== undefined) {
+        resolvedIndexes.add(resolved);
       }
     }
 
-    graph.set(analysis.index, internalCalleeIndexes);
-    fanOutByIndex.set(analysis.index, internalCalleeNames.size);
-    internalCallCount += internalCalleeNames.size;
-    for (const calleeIndex of internalCalleeIndexes) {
+    graph.set(analysis.index, resolvedIndexes);
+    fanOutByIndex.set(analysis.index, resolvedIndexes.size);
+    for (const calleeIndex of resolvedIndexes) {
       fanInByIndex.set(calleeIndex, (fanInByIndex.get(calleeIndex) ?? 0) + 1);
     }
   }
@@ -604,7 +1106,8 @@ function measureCallGraph(analyses: FunctionAnalysis[]): {
     metrics: {
       callCount,
       uniqueCalleeCount: allCallees.size,
-      internalCallCount,
+      // Occurrence-level internal call counts were removed as redundant/unactionable (issue #22);
+      // internalEdgeCount reports unique caller→callee edges.
       internalEdgeCount: sum([...graph.values()].map((callees) => callees.size)),
       recursiveFunctionCount: recursiveIndexes.size,
       maxFanIn: maxMapValue(fanInByIndex),
@@ -614,8 +1117,16 @@ function measureCallGraph(analyses: FunctionAnalysis[]): {
   };
 }
 
-function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<string, number> {
-  const indexesByName = new Map<string, number | undefined>();
+interface CalleeCandidate {
+  index: number;
+  callableParameterCount: number;
+  callableMinParameterCount: number;
+  unboundedArity: boolean;
+  scopeName?: string;
+}
+
+function mapCandidatesByName(analyses: FunctionAnalysis[]): Map<string, CalleeCandidate[]> {
+  const candidatesByName = new Map<string, CalleeCandidate[]>();
   for (const analysis of analyses) {
     // Bodyless signatures stay in functions[] for PMD-style aggregation, but they must not make
     // an implemented method's name ambiguous (an interface method and its implementation share a
@@ -623,10 +1134,97 @@ function mapUniqueFunctionIndexesByName(analyses: FunctionAnalysis[]): Map<strin
     if (!analysis.name || !analysis.hasImplementation) {
       continue;
     }
-
-    indexesByName.set(analysis.name, indexesByName.has(analysis.name) ? undefined : analysis.index);
+    const candidates = candidatesByName.get(analysis.name) ?? [];
+    candidates.push({
+      index: analysis.index,
+      callableParameterCount: analysis.callableParameterCount,
+      callableMinParameterCount: analysis.callableMinParameterCount,
+      unboundedArity: analysis.unboundedArity,
+      scopeName: analysis.scopeName,
+    });
+    candidatesByName.set(analysis.name, candidates);
   }
-  return new Map([...indexesByName.entries()].filter((entry): entry is [string, number] => entry[1] !== undefined));
+  return candidatesByName;
+}
+
+/** Languages whose bare calls (`f()`) reach the enclosing class's methods, not only free functions. */
+const bareCallReachesMethodsLanguages = new Set<LanguageName>(['java', 'ruby', 'cpp']);
+
+/**
+ * Resolves a call site to a function index. A file-unique name resolves unconditionally (the
+ * long-standing behavior). Same-named functions are disambiguated by scope first — `this`/`self`
+ * calls and (language permitting) bare calls target the caller's own class or, failing that, its
+ * file-local base classes (nearest scope first), remaining bare calls target free functions —
+ * then by arity, which is always validated, even for a scope-unique candidate. A fixed-arity
+ * candidate is viable only on an exact argument-count match, one with defaults when the count
+ * falls between its required and declared parameters, and only true varargs/rest/splat accept
+ * unboundedly many. A site with zero or several viable candidates stays unresolved rather than
+ * guessing (issue #19).
+ */
+function resolveCallSite(
+  site: CallSite,
+  callerScopeName: string | undefined,
+  candidates: CalleeCandidate[] | undefined,
+  languageName: LanguageName,
+  baseScopesByScope: Map<string, string[]>
+): number | undefined {
+  if (!candidates || candidates.length === 0) {
+    return undefined;
+  }
+  if (candidates.length === 1) {
+    return candidates[0]?.index;
+  }
+
+  const filterViable = (pool: CalleeCandidate[]): CalleeCandidate[] => {
+    const argumentCount = site.argumentCount;
+    if (argumentCount === undefined) {
+      return pool;
+    }
+    return pool.filter((candidate) =>
+      candidate.unboundedArity
+        ? argumentCount >= candidate.callableMinParameterCount
+        : candidate.callableMinParameterCount <= argumentCount && argumentCount <= candidate.callableParameterCount
+    );
+  };
+
+  const isSelfLikeBareCall =
+    site.receiver === 'none' && bareCallReachesMethodsLanguages.has(languageName) && callerScopeName !== undefined;
+  if (site.receiver === 'self' || isSelfLikeBareCall) {
+    // Breadth-first over the caller's scope and its file-local base scopes: the nearest scope with
+    // viable candidates decides, resolving only when it is unambiguous there.
+    let sawScopedCandidate = false;
+    const visitedScopes = new Set<string | undefined>([callerScopeName]);
+    const scopeQueue: (string | undefined)[] = [callerScopeName];
+    while (scopeQueue.length > 0) {
+      const scope = scopeQueue.shift();
+      const inScope = candidates.filter((candidate) => candidate.scopeName === scope);
+      if (inScope.length > 0) {
+        sawScopedCandidate = true;
+        const viable = filterViable(inScope);
+        if (viable.length > 0) {
+          return viable.length === 1 ? viable[0]?.index : undefined;
+        }
+      }
+      if (scope !== undefined) {
+        for (const base of baseScopesByScope.get(scope) ?? []) {
+          if (!visitedScopes.has(base)) {
+            visitedScopes.add(base);
+            scopeQueue.push(base);
+          }
+        }
+      }
+    }
+    // A self call, or a bare call whose scope chain declares the name (committing the call to the
+    // class even when no overload's arity fits), never falls back to free functions.
+    if (site.receiver === 'self' || sawScopedCandidate) {
+      return undefined;
+    }
+  }
+
+  const pool =
+    site.receiver === 'other' ? candidates : candidates.filter((candidate) => candidate.scopeName === undefined);
+  const viable = filterViable(pool);
+  return viable.length === 1 ? viable[0]?.index : undefined;
 }
 
 /**
@@ -738,26 +1336,67 @@ function getComplexityNodeSets(language: LanguageDefinition): ComplexityNodeSets
   return sets;
 }
 
-function measureComplexity(
-  node: Parser.SyntaxNode,
-  language: LanguageDefinition,
-  nesting: number,
-  stopAtNestedFunctions: boolean
-): ComplexityResult {
-  let cyclomaticComplexity = 1;
-  let cognitiveComplexity = 0;
-  let nestingDepth = nesting;
-  const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
+interface FunctionBodyMetrics {
+  cyclomaticComplexity: number;
+  cognitiveComplexity: number;
+  nestingDepth: number;
+  ncss: number;
+}
 
-  // Cyclomatic complexity and nesting depth describe the function's own body, so they stop at
-  // nested function boundaries; cognitive complexity follows the Sonar spec instead and charges
-  // nested function/lambda content to the enclosing function, one nesting level deeper.
+/** Accumulator for one function body during measureFunctionBodyMetrics' post-order pass. */
+interface FunctionBodyFrame {
+  cyclomaticComplexity: number;
+  cognitiveComplexity: number;
+  /** Count of `1 + nesting` cognitive increments, for re-basing on hoist into the parent frame. */
+  nestingSensitiveCount: number;
+  nestingDepth: number;
+  ncss: number;
+  hasOwnNcssContribution: boolean;
+  /** Cognitive nesting (structural nesting + function/class bonuses) carried into this body. */
+  entryCognitiveNesting: number;
+  /** Structural nesting carried into this body (bonuses excluded), for nesting depth. */
+  entryStructuralNesting: number;
+}
+
+function createFrame(entryCognitiveNesting: number, entryStructuralNesting: number): FunctionBodyFrame {
+  return {
+    cyclomaticComplexity: 1,
+    cognitiveComplexity: 0,
+    nestingSensitiveCount: 0,
+    nestingDepth: 0,
+    ncss: 0,
+    hasOwnNcssContribution: false,
+    entryCognitiveNesting,
+    entryStructuralNesting,
+  };
+}
+
+/**
+ * Per-function complexity and NCSS for every function boundary, in one post-order pass so each
+ * node is visited once instead of once per enclosing function (issue #35). A function's metrics
+ * are its own-body contributions plus, per directly nested function, that function's
+ * already-computed totals: NCSS hoists as-is; cognitive complexity re-bases the nested function's
+ * nesting-sensitive increments (each worth `1 + nesting`) by the nesting offset at the embedding
+ * site, while flat increments (else branches, boolean-operator sequences, chain continuations,
+ * jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
+ * only, so nothing hoists.
+ */
+function measureFunctionBodyMetrics(
+  root: Parser.SyntaxNode,
+  language: LanguageDefinition
+): Map<number, FunctionBodyMetrics> {
+  const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
+  const { countable, containers } = getNcssSets(language);
+  const results = new Map<number, FunctionBodyMetrics>();
+  // frames[0] is a sentinel for top-level code; its accumulation is discarded.
+  const frames: FunctionBodyFrame[] = [createFrame(0, 0)];
+
   function visit(
     current: Parser.SyntaxNode,
     currentNesting: number,
     functionNestingBonus: number,
     insideFunction: boolean,
-    insideNestedFunction: boolean,
+    insideNestedRegion: boolean,
     insideChargedClassBody: boolean
   ): void {
     // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
@@ -766,20 +1405,22 @@ function measureComplexity(
     // directly inside a charged class body skip the function-boundary bonus.
     const isChargedClassBody = current.type === 'class_body' && insideFunction;
     if (isChargedClassBody) {
-      insideNestedFunction = true;
+      insideNestedRegion = true;
       functionNestingBonus += 1;
     }
-    if (isFunctionBoundary(current, functionNodes)) {
-      if (insideFunction) {
-        insideNestedFunction = true;
-        if (!insideChargedClassBody) {
-          functionNestingBonus += 1;
-        }
+    const opensFrame = isFunctionBoundary(current, functionNodes);
+    if (opensFrame) {
+      if (insideFunction && !insideChargedClassBody) {
+        functionNestingBonus += 1;
       }
       insideFunction = true;
     }
-    const cognitiveNesting = currentNesting + functionNestingBonus;
-    const countsForOwnBody = !(stopAtNestedFunctions && insideNestedFunction);
+    // The node's own increments target the frame it is embedded in, not the one it opens; a
+    // frame-opening or charged-class-body node contributes nothing to that frame's own body
+    // (cyclomatic/nesting), matching the per-function traversal this pass replaces.
+    const frame = frames.at(-1) as FunctionBodyFrame;
+    const relativeNesting = currentNesting + functionNestingBonus - frame.entryCognitiveNesting;
+    const countsForOwnBody = !insideNestedRegion && !opensFrame;
 
     // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
     // `if` keyword token), so only named nodes count as decisions.
@@ -798,6 +1439,150 @@ function measureComplexity(
     const isContinuation = isDecision && isFlatChainContinuation(current);
 
     if (isDecision && countsForOwnBody) {
+      frame.cyclomaticComplexity += 1;
+    }
+    if (isDecision && !isCaseClause && !cyclomaticOnlyNodeTypes.has(current.type)) {
+      if (isContinuation) {
+        frame.cognitiveComplexity += 1;
+      } else {
+        frame.cognitiveComplexity += 1 + relativeNesting;
+        frame.nestingSensitiveCount += 1;
+      }
+    }
+    if (current.isNamed && switchLikeNodeTypes.has(current.type)) {
+      frame.cognitiveComplexity += 1 + relativeNesting;
+      frame.nestingSensitiveCount += 1;
+    }
+    // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
+    // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+    frame.cognitiveComplexity += countPlainElseBranches(current);
+    // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
+    if (isFlowBreakingJump(current)) {
+      frame.cognitiveComplexity += 1;
+    }
+
+    if (isBooleanOperator(current)) {
+      if (countsForOwnBody) {
+        frame.cyclomaticComplexity += 1;
+      }
+      // A sequence of identical boolean operators reads as one condition, so only the operator
+      // starting a sequence adds a cognitive point (Sonar spec); each operator stays one
+      // cyclomatic path.
+      if (startsBooleanOperatorSequence(current)) {
+        frame.cognitiveComplexity += 1;
+      }
+    }
+
+    // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
+    // add one independent execution path without nesting.
+    if (isPatternGuard(current)) {
+      if (countsForOwnBody) {
+        frame.cyclomaticComplexity += 1;
+      }
+      frame.cognitiveComplexity += 1;
+    }
+
+    const childNesting = isNesting && !isContinuation ? currentNesting + 1 : currentNesting;
+    if (countsForOwnBody) {
+      frame.nestingDepth = Math.max(frame.nestingDepth, childNesting - frame.entryStructuralNesting);
+    }
+
+    if (opensFrame) {
+      frames.push(createFrame(childNesting + functionNestingBonus, childNesting));
+    }
+    // The node's NCSS contribution belongs to the innermost frame whose subtree holds it — the
+    // frame the node opens, if any (per-function NCSS includes the declaration node itself).
+    const ownNcss = ncssContribution(current, countable, containers);
+    const ncssFrame = frames.at(-1) as FunctionBodyFrame;
+    ncssFrame.ncss += ownNcss;
+    if (opensFrame && ownNcss > 0) {
+      ncssFrame.hasOwnNcssContribution = true;
+    }
+
+    for (const child of current.children) {
+      visit(
+        child,
+        childNesting,
+        functionNestingBonus,
+        insideFunction,
+        opensFrame ? false : insideNestedRegion,
+        isChargedClassBody
+      );
+    }
+
+    if (opensFrame) {
+      const closed = frames.pop() as FunctionBodyFrame;
+      results.set(current.id, {
+        cyclomaticComplexity: closed.cyclomaticComplexity,
+        cognitiveComplexity: closed.cognitiveComplexity,
+        nestingDepth: closed.nestingDepth,
+        // A function node without a countable declaration of its own (arrow functions, lambdas,
+        // blocks) still counts 1 for the declaration itself.
+        ncss: closed.ncss + (closed.hasOwnNcssContribution ? 0 : 1),
+      });
+      const parent = frames.at(-1) as FunctionBodyFrame;
+      parent.cognitiveComplexity +=
+        closed.cognitiveComplexity +
+        closed.nestingSensitiveCount * (closed.entryCognitiveNesting - parent.entryCognitiveNesting);
+      parent.nestingSensitiveCount += closed.nestingSensitiveCount;
+      parent.ncss += closed.ncss;
+    }
+  }
+
+  visit(root, 0, 0, false, false, false);
+  return results;
+}
+
+/**
+ * File-level complexity over the whole tree. Cognitive complexity charges nested function/lambda
+ * content one nesting level deeper per function boundary crossed (Sonar spec); cyclomatic
+ * complexity and nesting depth count every node once.
+ */
+function measureComplexity(node: Parser.SyntaxNode, language: LanguageDefinition): ComplexityResult {
+  let cyclomaticComplexity = 1;
+  let cognitiveComplexity = 0;
+  let nestingDepth = 0;
+  const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
+
+  function visit(
+    current: Parser.SyntaxNode,
+    currentNesting: number,
+    functionNestingBonus: number,
+    insideFunction: boolean,
+    insideChargedClassBody: boolean
+  ): void {
+    // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
+    // level once for everything inside it — PMD charges the class body, not the methods it holds,
+    // so methods directly inside a charged class body skip the function-boundary bonus.
+    const isChargedClassBody = current.type === 'class_body' && insideFunction;
+    if (isChargedClassBody) {
+      functionNestingBonus += 1;
+    }
+    if (isFunctionBoundary(current, functionNodes)) {
+      if (insideFunction && !insideChargedClassBody) {
+        functionNestingBonus += 1;
+      }
+      insideFunction = true;
+    }
+    const cognitiveNesting = currentNesting + functionNestingBonus;
+
+    // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
+    // `if` keyword token), so only named nodes count as decisions.
+    const isDecision = current.isNamed && decisionNodes.has(current.type) && !isDefaultSwitchBranch(current);
+    const isCaseClause = current.isNamed && caseClauseNodeTypes.has(current.type);
+    // Ruby's `case ... else` arm is an `else` node; like every other language's default branch it
+    // nests its contents inside the switch (it cannot go in the Ruby nesting set because
+    // `if`/`begin` else branches would then double-nest under their already-nesting parent).
+    const isNesting =
+      current.isNamed &&
+      (nestingNodes.has(current.type) ||
+        (current.type === 'else' && (current.parent?.type === 'case' || current.parent?.type === 'case_match')));
+    // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
+    // surcharge, and their bodies stay at the chain's nesting level (Sonar cognitive-complexity
+    // semantics); genuinely nested conditionals inside those bodies still deepen.
+    const isContinuation = isDecision && isFlatChainContinuation(current);
+
+    if (isDecision) {
       cyclomaticComplexity += 1;
     }
     if (isDecision && !isCaseClause && !cyclomaticOnlyNodeTypes.has(current.type)) {
@@ -815,9 +1600,7 @@ function measureComplexity(
     }
 
     if (isBooleanOperator(current)) {
-      if (countsForOwnBody) {
-        cyclomaticComplexity += 1;
-      }
+      cyclomaticComplexity += 1;
       // A sequence of identical boolean operators reads as one condition, so only the operator
       // starting a sequence adds a cognitive point (Sonar spec); each operator stays one
       // cyclomatic path.
@@ -829,24 +1612,20 @@ function measureComplexity(
     // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
     // add one independent execution path without nesting.
     if (isPatternGuard(current)) {
-      if (countsForOwnBody) {
-        cyclomaticComplexity += 1;
-      }
+      cyclomaticComplexity += 1;
       cognitiveComplexity += 1;
     }
 
     const childNesting = isNesting && !isContinuation ? currentNesting + 1 : currentNesting;
-    if (countsForOwnBody) {
-      nestingDepth = Math.max(nestingDepth, childNesting);
-    }
+    nestingDepth = Math.max(nestingDepth, childNesting);
 
     for (const child of current.children) {
-      visit(child, childNesting, functionNestingBonus, insideFunction, insideNestedFunction, isChargedClassBody);
+      visit(child, childNesting, functionNestingBonus, insideFunction, isChargedClassBody);
     }
   }
 
   for (const child of node.children) {
-    visit(child, nesting, 0, stopAtNestedFunctions, false, false);
+    visit(child, 0, 0, false, false);
   }
 
   return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
@@ -1046,11 +1825,23 @@ function isBooleanOperator(node: Parser.SyntaxNode): boolean {
 function collectCalls(
   root: Parser.SyntaxNode,
   language: LanguageDefinition,
-  constructedTypeNames: Set<string> = new Set()
-): { callCount: number; callees: Set<string> } {
+  constructedTypeNames: Set<string> = new Set(),
+  goReceiverName?: string
+): { callCount: number; callees: Set<string>; callSites: CallSite[] } {
   const callees = new Set<string>();
+  const callSites: CallSite[] = [];
   const functionNodeTypes = getComplexityNodeSets(language).functionNodes;
+  const rubyBindingsCache = new Map<number, Map<string, number>>();
   let callCount = 0;
+
+  function addCallee(name: string, argumentCount: number | undefined, receiver: CallReceiver): void {
+    callees.add(name);
+    // A Python self/cls attribute call names its callee `self.helper`; resolution matches the
+    // method name alone (the receiver is the caller's own class), while the callees set keeps the
+    // full spelling.
+    const resolutionName = language.name === 'python' && receiver === 'self' ? (name.split('.').at(-1) ?? name) : name;
+    callSites.push({ name: resolutionName, argumentCount, receiver });
+  }
 
   function visit(node: Parser.SyntaxNode, insideRoot: boolean): void {
     if (!insideRoot && isFunctionBoundary(node, functionNodeTypes)) {
@@ -1072,7 +1863,13 @@ function collectCalls(
             constructedTypeNames.has(cppBaseTypeName(node.childForFieldName('function')) ?? '')));
       const callee = isCppConstructorCall ? undefined : findCalleeName(node);
       if (callee) {
-        callees.add(callee);
+        // A Ruby setter send (`self.foo = x` resolves the callee to `foo=`) passes one argument.
+        const isRubySetterSend = language.name === 'ruby' && node.type === 'call' && callee.endsWith('=');
+        addCallee(
+          callee,
+          isRubySetterSend ? 1 : countCallArguments(node),
+          classifyCallReceiver(node, language, goReceiverName)
+        );
       }
       // Ruby abbreviated assignment on a receiver (`self.foo += 1`, `self.foo ||= x`) invokes the
       // getter (the call node itself) AND the setter, so the setter is one extra call.
@@ -1085,13 +1882,16 @@ function collectCalls(
         callCount += 1;
         const setterMethod = node.childForFieldName('method');
         if (setterMethod) {
-          callees.add(`${setterMethod.text}=`);
+          addCallee(`${setterMethod.text}=`, 1, classifyCallReceiver(node, language, goReceiverName));
         }
       }
     } else if (isRubyImplicitCall(node, language) || isCppConstruction(node, constructedTypeNames)) {
       // `yield x` invokes the block, not its argument `x`, and constructors are overloaded by
       // definition, so neither adds a callee edge.
       callCount += 1;
+    } else if (language.name === 'ruby' && isRubyBareMethodSend(node, rubyBindingsCache)) {
+      callCount += 1;
+      addCallee(node.text, 0, 'none');
     }
 
     for (const child of node.namedChildren) {
@@ -1100,7 +1900,83 @@ function collectCalls(
   }
 
   visit(root, true);
-  return { callCount, callees };
+  return { callCount, callees, callSites };
+}
+
+/**
+ * Declared arguments at a call site, for arity-based overload resolution. Ruby block arguments
+ * (`&blk`) bind the block, not a positional parameter. Syntax without an argument list that can
+ * still be a counted call (Rust macros) reports no arity.
+ */
+function countCallArguments(node: Parser.SyntaxNode): number | undefined {
+  const argumentsNode = node.childForFieldName('arguments');
+  if (!argumentsNode) {
+    return node.type === 'macro_invocation' ? undefined : 0;
+  }
+  return argumentsNode.namedChildren.filter((child) => child.type !== 'comment' && child.type !== 'block_argument')
+    .length;
+}
+
+function classifyCallReceiver(
+  node: Parser.SyntaxNode,
+  language: LanguageDefinition,
+  goReceiverName?: string
+): CallReceiver {
+  if (language.name === 'ruby' && node.type === 'call') {
+    const receiverNode = node.childForFieldName('receiver');
+    if (!receiverNode) {
+      return 'none';
+    }
+    return receiverNode.type === 'self' ? 'self' : 'other';
+  }
+
+  if (node.type === 'method_invocation') {
+    const objectNode = node.childForFieldName('object');
+    if (!objectNode) {
+      return 'none';
+    }
+    return objectNode.type === 'this' ? 'self' : 'other';
+  }
+
+  const calleeNode = node.childForFieldName('function');
+  if (calleeNode) {
+    const unwrapped = unwrapParenthesizedExpression(calleeNode);
+    if (unwrapped.type === 'identifier') {
+      return 'none';
+    }
+    // Rust `Self::helper()` invokes an associated function of the caller's own impl.
+    if (unwrapped.type === 'scoped_identifier' && unwrapped.childForFieldName('path')?.text === 'Self') {
+      return 'self';
+    }
+    const receiverNode =
+      unwrapped.type === 'member_expression'
+        ? unwrapped.childForFieldName('object')
+        : unwrapped.type === 'field_expression'
+          ? (unwrapped.childForFieldName('argument') ?? unwrapped.childForFieldName('value'))
+          : unwrapped.type === 'attribute' || unwrapped.type === 'selector_expression'
+            ? (unwrapped.childForFieldName('object') ?? unwrapped.childForFieldName('operand'))
+            : undefined;
+    if (receiverNode) {
+      // Python class methods go through the conventional `cls` receiver.
+      const isPythonClsReceiver =
+        language.name === 'python' && receiverNode.type === 'identifier' && receiverNode.text === 'cls';
+      return isSelfLikeReceiver(receiverNode, goReceiverName) || isPythonClsReceiver ? 'self' : 'other';
+    }
+  }
+  return 'other';
+}
+
+/**
+ * JS `this`, Rust/Ruby `self` nodes, Python's conventional `self` identifier, and the enclosing Go
+ * method's receiver variable (`a` in `func (a A) run() { a.helper() }`).
+ */
+function isSelfLikeReceiver(node: Parser.SyntaxNode, goReceiverName?: string): boolean {
+  return (
+    node.type === 'this' ||
+    node.type === 'self' ||
+    (node.type === 'identifier' &&
+      (node.text === 'self' || (goReceiverName !== undefined && node.text === goReceiverName)))
+  );
 }
 
 const cppNamedCasts = new Set(['static_cast', 'dynamic_cast', 'const_cast', 'reinterpret_cast']);
@@ -1212,15 +2088,319 @@ function collectConstructedTypeNames(root: Parser.SyntaxNode, language: Language
  * Ruby's bare `yield` and `super` invoke without a `call` node (only `super()` parses as `call`,
  * whose `super` child must not double-count), so they add to the call count without a callee edge.
  * Language-gated because Python `yield` and JS/Java `super` children are not extra calls.
- * Bare receiverless zero-argument sends (`helper` alone) are deliberately NOT counted: they parse
- * as plain identifiers, and telling them apart from local-variable reads requires Ruby's
- * lexically-ordered binding analysis — a static-analysis boundary this measurer does not cross.
  */
 function isRubyImplicitCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
   if (language.name !== 'ruby') {
     return false;
   }
   return node.type === 'yield' || (node.type === 'super' && node.parent?.type !== 'call');
+}
+
+/**
+ * A Ruby bare receiverless zero-argument send (`helper` in `def run; helper; end`) parses as a
+ * plain `identifier`. Mirroring the real parser's lexically-ordered binding rule, an identifier
+ * read is a method call iff no local variable of that name was bound earlier in its scope chain
+ * (issue #20). Bindings are over-approximated where the grammar is ambiguous, so unclear cases
+ * are missed calls rather than invented ones.
+ */
+function isRubyBareMethodSend(node: Parser.SyntaxNode, bindingsCache: Map<number, Map<string, number>>): boolean {
+  if (node.type !== 'identifier' || rubyPseudoVariables.has(node.text) || !isRubyExpressionIdentifier(node)) {
+    return false;
+  }
+  return !isRubyLocalVariable(node, bindingsCache);
+}
+
+/** Compiler-provided pseudo-variables that parse as plain identifiers but are never method sends. */
+const rubyPseudoVariables = new Set(['__FILE__', '__LINE__', '__ENCODING__']);
+
+/** Identifier positions that bind a local or belong to another construct rather than reading a value. */
+function isRubyExpressionIdentifier(node: Parser.SyntaxNode): boolean {
+  const parent = node.parent;
+  if (!parent) {
+    return false;
+  }
+
+  switch (parent.type) {
+    // The method name of a `call` is part of the already-counted call; a `method` definition's
+    // name (and `def obj.meth`'s object) defines rather than reads.
+    case 'call': {
+      if (parent.childForFieldName('method')?.id === node.id) {
+        return false;
+      }
+      break;
+    }
+    // An endless method's body expression (`def g = helper`) is a DIRECT child of the method
+    // node, so only the definition's `name` (and `def obj.meth`'s `object`) is rejected here.
+    case 'method':
+    case 'singleton_method': {
+      if (parent.childForFieldName('name')?.id === node.id || parent.childForFieldName('object')?.id === node.id) {
+        return false;
+      }
+      break;
+    }
+    case 'setter':
+    // `alias c a` and `undef foo` operands are method-name references; none invokes anything.
+    case 'alias':
+    case 'undef': {
+      return false;
+    }
+    // Binding targets: `x = 1`, `x ||= 1`, `for x in ...`, `rescue => x`, and every parameter form.
+    case 'assignment':
+    case 'operator_assignment': {
+      if (parent.childForFieldName('left')?.id === node.id) {
+        return false;
+      }
+      break;
+    }
+    case 'left_assignment_list':
+    case 'destructured_left_assignment':
+    case 'rest_assignment':
+    case 'exception_variable':
+    case 'method_parameters':
+    case 'block_parameters':
+    case 'lambda_parameters':
+    case 'destructured_parameter':
+    case 'splat_parameter':
+    case 'optional_parameter':
+    case 'keyword_parameter':
+    case 'hash_splat_parameter':
+    case 'block_parameter': {
+      // An optional/keyword parameter's default value is a genuine read.
+      return parent.childForFieldName('value')?.id === node.id;
+    }
+    case 'for': {
+      if (parent.childForFieldName('pattern')?.id === node.id) {
+        return false;
+      }
+      break;
+    }
+    default: {
+      break;
+    }
+  }
+
+  // Pattern-matching positions bind (`in [head, *tail]`, `v => x`); pinned expressions inside
+  // patterns are reads, but skipping them only misses calls (conservative).
+  for (let current: Parser.SyntaxNode | null = node; current; current = current.parent) {
+    if (rubyPatternNodeTypes.has(current.type)) {
+      return false;
+    }
+    if (
+      (current.parent?.type === 'in_clause' || current.parent?.type === 'match_pattern') &&
+      current.parent.childForFieldName('pattern')?.id === current.id
+    ) {
+      return false;
+    }
+    if (rubyScopeNodeTypes.has(current.type)) {
+      break;
+    }
+  }
+
+  // `defined?(helper)` inspects without invoking.
+  let ancestor = parent;
+  while (ancestor.type === 'parenthesized_statements' && ancestor.parent) {
+    ancestor = ancestor.parent;
+  }
+  return !(ancestor.type === 'unary' && ancestor.child(0)?.text === 'defined?');
+}
+
+const rubyPatternNodeTypes = new Set([
+  'array_pattern',
+  'hash_pattern',
+  'find_pattern',
+  'keyword_pattern',
+  'as_pattern',
+  'alternative_pattern',
+]);
+
+/** Hard boundaries see no outer locals; soft scopes (blocks, lambdas) do. */
+const rubyHardScopeNodeTypes = new Set(['method', 'singleton_method', 'class', 'module', 'singleton_class', 'program']);
+const rubySoftScopeNodeTypes = new Set(['block', 'do_block', 'lambda']);
+const rubyScopeNodeTypes = new Set([...rubyHardScopeNodeTypes, ...rubySoftScopeNodeTypes]);
+
+function isRubyLocalVariable(node: Parser.SyntaxNode, bindingsCache: Map<number, Map<string, number>>): boolean {
+  const name = node.text;
+  for (
+    let scope = findEnclosingRubyScope(node.parent);
+    scope;
+    scope = rubyHardScopeNodeTypes.has(scope.type) ? undefined : findEnclosingRubyScope(scope.parent)
+  ) {
+    let bindings = bindingsCache.get(scope.id);
+    if (!bindings) {
+      bindings = collectRubyScopeBindings(scope);
+      bindingsCache.set(scope.id, bindings);
+    }
+    const bindingIndex = bindings.get(name);
+    if (bindingIndex !== undefined && bindingIndex < node.startIndex) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function findEnclosingRubyScope(node: Parser.SyntaxNode | null | undefined): Parser.SyntaxNode | undefined {
+  for (let current = node; current; current = current.parent) {
+    if (rubyScopeNodeTypes.has(current.type)) {
+      return current;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Earliest binding position of each local name a scope binds directly. Bindings inside nested
+ * scopes never escape them (block-local scoping), so nested scope subtrees are skipped; the
+ * nested scopes' own bindings are consulted when the walk in isRubyLocalVariable passes them.
+ */
+function collectRubyScopeBindings(scope: Parser.SyntaxNode): Map<string, number> {
+  const bindings = new Map<string, number>();
+  const add = (name: string, index: number): void => {
+    const existing = bindings.get(name);
+    if (existing === undefined || index < existing) {
+      bindings.set(name, index);
+    }
+  };
+
+  collectRubyParameterBindings(scope.childForFieldName('parameters'), add);
+
+  // A parameter-less block/lambda implicitly binds the numbered parameters `_1`..`_9` (2.7+) and
+  // `it` (3.4+) from its start, so such reads are (potential) parameter reads, not method sends.
+  if (rubySoftScopeNodeTypes.has(scope.type) && !scope.childForFieldName('parameters')) {
+    add('it', scope.startIndex);
+    for (let numbered = 1; numbered <= 9; numbered += 1) {
+      add(`_${numbered}`, scope.startIndex);
+    }
+  }
+
+  function visit(node: Parser.SyntaxNode): void {
+    for (const child of node.namedChildren) {
+      if (rubyScopeNodeTypes.has(child.type)) {
+        continue;
+      }
+      collectRubyNodeBindings(child, add);
+      visit(child);
+    }
+  }
+
+  visit(scope);
+  return bindings;
+}
+
+function collectRubyNodeBindings(node: Parser.SyntaxNode, add: (name: string, index: number) => void): void {
+  switch (node.type) {
+    case 'assignment': {
+      addRubyAssignmentTargets(node.childForFieldName('left'), add);
+      break;
+    }
+    case 'operator_assignment': {
+      const left = node.childForFieldName('left');
+      if (left?.type === 'identifier') {
+        add(left.text, left.startIndex);
+      }
+      break;
+    }
+    case 'for': {
+      addRubyAssignmentTargets(node.childForFieldName('pattern'), add);
+      break;
+    }
+    case 'exception_variable': {
+      const variable = node.namedChild(0);
+      if (variable?.type === 'identifier') {
+        add(variable.text, variable.startIndex);
+      }
+      break;
+    }
+    // `case/in` patterns and rightward assignment (`v => x`) bind their captures.
+    case 'in_clause':
+    case 'match_pattern': {
+      const pattern = node.childForFieldName('pattern');
+      if (pattern) {
+        addRubyPatternBindings(pattern, add);
+      }
+      break;
+    }
+    // `/(?<year>...)/ =~ value` binds each named capture as a local, but ONLY when the regexp
+    // literal is the LEFT operand (Regexp#=~); `value =~ /(?<year>...)/` binds nothing. Both the
+    // angle (`(?<name>`) and quote (`(?'name'`) capture syntaxes bind. The binding takes effect
+    // at the END of the `=~` expression: a name read inside the right operand is still unbound
+    // (Ruby raises NameError there), so it stays a counted send.
+    case 'binary': {
+      if (node.children.some((child) => !child.isNamed && child.text === '=~')) {
+        const regexNode = node.childForFieldName('left');
+        if (regexNode?.type === 'regex') {
+          for (const match of regexNode.text.matchAll(
+            /\(\?(?:<([A-Za-z_][A-Za-z0-9_]*)>|'([A-Za-z_][A-Za-z0-9_]*)')/gu
+          )) {
+            const captureName = match[1] ?? match[2];
+            if (captureName) {
+              add(captureName, node.endIndex);
+            }
+          }
+        }
+      }
+      break;
+    }
+    default: {
+      break;
+    }
+  }
+}
+
+function addRubyAssignmentTargets(target: Parser.SyntaxNode | null, add: (name: string, index: number) => void): void {
+  if (!target) {
+    return;
+  }
+  if (target.type === 'identifier') {
+    add(target.text, target.startIndex);
+    return;
+  }
+  if (
+    target.type === 'left_assignment_list' ||
+    target.type === 'destructured_left_assignment' ||
+    target.type === 'rest_assignment'
+  ) {
+    for (const child of target.namedChildren) {
+      addRubyAssignmentTargets(child, add);
+    }
+  }
+}
+
+/** Every identifier in a pattern binds; a valueless `in {name:}` key binds the key's name too. */
+function addRubyPatternBindings(pattern: Parser.SyntaxNode, add: (name: string, index: number) => void): void {
+  if (pattern.type === 'identifier') {
+    add(pattern.text, pattern.startIndex);
+    return;
+  }
+  if (pattern.type === 'keyword_pattern' && pattern.namedChildCount === 1) {
+    const key = pattern.childForFieldName('key');
+    if (key) {
+      add(key.text, key.startIndex);
+    }
+  }
+  for (const child of pattern.namedChildren) {
+    addRubyPatternBindings(child, add);
+  }
+}
+
+function collectRubyParameterBindings(
+  parameters: Parser.SyntaxNode | null | undefined,
+  add: (name: string, index: number) => void
+): void {
+  if (!parameters) {
+    return;
+  }
+  for (const child of parameters.namedChildren) {
+    if (child.type === 'identifier') {
+      add(child.text, child.startIndex);
+    } else if (child.type === 'destructured_parameter') {
+      collectRubyParameterBindings(child, add);
+    } else {
+      const nameNode = child.childForFieldName('name');
+      if (nameNode?.type === 'identifier') {
+        add(nameNode.text, nameNode.startIndex);
+      }
+    }
+  }
 }
 
 function collectIdentifiers(root: Parser.SyntaxNode): Set<string> {
@@ -1447,8 +2627,18 @@ function collectModuleDeclarations(root: Parser.SyntaxNode, language: LanguageDe
   const exportedNames = collectExportedNames(root);
   const scope = language.name === 'java' ? findJavaPackageScope(root) : '';
   return root.namedChildren
-    .flatMap((child) => collectTopLevelDeclarations(child, false, scope, language.name === 'cpp'))
-    .map((declaration) => (exportedNames.has(declaration.name) ? { ...declaration, exported: true } : declaration));
+    .flatMap((child) => collectTopLevelDeclarations(child, false, scope, language.name))
+    .map((declaration) =>
+      !declaration.exported &&
+      (exportedNames.has(declaration.name) || isGoExportedDeclarationName(declaration, language))
+        ? { ...declaration, exported: true }
+        : declaration
+    );
+}
+
+/** Go method declarations are named `Receiver.Method`; the method's own capitalization decides. */
+function isGoExportedDeclarationName(declaration: DeclarationMetrics, language: LanguageDefinition): boolean {
+  return language.name === 'go' && isGoExportedName(declaration.name.split('.').at(-1) ?? '');
 }
 
 /** Java top-level declarations are qualified by their package so simple names stay distinct. */
@@ -1466,10 +2656,11 @@ function collectTopLevelDeclarations(
   node: Parser.SyntaxNode,
   exported: boolean,
   scope = '',
-  isCpp = false
+  languageName = ''
 ): DeclarationMetrics[] {
+  const isCpp = languageName === 'cpp';
   if (isModuleExportNode(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true, scope, isCpp));
+    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true, scope, languageName));
   }
 
   // C++ namespaces qualify their contents so `Alpha::ServiceThing` and `Beta::ServiceThing` stay
@@ -1482,12 +2673,12 @@ function collectTopLevelDeclarations(
     }
     const bodyNode = node.childForFieldName('body');
     return (bodyNode?.namedChildren ?? []).flatMap((child) =>
-      collectTopLevelDeclarations(child, exported, `${scope}${name}::`, isCpp)
+      collectTopLevelDeclarations(child, exported, `${scope}${name}::`, languageName)
     );
   }
 
   if (isDeclarationContainer(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported, scope, isCpp));
+    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported, scope, languageName));
   }
 
   // C/C++ global variables live in `declaration` nodes with one or more declarators.
@@ -1512,7 +2703,15 @@ function collectTopLevelDeclarations(
     return qualifyDeclarations(rubyConstantDeclarations(node, exported), scope, true);
   }
 
-  return qualifyDeclarations(declarationFromNode(node, exported), scope);
+  // A Rust item is exported by its own `pub` modifier, not by a wrapping export statement. Only
+  // unrestricted `pub` counts — see isExportedRustVisibility (issue #14).
+  const isExported = exported || (languageName === 'rust' && hasUnrestrictedRustPub(node));
+  return qualifyDeclarations(declarationFromNode(node, isExported), scope);
+}
+
+/** The item carries a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction). */
+function hasUnrestrictedRustPub(node: Parser.SyntaxNode): boolean {
+  return node.namedChildren.some((child) => child.type === 'visibility_modifier' && child.namedChildCount === 0);
 }
 
 /**
@@ -1842,6 +3041,8 @@ function isTopLevelDeclarationNode(node: Parser.SyntaxNode): boolean {
     node.type === 'type_alias_declaration' ||
     node.type === 'type_declaration' ||
     node.type === 'type_spec' ||
+    // Go `type Alias = int`
+    node.type === 'type_alias' ||
     node.type === 'const_spec' ||
     node.type === 'var_spec' ||
     node.type === 'variable_declarator' ||
@@ -1956,8 +3157,11 @@ function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition):
       }
     }
 
-    if (isExportNode(node)) {
+    if (isExportNode(node, language)) {
       exportCount += 1;
+    }
+    if (language.name === 'go') {
+      exportCount += countGoExportedNames(node);
     }
 
     for (const child of node.namedChildren) {
@@ -2989,7 +4193,7 @@ function isImportSourceNode(node: Parser.SyntaxNode, language: LanguageDefinitio
     isCppModuleImport(node, language) ||
     isDynamicImportNode(node) ||
     isRubyRequireCall(node, language) ||
-    (isExportNode(node) && node.childForFieldName('source') !== null)
+    (isExportNode(node, language) && node.childForFieldName('source') !== null)
   );
 }
 
@@ -3387,12 +4591,140 @@ function unquote(value: string): string {
   return value.replaceAll(/^['"`<]|['"`>]$/gu, '');
 }
 
-function isExportNode(node: Parser.SyntaxNode): boolean {
+function isExportNode(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
+  // Rust visibility is a modifier, not an export statement; each exported `visibility_modifier`
+  // counts once — including pub fields/methods, matching how JS counts `public_field_definition`
+  // (issue #14). See isExportedRustVisibility for what "exported" means.
+  if (language.name === 'rust') {
+    return node.type === 'visibility_modifier' && isExportedRustVisibility(node);
+  }
+  // Go exports by capitalization; each capitalized top-level declared name is one export.
+  if (language.name === 'go') {
+    return false;
+  }
   // Java's JPMS `exports com.example.api;` directive is module wiring, not a symbol export.
   return (
     (node.type.startsWith('export') && node.type !== 'exports_module_directive') ||
     node.type === 'public_field_definition'
   );
+}
+
+/** Container items whose non-`pub` visibility blocks reachability of everything inside them. */
+const rustContainerItemTypes = new Set(['struct_item', 'enum_item', 'union_item', 'trait_item']);
+
+/**
+ * Rust's exported surface is the unrestricted-`pub` API reachable from the crate root — the
+ * convention rustdoc, cargo-public-api, and rustc's `unreachable_pub` lint agree on (issue #14).
+ * File-local approximation: a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction) whose
+ * enclosing inline `mod`s and container items (struct/enum/union/trait) in this file are all
+ * bare-`pub` themselves, whose enclosing `impl`s target a file-locally exported (or file-locally
+ * undeclared, assumed reachable) type, and which sits in no function body.
+ */
+function isExportedRustVisibility(node: Parser.SyntaxNode): boolean {
+  // Restricted variants (`pub(crate)` etc.) carry the restriction as a named child; bare `pub`
+  // has none.
+  if (node.namedChildCount > 0) {
+    return false;
+  }
+  // Skip the item carrying this modifier: its own reachability is judged by its ancestors (and
+  // the modifier under test IS its unrestricted `pub`).
+  for (let ancestor = node.parent?.parent; ancestor; ancestor = ancestor.parent) {
+    // Items inside a function body (`fn outer() { pub fn nested() {} }`) are never reachable.
+    if (ancestor.type === 'block' || ancestor.type === 'function_item') {
+      return false;
+    }
+    if (
+      (ancestor.type === 'mod_item' || rustContainerItemTypes.has(ancestor.type)) &&
+      !hasUnrestrictedRustPub(ancestor)
+    ) {
+      return false;
+    }
+    if (ancestor.type === 'impl_item' && !isRustImplTargetExported(ancestor)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether an `impl` block's items can be externally reachable: judged by the implemented type's
+ * own visibility when that type is declared in this file. A type not declared here (another
+ * module's type, a generic instantiation of one) is assumed reachable — the conservative side of
+ * the file-local approximation, counting possibly-exported items rather than dropping them.
+ */
+function isRustImplTargetExported(implNode: Parser.SyntaxNode): boolean {
+  const typeName = findRustTypeBaseName(implNode.childForFieldName('type'));
+  if (typeName === undefined) {
+    return true;
+  }
+  let root = implNode;
+  while (root.parent) {
+    root = root.parent;
+  }
+  const declaration = findRustTypeDeclaration(root, typeName);
+  if (!declaration) {
+    return true;
+  }
+  const visibility = declaration.namedChildren.find((child) => child.type === 'visibility_modifier');
+  return visibility !== undefined && isExportedRustVisibility(visibility);
+}
+
+const rustTypeDeclarationTypes = new Set([...rustContainerItemTypes, 'type_item']);
+
+function findRustTypeDeclaration(root: Parser.SyntaxNode, typeName: string): Parser.SyntaxNode | undefined {
+  return collectNodes(root, rustTypeDeclarationTypes).find((node) => node.childForFieldName('name')?.text === typeName);
+}
+
+/** The base identifier of an impl target (`Foo` in `Foo<T>`, `crate::a::Foo`, `&mut Foo`). */
+function findRustTypeBaseName(node: Parser.SyntaxNode | null): string | undefined {
+  let current: Parser.SyntaxNode | undefined = node ?? undefined;
+  while (current) {
+    if (current.type === 'type_identifier') {
+      return current.text;
+    }
+    current = current.childForFieldName('name') ?? current.childForFieldName('type') ?? current.namedChildren.at(-1);
+  }
+  return undefined;
+}
+
+/** Capitalized names a top-level Go declaration exports (`var A, b = ...` exports only `A`). */
+function countGoExportedNames(node: Parser.SyntaxNode): number {
+  if (
+    node.type === 'function_declaration' ||
+    node.type === 'method_declaration' ||
+    node.type === 'type_spec' ||
+    // `type Alias = int` parses as `type_alias`, not `type_spec`.
+    node.type === 'type_alias'
+  ) {
+    const name = node.childForFieldName('name')?.text;
+    return name !== undefined && isGoExportedName(name) && isGoTopLevelDeclaration(node) ? 1 : 0;
+  }
+  if ((node.type === 'const_spec' || node.type === 'var_spec') && isGoTopLevelDeclaration(node)) {
+    return findChildrenByFieldName(node, 'name').filter((nameNode) => isGoExportedName(nameNode.text)).length;
+  }
+  return 0;
+}
+
+// Grouped `var ( ... )` wraps its specs in an extra `var_spec_list` level.
+const goDeclarationWrapperTypes = new Set([
+  'type_declaration',
+  'const_declaration',
+  'var_declaration',
+  'var_spec_list',
+]);
+
+/** Whether a Go spec/declaration sits at package level (possibly inside a grouped declaration). */
+function isGoTopLevelDeclaration(node: Parser.SyntaxNode): boolean {
+  let parent = node.parent;
+  while (parent && goDeclarationWrapperTypes.has(parent.type)) {
+    parent = parent.parent;
+  }
+  return parent?.type === 'source_file';
+}
+
+/** Go exports identifiers whose first character is an upper-case letter (Go spec, "Exported identifiers"). */
+function isGoExportedName(name: string): boolean {
+  return /^\p{Lu}/u.test(name);
 }
 
 function findRecursiveIndexes(graph: Map<number, Set<number>>): Set<number> {

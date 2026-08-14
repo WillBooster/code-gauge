@@ -7,11 +7,23 @@ import { loadFixtureCorpus } from './fixtureCorpus.js';
 // so any implementation change — in particular the native Rust backend — must reproduce the
 // TypeScript implementation bit-for-bit to stay green.
 
+// Transcendental functions (Math.log / Rust ln) may differ by 1 ulp across platforms, so
+// non-integer values are rounded before snapshotting; full precision stays covered by the
+// same-machine native-parity suite.
+function roundFloats(value: unknown): unknown {
+  if (typeof value === 'number' && !Number.isInteger(value)) return Number(value.toFixed(8));
+  if (Array.isArray(value)) return value.map((element) => roundFloats(element));
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, roundFloats(entry)]));
+  }
+  return value;
+}
+
 describe('measureCode: golden metrics for the fixture corpus', () => {
   for (const entry of loadFixtureCorpus()) {
     it(`matches the golden metrics for ${entry.name}`, () => {
       const metrics = measureCode(entry.code, { language: entry.language });
-      expect(metrics).toMatchSnapshot();
+      expect(roundFloats(metrics)).toMatchSnapshot();
     });
   }
 });

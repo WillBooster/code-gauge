@@ -68,7 +68,6 @@ pub struct FunctionMetrics {
 pub struct CallGraphMetrics {
     pub call_count: u64,
     pub unique_callee_count: usize,
-    pub internal_call_count: usize,
     pub internal_edge_count: usize,
     pub recursive_function_count: usize,
     pub max_fan_in: usize,

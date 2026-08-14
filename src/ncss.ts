@@ -45,7 +45,7 @@ const bodylessNcssSpecifierTypes = new Set([
  * statement, and clause (`else`, `case`/`default` label, `catch`, `finally`, try-with-resources
  * resource); `try` itself, braces, blank lines, and comments count 0.
  */
-interface NcssSets {
+export interface NcssSets {
   countable: Set<string>;
   containers: Set<string>;
 }
@@ -59,7 +59,7 @@ export function invalidateNcssSetsCache(language: LanguageDefinition): void {
   ncssSetsCache.delete(language);
 }
 
-function getNcssSets(language: LanguageDefinition): NcssSets {
+export function getNcssSets(language: LanguageDefinition): NcssSets {
   let sets = ncssSetsCache.get(language);
   if (!sets) {
     sets = { countable: new Set(language.ncssNodeTypes), containers: new Set(language.ncssContainerNodeTypes) };
@@ -83,17 +83,7 @@ export function countNcss(node: Parser.SyntaxNode, language: LanguageDefinition)
   return count;
 }
 
-/**
- * Per-function NCSS: the function's whole subtree plus 1 for the declaration itself when the
- * function node carries no countable declaration of its own (arrow functions, lambdas, blocks).
- */
-export function countFunctionNcss(node: Parser.SyntaxNode, language: LanguageDefinition): number {
-  const { countable, containers } = getNcssSets(language);
-  const selfContribution = ncssContribution(node, countable, containers);
-  return countNcss(node, language) + (selfContribution > 0 ? 0 : 1);
-}
-
-function ncssContribution(node: Parser.SyntaxNode, countable: Set<string>, containers: Set<string>): number {
+export function ncssContribution(node: Parser.SyntaxNode, countable: Set<string>, containers: Set<string>): number {
   if (!node.isNamed || commentNodeTypes.has(node.type) || isForHeaderNode(node)) {
     return 0;
   }

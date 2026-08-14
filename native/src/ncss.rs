@@ -67,18 +67,7 @@ pub fn count_ncss(
     count
 }
 
-/// Per-function NCSS: the function's whole subtree plus 1 for the declaration itself when the
-/// function node carries no countable declaration of its own (arrow functions, lambdas, blocks).
-pub fn count_function_ncss(
-    node: Node<'_>,
-    countable: &HashSet<&'static str>,
-    containers: &HashSet<&'static str>,
-) -> u64 {
-    let self_contribution = ncss_contribution(node, countable, containers);
-    count_ncss(node, countable, containers) + if self_contribution > 0 { 0 } else { 1 }
-}
-
-fn ncss_contribution(
+pub fn ncss_contribution(
     node: Node<'_>,
     countable: &HashSet<&'static str>,
     containers: &HashSet<&'static str>,

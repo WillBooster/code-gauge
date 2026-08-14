@@ -1,17 +1,35 @@
 use indexmap::IndexSet;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
 
-use crate::complexity::{is_function_boundary, measure_complexity, LanguageSets};
+use crate::complexity::{is_function_boundary, FunctionBodyMetrics, LanguageSets};
 use crate::util::{
     all_children, find_children_by_field_name, named_children, node_text, strip_js_whitespace,
     Source,
 };
 
+/// How a call site addresses its callee: `None` is a bare call (`f()`), `SelfLike` goes through
+/// the caller's own instance (`this.f()`, `self.f()`), `Other` has any other explicit receiver.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum CallReceiver {
+    None,
+    SelfLike,
+    Other,
+}
+
+pub struct CallSite {
+    pub name: String,
+    /// None when the syntax carries no argument list (e.g. Rust macro token trees).
+    pub argument_count: Option<usize>,
+    pub receiver: CallReceiver,
+}
+
 pub struct FunctionAnalysis {
     pub index: usize,
     pub name: Option<String>,
     pub node_type: &'static str,
+    /// Name of the enclosing class-like scope, used to disambiguate same-named methods.
+    pub scope_name: Option<String>,
     /// False for bodyless signatures (Java abstract/interface methods), which resolve no calls.
     pub has_implementation: bool,
     pub start_line: usize,
@@ -24,13 +42,22 @@ pub struct FunctionAnalysis {
     pub ncss: u64,
     pub call_count: u64,
     pub parameter_count: usize,
+    /// Largest argument count a call site can pass (receiver-adjusted for Python bound methods);
+    /// meaningless when `unbounded_arity` is set.
+    pub callable_parameter_count: usize,
+    /// Required (neither variadic/rest/splat nor defaulted) parameters, receiver-adjusted likewise.
+    pub callable_min_parameter_count: usize,
+    /// Whether the signature accepts unboundedly many arguments (true varargs/rest/splat only).
+    pub unbounded_arity: bool,
     pub callees: IndexSet<String>,
+    pub call_sites: Vec<CallSite>,
     pub identifiers: HashSet<String>,
 }
 
 pub struct CallsResult {
     pub call_count: u64,
     pub callees: IndexSet<String>,
+    pub call_sites: Vec<CallSite>,
 }
 
 /// C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members; those have no
@@ -70,14 +97,29 @@ pub fn analyze_function(
     sets: &LanguageSets,
     index: usize,
     constructed_type_names: &HashSet<String>,
+    body_metrics: &FunctionBodyMetrics,
     code: &Source<'_>,
 ) -> FunctionAnalysis {
-    let complexity = measure_complexity(node, sets, 0, true, code);
-    let calls = collect_calls(node, sets, constructed_type_names, code);
+    let calls = collect_calls(
+        node,
+        sets,
+        constructed_type_names,
+        code,
+        find_go_receiver_name(node, code),
+    );
+    let parameters = count_parameters(node, code);
+    // Python bound methods receive `self`/`cls` implicitly, so a call site passes one argument
+    // fewer than the declaration lists; the reported parameter_count keeps the declared count.
+    let receiver_offset = if sets.name == "python" {
+        count_python_bound_receiver_parameters(node, code)
+    } else {
+        0
+    };
     FunctionAnalysis {
         index,
         name: find_function_name(node, code),
         node_type: node.kind(),
+        scope_name: find_function_scope_name(node, sets, code),
         has_implementation: has_implementation_body(node),
         start_line: node.start_position().row + 1,
         // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving yields
@@ -85,31 +127,561 @@ pub fn analyze_function(
         start_column: node.start_position().column / 2,
         end_line: node.end_position().row + 1,
         returns_jsx: returns_jsx(node, sets, code),
-        cyclomatic_complexity: complexity.cyclomatic_complexity,
-        cognitive_complexity: complexity.cognitive_complexity,
-        nesting_depth: complexity.nesting_depth,
-        ncss: crate::ncss::count_function_ncss(node, &sets.ncss_nodes, &sets.ncss_containers),
+        cyclomatic_complexity: body_metrics.cyclomatic_complexity,
+        cognitive_complexity: body_metrics.cognitive_complexity,
+        nesting_depth: body_metrics.nesting_depth,
+        ncss: body_metrics.ncss,
         call_count: calls.call_count,
-        parameter_count: count_parameters(node, code),
+        parameter_count: parameters.count,
+        callable_parameter_count: parameters.count.saturating_sub(receiver_offset),
+        callable_min_parameter_count: parameters.min_count.saturating_sub(receiver_offset),
+        unbounded_arity: parameters.unbounded,
         callees: calls.callees,
+        call_sites: calls.call_sites,
         identifiers: collect_identifiers(node, code),
     }
 }
 
+/// Class-like nodes that scope their methods; namespaces are not scopes for bare-call resolution.
+const SCOPE_NODE_TYPES: &[&str] = &[
+    "class_declaration",
+    "class_definition",
+    "class_specifier",
+    "struct_specifier",
+    "union_specifier",
+    "interface_declaration",
+    "enum_declaration",
+    "record_declaration",
+    "annotation_type_declaration",
+    "object_creation_expression",
+    "class",
+    "module",
+    "singleton_class",
+    "struct_item",
+    "enum_item",
+    "union_item",
+    "trait_item",
+    "impl_item",
+];
+
+/// Namespace-like ancestors qualify class scopes (`ns::Widget`) but open no scope on their own;
+/// see namespaceScopeNodeTypes in metrics.ts.
+const NAMESPACE_SCOPE_NODE_TYPES: &[&str] = &["namespace_definition", "mod_item"];
+
+/// Qualified name of the class-like scope chain enclosing a function (`Outer::Worker`); see
+/// findFunctionScopeName in metrics.ts. Go methods carry their scope on the receiver, and C++
+/// out-of-line members (`void Widget::process()`) on the qualified declarator, prefixed by any
+/// enclosing namespaces so `namespace X { void A::f() {} }` matches the in-class `X::A`.
+fn find_function_scope_name(
+    node: Node<'_>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+) -> Option<String> {
+    let (mut segments, has_class_scope) = collect_scope_segments(node.parent(), sets, code);
+    if has_class_scope {
+        return Some(segments.join("::"));
+    }
+
+    if node.kind() == "method_declaration" {
+        let receiver_type_node = node
+            .child_by_field_name("receiver")
+            .and_then(|receiver| named_children(receiver).first().copied())
+            .and_then(|first| first.child_by_field_name("type"));
+        if let Some(receiver_type_node) = receiver_type_node {
+            // Go receiver type arguments always DECLARE fresh type parameters, so `Pair[A, B]`
+            // and `Pair[X, Y]` name the same scope; stripping them makes the spellings match.
+            let normalized = normalize_go_receiver_type(node_text(receiver_type_node, code));
+            let stripped = match normalized.find('[') {
+                Some(start) if normalized.ends_with(']') => normalized[..start].to_string(),
+                _ => normalized,
+            };
+            return Some(stripped);
+        }
+    }
+
+    let qualified_name = unwrap_declarator_name(node.child_by_field_name("declarator"), true, code);
+    if let Some(qualified_name) = qualified_name {
+        if let Some(scope_end) = qualified_name.rfind("::") {
+            if scope_end > 0 {
+                // Out-of-line C++ members spell their class's template parameters
+                // (`void A<T>::method()`); canonicalizing them makes the scope match the
+                // in-class spelling `A`.
+                let scope = canonicalize_generic_scope(
+                    &qualified_name[..scope_end],
+                    &collect_cpp_template_parameter_names(node, code),
+                );
+                segments.push(scope);
+                return Some(segments.join("::"));
+            }
+        }
+    }
+    None
+}
+
+/// Walks class-like (and qualifying namespace) ancestors of `start`; see findFunctionScopeName.
+fn collect_scope_segments(
+    start: Option<Node<'_>>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+) -> (Vec<String>, bool) {
+    let mut segments: Vec<String> = Vec::new();
+    let mut has_class_scope = false;
+    let mut current = start;
+    while let Some(ancestor) = current {
+        current = ancestor.parent();
+        if NAMESPACE_SCOPE_NODE_TYPES.contains(&ancestor.kind()) {
+            // Anonymous namespaces add no segment: in C++ they reopen the same unnamed namespace.
+            if let Some(name_node) = ancestor.child_by_field_name("name") {
+                segments.push(node_text(name_node, code).to_string());
+            }
+            continue;
+        }
+        // A class LOCAL to a function exists per enclosing function, so a stable per-function
+        // marker keeps same-named local classes in different functions from cross-matching.
+        if has_class_scope && is_function_boundary(ancestor, &sets.function_nodes) {
+            segments.push(format!("<fn:{}>", ancestor.start_byte()));
+            continue;
+        }
+        if !SCOPE_NODE_TYPES.contains(&ancestor.kind()) {
+            continue;
+        }
+        // A plain `new Foo(...)` scopes nothing; only an anonymous-class body opens a scope.
+        if ancestor.kind() == "object_creation_expression"
+            && !named_children(ancestor)
+                .iter()
+                .any(|child| child.kind() == "class_body")
+        {
+            continue;
+        }
+        segments.push(scope_segment_name(ancestor, code));
+        has_class_scope = true;
+    }
+    segments.reverse();
+    (segments, has_class_scope)
+}
+
+/// One scope segment for a class-like node; see scopeSegmentName in metrics.ts.
+fn scope_segment_name(node: Node<'_>, code: &Source<'_>) -> String {
+    // Rust `impl` blocks scope by the implementing type rather than a `name` field; declared type
+    // parameters are canonicalized so `impl<T> Foo<T>` and `impl<U> Foo<U>` name the same scope
+    // while genuinely distinct specializations (`impl Foo<u32>`) stay distinct.
+    if node.kind() == "impl_item" {
+        return match node.child_by_field_name("type") {
+            Some(type_node) => canonicalize_generic_scope(
+                node_text(type_node, code),
+                &declared_type_parameter_names(node.child_by_field_name("type_parameters"), code),
+            ),
+            None => anonymous_scope_name(node),
+        };
+    }
+    // A Ruby eigenclass (`class << self`) reopens the same scope every time for a given target,
+    // so it keys on the target text under the enclosing scope (`Outer::<<self`) rather than
+    // getting a per-node anonymous marker.
+    if node.kind() == "singleton_class" {
+        return match node.child_by_field_name("value") {
+            Some(value_node) => format!("<<{}", strip_js_whitespace(node_text(value_node, code))),
+            None => anonymous_scope_name(node),
+        };
+    }
+    match node.child_by_field_name("name") {
+        Some(name_node) => node_text(name_node, code).to_string(),
+        None => anonymous_scope_name(node),
+    }
+}
+
+/// Alpha-normalizes a generic scope spelling; see canonicalizeGenericScope in metrics.ts:
+/// declared type parameters are renamed positionally and a sequential full parameter list
+/// (`<$0,$1>`) is dropped so the scope matches spellings that omit it.
+fn canonicalize_generic_scope(scope: &str, parameter_names: &[String]) -> String {
+    let mut text = strip_js_whitespace(scope);
+    if parameter_names.is_empty() {
+        return text;
+    }
+    for (index, name) in parameter_names.iter().enumerate() {
+        text = replace_identifier_token(&text, name, &format!("${index}"));
+    }
+    strip_sequential_parameter_lists(&text)
+}
+
+/// Replaces whole-token occurrences of `name` (boundaries: `[A-Za-z0-9_]`, plus a preceding `'`
+/// so lifetimes never split) with `replacement`.
+fn replace_identifier_token(text: &str, name: &str, replacement: &str) -> String {
+    if name.is_empty() {
+        return text.to_string();
+    }
+    let bytes = text.as_bytes();
+    let mut result = String::with_capacity(text.len());
+    let mut position = 0usize;
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    while let Some(found) = text[position..].find(name) {
+        let start = position + found;
+        let end = start + name.len();
+        let boundary_before =
+            start == 0 || (!is_word(bytes[start - 1]) && bytes[start - 1] != b'\'');
+        let boundary_after = end == bytes.len() || !is_word(bytes[end]);
+        result.push_str(&text[position..start]);
+        if boundary_before && boundary_after {
+            result.push_str(replacement);
+        } else {
+            result.push_str(name);
+        }
+        position = end;
+    }
+    result.push_str(&text[position..]);
+    result
+}
+
+/// Removes every `<...>` group whose content is exactly the sequential list `$0,$1,...`.
+fn strip_sequential_parameter_lists(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('<') {
+        let Some(close_offset) = rest[open..].find('>') else {
+            break;
+        };
+        let close = open + close_offset;
+        let content = &rest[open + 1..close];
+        let sequential = !content.is_empty()
+            && content
+                .split(',')
+                .enumerate()
+                .all(|(index, part)| part == format!("${index}"));
+        if sequential {
+            result.push_str(&rest[..open]);
+        } else {
+            result.push_str(&rest[..=open]);
+            rest = &rest[open + 1..];
+            continue;
+        }
+        rest = &rest[close + 1..];
+    }
+    result.push_str(rest);
+    result
+}
+
+/// Names the type parameters a `type_parameters`/`template_parameter_list` node declares, in
+/// declaration order; see declaredTypeParameterNames in metrics.ts.
+fn declared_type_parameter_names(
+    parameters_node: Option<Node<'_>>,
+    code: &Source<'_>,
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let Some(parameters_node) = parameters_node else {
+        return names;
+    };
+    for child in named_children(parameters_node) {
+        if child.kind() == "comment" {
+            continue;
+        }
+        if let Some(name) = find_first_type_parameter_name(child, code) {
+            names.push(name);
+        }
+    }
+    names
+}
+
+fn find_first_type_parameter_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if matches!(node.kind(), "type_identifier" | "identifier" | "lifetime") {
+        return Some(node_text(node, code).to_string());
+    }
+    for child in named_children(node) {
+        if let Some(name) = find_first_type_parameter_name(child, code) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+/// Template parameters declared by the `template_declaration`s wrapping an out-of-line member.
+fn collect_cpp_template_parameter_names(node: Node<'_>, code: &Source<'_>) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut ancestor = node.parent();
+    while let Some(current) = ancestor {
+        if current.kind() == "template_declaration" {
+            let mut declared =
+                declared_type_parameter_names(current.child_by_field_name("parameters"), code);
+            declared.extend(names);
+            names = declared;
+        }
+        ancestor = current.parent();
+    }
+    names
+}
+
+/// Languages whose file-local class base relationships inform self-call resolution.
+const BASE_CLASS_LANGUAGES: &[&str] = &[
+    "java",
+    "javascript",
+    "jsx",
+    "typescript",
+    "tsx",
+    "cpp",
+    "python",
+    "ruby",
+];
+
+const BASE_CLASS_NODE_TYPES: &[&str] = &[
+    "class_declaration",
+    "interface_declaration",
+    "class_specifier",
+    "struct_specifier",
+    "class_definition",
+    "class",
+];
+
+/// File-local base-class relationships, keyed and valued by scope names; see collectBaseScopes in
+/// metrics.ts (Java/TS/JS `extends`, C++ base clauses, Python bases, Ruby `<`; Rust and Go have
+/// no class inheritance).
+pub fn collect_base_scopes(
+    root: Node<'_>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+) -> HashMap<String, Vec<String>> {
+    let mut base_scopes_by_scope: HashMap<String, Vec<String>> = HashMap::new();
+    if !BASE_CLASS_LANGUAGES.contains(&sets.name) {
+        return base_scopes_by_scope;
+    }
+
+    let class_types: HashSet<&'static str> = BASE_CLASS_NODE_TYPES.iter().copied().collect();
+    let mut known_scopes: HashSet<String> = HashSet::new();
+    let mut entries: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+    for node in collect_nodes(root, &class_types) {
+        let (segments, _) = collect_scope_segments(node.parent(), sets, code);
+        let mut scope_segments = segments.clone();
+        scope_segments.push(scope_segment_name(node, code));
+        let scope = scope_segments.join("::");
+        known_scopes.insert(scope.clone());
+        let base_names = find_base_class_names(node, sets.name, code);
+        if !base_names.is_empty() {
+            entries.push((scope, segments, base_names));
+        }
+    }
+
+    for (scope, enclosing_segments, base_names) in entries {
+        let resolved: Vec<String> = base_names
+            .iter()
+            .map(|base| resolve_base_scope(base, &enclosing_segments, &known_scopes))
+            .collect();
+        // Reopened/partial classes (Ruby) may contribute bases from several definitions of one
+        // scope.
+        let existing = base_scopes_by_scope.entry(scope).or_default();
+        for base in resolved {
+            if !existing.contains(&base) {
+                existing.push(base);
+            }
+        }
+    }
+    base_scopes_by_scope
+}
+
+/// An unqualified base written beside the child resolves under their shared enclosing scopes.
+fn resolve_base_scope(
+    base_name: &str,
+    enclosing_segments: &[String],
+    known_scopes: &HashSet<String>,
+) -> String {
+    for depth in (1..=enclosing_segments.len()).rev() {
+        let mut candidate_segments: Vec<&str> = enclosing_segments[..depth]
+            .iter()
+            .map(|segment| segment.as_str())
+            .collect();
+        candidate_segments.push(base_name);
+        let candidate = candidate_segments.join("::");
+        if known_scopes.contains(&candidate) {
+            return candidate;
+        }
+    }
+    base_name.to_string()
+}
+
+/// Normalized base-class names one class-like definition declares; see findBaseClassNames in
+/// metrics.ts.
+fn find_base_class_names(node: Node<'_>, language_name: &str, code: &Source<'_>) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    // Java `extends Parent` and Ruby `class Child < Parent` wrap the base in a `superclass` node.
+    if let Some(superclass_node) = node.child_by_field_name("superclass") {
+        let base = if superclass_node.kind() == "superclass" {
+            named_children(superclass_node).first().copied()
+        } else {
+            Some(superclass_node)
+        };
+        if let Some(base) = base {
+            names.push(node_text(base, code).to_string());
+        }
+    }
+    // TS puts an `extends_clause` (with `value` fields) inside `class_heritage`; JS puts the
+    // extended expression there directly.
+    if let Some(heritage_node) = named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "class_heritage")
+    {
+        let extends_clause = named_children(heritage_node)
+            .into_iter()
+            .find(|child| child.kind() == "extends_clause");
+        let bases = match extends_clause {
+            Some(clause) => find_children_by_field_name(clause, "value"),
+            None => named_children(heritage_node),
+        };
+        names.extend(bases.iter().map(|base| node_text(*base, code).to_string()));
+    }
+    // C++ `class Child : public Parent, Mixin` lists bases (with access specifiers) in a clause.
+    if let Some(base_clause_node) = named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "base_class_clause")
+    {
+        names.extend(
+            named_children(base_clause_node)
+                .into_iter()
+                .filter(|child| {
+                    matches!(
+                        child.kind(),
+                        "type_identifier" | "template_type" | "qualified_identifier"
+                    )
+                })
+                .map(|base| node_text(base, code).to_string()),
+        );
+    }
+    // Python `class Child(Parent, metaclass=Meta)` lists bases as superclass arguments.
+    if let Some(superclasses_node) = node.child_by_field_name("superclasses") {
+        names.extend(
+            named_children(superclasses_node)
+                .into_iter()
+                .filter(|child| matches!(child.kind(), "identifier" | "attribute" | "subscript"))
+                .map(|base| node_text(base, code).to_string()),
+        );
+    }
+    names
+        .iter()
+        .map(|name| normalize_base_class_name(name, language_name))
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// Strips generic arguments and rewrites qualifiers so a base spelling can match a scope name.
+fn normalize_base_class_name(name: &str, language_name: &str) -> String {
+    let mut text = strip_js_whitespace(name);
+    if language_name != "cpp" && language_name != "ruby" {
+        text = text.replace('.', "::");
+    }
+    let generic_start = text.find('<').into_iter().chain(text.find('[')).min();
+    if let Some(start) = generic_start {
+        text.truncate(start);
+    }
+    text
+}
+
+/// The receiver variable of a Go method (`a` in `func (a A) run()`); reads through it are `self`.
+fn find_go_receiver_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if node.kind() != "method_declaration" {
+        return None;
+    }
+    let name_node = node
+        .child_by_field_name("receiver")
+        .and_then(|receiver| named_children(receiver).first().copied())
+        .and_then(|first| first.child_by_field_name("name"))?;
+    if name_node.kind() == "identifier" {
+        Some(node_text(name_node, code).to_string())
+    } else {
+        None
+    }
+}
+
+fn normalize_go_receiver_type(receiver_type: &str) -> String {
+    strip_js_whitespace(receiver_type)
+        .trim_start_matches('*')
+        .to_string()
+}
+
+/// Unnamed scopes (anonymous classes) get a per-node marker so they never cross-match.
+fn anonymous_scope_name(node: Node<'_>) -> String {
+    // The start byte: two anonymous classes on one line must still get distinct markers.
+    format!("<anonymous:{}>", node.start_byte())
+}
+
+struct ParameterCounts {
+    /// All declared parameters, matching what the function metrics report.
+    count: usize,
+    /// Only required parameters: variadic/rest/splat and defaulted parameters are excluded.
+    min_count: usize,
+    /// Whether the signature accepts unboundedly many arguments (true varargs/rest/splat only).
+    unbounded: bool,
+}
+
+/// Parameter kinds that accept unboundedly many arguments; see unboundedParameterTypes in
+/// metrics.ts. Defaulted parameters are NOT here: they widen the accepted range only up to the
+/// declared parameter count.
+const UNBOUNDED_PARAMETER_TYPES: &[&str] = &[
+    "spread_parameter",
+    "variadic_parameter_declaration",
+    "variadic_parameter",
+    "rest_pattern",
+    "list_splat_pattern",
+    "dictionary_splat_pattern",
+    "splat_parameter",
+    "hash_splat_parameter",
+];
+
+/// Parameter kinds a call site may omit because they carry a default; see optionalParameterTypes
+/// in metrics.ts.
+const OPTIONAL_PARAMETER_TYPES: &[&str] = &[
+    "optional_parameter_declaration",
+    "assignment_pattern",
+    "optional_parameter",
+    "default_parameter",
+    "typed_default_parameter",
+];
+
+/// Whether one declared parameter is a true varargs/rest/splat; see isUnboundedParameter in
+/// metrics.ts.
+fn is_unbounded_parameter(node: Node<'_>) -> bool {
+    if UNBOUNDED_PARAMETER_TYPES.contains(&node.kind()) {
+        return true;
+    }
+    // TS wraps rest params (`...rest: T[]`, a `rest_pattern` in the `pattern` field) in
+    // `required_parameter`.
+    node.kind() == "required_parameter"
+        && node
+            .child_by_field_name("pattern")
+            .is_some_and(|pattern| pattern.kind() == "rest_pattern")
+}
+
+/// Whether one declared parameter is defaulted/omittable; see isOptionalParameter in metrics.ts.
+fn is_optional_parameter(node: Node<'_>) -> bool {
+    if OPTIONAL_PARAMETER_TYPES.contains(&node.kind()) {
+        return true;
+    }
+    // TS wraps defaults (`b = 1`, a `value` field) in `required_parameter`; Ruby `k2: 2` is a
+    // `keyword_parameter` with a `value`.
+    (node.kind() == "required_parameter" || node.kind() == "keyword_parameter")
+        && node.child_by_field_name("value").is_some()
+}
+
 /// Counts declared parameters of a function/method, ignoring punctuation and comments.
-fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
+fn count_parameters(node: Node<'_>, code: &Source<'_>) -> ParameterCounts {
     // An unparenthesized arrow-function parameter (`x => x + 1`) is a bare `parameter` field.
     if node.child_by_field_name("parameter").is_some() {
-        return 1;
+        return ParameterCounts {
+            count: 1,
+            min_count: 1,
+            unbounded: false,
+        };
     }
 
     let Some(parameters_node) = find_parameters_node(node) else {
-        return 0;
+        return ParameterCounts {
+            count: 0,
+            min_count: 0,
+            unbounded: false,
+        };
     };
 
     // A Java bare lambda parameter (`x -> x + 1`) puts a lone identifier in the `parameters` field.
     if parameters_node.kind() == "identifier" {
-        return 1;
+        return ParameterCounts {
+            count: 1,
+            min_count: 1,
+            unbounded: false,
+        };
     }
 
     // Ruby block-locals after `;` (`{ |x; memo| ... }`) occupy `locals` fields and receive no arguments.
@@ -117,32 +689,99 @@ fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
         .iter()
         .map(|child| child.id())
         .collect();
-    let named_count: usize = named_children(parameters_node)
-        .iter()
-        .filter(|child| {
-            child.kind() != "comment"
-                && child.kind() != "self_parameter"
-                && child.kind() != "receiver_parameter"
-                && child.kind() != "positional_separator"
-                && child.kind() != "keyword_separator"
-                && !block_local_ids.contains(&child.id())
-                && !is_void_parameter(**child, code)
-        })
+    let mut count = 0usize;
+    let mut min_count = 0usize;
+    let mut unbounded = false;
+    // A Ruby block parameter (`&blk`) binds the block, which call sites pass outside the argument
+    // list, so it counts toward no arity.
+    for child in named_children(parameters_node) {
+        if child.kind() == "comment"
+            || child.kind() == "self_parameter"
+            || child.kind() == "receiver_parameter"
+            || child.kind() == "block_parameter"
+            || child.kind() == "positional_separator"
+            || child.kind() == "keyword_separator"
+            || block_local_ids.contains(&child.id())
+            || is_void_parameter(child, code)
+        {
+            continue;
+        }
         // Go declares several names per declaration (`a, b int`); each name is a parameter.
-        .map(|child| {
-            if child.kind() == "parameter_declaration" {
-                find_children_by_field_name(*child, "name").len().max(1)
-            } else {
-                1
-            }
-        })
-        .sum();
+        let weight = if child.kind() == "parameter_declaration" {
+            find_children_by_field_name(child, "name").len().max(1)
+        } else {
+            1
+        };
+        count += weight;
+        if is_unbounded_parameter(child) {
+            unbounded = true;
+        } else if !is_optional_parameter(child) {
+            min_count += weight;
+        }
+    }
     // C++ C-style varargs (`int f(int a, ...)`) leave `...` as an anonymous token.
     let anonymous_variadic_count = all_children(parameters_node)
         .iter()
         .filter(|child| !child.is_named() && node_text(**child, code) == "...")
         .count();
-    named_count + anonymous_variadic_count
+    if anonymous_variadic_count > 0 {
+        unbounded = true;
+    }
+    ParameterCounts {
+        count: count + anonymous_variadic_count,
+        min_count,
+        unbounded,
+    }
+}
+
+/// 1 when a Python method's leading `self`/`cls` parameter is bound implicitly (so call sites
+/// pass one argument fewer than declared), 0 otherwise. `@staticmethod`s bind no receiver.
+fn count_python_bound_receiver_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
+    if node.kind() != "function_definition" {
+        return 0;
+    }
+    let definition = match node.parent() {
+        Some(parent) if parent.kind() == "decorated_definition" => parent,
+        _ => node,
+    };
+    let inside_class = definition.parent().is_some_and(|parent| {
+        parent.kind() == "block"
+            && parent
+                .parent()
+                .is_some_and(|grandparent| grandparent.kind() == "class_definition")
+    });
+    if !inside_class {
+        return 0;
+    }
+    if definition.kind() == "decorated_definition"
+        && named_children(definition).iter().any(|child| {
+            child.kind() == "decorator" && {
+                let text = node_text(*child, code);
+                text.strip_prefix('@').unwrap_or(text) == "staticmethod"
+            }
+        })
+    {
+        return 0;
+    }
+    let first_parameter = node
+        .child_by_field_name("parameters")
+        .map(named_children)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|child| child.kind() != "comment");
+    let receiver_name = match first_parameter {
+        Some(parameter) if parameter.kind() == "identifier" => {
+            Some(node_text(parameter, code).to_string())
+        }
+        Some(parameter) if parameter.kind() == "typed_parameter" => parameter
+            .named_child(0)
+            .map(|name| node_text(name, code).to_string()),
+        _ => None,
+    };
+    match receiver_name.as_deref() {
+        Some("self") | Some("cls") => 1,
+        _ => 0,
+    }
 }
 
 /// C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator.
@@ -182,52 +821,79 @@ fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
         .find(|child| child.kind() == "formal_parameters" || child.kind() == "parameter_list")
 }
 
-pub fn collect_calls(
-    root: Node<'_>,
-    sets: &LanguageSets,
-    constructed_type_names: &HashSet<String>,
-    code: &Source<'_>,
-) -> CallsResult {
-    let mut callees: IndexSet<String> = IndexSet::new();
-    let mut call_count: u64 = 0;
+struct CallsCollector<'a, 'code> {
+    sets: &'a LanguageSets,
+    constructed_type_names: &'a HashSet<String>,
+    code: &'a Source<'code>,
+    call_count: u64,
+    callees: IndexSet<String>,
+    call_sites: Vec<CallSite>,
+    ruby_bindings_cache: HashMap<usize, HashMap<String, usize>>,
+    /// The enclosing Go method's receiver variable name; reads through it are `self`.
+    go_receiver_name: Option<String>,
+}
 
-    fn visit(
-        node: Node<'_>,
-        inside_root: bool,
-        sets: &LanguageSets,
-        constructed_type_names: &HashSet<String>,
-        code: &Source<'_>,
-        call_count: &mut u64,
-        callees: &mut IndexSet<String>,
-    ) {
-        if !inside_root && is_function_boundary(node, &sets.function_nodes) {
+impl CallsCollector<'_, '_> {
+    fn add_callee(&mut self, name: String, argument_count: Option<usize>, receiver: CallReceiver) {
+        // A Python self/cls attribute call names its callee `self.helper`; resolution matches the
+        // method name alone (the receiver is the caller's own class), while the callees set keeps
+        // the full spelling.
+        let resolution_name = if self.sets.name == "python" && receiver == CallReceiver::SelfLike {
+            name.rsplit('.').next().unwrap_or(&name).to_string()
+        } else {
+            name.clone()
+        };
+        self.callees.insert(name);
+        self.call_sites.push(CallSite {
+            name: resolution_name,
+            argument_count,
+            receiver,
+        });
+    }
+
+    fn visit(&mut self, node: Node<'_>, inside_root: bool) {
+        if !inside_root && is_function_boundary(node, &self.sets.function_nodes) {
             return;
         }
 
         // C++ casts (`int(x)`, `static_cast<int>(x)`) parse as call expressions but invoke nothing.
-        if sets.name == "cpp" && is_cpp_cast_expression(node, code) {
+        if self.sets.name == "cpp" && is_cpp_cast_expression(node, self.code) {
             // Not a call: fall through to children only.
         } else if is_call_node(node) {
-            *call_count += 1;
+            self.call_count += 1;
             // C++ `new Widget()` and functional construction name an overloaded constructor, so they
             // count as calls without a callee edge. JS `new Foo()` keeps its edge to the function.
-            let is_cpp_constructor_call = sets.name == "cpp"
+            let is_cpp_constructor_call = self.sets.name == "cpp"
                 && (node.kind() == "new_expression"
                     || (node.kind() == "call_expression"
-                        && cpp_base_type_name(node.child_by_field_name("function"), code)
-                            .is_some_and(|name| constructed_type_names.contains(&name))));
+                        && cpp_base_type_name(node.child_by_field_name("function"), self.code)
+                            .is_some_and(|name| self.constructed_type_names.contains(&name))));
             let callee = if is_cpp_constructor_call {
                 None
             } else {
-                find_callee_name(node, code)
+                find_callee_name(node, self.code)
             };
             // JS truthiness: `if (callee)` also drops the empty string a MISSING node produces.
             if let Some(callee) = callee.filter(|callee| !callee.is_empty()) {
-                callees.insert(callee);
+                // A Ruby setter send (`self.foo = x` resolves the callee to `foo=`) passes one argument.
+                let is_ruby_setter_send =
+                    self.sets.name == "ruby" && node.kind() == "call" && callee.ends_with('=');
+                let argument_count = if is_ruby_setter_send {
+                    Some(1)
+                } else {
+                    count_call_arguments(node)
+                };
+                let receiver = classify_call_receiver(
+                    node,
+                    self.sets,
+                    self.code,
+                    self.go_receiver_name.as_deref(),
+                );
+                self.add_callee(callee, argument_count, receiver);
             }
             // Ruby abbreviated assignment on a receiver (`self.foo += 1`) invokes the getter AND the
             // setter, so the setter is one extra call.
-            if sets.name == "ruby"
+            if self.sets.name == "ruby"
                 && node.kind() == "call"
                 && node.parent().is_some_and(|parent| {
                     parent.kind() == "operator_assignment"
@@ -236,45 +902,167 @@ pub fn collect_calls(
                             .is_some_and(|left| left.id() == node.id())
                 })
             {
-                *call_count += 1;
+                self.call_count += 1;
                 if let Some(setter_method) = node.child_by_field_name("method") {
-                    callees.insert(format!("{}=", node_text(setter_method, code)));
+                    let receiver = classify_call_receiver(
+                        node,
+                        self.sets,
+                        self.code,
+                        self.go_receiver_name.as_deref(),
+                    );
+                    self.add_callee(
+                        format!("{}=", node_text(setter_method, self.code)),
+                        Some(1),
+                        receiver,
+                    );
                 }
             }
-        } else if is_ruby_implicit_call(node, sets)
-            || is_cpp_construction(node, constructed_type_names, code)
+        } else if is_ruby_implicit_call(node, self.sets)
+            || is_cpp_construction(node, self.constructed_type_names, self.code)
         {
             // `yield x` invokes the block, not its argument, and constructors are overloaded by
             // definition, so neither adds a callee edge.
-            *call_count += 1;
+            self.call_count += 1;
+        } else if self.sets.name == "ruby"
+            && is_ruby_bare_method_send(node, self.code, &mut self.ruby_bindings_cache)
+        {
+            self.call_count += 1;
+            self.add_callee(
+                node_text(node, self.code).to_string(),
+                Some(0),
+                CallReceiver::None,
+            );
         }
 
         for child in named_children(node) {
-            visit(
-                child,
-                false,
-                sets,
-                constructed_type_names,
-                code,
-                call_count,
-                callees,
-            );
+            self.visit(child, false);
         }
     }
+}
 
-    visit(
-        root,
-        true,
+pub fn collect_calls(
+    root: Node<'_>,
+    sets: &LanguageSets,
+    constructed_type_names: &HashSet<String>,
+    code: &Source<'_>,
+    go_receiver_name: Option<String>,
+) -> CallsResult {
+    let mut collector = CallsCollector {
         sets,
         constructed_type_names,
         code,
-        &mut call_count,
-        &mut callees,
-    );
+        call_count: 0,
+        callees: IndexSet::new(),
+        call_sites: Vec::new(),
+        ruby_bindings_cache: HashMap::new(),
+        go_receiver_name,
+    };
+    collector.visit(root, true);
     CallsResult {
-        call_count,
-        callees,
+        call_count: collector.call_count,
+        callees: collector.callees,
+        call_sites: collector.call_sites,
     }
+}
+
+/// Declared arguments at a call site, for arity-based overload resolution. Ruby block arguments
+/// (`&blk`) bind the block, not a positional parameter. Syntax without an argument list that can
+/// still be a counted call (Rust macros) reports no arity.
+fn count_call_arguments(node: Node<'_>) -> Option<usize> {
+    let Some(arguments_node) = node.child_by_field_name("arguments") else {
+        return if node.kind() == "macro_invocation" {
+            None
+        } else {
+            Some(0)
+        };
+    };
+    Some(
+        named_children(arguments_node)
+            .iter()
+            .filter(|child| child.kind() != "comment" && child.kind() != "block_argument")
+            .count(),
+    )
+}
+
+fn classify_call_receiver(
+    node: Node<'_>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+    go_receiver_name: Option<&str>,
+) -> CallReceiver {
+    if sets.name == "ruby" && node.kind() == "call" {
+        let Some(receiver_node) = node.child_by_field_name("receiver") else {
+            return CallReceiver::None;
+        };
+        return if receiver_node.kind() == "self" {
+            CallReceiver::SelfLike
+        } else {
+            CallReceiver::Other
+        };
+    }
+
+    if node.kind() == "method_invocation" {
+        let Some(object_node) = node.child_by_field_name("object") else {
+            return CallReceiver::None;
+        };
+        return if object_node.kind() == "this" {
+            CallReceiver::SelfLike
+        } else {
+            CallReceiver::Other
+        };
+    }
+
+    if let Some(callee_node) = node.child_by_field_name("function") {
+        let unwrapped = unwrap_parenthesized_expression(callee_node);
+        if unwrapped.kind() == "identifier" {
+            return CallReceiver::None;
+        }
+        // Rust `Self::helper()` invokes an associated function of the caller's own impl.
+        if unwrapped.kind() == "scoped_identifier"
+            && unwrapped
+                .child_by_field_name("path")
+                .is_some_and(|path| node_text(path, code) == "Self")
+        {
+            return CallReceiver::SelfLike;
+        }
+        let receiver_node = match unwrapped.kind() {
+            "member_expression" => unwrapped.child_by_field_name("object"),
+            "field_expression" => unwrapped
+                .child_by_field_name("argument")
+                .or_else(|| unwrapped.child_by_field_name("value")),
+            "attribute" => unwrapped.child_by_field_name("object"),
+            "selector_expression" => unwrapped.child_by_field_name("operand"),
+            _ => None,
+        };
+        if let Some(receiver_node) = receiver_node {
+            // Python class methods go through the conventional `cls` receiver.
+            let is_python_cls_receiver = sets.name == "python"
+                && receiver_node.kind() == "identifier"
+                && node_text(receiver_node, code) == "cls";
+            return if is_self_like_receiver(receiver_node, code, go_receiver_name)
+                || is_python_cls_receiver
+            {
+                CallReceiver::SelfLike
+            } else {
+                CallReceiver::Other
+            };
+        }
+    }
+    CallReceiver::Other
+}
+
+/// JS `this`, Rust/Ruby `self` nodes, Python's conventional `self` identifier, and the enclosing
+/// Go method's receiver variable (`a` in `func (a A) run() { a.helper() }`).
+fn is_self_like_receiver(
+    node: Node<'_>,
+    code: &Source<'_>,
+    go_receiver_name: Option<&str>,
+) -> bool {
+    node.kind() == "this"
+        || node.kind() == "self"
+        || (node.kind() == "identifier"
+            && (node_text(node, code) == "self"
+                || go_receiver_name.is_some_and(|name| node_text(node, code) == name)))
 }
 
 const CPP_NAMED_CASTS: &[&str] = &[
@@ -428,6 +1216,384 @@ fn is_ruby_implicit_call(node: Node<'_>, sets: &LanguageSets) -> bool {
     }
     node.kind() == "yield"
         || (node.kind() == "super" && node.parent().is_none_or(|parent| parent.kind() != "call"))
+}
+
+/// A Ruby bare receiverless zero-argument send parses as a plain `identifier`; see
+/// isRubyBareMethodSend in metrics.ts (issue #20).
+fn is_ruby_bare_method_send(
+    node: Node<'_>,
+    code: &Source<'_>,
+    bindings_cache: &mut HashMap<usize, HashMap<String, usize>>,
+) -> bool {
+    if node.kind() != "identifier"
+        || RUBY_PSEUDO_VARIABLES.contains(&node_text(node, code))
+        || !is_ruby_expression_identifier(node)
+    {
+        return false;
+    }
+    !is_ruby_local_variable(node, code, bindings_cache)
+}
+
+/// Compiler-provided pseudo-variables that parse as plain identifiers but are never method sends.
+const RUBY_PSEUDO_VARIABLES: &[&str] = &["__FILE__", "__LINE__", "__ENCODING__"];
+
+/// Identifier positions that bind a local or belong to another construct rather than reading a value.
+fn is_ruby_expression_identifier(node: Node<'_>) -> bool {
+    let Some(parent) = node.parent() else {
+        return false;
+    };
+
+    match parent.kind() {
+        // The method name of a `call` is part of the already-counted call; a `method` definition's
+        // name (and `def obj.meth`'s object) defines rather than reads.
+        "call"
+            if parent
+                .child_by_field_name("method")
+                .is_some_and(|method| method.id() == node.id()) =>
+        {
+            return false;
+        }
+        // An endless method's body expression (`def g = helper`) is a DIRECT child of the method
+        // node, so only the definition's `name` (and `def obj.meth`'s `object`) is rejected here.
+        "method" | "singleton_method"
+            if parent
+                .child_by_field_name("name")
+                .is_some_and(|name| name.id() == node.id())
+                || parent
+                    .child_by_field_name("object")
+                    .is_some_and(|object| object.id() == node.id()) =>
+        {
+            return false;
+        }
+        // `alias c a` and `undef foo` operands are method-name references; none invokes anything.
+        "setter" | "alias" | "undef" => {
+            return false;
+        }
+        // Binding targets: `x = 1`, `x ||= 1`, `for x in ...`, `rescue => x`, and every parameter form.
+        "assignment" | "operator_assignment"
+            if parent
+                .child_by_field_name("left")
+                .is_some_and(|left| left.id() == node.id()) =>
+        {
+            return false;
+        }
+        "left_assignment_list"
+        | "destructured_left_assignment"
+        | "rest_assignment"
+        | "exception_variable"
+        | "method_parameters"
+        | "block_parameters"
+        | "lambda_parameters"
+        | "destructured_parameter"
+        | "splat_parameter"
+        | "optional_parameter"
+        | "keyword_parameter"
+        | "hash_splat_parameter"
+        | "block_parameter" => {
+            // An optional/keyword parameter's default value is a genuine read.
+            return parent
+                .child_by_field_name("value")
+                .is_some_and(|value| value.id() == node.id());
+        }
+        "for"
+            if parent
+                .child_by_field_name("pattern")
+                .is_some_and(|pattern| pattern.id() == node.id()) =>
+        {
+            return false;
+        }
+        _ => {}
+    }
+
+    // Pattern-matching positions bind (`in [head, *tail]`, `v => x`); pinned expressions inside
+    // patterns are reads, but skipping them only misses calls (conservative).
+    let mut current = Some(node);
+    while let Some(current_node) = current {
+        if RUBY_PATTERN_NODE_TYPES.contains(&current_node.kind()) {
+            return false;
+        }
+        if current_node.parent().is_some_and(|grandparent| {
+            (grandparent.kind() == "in_clause" || grandparent.kind() == "match_pattern")
+                && grandparent
+                    .child_by_field_name("pattern")
+                    .is_some_and(|pattern| pattern.id() == current_node.id())
+        }) {
+            return false;
+        }
+        if is_ruby_scope_node(current_node.kind()) {
+            break;
+        }
+        current = current_node.parent();
+    }
+
+    // `defined?(helper)` inspects without invoking.
+    let mut ancestor = parent;
+    while ancestor.kind() == "parenthesized_statements" {
+        let Some(next) = ancestor.parent() else {
+            break;
+        };
+        ancestor = next;
+    }
+    !(ancestor.kind() == "unary"
+        && ancestor
+            .child(0)
+            .is_some_and(|child| child.kind() == "defined?"))
+}
+
+const RUBY_PATTERN_NODE_TYPES: &[&str] = &[
+    "array_pattern",
+    "hash_pattern",
+    "find_pattern",
+    "keyword_pattern",
+    "as_pattern",
+    "alternative_pattern",
+];
+
+/// Hard boundaries see no outer locals; soft scopes (blocks, lambdas) do.
+const RUBY_HARD_SCOPE_NODE_TYPES: &[&str] = &[
+    "method",
+    "singleton_method",
+    "class",
+    "module",
+    "singleton_class",
+    "program",
+];
+const RUBY_SOFT_SCOPE_NODE_TYPES: &[&str] = &["block", "do_block", "lambda"];
+
+fn is_ruby_scope_node(kind: &str) -> bool {
+    RUBY_HARD_SCOPE_NODE_TYPES.contains(&kind) || RUBY_SOFT_SCOPE_NODE_TYPES.contains(&kind)
+}
+
+fn is_ruby_local_variable(
+    node: Node<'_>,
+    code: &Source<'_>,
+    bindings_cache: &mut HashMap<usize, HashMap<String, usize>>,
+) -> bool {
+    let name = node_text(node, code);
+    let mut scope = find_enclosing_ruby_scope(node.parent());
+    while let Some(scope_node) = scope {
+        let bindings = bindings_cache
+            .entry(scope_node.id())
+            .or_insert_with(|| collect_ruby_scope_bindings(scope_node, code));
+        if bindings
+            .get(name)
+            .is_some_and(|binding_index| *binding_index < node.start_byte())
+        {
+            return true;
+        }
+        scope = if RUBY_HARD_SCOPE_NODE_TYPES.contains(&scope_node.kind()) {
+            None
+        } else {
+            find_enclosing_ruby_scope(scope_node.parent())
+        };
+    }
+    false
+}
+
+fn find_enclosing_ruby_scope(node: Option<Node<'_>>) -> Option<Node<'_>> {
+    let mut current = node;
+    while let Some(current_node) = current {
+        if is_ruby_scope_node(current_node.kind()) {
+            return Some(current_node);
+        }
+        current = current_node.parent();
+    }
+    None
+}
+
+/// Earliest binding position of each local name a scope binds directly; see
+/// collectRubyScopeBindings in metrics.ts. Bindings inside nested scopes never escape them.
+fn collect_ruby_scope_bindings(scope: Node<'_>, code: &Source<'_>) -> HashMap<String, usize> {
+    let mut bindings: HashMap<String, usize> = HashMap::new();
+
+    collect_ruby_parameter_bindings(scope.child_by_field_name("parameters"), code, &mut bindings);
+
+    // A parameter-less block/lambda implicitly binds the numbered parameters `_1`..`_9` (2.7+) and
+    // `it` (3.4+) from its start, so such reads are (potential) parameter reads, not method sends.
+    if RUBY_SOFT_SCOPE_NODE_TYPES.contains(&scope.kind())
+        && scope.child_by_field_name("parameters").is_none()
+    {
+        add_ruby_binding(&mut bindings, "it", scope.start_byte());
+        for numbered in 1..=9 {
+            add_ruby_binding(&mut bindings, &format!("_{numbered}"), scope.start_byte());
+        }
+    }
+
+    fn visit(node: Node<'_>, code: &Source<'_>, bindings: &mut HashMap<String, usize>) {
+        for child in named_children(node) {
+            if is_ruby_scope_node(child.kind()) {
+                continue;
+            }
+            collect_ruby_node_bindings(child, code, bindings);
+            visit(child, code, bindings);
+        }
+    }
+
+    visit(scope, code, &mut bindings);
+    bindings
+}
+
+fn add_ruby_binding(bindings: &mut HashMap<String, usize>, name: &str, index: usize) {
+    match bindings.get(name) {
+        Some(existing) if *existing <= index => {}
+        _ => {
+            bindings.insert(name.to_string(), index);
+        }
+    }
+}
+
+fn collect_ruby_node_bindings(
+    node: Node<'_>,
+    code: &Source<'_>,
+    bindings: &mut HashMap<String, usize>,
+) {
+    match node.kind() {
+        "assignment" => {
+            add_ruby_assignment_targets(node.child_by_field_name("left"), code, bindings);
+        }
+        "operator_assignment" => {
+            if let Some(left) = node.child_by_field_name("left") {
+                if left.kind() == "identifier" {
+                    add_ruby_binding(bindings, node_text(left, code), left.start_byte());
+                }
+            }
+        }
+        "for" => {
+            add_ruby_assignment_targets(node.child_by_field_name("pattern"), code, bindings);
+        }
+        "exception_variable" => {
+            if let Some(variable) = node.named_child(0) {
+                if variable.kind() == "identifier" {
+                    add_ruby_binding(bindings, node_text(variable, code), variable.start_byte());
+                }
+            }
+        }
+        // `case/in` patterns and rightward assignment (`v => x`) bind their captures.
+        "in_clause" | "match_pattern" => {
+            if let Some(pattern) = node.child_by_field_name("pattern") {
+                add_ruby_pattern_bindings(pattern, code, bindings);
+            }
+        }
+        // `/(?<year>...)/ =~ value` binds each named capture as a local, but ONLY when the regexp
+        // literal is the LEFT operand (Regexp#=~); `value =~ /(?<year>...)/` binds nothing. Both
+        // the angle (`(?<name>`) and quote (`(?'name'`) capture syntaxes bind, and the binding
+        // takes effect at the END of the `=~` expression: a name read inside the right operand is
+        // still unbound (Ruby raises NameError there), so it stays a counted send.
+        "binary" => {
+            let has_match_operator = all_children(node)
+                .iter()
+                .any(|child| !child.is_named() && node_text(*child, code) == "=~");
+            if has_match_operator {
+                if let Some(regex_node) = node
+                    .child_by_field_name("left")
+                    .filter(|left| left.kind() == "regex")
+                {
+                    for capture_name in ruby_regex_named_captures(node_text(regex_node, code)) {
+                        add_ruby_binding(bindings, &capture_name, node.end_byte());
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Names in `(?<name>` and `(?'name'` groups, mirroring the capture regex in metrics.ts.
+fn ruby_regex_named_captures(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut names = Vec::new();
+    let mut index = 0;
+    while index + 3 < bytes.len() {
+        if &bytes[index..index + 2] == b"(?"
+            && (bytes[index + 2] == b'<' || bytes[index + 2] == b'\'')
+        {
+            let closer = if bytes[index + 2] == b'<' {
+                b'>'
+            } else {
+                b'\''
+            };
+            let start = index + 3;
+            let mut end = start;
+            if end < bytes.len() && (bytes[end].is_ascii_alphabetic() || bytes[end] == b'_') {
+                end += 1;
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                {
+                    end += 1;
+                }
+                if end < bytes.len() && bytes[end] == closer {
+                    names.push(text[start..end].to_string());
+                    index = end + 1;
+                    continue;
+                }
+            }
+        }
+        index += 1;
+    }
+    names
+}
+
+fn add_ruby_assignment_targets(
+    target: Option<Node<'_>>,
+    code: &Source<'_>,
+    bindings: &mut HashMap<String, usize>,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    if target.kind() == "identifier" {
+        add_ruby_binding(bindings, node_text(target, code), target.start_byte());
+        return;
+    }
+    if matches!(
+        target.kind(),
+        "left_assignment_list" | "destructured_left_assignment" | "rest_assignment"
+    ) {
+        for child in named_children(target) {
+            add_ruby_assignment_targets(Some(child), code, bindings);
+        }
+    }
+}
+
+/// Every identifier in a pattern binds; a valueless `in {name:}` key binds the key's name too.
+fn add_ruby_pattern_bindings(
+    pattern: Node<'_>,
+    code: &Source<'_>,
+    bindings: &mut HashMap<String, usize>,
+) {
+    if pattern.kind() == "identifier" {
+        add_ruby_binding(bindings, node_text(pattern, code), pattern.start_byte());
+        return;
+    }
+    if pattern.kind() == "keyword_pattern" && pattern.named_child_count() == 1 {
+        if let Some(key) = pattern.child_by_field_name("key") {
+            add_ruby_binding(bindings, node_text(key, code), key.start_byte());
+        }
+    }
+    for child in named_children(pattern) {
+        add_ruby_pattern_bindings(child, code, bindings);
+    }
+}
+
+fn collect_ruby_parameter_bindings(
+    parameters: Option<Node<'_>>,
+    code: &Source<'_>,
+    bindings: &mut HashMap<String, usize>,
+) {
+    let Some(parameters) = parameters else {
+        return;
+    };
+    for child in named_children(parameters) {
+        if child.kind() == "identifier" {
+            add_ruby_binding(bindings, node_text(child, code), child.start_byte());
+        } else if child.kind() == "destructured_parameter" {
+            collect_ruby_parameter_bindings(Some(child), code, bindings);
+        } else if let Some(name_node) = child.child_by_field_name("name") {
+            if name_node.kind() == "identifier" {
+                add_ruby_binding(bindings, node_text(name_node, code), name_node.start_byte());
+            }
+        }
+    }
 }
 
 pub fn collect_identifiers(root: Node<'_>, code: &Source<'_>) -> HashSet<String> {
