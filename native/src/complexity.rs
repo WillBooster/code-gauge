@@ -4,16 +4,13 @@ use tree_sitter::Node;
 use crate::util::{all_children, node_text, Source};
 
 pub struct ComplexityResult {
-    pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
     pub nesting_depth: u64,
 }
 
 /// Node-type lookup sets built once per measurement from the language definition.
 pub struct LanguageSets {
-    pub name: &'static str,
     pub function_nodes: HashSet<&'static str>,
-    pub class_nodes: HashSet<&'static str>,
     pub decision_nodes: HashSet<&'static str>,
     pub nesting_nodes: HashSet<&'static str>,
     pub ncss_nodes: HashSet<&'static str>,
@@ -23,9 +20,7 @@ pub struct LanguageSets {
 impl LanguageSets {
     pub fn new(language: &crate::languages::LanguageDefinition) -> Self {
         LanguageSets {
-            name: language.name,
             function_nodes: language.function_node_types.iter().copied().collect(),
-            class_nodes: language.class_node_types.iter().copied().collect(),
             decision_nodes: language.decision_node_types.iter().copied().collect(),
             nesting_nodes: language.nesting_node_types.iter().copied().collect(),
             ncss_nodes: language.ncss_node_types.iter().copied().collect(),
@@ -50,8 +45,8 @@ pub fn is_function_boundary(node: Node<'_>, function_nodes: &HashSet<&'static st
     function_nodes.contains(node.kind()) && !is_lambda_body_block(node)
 }
 
-// Sonar cognitive complexity charges a switch/match once as a whole; each case label still adds
-// one cyclomatic path. Only named nodes are consulted, so anonymous keyword tokens never match.
+// Sonar cognitive complexity charges a switch/match once as a whole, not per case label. Only
+// named nodes are consulted, so anonymous keyword tokens never match.
 const SWITCH_LIKE_NODE_TYPES: &[&str] = &[
     "switch_statement",
     "switch_expression",
@@ -64,7 +59,7 @@ const SWITCH_LIKE_NODE_TYPES: &[&str] = &[
     "case_match",
 ];
 
-// Per-case decision nodes: cyclomatic-only, because the switch itself carries the cognitive cost.
+// Per-case decision nodes add no cognitive point because the switch itself carries the cost.
 const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
     "case_clause",
     "switch_case",
@@ -81,12 +76,7 @@ const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
 
 const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "unless"];
 
-// Decision nodes that add an execution path but no cognitive point: PMD's cyclomatic complexity
-// charges Java `throw` while its cognitive complexity does not.
-const CYCLOMATIC_ONLY_NODE_TYPES: &[&str] = &["throw_statement"];
-
 pub struct FunctionBodyMetrics {
-    pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
     pub nesting_depth: u64,
     pub ncss: u64,
@@ -94,7 +84,6 @@ pub struct FunctionBodyMetrics {
 
 /// Accumulator for one function body during measure_function_body_metrics' post-order pass.
 struct FunctionBodyFrame {
-    cyclomatic_complexity: u64,
     cognitive_complexity: u64,
     /// Count of `1 + nesting` cognitive increments, for re-basing on hoist into the parent frame.
     nesting_sensitive_count: u64,
@@ -110,7 +99,6 @@ struct FunctionBodyFrame {
 impl FunctionBodyFrame {
     fn new(entry_cognitive_nesting: u64, entry_structural_nesting: u64) -> Self {
         FunctionBodyFrame {
-            cyclomatic_complexity: 1,
             cognitive_complexity: 0,
             nesting_sensitive_count: 0,
             nesting_depth: 0,
@@ -135,8 +123,8 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
 /// already-computed totals: NCSS hoists as-is; cognitive complexity re-bases the nested function's
 /// nesting-sensitive increments (each worth `1 + nesting`) by the nesting offset at the embedding
 /// site, while flat increments (else branches, boolean-operator sequences, chain continuations,
-/// jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
-/// only, so nothing hoists.
+/// jumps, guards) hoist unchanged; nesting depth describes the own body only, so it does not
+/// hoist.
 pub fn measure_function_body_metrics(
     root: Node<'_>,
     sets: &LanguageSets,
@@ -180,7 +168,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         }
         // The node's own increments target the frame it is embedded in, not the one it opens; a
         // frame-opening or charged-class-body node contributes nothing to that frame's own body
-        // (cyclomatic/nesting), matching the per-function traversal this pass replaces.
+        // (nesting), matching the per-function traversal this pass replaces.
         let entry_cognitive_nesting = self.top_frame().entry_cognitive_nesting;
         let entry_structural_nesting = self.top_frame().entry_structural_nesting;
         let relative_nesting = current_nesting + function_nesting_bonus - entry_cognitive_nesting;
@@ -205,10 +193,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
-        if is_decision && counts_for_own_body {
-            self.top_frame().cyclomatic_complexity += 1;
-        }
-        if is_decision && !is_case_clause && !CYCLOMATIC_ONLY_NODE_TYPES.contains(&current.kind()) {
+        if is_decision && !is_case_clause {
             if is_continuation {
                 self.top_frame().cognitive_complexity += 1;
             } else {
@@ -221,30 +206,23 @@ impl FunctionBodyPass<'_, '_, '_> {
             self.top_frame().nesting_sensitive_count += 1;
         }
         // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
-        // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+        // nested if instead.
         self.top_frame().cognitive_complexity += count_plain_else_branches(current);
         // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
         if is_flow_breaking_jump(current) {
             self.top_frame().cognitive_complexity += 1;
         }
 
-        if is_boolean_operator(current, self.code) {
-            if counts_for_own_body {
-                self.top_frame().cyclomatic_complexity += 1;
-            }
-            // A sequence of identical boolean operators reads as one condition, so only the
-            // operator starting a sequence adds a cognitive point (Sonar spec); each operator stays
-            // one cyclomatic path.
-            if starts_boolean_operator_sequence(current, self.code) {
-                self.top_frame().cognitive_complexity += 1;
-            }
+        // A sequence of identical boolean operators reads as one condition, so only the operator
+        // starting a sequence adds a cognitive point (Sonar spec).
+        if is_boolean_operator(current, self.code)
+            && starts_boolean_operator_sequence(current, self.code)
+        {
+            self.top_frame().cognitive_complexity += 1;
         }
 
         // Pattern guards add one independent execution path without nesting.
         if is_pattern_guard(current) {
-            if counts_for_own_body {
-                self.top_frame().cyclomatic_complexity += 1;
-            }
             self.top_frame().cognitive_complexity += 1;
         }
 
@@ -299,7 +277,6 @@ impl FunctionBodyPass<'_, '_, '_> {
             self.results.insert(
                 current.id(),
                 FunctionBodyMetrics {
-                    cyclomatic_complexity: closed.cyclomatic_complexity,
                     cognitive_complexity: closed.cognitive_complexity,
                     nesting_depth: closed.nesting_depth,
                     // A function node without a countable declaration of its own (arrow functions,
@@ -324,15 +301,14 @@ impl FunctionBodyPass<'_, '_, '_> {
 }
 
 /// File-level complexity over the whole tree. Cognitive complexity charges nested function/lambda
-/// content one nesting level deeper per function boundary crossed (Sonar spec); cyclomatic
-/// complexity and nesting depth count every node once.
+/// content one nesting level deeper per function boundary crossed (Sonar spec); nesting depth
+/// counts every node once.
 pub fn measure_complexity(
     node: Node<'_>,
     sets: &LanguageSets,
     code: &Source<'_>,
 ) -> ComplexityResult {
     let mut result = ComplexityResult {
-        cyclomatic_complexity: 1,
         cognitive_complexity: 0,
         nesting_depth: 0,
     };
@@ -382,10 +358,7 @@ pub fn measure_complexity(
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
-        if is_decision {
-            result.cyclomatic_complexity += 1;
-        }
-        if is_decision && !is_case_clause && !CYCLOMATIC_ONLY_NODE_TYPES.contains(&current.kind()) {
+        if is_decision && !is_case_clause {
             result.cognitive_complexity += if is_continuation {
                 1
             } else {
@@ -396,26 +369,21 @@ pub fn measure_complexity(
             result.cognitive_complexity += 1 + cognitive_nesting;
         }
         // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
-        // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+        // nested if instead.
         result.cognitive_complexity += count_plain_else_branches(current);
         // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
         if is_flow_breaking_jump(current) {
             result.cognitive_complexity += 1;
         }
 
-        if is_boolean_operator(current, code) {
-            result.cyclomatic_complexity += 1;
-            // A sequence of identical boolean operators reads as one condition, so only the
-            // operator starting a sequence adds a cognitive point (Sonar spec); each operator stays
-            // one cyclomatic path.
-            if starts_boolean_operator_sequence(current, code) {
-                result.cognitive_complexity += 1;
-            }
+        // A sequence of identical boolean operators reads as one condition, so only the operator
+        // starting a sequence adds a cognitive point (Sonar spec).
+        if is_boolean_operator(current, code) && starts_boolean_operator_sequence(current, code) {
+            result.cognitive_complexity += 1;
         }
 
         // Pattern guards add one independent execution path without nesting.
         if is_pattern_guard(current) {
-            result.cyclomatic_complexity += 1;
             result.cognitive_complexity += 1;
         }
 

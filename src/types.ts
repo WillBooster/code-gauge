@@ -19,7 +19,6 @@ export interface LanguageDefinition {
   parserLanguage: ParserLanguage;
   aliases?: readonly string[];
   functionNodeTypes?: readonly string[];
-  classNodeTypes?: readonly string[];
   decisionNodeTypes?: readonly string[];
   nestingNodeTypes?: readonly string[];
   /** Node types that each count as one non-commenting source statement (NCSS). */
@@ -73,10 +72,7 @@ export interface HalsteadMetrics {
   vocabulary: number;
   length: number;
   volume: number;
-  difficulty: number;
   effort: number;
-  time: number;
-  bugs: number;
 }
 
 export interface FunctionMetrics {
@@ -91,8 +87,6 @@ export interface FunctionMetrics {
   startLine: number;
   startColumn: number;
   endLine: number;
-  returnsJsx: boolean;
-  cyclomaticComplexity: number;
   cognitiveComplexity: number;
   nestingDepth: number;
   /**
@@ -101,69 +95,20 @@ export interface FunctionMetrics {
    * class bodies are included, so summing over functions counts shared regions more than once.
    */
   ncss: number;
-  callCount: number;
-  uniqueCalleeCount: number;
-  fanIn: number;
-  fanOut: number;
   parameterCount: number;
-  recursive: boolean;
-}
-
-export interface CallGraphMetrics {
-  callCount: number;
-  uniqueCalleeCount: number;
-  internalEdgeCount: number;
-  recursiveFunctionCount: number;
-  maxFanIn: number;
-  maxFanOut: number;
-  maxCallDepth: number;
-}
-
-export interface CouplingMetrics {
-  importCount: number;
-  importSourceCount: number;
-  relativeImportCount: number;
-  externalImportCount: number;
-  exportCount: number;
-}
-
-export interface DeclarationMetrics {
-  exported: boolean;
-  name: string;
-  startLine: number;
-}
-
-export interface ModuleMetrics {
-  declarations: DeclarationMetrics[];
-  importSources: string[];
-}
-
-export interface CohesionMetrics {
-  averageFunctionIdentifierOverlap: number;
-  sharedIdentifierCount: number;
-  uniqueIdentifierCount: number;
-}
-
-export interface SyntaxFeatureMetrics {
-  assignmentCount: number;
-  awaitExpressionCount: number;
-  loopStatementCount: number;
-  mutableBindingCount: number;
-  returnStatementCount: number;
-  throwStatementCount: number;
-  tryStatementCount: number;
 }
 
 /**
  * Within-file structural duplication: copy-pasted regions whose normalized token sequence repeats.
  * Identifiers are anonymized consistently by first-occurrence order and literals by kind, so
- * consistently renamed copies match. Distinct from cross-file duplicate symbol names.
+ * consistently renamed copies match.
  */
 export interface DuplicationMetrics {
   /**
    * Number of redundant (extra) duplicated regions: sum over groups of (groupSize - 1) times the
-   * matched fragments per occurrence, so a gapped (merged) clone counts like its unmerged
-   * fragments and threshold semantics do not shift with merging.
+   * matched fragments per occurrence, so merging a gapped clone's fragments into one group does
+   * not halve duplicateBlockCount — an edited two-fragment pair still counts 2, exactly as its
+   * unmerged fragments did.
    */
   duplicateBlockCount: number;
   /** Number of distinct normalized token sequences that appear more than once. */
@@ -172,6 +117,13 @@ export interface DuplicationMetrics {
   duplicateBlockGroups: DuplicateBlockOccurrence[][];
   /** Number of distinct lines covered by any counted duplicate occurrence (originals included). */
   duplicateLineCount: number;
+  /**
+   * The 1-based lines behind duplicateLineCount, sorted ascending: code lines carrying matched
+   * tokens. Exposed so consumers combining within-file and cross-file coverage can union exact
+   * line sets instead of over-counting from block bounding ranges (which include the unmatched gap
+   * of a merged clone and comment/blank lines).
+   */
+  duplicateLineNumbers: number[];
   /**
    * duplicateLineCount / code lines (0 when the file has no code). Code lines are the denominator
    * because duplicated lines are counted from matched tokens, which only ever land on code lines;
@@ -187,41 +139,17 @@ export interface DuplicateBlockOccurrence {
   startLine: number;
 }
 
-export interface TypeComplexityMetrics {
-  typeAnnotationCount: number;
-  typeAliasCount: number;
-  interfaceCount: number;
-  genericParameterCount: number;
-  unionTypeCount: number;
-  intersectionTypeCount: number;
-  conditionalTypeCount: number;
-  typeAssertionCount: number;
-  nonNullAssertionCount: number;
-  satisfiesExpressionCount: number;
-}
-
 export interface CodeMetrics {
   language: LanguageName;
   bytes: number;
   lines: LineMetrics;
   functions: FunctionMetrics[];
-  classCount: number;
-  functionCount: number;
-  cyclomaticComplexity: number;
-  maxCyclomaticComplexity: number;
   cognitiveComplexity: number;
   maxCognitiveComplexity: number;
   nestingDepth: number;
   /** Non-commenting source statements in the whole file; every statement counts exactly once. */
   ncssCount: number;
-  callGraph: CallGraphMetrics;
-  coupling: CouplingMetrics;
-  module: ModuleMetrics;
-  cohesion: CohesionMetrics;
-  syntaxFeatures: SyntaxFeatureMetrics;
-  typeComplexity: TypeComplexityMetrics;
   duplication: DuplicationMetrics;
   halstead: HalsteadMetrics;
-  maintainabilityIndex: number;
   syntaxTree?: string;
 }

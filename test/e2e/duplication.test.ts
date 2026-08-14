@@ -649,6 +649,26 @@ describe('duplication: cross-file clones', () => {
     expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 1, 'b.js': 1 });
   });
 
+  it('reports exact matched code lines per file and omits candidates-only files', () => {
+    const metrics = measureCrossFileDuplication([
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript' }) },
+      { file: 'b.js', candidates: collectCrossFileDuplicationFileData(fileB, { language: 'javascript' }).candidates },
+    ]);
+
+    expect(metrics.groups.length).toBe(1);
+    const occurrence = metrics.groups[0]?.occurrences.find(({ file }) => file === 'a.js');
+    const aLines = metrics.duplicateLineNumbersByFile['a.js'] ?? [];
+    // a.js supplied its token stream, so its entry lists exactly the matched code lines: sorted,
+    // within the occurrence's bounds, and no larger than the file's code lines.
+    expect(aLines.length).toBeGreaterThan(0);
+    expect(aLines).toEqual([...aLines].toSorted((left, right) => left - right));
+    expect(aLines[0]).toBeGreaterThanOrEqual(occurrence?.startLine ?? 0);
+    expect(aLines.at(-1)).toBeLessThanOrEqual(occurrence?.endLine ?? 0);
+    // b.js supplied only candidates: its matched lines are unknowable, so it has no entry rather
+    // than an approximate bounding range.
+    expect(Object.hasOwn(metrics.duplicateLineNumbersByFile, 'b.js')).toBe(false);
+  });
+
   it('does not match code calling different APIs', () => {
     // Renaming the invoked member (.amount -> .price) is a semantic change, not a rename.
     const differentApi = fileB.replaceAll('.amount', '.price');

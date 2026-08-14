@@ -5,7 +5,11 @@
 [![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
 [![wbfy](https://img.shields.io/badge/wbfy-18.3.0-1e90ff.svg)](https://github.com/WillBooster/shared/tree/main/packages/wbfy)
 
-A command-line tool for measuring code metrics with tree-sitter. It scans a project and reports high-risk files, functions, and React components so you can spot code that is worth refactoring. A [programmatic API](#programmatic-api) is also available.
+A command-line tool that ranks the files of a project by refactoring priority, built for AI-agent
+workflows: an agent asked to "refactor this repository" runs `code-gauge` and starts from the top of
+the list. Measurement uses tree-sitter, and the output is deliberately small — only the metrics that
+tell an agent _what to change_ are measured and reported, so nothing in the output anchors an agent
+toward out-of-scope "improvements". A [programmatic API](#programmatic-api) is also available.
 
 ## Getting started
 
@@ -18,150 +22,135 @@ npm install -g code-gauge
 code-gauge path/to/project
 ```
 
-The CLI scans JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++ files. By default it skips generated, vendor, test, and tool directories, prints a summary, and lists the highest-risk findings. TypeScript project metrics and React component classification turn on automatically when a `tsconfig.json` is found.
+The CLI scans JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++ files. By
+default it skips generated, vendor, test, and tool directories and prints the top 10 refactoring
+candidates:
+
+```
+Measured 123 files under /path/to/project (code LOC 45678, NCSS 23456, functions 1789)
+
+Refactoring candidates (top 10 of 123):
+1. src/metrics.ts (score 2.87): worst function measure (L120-310) cognitive 42, NCSS 220, nesting 6; duplicated lines 180 (20%, shared with src/other.ts); file NCSS 1240
+...
+```
+
+## Ranking model
+
+Every file gets a score that is the sum of its repository-relative percentile ranks (each in `[0, 1)`)
+over three dimensions:
+
+- **Worst-function cognitive complexity** — the SonarSource cognitive-complexity model, the
+  measure of understanding effort with the strongest empirical support among structural metrics.
+- **Duplicated lines** — distinct lines covered by within-file duplicate blocks or cross-file
+  duplicate occurrences (Type-1/2 clones, gapped and near-miss Type-3 clones).
+- **File NCSS** — non-commenting source statements, a comment- and formatting-independent size
+  measure calibrated against PMD's `NcssCount`.
+
+Ranking is relative to the scanned project, so no absolute thresholds are involved: the top of the
+list is worth refactoring first regardless of where any cutoff would sit. Each reported file carries
+the concrete evidence (worst function with location, duplication with partner files, file size) so
+an agent can act on it directly.
 
 ## Options
 
-| Option                     | Description                                                                 |
-| -------------------------- | --------------------------------------------------------------------------- |
-| `--config <path>`          | Use this config file instead of the auto-detected `code-gauge.config.json`. |
-| `--include-tests`          | Include test files and test directories.                                    |
-| `--tsconfig <path>`        | Use this `tsconfig.json` instead of the auto-detected one.                  |
-| `--max-findings <n>`       | Maximum number of findings to print (default: 20).                          |
-| `--largest-files <n>`      | List the `n` largest files by code LOC (config key: `largestFiles`).        |
-| `--json`                   | Print machine-readable JSON.                                                |
-| `--fail-on-risk`           | Exit with code 1 when any high-risk finding is reported.                    |
-| `--fail-on-error`          | Exit with code 1 when any file or directory cannot be scanned.              |
-| `--<metric>-threshold <n>` | Override a risk threshold (see below).                                      |
+| Option                                     | Description                                                                     |
+| ------------------------------------------ | ------------------------------------------------------------------------------- |
+| `--config <path>`                          | Use this config file instead of the auto-detected `code-gauge.config.json`.     |
+| `--top <n>`                                | Number of top-ranked files to report (default: 10).                             |
+| `--include-tests`                          | Include test files and test directories.                                        |
+| `--json`                                   | Print machine-readable JSON.                                                    |
+| `--fail-on-error`                          | Exit with code 1 when any file or directory cannot be scanned.                  |
+| `--duplication-min-tokens <n>`             | Minimum normalized token count for a duplicate region (default 40).             |
+| `--duplication-max-gap-tokens <n>`         | Maximum token gap merged into one gapped clone group; 0 disables (default 30).  |
+| `--duplication-min-similarity-percent <n>` | Minimum similarity percent for near-miss clones; 100 = exact only (default 70). |
 
-## Risk thresholds
+## Configuration
 
-A finding is reported when a measured value is **greater than or equal to** its threshold. Every threshold can be set on the command line (e.g. `--file-loc-threshold 400`) or in a config file; the command line wins over the config file, which wins over the defaults.
-
-`code-gauge` looks for `code-gauge.config.json` by walking up from the target directory (override with `--config`). The following config reproduces every built-in default:
+`code-gauge` looks for `code-gauge.config.json` by walking up from the target directory (override
+with `--config`). The following config reproduces every built-in default:
 
 ```json
 {
-  "thresholds": {
-    "fileLoc": 500,
-    "functionLoc": 120,
-    "componentLoc": 350,
-    "cognitive": 25,
-    "cyclomatic": 20,
-    "call": 50,
-    "import": 25,
-    "fanOut": 10,
-    "parameter": 8,
-    "duplicateBlock": 2,
-    "duplicationRatioPercent": 30,
-    "crossFileDuplicateBlock": 2,
-    "transitiveDependency": 25,
-    "structuralBreadth": 8,
-    "structuralCoordination": 300,
-    "stateMutation": 50,
-    "duplicateSymbolGroup": 5
-  },
   "duplication": {
     "minTokens": 40,
     "maxGapTokens": 30,
     "minSimilarityPercent": 70
   },
-  "languageThresholds": {
-    "python": { "stateMutation": 90, "structuralCoordination": 350 },
-    "ruby": { "stateMutation": 90, "structuralCoordination": 350 },
-    "react": { "import": 30 }
-  },
-  "maxFindings": 20,
+  "rank": { "top": 10 },
   "includeTests": false,
-  "failOnRisk": false,
   "failOnError": false
 }
 ```
 
-| Threshold                 | CLI flag                                 | Reports when a …                                       |
-| ------------------------- | ---------------------------------------- | ------------------------------------------------------ |
-| `fileLoc`                 | `--file-loc-threshold`                   | file's code LOC is large.                              |
-| `functionLoc`             | `--function-loc-threshold`               | function's physical LOC span is large.                 |
-| `componentLoc`            | `--component-loc-threshold`              | React component's physical LOC span is large.          |
-| `cognitive`               | `--cognitive-threshold`                  | function's cognitive complexity is high.               |
-| `cyclomatic`              | `--cyclomatic-threshold`                 | function's cyclomatic complexity is high.              |
-| `call`                    | `--call-threshold`                       | function makes many calls.                             |
-| `import`                  | `--import-threshold`                     | file has many unique import sources.                   |
-| `fanOut`                  | `--fan-out-threshold`                    | function calls many other in-file functions.           |
-| `parameter`               | `--parameter-threshold`                  | function declares many parameters.                     |
-| `duplicateBlock`          | `--duplicate-block-threshold`            | file contains copy-pasted code blocks.                 |
-| `duplicationRatioPercent` | `--duplication-ratio-percent-threshold`  | large percentage of a file's code lines is duplicated. |
-| `crossFileDuplicateBlock` | `--cross-file-duplicate-block-threshold` | file shares copy-pasted code blocks with other files.  |
-| `transitiveDependency`    | `--transitive-dependency-threshold`      | file transitively reaches many local files.            |
-| `structuralBreadth`       | `--structural-breadth-threshold`         | file coordinates many structural concerns.             |
-| `structuralCoordination`  | `--structural-coordination-threshold`    | file's structural coordination score is high.          |
-| `stateMutation`           | `--state-mutation-threshold`             | file mutates state heavily.                            |
-| `duplicateSymbolGroup`    | `--duplicate-symbol-group-threshold`     | file shares many duplicated symbols with others.       |
-
-### Per-language thresholds
-
-Some metrics distribute very differently by language or file type, so a single global threshold either
-over-flags one language or under-flags another. `languageThresholds` overrides individual thresholds for a
-profile without repeating the whole set. Each file resolves its thresholds as **base → its language profile →
-the `react` profile** (the last applies when the file contains a React component), so later profiles win.
-
-Valid profile keys are `javascript`, `jsx`, `typescript`, `tsx`, `python`, `go`, `rust`, `java`, `ruby`, `c`,
-`cpp`, and `react`. Built-in
-overrides raise `stateMutation` and `structuralCoordination` for Python and Ruby (every binding is an
-assignment, so these run far higher than in TypeScript) and raise `import` for React files (which pull in
-many components).
-Anything you specify is merged on top of the built-in overrides, so `{ "python": { "stateMutation": 8 } }`
-restores the global value for Python while keeping the other built-in adjustments.
-
-```json
-{
-  "languageThresholds": {
-    "python": { "stateMutation": 120 },
-    "react": { "componentLoc": 400, "import": 35 }
-  }
-}
-```
-
-Command-line `--<metric>-threshold` flags set the global base only; use the config file for per-language tuning.
+The command line wins over the config file, which wins over the defaults. Unknown settings are
+rejected so stale configuration fails loudly.
 
 ### Duplication detection settings
 
-The `duplication` config section (or the `--duplication-min-tokens`, `--duplication-max-gap-tokens`, and `--duplication-min-similarity-percent` flags) tunes how clones are detected rather than when they are reported:
+The `duplication` section tunes how clones are detected:
 
-- `minTokens` (default 40): minimum normalized token count for a region to count as a duplicate. Raise it to report only substantial copies; lower it to catch small ones.
-- `maxGapTokens` (default 30): copies edited in one spot split into two exact matches around the edit; adjacent matches separated by at most this many tokens are merged back into a single gapped (Type-3) clone group. `0` disables merging. Applies to within-file detection and to cross-file matching alike: cross-file candidates are joined by a project-level window index over per-statement fingerprint sequences, and gap-adjacent cross-file matches merge into gapped clone groups the same way. Merging changes only the grouping, not the counting: each matched fragment still counts toward `duplicateBlock` (and each token span counts at most once), so an edited two-fragment pair keeps counting 2.
-- `minSimilarityPercent` (default 70): blocks the exact pipeline misses are additionally compared by similarity (n-gram filtration, then token-level longest-common-subsequence verification, following NIL and NiCad), so a near-miss (Type-3) clone with scattered small edits is still reported when both blocks are at least this similar and share more than half of their content-bearing tokens (names and literal values). `100` disables near-miss detection and reports exact (Type-1/2) matches plus gapped merges only. Applies to within-file detection only; literal-dense (data-table) blocks never near-miss match. A near-miss occurrence counts all of its code lines (edited lines included) toward `duplicateLineCount`, because the whole fragment is the clone.
+- `minTokens` (default 40): minimum normalized token count for a region to count as a duplicate.
+  Raise it to report only substantial copies; lower it to catch small ones.
+- `maxGapTokens` (default 30): copies edited in one spot split into two exact matches around the
+  edit; adjacent matches separated by at most this many tokens are merged back into a single gapped
+  (Type-3) clone group. `0` disables merging. Applies to within-file detection and to cross-file
+  matching alike.
+- `minSimilarityPercent` (default 70): blocks the exact pipeline misses are additionally compared by
+  similarity (n-gram filtration, then token-level longest-common-subsequence verification, following
+  NIL and NiCad), so a near-miss (Type-3) clone with scattered small edits is still reported when
+  both blocks are at least this similar and share more than half of their content-bearing tokens.
+  `100` disables near-miss detection. Applies to within-file detection only.
 
-Custom detection settings are measured by the TypeScript backend; the native backend implements the defaults only.
+Custom detection settings are measured by the TypeScript backend; the native backend implements the
+defaults only.
 
 ## Metrics
 
+`measureCode` reports, per file:
+
 - Physical LOC, code lines, comment-only lines, and blank lines
-- Function and class counts
-- Cyclomatic and cognitive complexity (per function and maximum), following the SonarSource cognitive-complexity specification (except its recursion increment, which is not counted) and cross-validated against PMD's Java rules
-- NCSS (non-commenting source statements, per function and per file), calibrated against PMD's `NcssCount` rule for Java and generalized to every supported language; unlike PMD, package and import declarations count (PMD counts them only with `NcssOption.COUNT_IMPORTS`), and statement-shaped content is counted uniformly in expression positions too (PMD's visitor never descends into lambdas or anonymous classes passed as call arguments, switch-expression bodies, or expression-bodied arrow cases)
-- Nesting depth
-- Intra-file call graph metrics: call counts, fan-in/fan-out, recursion, call depth, and parameter counts
-- Within-file duplication: copy-pasted blocks and statement runs matched on normalized tokens (identifiers anonymized consistently, literals by kind, and literal-dense data tables excluded unless their values also match), with adjacent matches around a small edit merged into gapped (Type-3) clone groups, plus duplicated line count and ratio
-- Cross-file duplication: copy-pasted blocks shared between files, matched with the same normalization and reported as groups with their file locations
-- File coupling (imports/exports) and cohesion (shared function identifiers)
-- Architecture metrics: transitive local dependencies, structural coordination and breadth, state mutation, and cross-file duplicate symbols
-- TypeScript type-shape metrics: annotations, aliases, interfaces, generics, unions, intersections, assertions, and conditional types
-- Halstead metrics and the maintainability index
+- Per-function cognitive complexity (following the SonarSource specification, except its recursion
+  increment, which is not counted; cross-validated against PMD's Java rules), plus the file-level
+  total and maximum
+- Per-function and per-file NCSS (non-commenting source statements), calibrated against PMD's
+  `NcssCount` rule for Java and generalized to every supported language; unlike PMD, package and
+  import declarations count, and statement-shaped content is counted uniformly in expression
+  positions too
+- Per-function and file-level nesting depth
+- Per-function parameter counts and locations (name, node type, line span)
+- Within-file duplication: copy-pasted blocks matched on normalized tokens (identifiers anonymized
+  consistently, literals by kind, and literal-dense data tables excluded unless their values also
+  match), with adjacent matches around a small edit merged into gapped (Type-3) clone groups and
+  near-miss (Type-3) clones matched by token-LCS similarity, plus duplicated line count and ratio
+- Cross-file duplication (via `measureCrossFileDuplication`): copy-pasted blocks shared between
+  files, matched with the same normalization and reported as groups with their file locations
+- Halstead base counts, vocabulary, length, volume, and effort
+
+Metrics that the validation literature shows to be weakly grounded or that invite misdirected
+"improvements" (cyclomatic complexity, call-graph fan-in/fan-out, coupling and cohesion counts,
+maintainability index, and similar) are intentionally not measured; see
+[issue #44](https://github.com/WillBooster/code-gauge/issues/44) for the rationale and references.
 
 ## Supported languages
 
-Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++. Additional tree-sitter grammars can be registered with `TreeMeasurer.registerLanguage`.
+Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++.
+Additional tree-sitter grammars can be registered with `TreeMeasurer.registerLanguage`.
 
 ## Native (Rust) backend
 
-Measurement is also implemented as a Rust addon that produces bit-identical metrics roughly 13x faster than the TypeScript backend (the tree-sitter grammar crates are pinned to the same versions as the npm grammar packages). With a [Rust toolchain](https://rustup.rs) installed, build it once:
+Measurement is also implemented as a Rust addon that produces bit-identical metrics roughly 13x
+faster than the TypeScript backend (the tree-sitter grammar crates are pinned to the same versions
+as the npm grammar packages). With a [Rust toolchain](https://rustup.rs) installed, build it once:
 
 ```sh
 yarn build-native
 ```
 
-`measureCode` and the CLI pick up `native/code-gauge.node` automatically and fall back to the TypeScript implementation when the addon is missing (for example, on npm installs) or when a custom language has been registered. Set `CODE_GAUGE_NATIVE=0` to force the TypeScript backend, and compare both with `yarn benchmark` (requires `yarn build` first). `isNativeBackendAvailable()` reports which backend is in use.
+`measureCode` and the CLI pick up `native/code-gauge.node` automatically and fall back to the
+TypeScript implementation when the addon is missing (for example, on npm installs) or when a custom
+language has been registered. Set `CODE_GAUGE_NATIVE=0` to force the TypeScript backend, and compare
+both with `yarn benchmark` (requires `yarn build` first). `isNativeBackendAvailable()` reports which
+backend is in use.
 
 ## Programmatic API
 
@@ -180,5 +169,5 @@ function score(value) {
   { language: 'javascript' }
 );
 
-console.log(metrics.cyclomaticComplexity);
+console.log(metrics.maxCognitiveComplexity);
 ```

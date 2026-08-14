@@ -6,7 +6,6 @@ pub struct LanguageDefinition {
     pub aliases: &'static [&'static str],
     grammar_id: GrammarId,
     pub function_node_types: &'static [&'static str],
-    pub class_node_types: &'static [&'static str],
     pub decision_node_types: &'static [&'static str],
     pub nesting_node_types: &'static [&'static str],
     pub ncss_node_types: &'static [&'static str],
@@ -62,17 +61,6 @@ const COMMON_FUNCTION_NODES: &[&str] = &[
     "lambda",
     "lambda_expression",
     "closure_expression",
-];
-
-const COMMON_CLASS_NODES: &[&str] = &[
-    "class",
-    "class_declaration",
-    "class_definition",
-    "interface_declaration",
-    "trait_item",
-    "struct_item",
-    "enum_item",
-    "union_item",
 ];
 
 const COMMON_DECISION_NODES: &[&str] = &[
@@ -190,22 +178,6 @@ const JAVA_FUNCTION_NODES: &[&str] = &[
     "compact_constructor_declaration",
 ];
 
-const JAVA_CLASS_NODES: &[&str] = &[
-    "class",
-    "class_declaration",
-    "class_definition",
-    "interface_declaration",
-    "trait_item",
-    "struct_item",
-    "enum_item",
-    "union_item",
-    "enum_declaration",
-    "record_declaration",
-    "annotation_type_declaration",
-    "object_creation_expression",
-    "enum_constant",
-];
-
 const JAVA_DECISION_NODES: &[&str] = &[
     "if_statement",
     "elif_clause",
@@ -230,37 +202,7 @@ const JAVA_DECISION_NODES: &[&str] = &[
     "switch_rule",
 ];
 
-// PMD's standard cyclomatic complexity charges `throw` one path (verified against PMD 7.26.0);
-// it stays out of the nesting set (its argument expressions are not nested) and adds no
-// cognitive point (see CYCLOMATIC_ONLY_NODE_TYPES in complexity.rs). Other languages follow their
-// own reference tools (lizard/radon), which do not count throw/raise.
-const JAVA_CYCLOMATIC_DECISION_NODES: &[&str] = &[
-    "if_statement",
-    "elif_clause",
-    "else_if_clause",
-    "for_statement",
-    "for_in_statement",
-    "while_statement",
-    "do_statement",
-    "catch_clause",
-    "except_clause",
-    "case_clause",
-    "switch_case",
-    "match_arm",
-    "conditional_expression",
-    "ternary_expression",
-    "if_expression",
-    "while_expression",
-    "for_expression",
-    "loop_expression",
-    "enhanced_for_statement",
-    "switch_block_statement_group",
-    "switch_rule",
-    "throw_statement",
-];
-
 const RUBY_FUNCTION_NODES: &[&str] = &["method", "singleton_method", "lambda", "block", "do_block"];
-const RUBY_CLASS_NODES: &[&str] = &["class", "module"];
 const RUBY_DECISION_NODES: &[&str] = &[
     "if",
     "elsif",
@@ -280,7 +222,6 @@ const RUBY_DECISION_NODES: &[&str] = &[
 ];
 
 const C_FUNCTION_NODES: &[&str] = &["function_definition", "lambda_expression"];
-const C_CLASS_NODES: &[&str] = &["struct_specifier", "enum_specifier", "union_specifier"];
 const C_DECISION_NODES: &[&str] = &[
     "if_statement",
     "elif_clause",
@@ -301,12 +242,6 @@ const C_DECISION_NODES: &[&str] = &[
     "for_expression",
     "loop_expression",
     "case_statement",
-];
-const CPP_CLASS_NODES: &[&str] = &[
-    "struct_specifier",
-    "enum_specifier",
-    "union_specifier",
-    "class_specifier",
 ];
 const CPP_DECISION_NODES: &[&str] = &[
     "if_statement",
@@ -598,7 +533,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &["js", "mjs", "cjs"],
         grammar_id: GrammarId::JavaScript,
         function_node_types: COMMON_FUNCTION_NODES,
-        class_node_types: COMMON_CLASS_NODES,
         decision_node_types: COMMON_DECISION_NODES,
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: JS_NCSS_NODES,
@@ -609,7 +543,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &[],
         grammar_id: GrammarId::JavaScript,
         function_node_types: COMMON_FUNCTION_NODES,
-        class_node_types: COMMON_CLASS_NODES,
         decision_node_types: COMMON_DECISION_NODES,
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: JS_NCSS_NODES,
@@ -620,7 +553,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &["ts"],
         grammar_id: GrammarId::TypeScript,
         function_node_types: COMMON_FUNCTION_NODES,
-        class_node_types: COMMON_CLASS_NODES,
         decision_node_types: COMMON_DECISION_NODES,
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: JS_NCSS_NODES,
@@ -631,7 +563,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &[],
         grammar_id: GrammarId::Tsx,
         function_node_types: COMMON_FUNCTION_NODES,
-        class_node_types: COMMON_CLASS_NODES,
         decision_node_types: COMMON_DECISION_NODES,
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: JS_NCSS_NODES,
@@ -642,7 +573,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &["py"],
         grammar_id: GrammarId::Python,
         function_node_types: COMMON_FUNCTION_NODES,
-        class_node_types: COMMON_CLASS_NODES,
         decision_node_types: COMMON_DECISION_NODES,
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: PYTHON_NCSS_NODES,
@@ -653,7 +583,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &[],
         grammar_id: GrammarId::Go,
         function_node_types: COMMON_FUNCTION_NODES,
-        class_node_types: COMMON_CLASS_NODES,
         decision_node_types: GO_DECISION_NODES,
         nesting_node_types: GO_NESTING_NODES,
         ncss_node_types: GO_NCSS_NODES,
@@ -664,7 +593,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &["rs"],
         grammar_id: GrammarId::Rust,
         function_node_types: COMMON_FUNCTION_NODES,
-        class_node_types: COMMON_CLASS_NODES,
         decision_node_types: COMMON_DECISION_NODES,
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: RUST_NCSS_NODES,
@@ -675,8 +603,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &[],
         grammar_id: GrammarId::Java,
         function_node_types: JAVA_FUNCTION_NODES,
-        class_node_types: JAVA_CLASS_NODES,
-        decision_node_types: JAVA_CYCLOMATIC_DECISION_NODES,
+        decision_node_types: JAVA_DECISION_NODES,
         nesting_node_types: JAVA_DECISION_NODES,
         ncss_node_types: JAVA_NCSS_NODES,
         ncss_container_node_types: &[],
@@ -686,7 +613,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &["rb"],
         grammar_id: GrammarId::Ruby,
         function_node_types: RUBY_FUNCTION_NODES,
-        class_node_types: RUBY_CLASS_NODES,
         decision_node_types: RUBY_DECISION_NODES,
         nesting_node_types: RUBY_DECISION_NODES,
         ncss_node_types: RUBY_NCSS_NODES,
@@ -697,7 +623,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &[],
         grammar_id: GrammarId::C,
         function_node_types: C_FUNCTION_NODES,
-        class_node_types: C_CLASS_NODES,
         decision_node_types: C_DECISION_NODES,
         nesting_node_types: C_DECISION_NODES,
         ncss_node_types: C_NCSS_NODES,
@@ -708,7 +633,6 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         aliases: &["c++", "cxx"],
         grammar_id: GrammarId::Cpp,
         function_node_types: C_FUNCTION_NODES,
-        class_node_types: CPP_CLASS_NODES,
         decision_node_types: CPP_DECISION_NODES,
         nesting_node_types: CPP_DECISION_NODES,
         ncss_node_types: CPP_NCSS_NODES,

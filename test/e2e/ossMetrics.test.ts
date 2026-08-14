@@ -5,7 +5,6 @@ import {
   measureCode,
   supportedLanguages,
   type CodeMetrics,
-  type CohesionMetrics,
   type DuplicationMetrics,
   type FunctionMetrics,
   type HalsteadMetrics,
@@ -14,15 +13,11 @@ import { fixturesDir, loadFixtureCorpus } from './fixtureCorpus.js';
 import { ossExpectations, type OracleMetric } from './ossExpectations.js';
 
 // Measures every supported metric on real-world files from famous OSS projects (pinned to release
-// tags) and checks them against expectations verified with major existing tools — PMD, lizard,
-// gocognit, complexipy, eslint-plugin-sonarjs, cloc, and tokei. See ossExpectations.ts for the
-// oracle description and test/fixtures/oss/README.md for file provenance.
+// tags) and checks them against expectations verified with major existing tools — PMD, gocognit,
+// complexipy, eslint-plugin-sonarjs, cloc, and tokei. See ossExpectations.ts for the oracle
+// description and test/fixtures/oss/README.md for file provenance.
 
-const metricField: Record<
-  OracleMetric,
-  keyof Pick<FunctionMetrics, 'cyclomaticComplexity' | 'cognitiveComplexity' | 'ncss'>
-> = {
-  cyclomatic: 'cyclomaticComplexity',
+const metricField: Record<OracleMetric, keyof Pick<FunctionMetrics, 'cognitiveComplexity' | 'ncss'>> = {
   cognitive: 'cognitiveComplexity',
   ncss: 'ncss',
 };
@@ -34,36 +29,23 @@ const round = (value: number): number => Math.round(value * 10_000) / 10_000;
  * input's byte length); `functions` is covered per entry by the oracle assertions; `syntaxTree`
  * is opt-in output, asserted by the parse test. Every other CodeMetrics field must appear in
  * roundFloats' result — the return type makes forgetting a newly added metric a compile error,
- * including fields added to the hand-enumerated cohesion/duplication/halstead groups.
+ * including fields added to the hand-enumerated duplication/halstead groups.
  */
 type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree'>;
-type RoundedAggregates = Omit<Record<AggregateKey, unknown>, 'cohesion' | 'duplication' | 'halstead'> & {
-  cohesion: Record<keyof CohesionMetrics, number>;
-  duplication: Record<keyof DuplicationMetrics, unknown>;
+// duplicateLineNumbers is asserted structurally (its length is the pinned duplicateLineCount and
+// the golden snapshots pin the exact arrays), so the aggregate expectations stay hand-readable.
+type RoundedAggregates = Omit<Record<AggregateKey, unknown>, 'duplication' | 'halstead'> & {
+  duplication: Record<Exclude<keyof DuplicationMetrics, 'duplicateLineNumbers'>, unknown>;
   halstead: Record<keyof HalsteadMetrics, number>;
 };
 
 function roundFloats(metrics: CodeMetrics): RoundedAggregates {
   return {
     lines: metrics.lines,
-    functionCount: metrics.functionCount,
-    classCount: metrics.classCount,
-    cyclomaticComplexity: metrics.cyclomaticComplexity,
-    maxCyclomaticComplexity: metrics.maxCyclomaticComplexity,
     cognitiveComplexity: metrics.cognitiveComplexity,
     maxCognitiveComplexity: metrics.maxCognitiveComplexity,
     nestingDepth: metrics.nestingDepth,
     ncssCount: metrics.ncssCount,
-    callGraph: metrics.callGraph,
-    coupling: metrics.coupling,
-    module: metrics.module,
-    cohesion: {
-      averageFunctionIdentifierOverlap: round(metrics.cohesion.averageFunctionIdentifierOverlap),
-      sharedIdentifierCount: metrics.cohesion.sharedIdentifierCount,
-      uniqueIdentifierCount: metrics.cohesion.uniqueIdentifierCount,
-    },
-    syntaxFeatures: metrics.syntaxFeatures,
-    typeComplexity: metrics.typeComplexity,
     duplication: {
       duplicateBlockCount: metrics.duplication.duplicateBlockCount,
       duplicateBlockGroupCount: metrics.duplication.duplicateBlockGroupCount,
@@ -80,12 +62,8 @@ function roundFloats(metrics: CodeMetrics): RoundedAggregates {
       vocabulary: metrics.halstead.vocabulary,
       length: metrics.halstead.length,
       volume: round(metrics.halstead.volume),
-      difficulty: round(metrics.halstead.difficulty),
       effort: round(metrics.halstead.effort),
-      time: round(metrics.halstead.time),
-      bugs: round(metrics.halstead.bugs),
     },
-    maintainabilityIndex: round(metrics.maintainabilityIndex),
   };
 }
 
@@ -138,10 +116,14 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
       it('matches the verified aggregate metrics', () => {
         expect(metrics.language).toBe(expectation.language);
         expect(metrics.bytes).toBe(Buffer.byteLength(code));
+        expect(metrics.duplication.duplicateLineNumbers).toHaveLength(metrics.duplication.duplicateLineCount);
         expect(roundFloats(metrics)).toEqual(expectation.aggregates);
       });
 
-      it('matches every tool-verified per-function value', () => {
+      // skipIf makes the absence of per-function oracle coverage visible in the report instead of
+      // green-lighting a zero-assertion loop (C/C++/Ruby/Rust lost their only per-function oracle
+      // with cyclomatic complexity; see the ossExpectations.ts header).
+      it.skipIf(expectation.oracleFunctions.length === 0)('matches every tool-verified per-function value', () => {
         const bySpan = keyFunctionsBySpan(metrics);
         for (const [name, startLine, endLine, metric, tool, value] of expectation.oracleFunctions) {
           const fn = lookupFunction(bySpan, name, startLine, endLine);
@@ -149,24 +131,29 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
         }
       });
 
-      it('stays on the documented side of every known tool divergence', () => {
-        const bySpan = keyFunctionsBySpan(metrics);
-        for (const [
-          name,
-          startLine,
-          endLine,
-          metric,
-          tool,
-          toolValue,
-          codeGaugeValue,
-        ] of expectation.knownDivergences) {
-          const fn = lookupFunction(bySpan, name, startLine, endLine);
-          const actual = fn[metricField[metric]];
-          expect(actual, `${metric} of ${name}@${startLine} (documented divergence from ${tool})`).toBe(codeGaugeValue);
-          // If this fails, code-gauge now agrees with the tool: move the entry to oracleFunctions.
-          expect(actual, `${metric} of ${name}@${startLine} unexpectedly matches ${tool}`).not.toBe(toolValue);
+      it.skipIf(expectation.knownDivergences.length === 0)(
+        'stays on the documented side of every known tool divergence',
+        () => {
+          const bySpan = keyFunctionsBySpan(metrics);
+          for (const [
+            name,
+            startLine,
+            endLine,
+            metric,
+            tool,
+            toolValue,
+            codeGaugeValue,
+          ] of expectation.knownDivergences) {
+            const fn = lookupFunction(bySpan, name, startLine, endLine);
+            const actual = fn[metricField[metric]];
+            expect(actual, `${metric} of ${name}@${startLine} (documented divergence from ${tool})`).toBe(
+              codeGaugeValue
+            );
+            // If this fails, code-gauge now agrees with the tool: move the entry to oracleFunctions.
+            expect(actual, `${metric} of ${name}@${startLine} unexpectedly matches ${tool}`).not.toBe(toolValue);
+          }
         }
-      });
+      );
     });
   }
 

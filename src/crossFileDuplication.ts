@@ -1,6 +1,7 @@
 import { selectMaximalGroups } from './duplicateSelection.js';
 import {
   buildLiteralCountPrefix,
+  collectSegmentLines,
   collectSequenceWindowCandidates,
   countRedundantFragments,
   defaultDuplicationOptions,
@@ -35,6 +36,15 @@ export interface CrossFileDuplicationMetrics {
   duplicateBlockCount: number;
   /** Groups the file participates in, keyed by the file name passed in. */
   duplicateBlockGroupCountByFile: Record<string, number>;
+  /**
+   * Per file, the 1-based code lines covered by matched tokens of its cross-file occurrences,
+   * sorted ascending. Exact like within-file duplicateLineNumbers: the unmatched gap of a merged
+   * clone and comment/blank lines inside an occurrence's bounding range are excluded (blank rows
+   * inside multi-row tokens only when the file supplied codeLineNumbers). A file that supplied
+   * only candidates (no `tokens`) has no entry — without its token stream the matched lines are
+   * unknowable, and an approximate bounding range would break this field's exactness.
+   */
+  duplicateLineNumbersByFile: Record<string, number[]>;
   groups: CrossFileDuplicateBlockGroup[];
 }
 
@@ -79,7 +89,8 @@ export function measureCrossFileDuplication(
     // File index and position break coverage ties deterministically.
     (left, right) => left.regionBucket - right.regionBucket || left.startIndex - right.startIndex
   );
-  return summarize(mergeGapAdjacentGroups([...counted.values()], files, maxGapTokens));
+  const tokenOffsets = computeTokenOffsets(files, maxGapTokens);
+  return summarize(mergeGapAdjacentGroups([...counted.values()], tokenOffsets, maxGapTokens), files, tokenOffsets);
 }
 
 /** Repeated sub-windows of sibling statements matched across the whole project's files. */
@@ -109,16 +120,11 @@ function spansMultipleFiles(group: SelectableCandidate[]): boolean {
 }
 
 /**
- * Reuses the within-file gapped (Type-3) merging by mapping every occurrence into one project-wide
- * token index space: each file's tokens are offset by more than `maxGapTokens` past the previous
- * file's, so occurrences in different files are never gap-adjacent and pairs always stay within
- * one file.
+ * Per-file token offsets that map every file into one project-wide token index space: each file's
+ * tokens are offset by more than `maxGapTokens` past the previous file's, so occurrences in
+ * different files are never gap-adjacent and merged pairs always stay within one file.
  */
-function mergeGapAdjacentGroups(
-  groups: SelectableCandidate[][],
-  files: CrossFileDuplicationSourceFile[],
-  maxGapTokens: number
-): CrossFileOccurrence[][] {
+function computeTokenOffsets(files: CrossFileDuplicationSourceFile[], maxGapTokens: number): number[] {
   const tokenOffsets: number[] = [];
   let offset = 0;
   for (const { tokens, candidates } of files) {
@@ -133,6 +139,15 @@ function mergeGapAdjacentGroups(
     }
     offset += tokenCount + maxGapTokens + 1;
   }
+  return tokenOffsets;
+}
+
+/** Reuses the within-file gapped (Type-3) merging in the project-wide token index space. */
+function mergeGapAdjacentGroups(
+  groups: SelectableCandidate[][],
+  tokenOffsets: number[],
+  maxGapTokens: number
+): CrossFileOccurrence[][] {
   const occurrenceGroups = groups.map((group) =>
     group
       .map((candidate): CrossFileOccurrence => {
@@ -155,17 +170,31 @@ function mergeGapAdjacentGroups(
   return mergeAdjacentGroups(occurrenceGroups, maxGapTokens);
 }
 
-function summarize(groups: CrossFileOccurrence[][]): CrossFileDuplicationMetrics {
+function summarize(
+  groups: CrossFileOccurrence[][],
+  files: CrossFileDuplicationSourceFile[],
+  tokenOffsets: number[]
+): CrossFileDuplicationMetrics {
   const reported: CrossFileDuplicateBlockGroup[] = [];
-  // Accumulated in a Map: file names are arbitrary strings, and a plain object would read
+  // Accumulated in Maps: file names are arbitrary strings, and a plain object would read
   // inherited properties for names like "constructor".
   const groupCountByFile = new Map<string, number>();
+  const fileDataByName = new Map(
+    files.map((file, index) => [
+      file.file,
+      { tokens: file.tokens, codeLineNumbers: file.codeLineNumbers, offset: tokenOffsets[index] ?? 0 },
+    ])
+  );
+  const lineNumbersByFile = new Map<string, Set<number>>();
   let duplicateBlockCount = 0;
   for (const group of groups) {
     // Mirrors within-file counting: each redundant occurrence contributes one count per matched
     // fragment, gapped merging consolidates the grouping without halving the count, and spans a
     // partial merge shares between a retained group and the merged group count once.
     duplicateBlockCount += countRedundantFragments(group);
+    for (const occurrence of group) {
+      collectOccurrenceLines(occurrence, fileDataByName, lineNumbersByFile);
+    }
     const occurrences = group
       .map(({ file, startLine, endLine }) => ({ file, startLine, endLine }))
       .toSorted((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);
@@ -184,6 +213,45 @@ function summarize(groups: CrossFileOccurrence[][]): CrossFileDuplicationMetrics
   return {
     duplicateBlockCount,
     duplicateBlockGroupCountByFile: Object.fromEntries(groupCountByFile),
+    duplicateLineNumbersByFile: Object.fromEntries(
+      [...lineNumbersByFile].map(([file, lines]) => [file, [...lines].toSorted((left, right) => left - right)])
+    ),
     groups: reported,
   };
+}
+
+/**
+ * Adds the code lines an occurrence's matched tokens cover to its file's line set, mapping the
+ * project-wide token segments back into the file's own token stream. A file that supplied only
+ * candidates (no token stream) is skipped rather than approximated from the bounding line range,
+ * which would include gap and comment/blank lines and break the field's exactness contract.
+ */
+function collectOccurrenceLines(
+  occurrence: CrossFileOccurrence,
+  fileDataByName: Map<
+    string,
+    { tokens?: CrossFileDuplicationSourceFile['tokens']; codeLineNumbers?: Set<number>; offset: number }
+  >,
+  lineNumbersByFile: Map<string, Set<number>>
+): void {
+  const fileData = fileDataByName.get(occurrence.file);
+  if (!fileData?.tokens) {
+    return;
+  }
+  let lines = lineNumbersByFile.get(occurrence.file);
+  if (!lines) {
+    lines = new Set();
+    lineNumbersByFile.set(occurrence.file, lines);
+  }
+  for (const segment of occurrence.segments) {
+    collectSegmentLines(
+      {
+        startTokenIndex: segment.startTokenIndex - fileData.offset,
+        endTokenIndex: segment.endTokenIndex - fileData.offset,
+      },
+      fileData.tokens,
+      fileData.codeLineNumbers,
+      lines
+    );
+  }
 }

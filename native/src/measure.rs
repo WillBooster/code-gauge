@@ -2,22 +2,15 @@ use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tree_sitter::Node;
 
-use crate::callgraph::measure_call_graph;
 use crate::complexity::{
     is_lambda_body_block, measure_complexity, measure_function_body_metrics, LanguageSets,
 };
 use crate::duplication::measure_duplication;
-use crate::features::measure_syntax_features;
 use crate::functions::{
-    analyze_function, collect_base_scopes, collect_constructed_type_names, collect_nodes,
-    count_classes, is_implemented_function,
+    collect_nodes, count_parameters, find_function_name, is_implemented_function,
 };
 use crate::languages::LanguageDefinition;
-use crate::structure::{measure_coupling, measure_module};
-use crate::types::{
-    CohesionMetrics, FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics,
-    TypeComplexityMetrics,
-};
+use crate::types::{FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics};
 use crate::util::{all_children, is_js_whitespace, named_children, node_text, split_lines, Source};
 
 pub fn measure(
@@ -50,59 +43,29 @@ pub fn measure(
         .filter(|node| !is_lambda_body_block(*node) && is_implemented_function(*node))
         .collect();
 
-    let constructed_type_names = collect_constructed_type_names(root, &sets, code);
     let body_metrics_by_node_id = measure_function_body_metrics(root, &sets, code);
-    let analyses: Vec<_> = functions
+    let function_metrics: Vec<FunctionMetrics> = functions
         .iter()
-        .enumerate()
-        .map(|(index, node)| {
+        .map(|node| {
             let body_metrics = body_metrics_by_node_id
                 .get(&node.id())
                 .expect("every collected function node opens a frame in the body-metrics pass");
-            analyze_function(
-                *node,
-                &sets,
-                index,
-                &constructed_type_names,
-                body_metrics,
-                code,
-            )
-        })
-        .collect();
-    let base_scopes_by_scope = collect_base_scopes(root, &sets, code);
-    let call_graph = measure_call_graph(&analyses, sets.name, &base_scopes_by_scope);
-    let function_metrics: Vec<FunctionMetrics> = analyses
-        .iter()
-        .map(|analysis| FunctionMetrics {
-            name: analysis.name.clone(),
-            node_type: analysis.node_type.to_string(),
-            start_line: analysis.start_line,
-            start_column: analysis.start_column,
-            end_line: analysis.end_line,
-            returns_jsx: analysis.returns_jsx,
-            cyclomatic_complexity: analysis.cyclomatic_complexity,
-            // Sonar's written spec adds +1 cognitive complexity per function in a recursion
-            // cycle, but this is intentionally not implemented (issue #22): mainstream
-            // implementations (PMD, SonarQube analyzers) omit it, and file-local,
-            // receiver-blind call resolution would make it unsound (false positives on
-            // delegation, missed cross-file cycles). Recursion is still reported separately.
-            cognitive_complexity: analysis.cognitive_complexity,
-            nesting_depth: analysis.nesting_depth,
-            ncss: analysis.ncss,
-            call_count: analysis.call_count,
-            unique_callee_count: analysis.callees.len(),
-            fan_in: call_graph
-                .fan_in_by_index
-                .get(&analysis.index)
-                .copied()
-                .unwrap_or(0),
-            fan_out: call_graph
-                .fan_out_by_index
-                .get(&analysis.index)
-                .copied()
-                .unwrap_or(0),
-            parameter_count: analysis.parameter_count,
-            recursive: call_graph.recursive_indexes.contains(&analysis.index),
+            FunctionMetrics {
+                name: find_function_name(*node, code),
+                node_type: node.kind().to_string(),
+                start_line: node.start_position().row + 1,
+                // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving
+                // yields the code-unit column node-tree-sitter reports.
+                start_column: node.start_position().column / 2,
+                end_line: node.end_position().row + 1,
+                // Sonar's written spec adds +1 cognitive complexity per function in a recursion
+                // cycle, but this is intentionally not implemented (issue #22): mainstream
+                // implementations (PMD, SonarQube analyzers) omit it.
+                cognitive_complexity: body_metrics.cognitive_complexity,
+                nesting_depth: body_metrics.nesting_depth,
+                ncss: body_metrics.ncss,
+                parameter_count: count_parameters(*node, code),
+            }
         })
         .collect();
 
@@ -114,14 +77,6 @@ pub fn measure(
         language: language.name.to_string(),
         bytes: code.code.len(),
         lines,
-        class_count: count_classes(root, &sets),
-        function_count: function_metrics.len(),
-        cyclomatic_complexity: global_complexity.cyclomatic_complexity,
-        max_cyclomatic_complexity: function_metrics
-            .iter()
-            .map(|function| function.cyclomatic_complexity)
-            .max()
-            .unwrap_or(0),
         cognitive_complexity: global_complexity.cognitive_complexity,
         max_cognitive_complexity: function_metrics
             .iter()
@@ -130,12 +85,6 @@ pub fn measure(
             .unwrap_or(0),
         nesting_depth: global_complexity.nesting_depth,
         ncss_count: crate::ncss::count_ncss(root, &sets.ncss_nodes, &sets.ncss_containers),
-        call_graph: call_graph.metrics,
-        coupling: measure_coupling(root, &sets, code),
-        module: measure_module(root, &sets, code),
-        cohesion: measure_cohesion(&analyses),
-        syntax_features: measure_syntax_features(root, sets.name, code),
-        type_complexity: measure_type_complexity(root),
         duplication: measure_duplication(root, &code_line_numbers, code),
         halstead_counts,
         functions: function_metrics,
@@ -272,118 +221,6 @@ fn is_comment_only_line(line: &str, relevant_spans: &[CommentSpan]) -> bool {
         column += character.len_utf16();
     }
     true
-}
-
-fn measure_type_complexity(root: Node<'_>) -> TypeComplexityMetrics {
-    let mut metrics = TypeComplexityMetrics {
-        type_annotation_count: 0,
-        type_alias_count: 0,
-        interface_count: 0,
-        generic_parameter_count: 0,
-        union_type_count: 0,
-        intersection_type_count: 0,
-        conditional_type_count: 0,
-        type_assertion_count: 0,
-        non_null_assertion_count: 0,
-        satisfies_expression_count: 0,
-    };
-
-    fn visit(node: Node<'_>, metrics: &mut TypeComplexityMetrics) {
-        match node.kind() {
-            "type_annotation" => metrics.type_annotation_count += 1,
-            "type_alias_declaration" => metrics.type_alias_count += 1,
-            "interface_declaration" => metrics.interface_count += 1,
-            "type_parameter" => metrics.generic_parameter_count += 1,
-            "union_type" => metrics.union_type_count += 1,
-            "intersection_type" => metrics.intersection_type_count += 1,
-            "conditional_type" => metrics.conditional_type_count += 1,
-            "as_expression" | "type_assertion" => metrics.type_assertion_count += 1,
-            "non_null_expression" => metrics.non_null_assertion_count += 1,
-            "satisfies_expression" => metrics.satisfies_expression_count += 1,
-            _ => {}
-        }
-
-        for child in named_children(node) {
-            visit(child, metrics);
-        }
-    }
-
-    visit(root, &mut metrics);
-    metrics
-}
-
-/// Caps the pairwise overlap computation so files with thousands of functions stay fast.
-const MAX_COHESION_PAIR_COUNT: i64 = 250_000;
-
-fn measure_cohesion(analyses: &[crate::functions::FunctionAnalysis]) -> CohesionMetrics {
-    // An identifier is shared iff it appears in at least two functions.
-    let mut function_count_by_identifier: HashMap<&str, usize> = HashMap::new();
-    for analysis in analyses {
-        for identifier in &analysis.identifiers {
-            *function_count_by_identifier.entry(identifier).or_insert(0) += 1;
-        }
-    }
-    let shared_identifier_count = function_count_by_identifier
-        .values()
-        .filter(|count| **count >= 2)
-        .count();
-
-    // Beyond the cap the average pairwise Jaccard overlap is estimated from an evenly strided,
-    // deterministic sample of pairs; see measureCohesion in metrics.ts.
-    let function_count = analyses.len() as i64;
-    let total_pair_count = (function_count * (function_count - 1)) / 2;
-    let stride = (total_pair_count + MAX_COHESION_PAIR_COUNT - 1) / MAX_COHESION_PAIR_COUNT;
-    let stride = stride.max(1);
-    let mut overlap_total: f64 = 0.0;
-    let mut sampled_pair_count: i64 = 0;
-    let mut left_index: i64 = 0;
-    let mut row_start_pair_index: i64 = 0;
-    let mut row_length: i64 = function_count - 1;
-    let mut pair_index: i64 = 0;
-    while pair_index < total_pair_count {
-        while pair_index >= row_start_pair_index + row_length {
-            row_start_pair_index += row_length;
-            left_index += 1;
-            row_length = function_count - 1 - left_index;
-        }
-        let right_index = left_index + 1 + (pair_index - row_start_pair_index);
-
-        let left = analyses.get(left_index as usize);
-        let right = analyses.get(right_index as usize);
-        if let (Some(left), Some(right)) = (left, right) {
-            let intersection_size = count_intersection(&left.identifiers, &right.identifiers);
-            let union_size = left.identifiers.len() + right.identifiers.len() - intersection_size;
-            overlap_total += if union_size == 0 {
-                0.0
-            } else {
-                intersection_size as f64 / union_size as f64
-            };
-            sampled_pair_count += 1;
-        }
-        pair_index += stride;
-    }
-
-    CohesionMetrics {
-        average_function_identifier_overlap: if sampled_pair_count == 0 {
-            1.0
-        } else {
-            overlap_total / sampled_pair_count as f64
-        },
-        shared_identifier_count,
-        unique_identifier_count: function_count_by_identifier.len(),
-    }
-}
-
-fn count_intersection(left: &HashSet<String>, right: &HashSet<String>) -> usize {
-    let (smaller, larger) = if left.len() <= right.len() {
-        (left, right)
-    } else {
-        (right, left)
-    };
-    smaller
-        .iter()
-        .filter(|value| larger.contains(*value))
-        .count()
 }
 
 const OPERATOR_TEXTS: &[&str] = &[

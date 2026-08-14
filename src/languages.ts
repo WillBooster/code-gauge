@@ -31,17 +31,6 @@ const commonFunctionNodes = [
   'closure_expression',
 ] as const;
 
-const commonClassNodes = [
-  'class',
-  'class_declaration',
-  'class_definition',
-  'interface_declaration',
-  'trait_item',
-  'struct_item',
-  'enum_item',
-  'union_item',
-] as const;
-
 const commonDecisionNodes = [
   'if_statement',
   'elif_clause',
@@ -76,33 +65,17 @@ const javaFunctionNodes = [
   'constructor_declaration',
   'compact_constructor_declaration',
 ] as const;
-const javaClassNodes = [
-  ...commonClassNodes,
-  'enum_declaration',
-  'record_declaration',
-  'annotation_type_declaration',
-  // Counted only when they carry a `class_body` (anonymous classes, JLS 15.9.5).
-  'object_creation_expression',
-  'enum_constant',
-] as const;
 const javaDecisionNodes = [
   ...commonDecisionNodes,
   'enhanced_for_statement',
   'switch_block_statement_group',
   'switch_rule',
 ] as const;
-// PMD's standard cyclomatic complexity charges `throw` one path (verified against PMD 7.26.0);
-// it stays out of the nesting set (its argument expressions are not nested) and adds no
-// cognitive point (see cyclomaticOnlyNodeTypes in metrics.ts). Other languages follow their own
-// reference tools (lizard/radon), which do not count throw/raise.
-const javaCyclomaticDecisionNodes = [...javaDecisionNodes, 'throw_statement'] as const;
 
 // Ruby node types are keyword-like (`if`, `while`, ...), so they must stay Ruby-specific: the same
 // strings appear as anonymous keyword tokens in other grammars and would be double-counted there.
 // `block`/`do_block` are Ruby's closures (`items.map { ... }`), the analog of JS callbacks.
 const rubyFunctionNodes = ['method', 'singleton_method', 'lambda', 'block', 'do_block'] as const;
-// `singleton_class` (`class << self`) opens an eigenclass scope, not a new type declaration.
-const rubyClassNodes = ['class', 'module'] as const;
 const rubyDecisionNodes = [
   'if',
   'elsif',
@@ -124,9 +97,7 @@ const rubyDecisionNodes = [
 // `function_declarator` must stay out: it is nested inside every `function_definition` (which
 // would double-count) and also appears in body-less prototypes.
 const cFunctionNodes = ['function_definition', 'lambda_expression'] as const;
-const cClassNodes = ['struct_specifier', 'enum_specifier', 'union_specifier'] as const;
 const cDecisionNodes = [...commonDecisionNodes, 'case_statement'] as const;
-const cppClassNodes = [...cClassNodes, 'class_specifier'] as const;
 const cppDecisionNodes = [...cDecisionNodes, 'for_range_loop'] as const;
 
 // NCSS node sets: every listed type counts as one non-commenting source statement. The Java set is
@@ -433,8 +404,7 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     name: 'java',
     parserLanguage: normalizeGrammar(Java as unknown as GrammarModule),
     functionNodeTypes: javaFunctionNodes,
-    classNodeTypes: javaClassNodes,
-    decisionNodeTypes: javaCyclomaticDecisionNodes,
+    decisionNodeTypes: javaDecisionNodes,
     nestingNodeTypes: javaDecisionNodes,
     ncssNodeTypes: javaNcssNodes,
   },
@@ -443,7 +413,6 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     aliases: ['rb'],
     parserLanguage: normalizeGrammar(Ruby as unknown as GrammarModule),
     functionNodeTypes: rubyFunctionNodes,
-    classNodeTypes: rubyClassNodes,
     decisionNodeTypes: rubyDecisionNodes,
     nestingNodeTypes: rubyDecisionNodes,
     ncssNodeTypes: rubyNcssNodes,
@@ -453,7 +422,6 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     name: 'c',
     parserLanguage: normalizeGrammar(C as unknown as GrammarModule),
     functionNodeTypes: cFunctionNodes,
-    classNodeTypes: cClassNodes,
     decisionNodeTypes: cDecisionNodes,
     nestingNodeTypes: cDecisionNodes,
     ncssNodeTypes: cNcssNodes,
@@ -463,14 +431,12 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
     aliases: ['c++', 'cxx'],
     parserLanguage: normalizeGrammar(Cpp as unknown as GrammarModule),
     functionNodeTypes: cFunctionNodes,
-    classNodeTypes: cppClassNodes,
     decisionNodeTypes: cppDecisionNodes,
     nestingNodeTypes: cppDecisionNodes,
     ncssNodeTypes: cppNcssNodes,
   },
 ].map((language) => ({
   functionNodeTypes: commonFunctionNodes,
-  classNodeTypes: commonClassNodes,
   decisionNodeTypes: commonDecisionNodes,
   nestingNodeTypes: commonNestingNodes,
   ncssNodeTypes: jsNcssNodes,

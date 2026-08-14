@@ -10,19 +10,12 @@ import { createLanguageRegistry } from './languages.js';
 import { commentNodeTypes, countNcss, getNcssSets, invalidateNcssSetsCache, ncssContribution } from './ncss.js';
 import { measureWithNativeBackend, type NativeHalsteadCounts, type NativeMetricsPayload } from './nativeMetrics.js';
 import type {
-  CallGraphMetrics,
   CodeMetrics,
-  CohesionMetrics,
-  CouplingMetrics,
-  DeclarationMetrics,
   FunctionMetrics,
   HalsteadMetrics,
   LanguageDefinition,
   LanguageName,
   MeasureOptions,
-  ModuleMetrics,
-  SyntaxFeatureMetrics,
-  TypeComplexityMetrics,
 } from './types.js';
 
 const booleanOperators = new Set(['&&', '||', 'and', 'or']);
@@ -203,7 +196,6 @@ const atomicOperandNodeTypes = new Set([
 ]);
 
 interface ComplexityResult {
-  cyclomaticComplexity: number;
   cognitiveComplexity: number;
   nestingDepth: number;
 }
@@ -212,61 +204,6 @@ interface CommentSpan {
   line: number;
   startColumn: number;
   endColumn: number;
-}
-
-/**
- * How a call site addresses its callee: `none` is a bare call (`f()`), `self` goes through the
- * caller's own instance (`this.f()`, `self.f()`), `other` has any other explicit receiver.
- */
-type CallReceiver = 'none' | 'self' | 'other';
-
-interface CallSite {
-  name: string;
-  /** Undefined when the syntax carries no argument list (e.g. Rust macro token trees). */
-  argumentCount?: number;
-  receiver: CallReceiver;
-}
-
-interface FunctionAnalysis {
-  index: number;
-  name?: string;
-  nodeType: string;
-  /** Name of the enclosing class-like scope, used to disambiguate same-named methods. */
-  scopeName?: string;
-  /** False for bodyless signatures (Java abstract/interface methods), which resolve no calls. */
-  hasImplementation: boolean;
-  startLine: number;
-  startColumn: number;
-  endLine: number;
-  returnsJsx: boolean;
-  cyclomaticComplexity: number;
-  cognitiveComplexity: number;
-  nestingDepth: number;
-  ncss: number;
-  callCount: number;
-  parameterCount: number;
-  /**
-   * Largest argument count a call site can pass (receiver-adjusted for Python bound methods);
-   * meaningless when unboundedArity is set.
-   */
-  callableParameterCount: number;
-  /** Required (neither variadic/rest/splat nor defaulted) parameters, receiver-adjusted likewise. */
-  callableMinParameterCount: number;
-  /** Whether the signature accepts unboundedly many arguments (true varargs/rest/splat only). */
-  unboundedArity: boolean;
-  callees: Set<string>;
-  callSites: CallSite[];
-  identifiers: Set<string>;
-}
-
-interface StructuralMetrics {
-  callGraph: CallGraphMetrics;
-  cohesion: CohesionMetrics;
-  coupling: CouplingMetrics;
-  functions: FunctionMetrics[];
-  module: ModuleMetrics;
-  syntaxFeatures: SyntaxFeatureMetrics;
-  typeComplexity: TypeComplexityMetrics;
 }
 
 export class TreeMeasurer {
@@ -305,38 +242,21 @@ export class TreeMeasurer {
     const functions = collectNodes(root, new Set(language.functionNodeTypes)).filter(
       (node) => !isLambdaBodyBlock(node) && isImplementedFunction(node)
     );
-    const structuralMetrics = measureStructuralMetrics(root, functions, language);
-    const functionMetrics = structuralMetrics.functions;
+    const functionMetrics = collectFunctionMetrics(root, functions, language);
     const globalComplexity = measureComplexity(root, language);
     const { lines, codeLineNumbers } = classifyLines(code, root);
-    const halstead = measureHalstead(root, code);
 
     return {
       language: language.name,
       bytes: Buffer.byteLength(code),
       lines,
       functions: functionMetrics,
-      classCount: countClasses(root, language),
-      functionCount: functionMetrics.length,
-      cyclomaticComplexity: globalComplexity.cyclomaticComplexity,
-      maxCyclomaticComplexity: maxMetric(functionMetrics, 'cyclomaticComplexity'),
       cognitiveComplexity: globalComplexity.cognitiveComplexity,
-      maxCognitiveComplexity: maxMetric(functionMetrics, 'cognitiveComplexity'),
+      maxCognitiveComplexity: maxCognitiveComplexity(functionMetrics),
       nestingDepth: globalComplexity.nestingDepth,
       ncssCount: countNcss(root, language),
-      callGraph: structuralMetrics.callGraph,
-      coupling: structuralMetrics.coupling,
-      module: structuralMetrics.module,
-      cohesion: structuralMetrics.cohesion,
-      syntaxFeatures: structuralMetrics.syntaxFeatures,
-      typeComplexity: structuralMetrics.typeComplexity,
       duplication: measureDuplication(root, codeLineNumbers, options.duplication),
-      halstead,
-      maintainabilityIndex: calculateMaintainabilityIndex(
-        halstead.volume,
-        globalComplexity.cyclomaticComplexity,
-        lines.code
-      ),
+      halstead: measureHalstead(root, code),
       syntaxTree: options.includeSyntaxTree ? root.toString() : undefined,
     };
   }
@@ -356,7 +276,12 @@ export class TreeMeasurer {
     if (!language) {
       throw new Error(`Unsupported language: ${options.language}`);
     }
-    return collectCrossFileDuplicateCandidates(parseRoot(code, language), options.duplication);
+    const root = parseRoot(code, language);
+    return {
+      ...collectCrossFileDuplicateCandidates(root, options.duplication),
+      // Lets cross-file line coverage count only code lines, like within-file coverage.
+      codeLineNumbers: classifyLines(code, root).codeLineNumbers,
+    };
   }
 }
 
@@ -401,7 +326,6 @@ export function collectCrossFileDuplicationFileData(
  * produces, including explicitly-undefined optional keys.
  */
 function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree: boolean): CodeMetrics {
-  const halstead = deriveHalsteadMetrics(payload.halsteadCounts);
   return {
     language: payload.language,
     bytes: payload.bytes,
@@ -412,415 +336,61 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
       startLine: fn.startLine,
       startColumn: fn.startColumn,
       endLine: fn.endLine,
-      returnsJsx: fn.returnsJsx,
-      cyclomaticComplexity: fn.cyclomaticComplexity,
       cognitiveComplexity: fn.cognitiveComplexity,
       nestingDepth: fn.nestingDepth,
       ncss: fn.ncss,
-      callCount: fn.callCount,
-      uniqueCalleeCount: fn.uniqueCalleeCount,
-      fanIn: fn.fanIn,
-      fanOut: fn.fanOut,
       parameterCount: fn.parameterCount,
-      recursive: fn.recursive,
     })),
-    classCount: payload.classCount,
-    functionCount: payload.functionCount,
-    cyclomaticComplexity: payload.cyclomaticComplexity,
-    maxCyclomaticComplexity: payload.maxCyclomaticComplexity,
     cognitiveComplexity: payload.cognitiveComplexity,
     maxCognitiveComplexity: payload.maxCognitiveComplexity,
     nestingDepth: payload.nestingDepth,
     ncssCount: payload.ncssCount,
-    callGraph: payload.callGraph,
-    coupling: payload.coupling,
-    module: payload.module,
-    cohesion: payload.cohesion,
-    syntaxFeatures: payload.syntaxFeatures,
-    typeComplexity: payload.typeComplexity,
     duplication: payload.duplication,
-    halstead,
-    maintainabilityIndex: calculateMaintainabilityIndex(
-      halstead.volume,
-      payload.cyclomaticComplexity,
-      payload.lines.code
-    ),
+    halstead: deriveHalsteadMetrics(payload.halsteadCounts),
     syntaxTree: includeSyntaxTree ? payload.syntaxTree : undefined,
   };
 }
 
-function measureStructuralMetrics(
+function collectFunctionMetrics(
   root: Parser.SyntaxNode,
   functions: Parser.SyntaxNode[],
   language: LanguageDefinition
-): StructuralMetrics {
-  const constructedTypeNames = collectConstructedTypeNames(root, language);
+): FunctionMetrics[] {
   const bodyMetricsByNodeId = measureFunctionBodyMetrics(root, language);
-  const analyses = functions.map((node, index) => {
+  return functions.map((node) => {
     const bodyMetrics = bodyMetricsByNodeId.get(node.id);
     if (!bodyMetrics) {
       throw new Error(`missing body metrics for function node at line ${node.startPosition.row + 1}`);
     }
-    return analyzeFunction(node, language, index, constructedTypeNames, bodyMetrics);
+    return {
+      name: findFunctionName(node),
+      nodeType: node.type,
+      startLine: node.startPosition.row + 1,
+      startColumn: node.startPosition.column,
+      endLine: node.endPosition.row + 1,
+      cognitiveComplexity: bodyMetrics.cognitiveComplexity,
+      nestingDepth: bodyMetrics.nestingDepth,
+      ncss: bodyMetrics.ncss,
+      parameterCount: countParameters(node),
+    };
   });
-  const callGraph = measureCallGraph(analyses, language.name, collectBaseScopes(root, language));
-  // Sonar's written spec adds +1 cognitive complexity per function in a recursion cycle, but this
-  // is intentionally not implemented (issue #22): mainstream implementations (PMD, SonarQube
-  // analyzers) omit it, and our file-local, receiver-blind call resolution would make it unsound
-  // (false positives on delegation like `len() { return this.inner.len(); }`, missed cross-file
-  // cycles). Recursion is still detected and reported via `recursive`.
-  const functionsWithGraph = analyses.map((analysis) => ({
-    name: analysis.name,
-    nodeType: analysis.nodeType,
-    startLine: analysis.startLine,
-    startColumn: analysis.startColumn,
-    endLine: analysis.endLine,
-    returnsJsx: analysis.returnsJsx,
-    cyclomaticComplexity: analysis.cyclomaticComplexity,
-    cognitiveComplexity: analysis.cognitiveComplexity,
-    nestingDepth: analysis.nestingDepth,
-    ncss: analysis.ncss,
-    callCount: analysis.callCount,
-    uniqueCalleeCount: analysis.callees.size,
-    fanIn: callGraph.fanInByIndex.get(analysis.index) ?? 0,
-    fanOut: callGraph.fanOutByIndex.get(analysis.index) ?? 0,
-    parameterCount: analysis.parameterCount,
-    recursive: callGraph.recursiveIndexes.has(analysis.index),
-  }));
-
-  return {
-    functions: functionsWithGraph,
-    callGraph: callGraph.metrics,
-    coupling: measureCoupling(root, language),
-    module: measureModule(root, language),
-    cohesion: measureCohesion(analyses),
-    syntaxFeatures: measureSyntaxFeatures(root, language.name),
-    typeComplexity: measureTypeComplexity(root),
-  };
-}
-
-function analyzeFunction(
-  node: Parser.SyntaxNode,
-  language: LanguageDefinition,
-  index: number,
-  constructedTypeNames: Set<string>,
-  bodyMetrics: FunctionBodyMetrics
-): FunctionAnalysis {
-  const calls = collectCalls(node, language, constructedTypeNames, findGoReceiverName(node));
-  const parameters = countParameters(node);
-  // Python bound methods receive `self`/`cls` implicitly, so a call site passes one argument
-  // fewer than the declaration lists; the reported parameterCount keeps the declared count.
-  const receiverOffset = language.name === 'python' ? countPythonBoundReceiverParameters(node) : 0;
-  return {
-    index,
-    name: findFunctionName(node),
-    nodeType: node.type,
-    scopeName: findFunctionScopeName(node, language),
-    hasImplementation: hasImplementationBody(node),
-    startLine: node.startPosition.row + 1,
-    startColumn: node.startPosition.column,
-    endLine: node.endPosition.row + 1,
-    returnsJsx: returnsJsx(node, language),
-    cyclomaticComplexity: bodyMetrics.cyclomaticComplexity,
-    cognitiveComplexity: bodyMetrics.cognitiveComplexity,
-    nestingDepth: bodyMetrics.nestingDepth,
-    ncss: bodyMetrics.ncss,
-    callCount: calls.callCount,
-    parameterCount: parameters.count,
-    callableParameterCount: Math.max(parameters.count - receiverOffset, 0),
-    callableMinParameterCount: Math.max(parameters.minCount - receiverOffset, 0),
-    unboundedArity: parameters.unbounded,
-    callees: calls.callees,
-    callSites: calls.callSites,
-    identifiers: collectIdentifiers(node),
-  };
-}
-
-/** Class-like nodes that scope their methods; namespaces are not scopes for bare-call resolution. */
-const scopeNodeTypes = new Set([
-  'class_declaration',
-  'class_definition',
-  'class_specifier',
-  'struct_specifier',
-  'union_specifier',
-  'interface_declaration',
-  'enum_declaration',
-  'record_declaration',
-  'annotation_type_declaration',
-  'object_creation_expression',
-  'class',
-  'module',
-  'singleton_class',
-  'struct_item',
-  'enum_item',
-  'union_item',
-  'trait_item',
-  'impl_item',
-]);
-
-/**
- * Namespace-like ancestors qualify class scopes (`ns::Widget`) so same-named classes in different
- * namespaces/modules stay distinguishable, but on their own they open no scope: a free function
- * inside a namespace still resolves as a free function.
- */
-const namespaceScopeNodeTypes = new Set(['namespace_definition', 'mod_item']);
-
-/**
- * Qualified name of the class-like scope chain enclosing a function (`Outer::Worker`), so
- * same-named methods of different classes — including same-named NESTED classes under different
- * outers or namespaces — stay distinguishable in call-graph resolution. Go methods carry their
- * scope on the receiver, and C++ out-of-line members (`void Widget::process()`) on the qualified
- * declarator; namespace ancestors prefix the declarator-derived scope the same way, so
- * `namespace X { void A::f() {} }` matches the in-class definition's `X::A`.
- */
-function findFunctionScopeName(node: Parser.SyntaxNode, language: LanguageDefinition): string | undefined {
-  const { segments, hasClassScope } = collectScopeSegments(node.parent, language);
-  if (hasClassScope) {
-    return segments.join('::');
-  }
-
-  if (node.type === 'method_declaration') {
-    const receiverTypeNode = node.childForFieldName('receiver')?.namedChildren[0]?.childForFieldName('type');
-    if (receiverTypeNode) {
-      // Go receiver type arguments always DECLARE fresh type parameters, so `Pair[A, B]` and
-      // `Pair[X, Y]` name the same scope; stripping them makes the spellings match.
-      return normalizeGoReceiverType(receiverTypeNode.text).replace(/\[.*\]$/su, '');
-    }
-  }
-
-  const qualifiedName = unwrapDeclaratorName(node.childForFieldName('declarator'), true);
-  const scopeEnd = qualifiedName?.lastIndexOf('::') ?? -1;
-  if (qualifiedName !== undefined && scopeEnd > 0) {
-    // Out-of-line C++ members spell their class's template parameters (`void A<T>::method()`);
-    // canonicalizing them makes the scope match the in-class spelling `A` (H3).
-    const scope = canonicalizeGenericScope(qualifiedName.slice(0, scopeEnd), collectCppTemplateParameterNames(node));
-    return [...segments, scope].join('::');
-  }
-  return undefined;
-}
-
-interface ScopeSegments {
-  segments: string[];
-  hasClassScope: boolean;
-}
-
-/** Walks class-like (and qualifying namespace) ancestors of `start`; see findFunctionScopeName. */
-function collectScopeSegments(start: Parser.SyntaxNode | null, language: LanguageDefinition): ScopeSegments {
-  const functionNodeTypes = getComplexityNodeSets(language).functionNodes;
-  const segments: string[] = [];
-  let hasClassScope = false;
-  for (let current = start; current; current = current.parent) {
-    if (namespaceScopeNodeTypes.has(current.type)) {
-      // Anonymous namespaces add no segment: in C++ they reopen the same unnamed namespace.
-      const namespaceName = current.childForFieldName('name')?.text;
-      if (namespaceName) {
-        segments.unshift(namespaceName);
-      }
-      continue;
-    }
-    // A class LOCAL to a function exists per enclosing function, so a stable per-function marker
-    // keeps same-named local classes in different functions from cross-matching (issue: two
-    // methods each declaring a local `Worker` are unrelated scopes).
-    if (hasClassScope && isFunctionBoundary(current, functionNodeTypes)) {
-      segments.unshift(`<fn:${current.startIndex}>`);
-      continue;
-    }
-    if (!scopeNodeTypes.has(current.type)) {
-      continue;
-    }
-    // A plain `new Foo(...)` scopes nothing; only an anonymous-class body opens a scope.
-    if (
-      current.type === 'object_creation_expression' &&
-      !current.namedChildren.some((child) => child.type === 'class_body')
-    ) {
-      continue;
-    }
-    segments.unshift(scopeSegmentName(current));
-    hasClassScope = true;
-  }
-  return { segments, hasClassScope };
-}
-
-/** One scope segment for a class-like node (`Worker`, canonicalized `Foo` for `impl<T> Foo<T>`). */
-function scopeSegmentName(node: Parser.SyntaxNode): string {
-  // Rust `impl` blocks scope by the implementing type rather than a `name` field; declared type
-  // parameters are canonicalized so `impl<T> Foo<T>` and `impl<U> Foo<U>` name the same scope
-  // while genuinely distinct specializations (`impl Foo<u32>`) stay distinct.
-  if (node.type === 'impl_item') {
-    const typeText = node.childForFieldName('type')?.text;
-    if (typeText === undefined) {
-      return anonymousScopeName(node);
-    }
-    return canonicalizeGenericScope(typeText, declaredTypeParameterNames(node.childForFieldName('type_parameters')));
-  }
-  // A Ruby eigenclass (`class << self`) reopens the same scope every time for a given target, so
-  // it keys on the target text under the enclosing scope (`Outer::<<self`) rather than getting a
-  // per-node anonymous marker.
-  if (node.type === 'singleton_class') {
-    const valueText = node.childForFieldName('value')?.text;
-    return valueText === undefined ? anonymousScopeName(node) : `<<${valueText.replaceAll(/\s+/gu, '')}`;
-  }
-  return node.childForFieldName('name')?.text ?? anonymousScopeName(node);
-}
-
-/** Unnamed scopes (anonymous classes) get a per-node marker so they never cross-match. */
-function anonymousScopeName(node: Parser.SyntaxNode): string {
-  // The start CHARACTER index: two anonymous classes on one line must still get distinct markers.
-  return `<anonymous:${node.startIndex}>`;
-}
-
-/**
- * Alpha-normalizes a generic scope spelling: declared type parameters are renamed positionally
- * (`Foo<U,T>` with `<T,U>` declared becomes `Foo<$1,$0>`) so equivalent spellings match, and an
- * argument list that is exactly the sequential parameter list (`Foo<$0,$1>`) is dropped so the
- * scope also matches spellings that omit it (an in-class C++ template scope is plain `A`).
- * Arguments that are NOT declared parameters (`Foo<u32>`) survive untouched, keeping genuine
- * specializations distinct.
- */
-function canonicalizeGenericScope(scope: string, parameterNames: string[]): string {
-  let text = scope.replaceAll(/\s+/gu, '');
-  if (parameterNames.length === 0) {
-    return text;
-  }
-  for (const [index, name] of parameterNames.entries()) {
-    const escaped = name.replaceAll(/[$()*+.?[\\\]^{|}]/gu, String.raw`\$&`);
-    text = text.replaceAll(new RegExp(String.raw`(?<![\w'])${escaped}(?![\w])`, 'gu'), () => `$${index}`);
-  }
-  return text.replaceAll(/<\$\d+(?:,\$\d+)*>/gu, (list) => {
-    const indexes = [...list.matchAll(/\$(\d+)/gu)].map((match) => Number(match[1]));
-    return indexes.every((value, position) => value === position) ? '' : list;
-  });
-}
-
-/**
- * Names the type parameters a `type_parameters`/`template_parameter_list` node declares, in
- * declaration order. The first identifier-like descendant of each parameter is its name (`T` in
- * `class T = int`, `N` in `const N: usize`, `'a` as a whole lifetime).
- */
-function declaredTypeParameterNames(parametersNode: Parser.SyntaxNode | null): string[] {
-  const names: string[] = [];
-  for (const child of parametersNode?.namedChildren ?? []) {
-    if (child.type === 'comment') {
-      continue;
-    }
-    const name = findFirstTypeParameterName(child);
-    if (name !== undefined) {
-      names.push(name);
-    }
-  }
-  return names;
-}
-
-function findFirstTypeParameterName(node: Parser.SyntaxNode): string | undefined {
-  if (node.type === 'type_identifier' || node.type === 'identifier' || node.type === 'lifetime') {
-    return node.text;
-  }
-  for (const child of node.namedChildren) {
-    const name = findFirstTypeParameterName(child);
-    if (name !== undefined) {
-      return name;
-    }
-  }
-  return undefined;
-}
-
-/** Template parameters declared by the `template_declaration`s wrapping an out-of-line member. */
-function collectCppTemplateParameterNames(node: Parser.SyntaxNode): string[] {
-  const names: string[] = [];
-  for (let ancestor = node.parent; ancestor; ancestor = ancestor.parent) {
-    if (ancestor.type === 'template_declaration') {
-      names.unshift(...declaredTypeParameterNames(ancestor.childForFieldName('parameters')));
-    }
-  }
-  return names;
-}
-
-/** The receiver variable of a Go method (`a` in `func (a A) run()`); reads through it are `self`. */
-function findGoReceiverName(node: Parser.SyntaxNode): string | undefined {
-  if (node.type !== 'method_declaration') {
-    return undefined;
-  }
-  const nameNode = node.childForFieldName('receiver')?.namedChildren[0]?.childForFieldName('name');
-  return nameNode?.type === 'identifier' ? nameNode.text : undefined;
-}
-
-interface ParameterCounts {
-  /** All declared parameters, matching what the function metrics report. */
-  count: number;
-  /** Only required parameters: variadic/rest/splat and defaulted parameters are excluded. */
-  minCount: number;
-  /** Whether the signature accepts unboundedly many arguments (true varargs/rest/splat only). */
-  unbounded: boolean;
-}
-
-/**
- * Parameter kinds that accept unboundedly many arguments: varargs/rest/splat (Java `int... xs`,
- * JS/TS `...rest`, Python `*args`/`**kwargs`, Ruby `*rest`/`**opts`, Go `xs ...int`, C `...`).
- * Defaulted parameters are NOT here: they widen the accepted range only up to the declared
- * parameter count (`f(int, int = 0)` never takes three arguments).
- */
-const unboundedParameterTypes = new Set([
-  'spread_parameter',
-  'variadic_parameter_declaration',
-  'variadic_parameter',
-  'rest_pattern',
-  'list_splat_pattern',
-  'dictionary_splat_pattern',
-  'splat_parameter',
-  'hash_splat_parameter',
-]);
-
-/**
- * Parameter kinds a call site may omit because they carry a default: C++ `int b = 1`
- * (`optional_parameter_declaration`), JS `b = 1`, TS `c?`, Python `b=1`, Ruby `b = 1`. Rust has
- * none.
- */
-const optionalParameterTypes = new Set([
-  'optional_parameter_declaration',
-  'assignment_pattern',
-  'optional_parameter',
-  'default_parameter',
-  'typed_default_parameter',
-]);
-
-/** Whether one declared parameter is a true varargs/rest/splat (see unboundedParameterTypes). */
-function isUnboundedParameter(node: Parser.SyntaxNode): boolean {
-  if (unboundedParameterTypes.has(node.type)) {
-    return true;
-  }
-  // TS wraps rest params (`...rest: T[]`, a `rest_pattern` in the `pattern` field) in
-  // `required_parameter`.
-  return node.type === 'required_parameter' && node.childForFieldName('pattern')?.type === 'rest_pattern';
-}
-
-/** Whether one declared parameter is defaulted/omittable (see optionalParameterTypes). */
-function isOptionalParameter(node: Parser.SyntaxNode): boolean {
-  if (optionalParameterTypes.has(node.type)) {
-    return true;
-  }
-  // TS wraps defaults (`b = 1`, a `value` field) in `required_parameter`; Ruby `k2: 2` is a
-  // `keyword_parameter` with a `value`.
-  return (
-    (node.type === 'required_parameter' || node.type === 'keyword_parameter') &&
-    node.childForFieldName('value') !== null
-  );
 }
 
 /** Counts declared parameters of a function/method, ignoring punctuation and comments. */
-function countParameters(node: Parser.SyntaxNode): ParameterCounts {
+function countParameters(node: Parser.SyntaxNode): number {
   // An unparenthesized arrow-function parameter (`x => x + 1`) is a bare `parameter` field.
   if (node.childForFieldName('parameter')) {
-    return { count: 1, minCount: 1, unbounded: false };
+    return 1;
   }
 
   const parametersNode = findParametersNode(node);
   if (!parametersNode) {
-    return { count: 0, minCount: 0, unbounded: false };
+    return 0;
   }
 
   // A Java bare lambda parameter (`x -> x + 1`) puts a lone identifier in the `parameters` field.
   if (parametersNode.type === 'identifier') {
-    return { count: 1, minCount: 1, unbounded: false };
+    return 1;
   }
 
   // Ruby block-locals after `;` (`{ |x; memo| ... }`) occupy `locals` fields and receive no arguments.
@@ -829,8 +399,6 @@ function countParameters(node: Parser.SyntaxNode): ParameterCounts {
   // C/C++ `f(void)` declares none. A Ruby block parameter (`&blk`) binds the block, which call
   // sites pass outside the argument list, so it counts toward no arity.
   let count = 0;
-  let minCount = 0;
-  let unbounded = false;
   for (const child of parametersNode.namedChildren) {
     if (
       child.type === 'comment' ||
@@ -846,54 +414,14 @@ function countParameters(node: Parser.SyntaxNode): ParameterCounts {
       continue;
     }
     // Go declares several names per declaration (`a, b int`); each name is a parameter.
-    const weight =
-      child.type === 'parameter_declaration' ? Math.max(1, findChildrenByFieldName(child, 'name').length) : 1;
-    count += weight;
-    if (isUnboundedParameter(child)) {
-      unbounded = true;
-    } else if (!isOptionalParameter(child)) {
-      minCount += weight;
-    }
+    count += child.type === 'parameter_declaration' ? Math.max(1, findChildrenByFieldName(child, 'name').length) : 1;
   }
   // C++ C-style varargs (`int f(int a, ...)`) leave `...` as an anonymous token, unlike C's named
   // `variadic_parameter`.
   const anonymousVariadicCount = parametersNode.children.filter(
     (child) => !child.isNamed && child.text === '...'
   ).length;
-  if (anonymousVariadicCount > 0) {
-    unbounded = true;
-  }
-  return { count: count + anonymousVariadicCount, minCount, unbounded };
-}
-
-/**
- * 1 when a Python method's leading `self`/`cls` parameter is bound implicitly (so call sites pass
- * one argument fewer than declared), 0 otherwise. `@staticmethod`s bind no receiver.
- */
-function countPythonBoundReceiverParameters(node: Parser.SyntaxNode): number {
-  if (node.type !== 'function_definition') {
-    return 0;
-  }
-  const definition = node.parent?.type === 'decorated_definition' ? node.parent : node;
-  if (definition.parent?.type !== 'block' || definition.parent.parent?.type !== 'class_definition') {
-    return 0;
-  }
-  if (
-    definition.type === 'decorated_definition' &&
-    definition.namedChildren.some(
-      (child) => child.type === 'decorator' && child.text.replace(/^@/u, '') === 'staticmethod'
-    )
-  ) {
-    return 0;
-  }
-  const firstParameter = node.childForFieldName('parameters')?.namedChildren.find((child) => child.type !== 'comment');
-  const receiverName =
-    firstParameter?.type === 'identifier'
-      ? firstParameter.text
-      : firstParameter?.type === 'typed_parameter'
-        ? firstParameter.namedChild(0)?.text
-        : undefined;
-  return receiverName === 'self' || receiverName === 'cls' ? 1 : 0;
+  return count + anonymousVariadicCount;
 }
 
 /** C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator. */
@@ -931,307 +459,11 @@ function findParametersNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefi
   return node.namedChildren.find((child) => child.type === 'formal_parameters' || child.type === 'parameter_list');
 }
 
-/** Languages whose file-local class base relationships inform self-call resolution. */
-const baseClassLanguages = new Set<LanguageName>([
-  'java',
-  'javascript',
-  'jsx',
-  'typescript',
-  'tsx',
-  'cpp',
-  'python',
-  'ruby',
-]);
-
-const baseClassNodeTypes = new Set([
-  'class_declaration',
-  'interface_declaration',
-  'class_specifier',
-  'struct_specifier',
-  'class_definition',
-  'class',
-]);
-
-/**
- * File-local base-class relationships, keyed and valued by scope names, letting self-like calls
- * search the caller's ancestor chain (Java/TS/JS `extends`, C++ base clauses, Python bases, Ruby
- * `<`; Rust and Go have no class inheritance). An unqualified base name is resolved against the
- * classes declared in this file, preferring the innermost shared enclosing scope; a base that
- * resolves nowhere keeps its written spelling and simply matches no candidate scope.
- */
-function collectBaseScopes(root: Parser.SyntaxNode, language: LanguageDefinition): Map<string, string[]> {
-  const baseScopesByScope = new Map<string, string[]>();
-  if (!baseClassLanguages.has(language.name)) {
-    return baseScopesByScope;
-  }
-
-  const knownScopes = new Set<string>();
-  const entries: { scope: string; enclosingSegments: string[]; baseNames: string[] }[] = [];
-  for (const node of collectNodes(root, baseClassNodeTypes)) {
-    const { segments } = collectScopeSegments(node.parent, language);
-    const scope = [...segments, scopeSegmentName(node)].join('::');
-    knownScopes.add(scope);
-    const baseNames = findBaseClassNames(node, language.name);
-    if (baseNames.length > 0) {
-      entries.push({ scope, enclosingSegments: segments, baseNames });
-    }
-  }
-
-  for (const { scope, enclosingSegments, baseNames } of entries) {
-    const resolved = baseNames.map((base) => resolveBaseScope(base, enclosingSegments, knownScopes));
-    // Reopened/partial classes (Ruby) may contribute bases from several definitions of one scope.
-    const existing = baseScopesByScope.get(scope) ?? [];
-    baseScopesByScope.set(scope, [...existing, ...resolved.filter((base) => !existing.includes(base))]);
-  }
-  return baseScopesByScope;
-}
-
-/** An unqualified base written beside the child resolves under their shared enclosing scopes. */
-function resolveBaseScope(baseName: string, enclosingSegments: string[], knownScopes: Set<string>): string {
-  for (let depth = enclosingSegments.length; depth > 0; depth -= 1) {
-    const candidate = [...enclosingSegments.slice(0, depth), baseName].join('::');
-    if (knownScopes.has(candidate)) {
-      return candidate;
-    }
-  }
-  return baseName;
-}
-
-/** Normalized base-class names one class-like definition declares. */
-function findBaseClassNames(node: Parser.SyntaxNode, languageName: LanguageName): string[] {
-  const names: string[] = [];
-  // Java `extends Parent` and Ruby `class Child < Parent` wrap the base in a `superclass` node.
-  const superclassNode = node.childForFieldName('superclass');
-  if (superclassNode) {
-    const base = superclassNode.type === 'superclass' ? superclassNode.namedChildren[0] : superclassNode;
-    if (base) {
-      names.push(base.text);
-    }
-  }
-  // TS puts an `extends_clause` (with `value` fields) inside `class_heritage`; JS puts the
-  // extended expression there directly.
-  const heritageNode = node.namedChildren.find((child) => child.type === 'class_heritage');
-  if (heritageNode) {
-    const extendsClause = heritageNode.namedChildren.find((child) => child.type === 'extends_clause');
-    const bases = extendsClause ? findChildrenByFieldName(extendsClause, 'value') : heritageNode.namedChildren;
-    names.push(...bases.map((base) => base.text));
-  }
-  // C++ `class Child : public Parent, Mixin` lists bases (with access specifiers) in a clause.
-  const baseClauseNode = node.namedChildren.find((child) => child.type === 'base_class_clause');
-  if (baseClauseNode) {
-    names.push(
-      ...baseClauseNode.namedChildren
-        .filter(
-          (child) =>
-            child.type === 'type_identifier' || child.type === 'template_type' || child.type === 'qualified_identifier'
-        )
-        .map((base) => base.text)
-    );
-  }
-  // Python `class Child(Parent, metaclass=Meta)` lists bases as superclass arguments.
-  const superclassesNode = node.childForFieldName('superclasses');
-  if (superclassesNode) {
-    names.push(
-      ...superclassesNode.namedChildren
-        .filter((child) => child.type === 'identifier' || child.type === 'attribute' || child.type === 'subscript')
-        .map((base) => base.text)
-    );
-  }
-  return names.map((name) => normalizeBaseClassName(name, languageName)).filter((name) => name.length > 0);
-}
-
-/** Strips generic arguments and rewrites qualifiers so a base spelling can match a scope name. */
-function normalizeBaseClassName(name: string, languageName: LanguageName): string {
-  let text = name.replaceAll(/\s+/gu, '');
-  if (languageName !== 'cpp' && languageName !== 'ruby') {
-    text = text.replaceAll('.', '::');
-  }
-  const genericStart = ['<', '['].map((open) => text.indexOf(open)).filter((index) => index >= 0);
-  if (genericStart.length > 0) {
-    text = text.slice(0, Math.min(...genericStart));
-  }
-  return text;
-}
-
-function measureCallGraph(
-  analyses: FunctionAnalysis[],
-  languageName: LanguageName,
-  baseScopesByScope: Map<string, string[]>
-): {
-  fanInByIndex: Map<number, number>;
-  fanOutByIndex: Map<number, number>;
-  metrics: CallGraphMetrics;
-  recursiveIndexes: Set<number>;
-} {
-  const candidatesByName = mapCandidatesByName(analyses);
-  const fanInByIndex = new Map<number, number>();
-  const fanOutByIndex = new Map<number, number>();
-  const graph = new Map<number, Set<number>>();
-  let callCount = 0;
-  const allCallees = new Set<string>();
-
-  for (const analysis of analyses) {
-    callCount += analysis.callCount;
-    for (const callee of analysis.callees) {
-      allCallees.add(callee);
-    }
-
-    const resolvedIndexes = new Set<number>();
-    for (const site of analysis.callSites) {
-      const resolved = resolveCallSite(
-        site,
-        analysis.scopeName,
-        candidatesByName.get(site.name),
-        languageName,
-        baseScopesByScope
-      );
-      if (resolved !== undefined) {
-        resolvedIndexes.add(resolved);
-      }
-    }
-
-    graph.set(analysis.index, resolvedIndexes);
-    fanOutByIndex.set(analysis.index, resolvedIndexes.size);
-    for (const calleeIndex of resolvedIndexes) {
-      fanInByIndex.set(calleeIndex, (fanInByIndex.get(calleeIndex) ?? 0) + 1);
-    }
-  }
-
-  const recursiveIndexes = findRecursiveIndexes(graph);
-
-  return {
-    fanInByIndex,
-    fanOutByIndex,
-    recursiveIndexes,
-    metrics: {
-      callCount,
-      uniqueCalleeCount: allCallees.size,
-      // Occurrence-level internal call counts were removed as redundant/unactionable (issue #22);
-      // internalEdgeCount reports unique caller→callee edges.
-      internalEdgeCount: sum([...graph.values()].map((callees) => callees.size)),
-      recursiveFunctionCount: recursiveIndexes.size,
-      maxFanIn: maxMapValue(fanInByIndex),
-      maxFanOut: maxMapValue(fanOutByIndex),
-      maxCallDepth: measureMaxCallDepth(graph),
-    },
-  };
-}
-
-interface CalleeCandidate {
-  index: number;
-  callableParameterCount: number;
-  callableMinParameterCount: number;
-  unboundedArity: boolean;
-  scopeName?: string;
-}
-
-function mapCandidatesByName(analyses: FunctionAnalysis[]): Map<string, CalleeCandidate[]> {
-  const candidatesByName = new Map<string, CalleeCandidate[]>();
-  for (const analysis of analyses) {
-    // Bodyless signatures stay in functions[] for PMD-style aggregation, but they must not make
-    // an implemented method's name ambiguous (an interface method and its implementation share a
-    // name), which would drop the implementation's call-graph edges and recursion detection.
-    if (!analysis.name || !analysis.hasImplementation) {
-      continue;
-    }
-    const candidates = candidatesByName.get(analysis.name) ?? [];
-    candidates.push({
-      index: analysis.index,
-      callableParameterCount: analysis.callableParameterCount,
-      callableMinParameterCount: analysis.callableMinParameterCount,
-      unboundedArity: analysis.unboundedArity,
-      scopeName: analysis.scopeName,
-    });
-    candidatesByName.set(analysis.name, candidates);
-  }
-  return candidatesByName;
-}
-
-/** Languages whose bare calls (`f()`) reach the enclosing class's methods, not only free functions. */
-const bareCallReachesMethodsLanguages = new Set<LanguageName>(['java', 'ruby', 'cpp']);
-
-/**
- * Resolves a call site to a function index. A file-unique name resolves unconditionally (the
- * long-standing behavior). Same-named functions are disambiguated by scope first — `this`/`self`
- * calls and (language permitting) bare calls target the caller's own class or, failing that, its
- * file-local base classes (nearest scope first), remaining bare calls target free functions —
- * then by arity, which is always validated, even for a scope-unique candidate. A fixed-arity
- * candidate is viable only on an exact argument-count match, one with defaults when the count
- * falls between its required and declared parameters, and only true varargs/rest/splat accept
- * unboundedly many. A site with zero or several viable candidates stays unresolved rather than
- * guessing (issue #19).
- */
-function resolveCallSite(
-  site: CallSite,
-  callerScopeName: string | undefined,
-  candidates: CalleeCandidate[] | undefined,
-  languageName: LanguageName,
-  baseScopesByScope: Map<string, string[]>
-): number | undefined {
-  if (!candidates || candidates.length === 0) {
-    return undefined;
-  }
-  if (candidates.length === 1) {
-    return candidates[0]?.index;
-  }
-
-  const filterViable = (pool: CalleeCandidate[]): CalleeCandidate[] => {
-    const argumentCount = site.argumentCount;
-    if (argumentCount === undefined) {
-      return pool;
-    }
-    return pool.filter((candidate) =>
-      candidate.unboundedArity
-        ? argumentCount >= candidate.callableMinParameterCount
-        : candidate.callableMinParameterCount <= argumentCount && argumentCount <= candidate.callableParameterCount
-    );
-  };
-
-  const isSelfLikeBareCall =
-    site.receiver === 'none' && bareCallReachesMethodsLanguages.has(languageName) && callerScopeName !== undefined;
-  if (site.receiver === 'self' || isSelfLikeBareCall) {
-    // Breadth-first over the caller's scope and its file-local base scopes: the nearest scope with
-    // viable candidates decides, resolving only when it is unambiguous there.
-    let sawScopedCandidate = false;
-    const visitedScopes = new Set<string | undefined>([callerScopeName]);
-    const scopeQueue: (string | undefined)[] = [callerScopeName];
-    while (scopeQueue.length > 0) {
-      const scope = scopeQueue.shift();
-      const inScope = candidates.filter((candidate) => candidate.scopeName === scope);
-      if (inScope.length > 0) {
-        sawScopedCandidate = true;
-        const viable = filterViable(inScope);
-        if (viable.length > 0) {
-          return viable.length === 1 ? viable[0]?.index : undefined;
-        }
-      }
-      if (scope !== undefined) {
-        for (const base of baseScopesByScope.get(scope) ?? []) {
-          if (!visitedScopes.has(base)) {
-            visitedScopes.add(base);
-            scopeQueue.push(base);
-          }
-        }
-      }
-    }
-    // A self call, or a bare call whose scope chain declares the name (committing the call to the
-    // class even when no overload's arity fits), never falls back to free functions.
-    if (site.receiver === 'self' || sawScopedCandidate) {
-      return undefined;
-    }
-  }
-
-  const pool =
-    site.receiver === 'other' ? candidates : candidates.filter((candidate) => candidate.scopeName === undefined);
-  const viable = filterViable(pool);
-  return viable.length === 1 ? viable[0]?.index : undefined;
-}
-
 /**
  * C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members; those have no
  * `body` and are signatures, not implementations, matching how TypeScript method signatures are
  * excluded. Java `method_declaration` is NOT here: PMD reports abstract/interface methods as
- * methods (cyclomatic 1, NCSS 1), so bodyless Java methods stay in the function list.
+ * methods (NCSS 1), so bodyless Java methods stay in the function list.
  */
 const bodyRequiredFunctionTypes = new Set([
   'function_definition',
@@ -1240,15 +472,6 @@ const bodyRequiredFunctionTypes = new Set([
   // Rust trait method signatures (`fn required(&self);`) never carry a body.
   'function_signature_item',
 ]);
-
-/**
- * Whether the function carries an implementation. Only Java `method_declaration` can be bodyless
- * here (abstract/interface methods); every other bodyless kind is filtered out of functions[] by
- * isImplementedFunction.
- */
-function hasImplementationBody(node: Parser.SyntaxNode): boolean {
-  return node.type !== 'method_declaration' || node.childForFieldName('body') !== null;
-}
 
 function isImplementedFunction(node: Parser.SyntaxNode): boolean {
   if (!bodyRequiredFunctionTypes.has(node.type) || node.childForFieldName('body') !== null) {
@@ -1273,8 +496,8 @@ function isFunctionBoundary(node: Parser.SyntaxNode, functionNodeTypes: Set<stri
   return functionNodeTypes.has(node.type) && !isLambdaBodyBlock(node);
 }
 
-// Sonar cognitive complexity charges a switch/match once as a whole; each case label still adds
-// one cyclomatic path. Only named nodes are consulted, so anonymous keyword tokens never match.
+// Sonar cognitive complexity charges a switch/match once as a whole, not per case label. Only
+// named nodes are consulted, so anonymous keyword tokens never match.
 const switchLikeNodeTypes = new Set([
   'switch_statement',
   'switch_expression',
@@ -1287,7 +510,7 @@ const switchLikeNodeTypes = new Set([
   'case_match',
 ]);
 
-// Per-case decision nodes: cyclomatic-only, because the switch itself carries the cognitive cost.
+// Per-case decision nodes add no cognitive point because the switch itself carries the cost.
 const caseClauseNodeTypes = new Set([
   'case_clause',
   'switch_case',
@@ -1303,10 +526,6 @@ const caseClauseNodeTypes = new Set([
 ]);
 
 const ifLikeNodeTypes = new Set(['if_statement', 'if_expression', 'if', 'unless']);
-
-// Decision nodes that add an execution path but no cognitive point: PMD's cyclomatic complexity
-// charges Java `throw` while its cognitive complexity does not.
-const cyclomaticOnlyNodeTypes = new Set(['throw_statement']);
 
 interface ComplexityNodeSets {
   functionNodes: Set<string>;
@@ -1337,7 +556,6 @@ function getComplexityNodeSets(language: LanguageDefinition): ComplexityNodeSets
 }
 
 interface FunctionBodyMetrics {
-  cyclomaticComplexity: number;
   cognitiveComplexity: number;
   nestingDepth: number;
   ncss: number;
@@ -1345,7 +563,6 @@ interface FunctionBodyMetrics {
 
 /** Accumulator for one function body during measureFunctionBodyMetrics' post-order pass. */
 interface FunctionBodyFrame {
-  cyclomaticComplexity: number;
   cognitiveComplexity: number;
   /** Count of `1 + nesting` cognitive increments, for re-basing on hoist into the parent frame. */
   nestingSensitiveCount: number;
@@ -1360,7 +577,6 @@ interface FunctionBodyFrame {
 
 function createFrame(entryCognitiveNesting: number, entryStructuralNesting: number): FunctionBodyFrame {
   return {
-    cyclomaticComplexity: 1,
     cognitiveComplexity: 0,
     nestingSensitiveCount: 0,
     nestingDepth: 0,
@@ -1378,8 +594,7 @@ function createFrame(entryCognitiveNesting: number, entryStructuralNesting: numb
  * already-computed totals: NCSS hoists as-is; cognitive complexity re-bases the nested function's
  * nesting-sensitive increments (each worth `1 + nesting`) by the nesting offset at the embedding
  * site, while flat increments (else branches, boolean-operator sequences, chain continuations,
- * jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
- * only, so nothing hoists.
+ * jumps, guards) hoist unchanged; nesting depth describes the own body only, so it does not hoist.
  */
 function measureFunctionBodyMetrics(
   root: Parser.SyntaxNode,
@@ -1417,7 +632,7 @@ function measureFunctionBodyMetrics(
     }
     // The node's own increments target the frame it is embedded in, not the one it opens; a
     // frame-opening or charged-class-body node contributes nothing to that frame's own body
-    // (cyclomatic/nesting), matching the per-function traversal this pass replaces.
+    // (nesting), matching the per-function traversal this pass replaces.
     const frame = frames.at(-1) as FunctionBodyFrame;
     const relativeNesting = currentNesting + functionNestingBonus - frame.entryCognitiveNesting;
     const countsForOwnBody = !insideNestedRegion && !opensFrame;
@@ -1438,10 +653,7 @@ function measureFunctionBodyMetrics(
     // semantics); genuinely nested conditionals inside those bodies still deepen.
     const isContinuation = isDecision && isFlatChainContinuation(current);
 
-    if (isDecision && countsForOwnBody) {
-      frame.cyclomaticComplexity += 1;
-    }
-    if (isDecision && !isCaseClause && !cyclomaticOnlyNodeTypes.has(current.type)) {
+    if (isDecision && !isCaseClause) {
       if (isContinuation) {
         frame.cognitiveComplexity += 1;
       } else {
@@ -1454,31 +666,22 @@ function measureFunctionBodyMetrics(
       frame.nestingSensitiveCount += 1;
     }
     // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
-    // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+    // nested if instead.
     frame.cognitiveComplexity += countPlainElseBranches(current);
     // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
     if (isFlowBreakingJump(current)) {
       frame.cognitiveComplexity += 1;
     }
 
-    if (isBooleanOperator(current)) {
-      if (countsForOwnBody) {
-        frame.cyclomaticComplexity += 1;
-      }
-      // A sequence of identical boolean operators reads as one condition, so only the operator
-      // starting a sequence adds a cognitive point (Sonar spec); each operator stays one
-      // cyclomatic path.
-      if (startsBooleanOperatorSequence(current)) {
-        frame.cognitiveComplexity += 1;
-      }
+    // A sequence of identical boolean operators reads as one condition, so only the operator
+    // starting a sequence adds a cognitive point (Sonar spec).
+    if (isBooleanOperator(current) && startsBooleanOperatorSequence(current)) {
+      frame.cognitiveComplexity += 1;
     }
 
     // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
     // add one independent execution path without nesting.
     if (isPatternGuard(current)) {
-      if (countsForOwnBody) {
-        frame.cyclomaticComplexity += 1;
-      }
       frame.cognitiveComplexity += 1;
     }
 
@@ -1513,7 +716,6 @@ function measureFunctionBodyMetrics(
     if (opensFrame) {
       const closed = frames.pop() as FunctionBodyFrame;
       results.set(current.id, {
-        cyclomaticComplexity: closed.cyclomaticComplexity,
         cognitiveComplexity: closed.cognitiveComplexity,
         nestingDepth: closed.nestingDepth,
         // A function node without a countable declaration of its own (arrow functions, lambdas,
@@ -1535,11 +737,10 @@ function measureFunctionBodyMetrics(
 
 /**
  * File-level complexity over the whole tree. Cognitive complexity charges nested function/lambda
- * content one nesting level deeper per function boundary crossed (Sonar spec); cyclomatic
- * complexity and nesting depth count every node once.
+ * content one nesting level deeper per function boundary crossed (Sonar spec); nesting depth
+ * counts every node once.
  */
 function measureComplexity(node: Parser.SyntaxNode, language: LanguageDefinition): ComplexityResult {
-  let cyclomaticComplexity = 1;
   let cognitiveComplexity = 0;
   let nestingDepth = 0;
   const { functionNodes, decisionNodes, nestingNodes } = getComplexityNodeSets(language);
@@ -1582,37 +783,29 @@ function measureComplexity(node: Parser.SyntaxNode, language: LanguageDefinition
     // semantics); genuinely nested conditionals inside those bodies still deepen.
     const isContinuation = isDecision && isFlatChainContinuation(current);
 
-    if (isDecision) {
-      cyclomaticComplexity += 1;
-    }
-    if (isDecision && !isCaseClause && !cyclomaticOnlyNodeTypes.has(current.type)) {
+    if (isDecision && !isCaseClause) {
       cognitiveComplexity += isContinuation ? 1 : 1 + cognitiveNesting;
     }
     if (current.isNamed && switchLikeNodeTypes.has(current.type)) {
       cognitiveComplexity += 1 + cognitiveNesting;
     }
     // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
-    // nested if instead. Cyclomatic complexity never counts `else` (it adds no execution path).
+    // nested if instead.
     cognitiveComplexity += countPlainElseBranches(current);
     // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
     if (isFlowBreakingJump(current)) {
       cognitiveComplexity += 1;
     }
 
-    if (isBooleanOperator(current)) {
-      cyclomaticComplexity += 1;
-      // A sequence of identical boolean operators reads as one condition, so only the operator
-      // starting a sequence adds a cognitive point (Sonar spec); each operator stays one
-      // cyclomatic path.
-      if (startsBooleanOperatorSequence(current)) {
-        cognitiveComplexity += 1;
-      }
+    // A sequence of identical boolean operators reads as one condition, so only the operator
+    // starting a sequence adds a cognitive point (Sonar spec).
+    if (isBooleanOperator(current) && startsBooleanOperatorSequence(current)) {
+      cognitiveComplexity += 1;
     }
 
     // Pattern guards (Java `when`, Ruby `in y if ...`, Python `case n if ...`, Rust `n if ... =>`)
     // add one independent execution path without nesting.
     if (isPatternGuard(current)) {
-      cyclomaticComplexity += 1;
       cognitiveComplexity += 1;
     }
 
@@ -1628,7 +821,7 @@ function measureComplexity(node: Parser.SyntaxNode, language: LanguageDefinition
     visit(child, 0, 0, false, false);
   }
 
-  return { cyclomaticComplexity, cognitiveComplexity, nestingDepth };
+  return { cognitiveComplexity, nestingDepth };
 }
 
 /**
@@ -1762,8 +955,7 @@ function isFlatChainContinuation(node: Parser.SyntaxNode): boolean {
 /**
  * C/C++ `default:` shares the `case_statement` node type with `case` (only `case` has a `value`
  * field), and Java's default group/rule carries an expressionless `switch_label`; a default branch
- * adds no decision (and no cyclomatic path), though its contents still nest inside the switch like
- * any other arm.
+ * adds no decision, though its contents still nest inside the switch like any other arm.
  */
 function isDefaultSwitchBranch(node: Parser.SyntaxNode): boolean {
   if (node.type === 'case_statement') {
@@ -1822,628 +1014,6 @@ function isBooleanOperator(node: Parser.SyntaxNode): boolean {
   return parent !== null && booleanOperatorParentTypes.has(parent.type);
 }
 
-function collectCalls(
-  root: Parser.SyntaxNode,
-  language: LanguageDefinition,
-  constructedTypeNames: Set<string> = new Set(),
-  goReceiverName?: string
-): { callCount: number; callees: Set<string>; callSites: CallSite[] } {
-  const callees = new Set<string>();
-  const callSites: CallSite[] = [];
-  const functionNodeTypes = getComplexityNodeSets(language).functionNodes;
-  const rubyBindingsCache = new Map<number, Map<string, number>>();
-  let callCount = 0;
-
-  function addCallee(name: string, argumentCount: number | undefined, receiver: CallReceiver): void {
-    callees.add(name);
-    // A Python self/cls attribute call names its callee `self.helper`; resolution matches the
-    // method name alone (the receiver is the caller's own class), while the callees set keeps the
-    // full spelling.
-    const resolutionName = language.name === 'python' && receiver === 'self' ? (name.split('.').at(-1) ?? name) : name;
-    callSites.push({ name: resolutionName, argumentCount, receiver });
-  }
-
-  function visit(node: Parser.SyntaxNode, insideRoot: boolean): void {
-    if (!insideRoot && isFunctionBoundary(node, functionNodeTypes)) {
-      return;
-    }
-
-    // C++ casts (`int(x)`, `static_cast<int>(x)`) parse as call expressions but invoke nothing.
-    if (language.name === 'cpp' && isCppCastExpression(node)) {
-      // Not a call: fall through to children only.
-    } else if (isCallNode(node)) {
-      callCount += 1;
-      // C++ `new Widget()` and functional construction `Widget(1)` / `ns::Widget(1)` /
-      // `Box<int>(1)` name an overloaded constructor, so — like direct construction — they count
-      // as calls without a callee edge. JS `new Foo()` keeps its edge to the function.
-      const isCppConstructorCall =
-        language.name === 'cpp' &&
-        (node.type === 'new_expression' ||
-          (node.type === 'call_expression' &&
-            constructedTypeNames.has(cppBaseTypeName(node.childForFieldName('function')) ?? '')));
-      const callee = isCppConstructorCall ? undefined : findCalleeName(node);
-      if (callee) {
-        // A Ruby setter send (`self.foo = x` resolves the callee to `foo=`) passes one argument.
-        const isRubySetterSend = language.name === 'ruby' && node.type === 'call' && callee.endsWith('=');
-        addCallee(
-          callee,
-          isRubySetterSend ? 1 : countCallArguments(node),
-          classifyCallReceiver(node, language, goReceiverName)
-        );
-      }
-      // Ruby abbreviated assignment on a receiver (`self.foo += 1`, `self.foo ||= x`) invokes the
-      // getter (the call node itself) AND the setter, so the setter is one extra call.
-      if (
-        language.name === 'ruby' &&
-        node.type === 'call' &&
-        node.parent?.type === 'operator_assignment' &&
-        node.parent.childForFieldName('left')?.id === node.id
-      ) {
-        callCount += 1;
-        const setterMethod = node.childForFieldName('method');
-        if (setterMethod) {
-          addCallee(`${setterMethod.text}=`, 1, classifyCallReceiver(node, language, goReceiverName));
-        }
-      }
-    } else if (isRubyImplicitCall(node, language) || isCppConstruction(node, constructedTypeNames)) {
-      // `yield x` invokes the block, not its argument `x`, and constructors are overloaded by
-      // definition, so neither adds a callee edge.
-      callCount += 1;
-    } else if (language.name === 'ruby' && isRubyBareMethodSend(node, rubyBindingsCache)) {
-      callCount += 1;
-      addCallee(node.text, 0, 'none');
-    }
-
-    for (const child of node.namedChildren) {
-      visit(child, false);
-    }
-  }
-
-  visit(root, true);
-  return { callCount, callees, callSites };
-}
-
-/**
- * Declared arguments at a call site, for arity-based overload resolution. Ruby block arguments
- * (`&blk`) bind the block, not a positional parameter. Syntax without an argument list that can
- * still be a counted call (Rust macros) reports no arity.
- */
-function countCallArguments(node: Parser.SyntaxNode): number | undefined {
-  const argumentsNode = node.childForFieldName('arguments');
-  if (!argumentsNode) {
-    return node.type === 'macro_invocation' ? undefined : 0;
-  }
-  return argumentsNode.namedChildren.filter((child) => child.type !== 'comment' && child.type !== 'block_argument')
-    .length;
-}
-
-function classifyCallReceiver(
-  node: Parser.SyntaxNode,
-  language: LanguageDefinition,
-  goReceiverName?: string
-): CallReceiver {
-  if (language.name === 'ruby' && node.type === 'call') {
-    const receiverNode = node.childForFieldName('receiver');
-    if (!receiverNode) {
-      return 'none';
-    }
-    return receiverNode.type === 'self' ? 'self' : 'other';
-  }
-
-  if (node.type === 'method_invocation') {
-    const objectNode = node.childForFieldName('object');
-    if (!objectNode) {
-      return 'none';
-    }
-    return objectNode.type === 'this' ? 'self' : 'other';
-  }
-
-  const calleeNode = node.childForFieldName('function');
-  if (calleeNode) {
-    const unwrapped = unwrapParenthesizedExpression(calleeNode);
-    if (unwrapped.type === 'identifier') {
-      return 'none';
-    }
-    // Rust `Self::helper()` invokes an associated function of the caller's own impl.
-    if (unwrapped.type === 'scoped_identifier' && unwrapped.childForFieldName('path')?.text === 'Self') {
-      return 'self';
-    }
-    const receiverNode =
-      unwrapped.type === 'member_expression'
-        ? unwrapped.childForFieldName('object')
-        : unwrapped.type === 'field_expression'
-          ? (unwrapped.childForFieldName('argument') ?? unwrapped.childForFieldName('value'))
-          : unwrapped.type === 'attribute' || unwrapped.type === 'selector_expression'
-            ? (unwrapped.childForFieldName('object') ?? unwrapped.childForFieldName('operand'))
-            : undefined;
-    if (receiverNode) {
-      // Python class methods go through the conventional `cls` receiver.
-      const isPythonClsReceiver =
-        language.name === 'python' && receiverNode.type === 'identifier' && receiverNode.text === 'cls';
-      return isSelfLikeReceiver(receiverNode, goReceiverName) || isPythonClsReceiver ? 'self' : 'other';
-    }
-  }
-  return 'other';
-}
-
-/**
- * JS `this`, Rust/Ruby `self` nodes, Python's conventional `self` identifier, and the enclosing Go
- * method's receiver variable (`a` in `func (a A) run() { a.helper() }`).
- */
-function isSelfLikeReceiver(node: Parser.SyntaxNode, goReceiverName?: string): boolean {
-  return (
-    node.type === 'this' ||
-    node.type === 'self' ||
-    (node.type === 'identifier' &&
-      (node.text === 'self' || (goReceiverName !== undefined && node.text === goReceiverName)))
-  );
-}
-
-const cppNamedCasts = new Set(['static_cast', 'dynamic_cast', 'const_cast', 'reinterpret_cast']);
-
-/** C++ casts parse as call expressions (`int(x)`, `static_cast<int>(x)`) but invoke nothing. */
-function isCppCastExpression(node: Parser.SyntaxNode): boolean {
-  if (node.type !== 'call_expression') {
-    return false;
-  }
-  const callee = node.childForFieldName('function');
-  if (callee?.type === 'primitive_type') {
-    return true;
-  }
-  const name = callee?.type === 'template_function' ? callee.childForFieldName('name')?.text : callee?.text;
-  return name !== undefined && cppNamedCasts.has(name);
-}
-
-/**
- * C++ direct and list construction (`Foo a(1)`, `Foo b{2}`, `Foo{3}`) invoke a constructor without
- * a call node. Only types defined in the measured tree count, so scalar initialization
- * (`int a(1)`) and external types stay excluded.
- */
-function isCppConstruction(node: Parser.SyntaxNode, constructedTypeNames: Set<string>): boolean {
-  if (constructedTypeNames.size === 0) {
-    return false;
-  }
-  if (node.type === 'compound_literal_expression') {
-    return constructedTypeNames.has(cppBaseTypeName(node.childForFieldName('type')) ?? '');
-  }
-  if (node.type === 'init_declarator') {
-    const value = node.childForFieldName('value');
-    if (value?.type !== 'argument_list' && value?.type !== 'initializer_list') {
-      return false;
-    }
-    return constructedTypeNames.has(cppBaseTypeName(node.parent?.childForFieldName('type')) ?? '');
-  }
-  // Default construction (`Widget value;`, `Widget values[2];`): a bare identifier or array
-  // declarator of a local class type. `extern` declarations declare without constructing, and
-  // pointer chains construct nothing.
-  if (
-    (node.type === 'identifier' || node.type === 'array_declarator') &&
-    node.parent?.type === 'declaration' &&
-    findChildrenByFieldName(node.parent, 'declarator').some((declarator) => declarator.id === node.id) &&
-    !hasStorageClass(node.parent, 'extern')
-  ) {
-    let current: Parser.SyntaxNode | null | undefined = node;
-    while (current?.type === 'array_declarator') {
-      current = current.childForFieldName('declarator');
-    }
-    return (
-      current?.type === 'identifier' &&
-      constructedTypeNames.has(cppBaseTypeName(node.parent.childForFieldName('type')) ?? '')
-    );
-  }
-  // Base/delegating constructor initializers (`Widget() : Base(1) {}`). The grammar names both
-  // base classes and members as `field_identifier`, so they are told apart by whether the name is
-  // a locally defined class — the same base-name trade documented on cppBaseTypeName.
-  if (node.type === 'field_initializer') {
-    const nameNode = node.namedChild(0);
-    const name = nameNode?.type === 'field_identifier' ? nameNode.text : cppBaseTypeName(nameNode);
-    return constructedTypeNames.has(name ?? '');
-  }
-  return false;
-}
-
-/**
- * Base name of a possibly qualified/templated C++ type or callee (`ns::Box<int>` -> `Box`).
- * Matching by base name treats a same-named external type as local — a conservative trade
- * accepted over tracking full namespace scopes.
- */
-function cppBaseTypeName(node: Parser.SyntaxNode | null | undefined): string | undefined {
-  let current: Parser.SyntaxNode | null | undefined = node;
-  while (current) {
-    if (current.type === 'type_identifier' || current.type === 'identifier') {
-      return current.text;
-    }
-    if (
-      current.type === 'qualified_identifier' ||
-      current.type === 'scoped_identifier' ||
-      current.type === 'template_type' ||
-      current.type === 'template_function'
-    ) {
-      current = current.childForFieldName('name');
-      continue;
-    }
-    return undefined;
-  }
-  return undefined;
-}
-
-const cppClassSpecifierTypes = new Set(['class_specifier', 'struct_specifier', 'union_specifier']);
-
-/** Names of C++ class-like types defined (with a body) in this tree, for construction counting. */
-function collectConstructedTypeNames(root: Parser.SyntaxNode, language: LanguageDefinition): Set<string> {
-  const names = new Set<string>();
-  if (language.name !== 'cpp') {
-    return names;
-  }
-  for (const node of collectNodes(root, cppClassSpecifierTypes)) {
-    const name = node.childForFieldName('name')?.text;
-    if (name && node.childForFieldName('body')) {
-      names.add(name);
-    }
-  }
-  return names;
-}
-
-/**
- * Ruby's bare `yield` and `super` invoke without a `call` node (only `super()` parses as `call`,
- * whose `super` child must not double-count), so they add to the call count without a callee edge.
- * Language-gated because Python `yield` and JS/Java `super` children are not extra calls.
- */
-function isRubyImplicitCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  if (language.name !== 'ruby') {
-    return false;
-  }
-  return node.type === 'yield' || (node.type === 'super' && node.parent?.type !== 'call');
-}
-
-/**
- * A Ruby bare receiverless zero-argument send (`helper` in `def run; helper; end`) parses as a
- * plain `identifier`. Mirroring the real parser's lexically-ordered binding rule, an identifier
- * read is a method call iff no local variable of that name was bound earlier in its scope chain
- * (issue #20). Bindings are over-approximated where the grammar is ambiguous, so unclear cases
- * are missed calls rather than invented ones.
- */
-function isRubyBareMethodSend(node: Parser.SyntaxNode, bindingsCache: Map<number, Map<string, number>>): boolean {
-  if (node.type !== 'identifier' || rubyPseudoVariables.has(node.text) || !isRubyExpressionIdentifier(node)) {
-    return false;
-  }
-  return !isRubyLocalVariable(node, bindingsCache);
-}
-
-/** Compiler-provided pseudo-variables that parse as plain identifiers but are never method sends. */
-const rubyPseudoVariables = new Set(['__FILE__', '__LINE__', '__ENCODING__']);
-
-/** Identifier positions that bind a local or belong to another construct rather than reading a value. */
-function isRubyExpressionIdentifier(node: Parser.SyntaxNode): boolean {
-  const parent = node.parent;
-  if (!parent) {
-    return false;
-  }
-
-  switch (parent.type) {
-    // The method name of a `call` is part of the already-counted call; a `method` definition's
-    // name (and `def obj.meth`'s object) defines rather than reads.
-    case 'call': {
-      if (parent.childForFieldName('method')?.id === node.id) {
-        return false;
-      }
-      break;
-    }
-    // An endless method's body expression (`def g = helper`) is a DIRECT child of the method
-    // node, so only the definition's `name` (and `def obj.meth`'s `object`) is rejected here.
-    case 'method':
-    case 'singleton_method': {
-      if (parent.childForFieldName('name')?.id === node.id || parent.childForFieldName('object')?.id === node.id) {
-        return false;
-      }
-      break;
-    }
-    case 'setter':
-    // `alias c a` and `undef foo` operands are method-name references; none invokes anything.
-    case 'alias':
-    case 'undef': {
-      return false;
-    }
-    // Binding targets: `x = 1`, `x ||= 1`, `for x in ...`, `rescue => x`, and every parameter form.
-    case 'assignment':
-    case 'operator_assignment': {
-      if (parent.childForFieldName('left')?.id === node.id) {
-        return false;
-      }
-      break;
-    }
-    case 'left_assignment_list':
-    case 'destructured_left_assignment':
-    case 'rest_assignment':
-    case 'exception_variable':
-    case 'method_parameters':
-    case 'block_parameters':
-    case 'lambda_parameters':
-    case 'destructured_parameter':
-    case 'splat_parameter':
-    case 'optional_parameter':
-    case 'keyword_parameter':
-    case 'hash_splat_parameter':
-    case 'block_parameter': {
-      // An optional/keyword parameter's default value is a genuine read.
-      return parent.childForFieldName('value')?.id === node.id;
-    }
-    case 'for': {
-      if (parent.childForFieldName('pattern')?.id === node.id) {
-        return false;
-      }
-      break;
-    }
-    default: {
-      break;
-    }
-  }
-
-  // Pattern-matching positions bind (`in [head, *tail]`, `v => x`); pinned expressions inside
-  // patterns are reads, but skipping them only misses calls (conservative).
-  for (let current: Parser.SyntaxNode | null = node; current; current = current.parent) {
-    if (rubyPatternNodeTypes.has(current.type)) {
-      return false;
-    }
-    if (
-      (current.parent?.type === 'in_clause' || current.parent?.type === 'match_pattern') &&
-      current.parent.childForFieldName('pattern')?.id === current.id
-    ) {
-      return false;
-    }
-    if (rubyScopeNodeTypes.has(current.type)) {
-      break;
-    }
-  }
-
-  // `defined?(helper)` inspects without invoking.
-  let ancestor = parent;
-  while (ancestor.type === 'parenthesized_statements' && ancestor.parent) {
-    ancestor = ancestor.parent;
-  }
-  return !(ancestor.type === 'unary' && ancestor.child(0)?.text === 'defined?');
-}
-
-const rubyPatternNodeTypes = new Set([
-  'array_pattern',
-  'hash_pattern',
-  'find_pattern',
-  'keyword_pattern',
-  'as_pattern',
-  'alternative_pattern',
-]);
-
-/** Hard boundaries see no outer locals; soft scopes (blocks, lambdas) do. */
-const rubyHardScopeNodeTypes = new Set(['method', 'singleton_method', 'class', 'module', 'singleton_class', 'program']);
-const rubySoftScopeNodeTypes = new Set(['block', 'do_block', 'lambda']);
-const rubyScopeNodeTypes = new Set([...rubyHardScopeNodeTypes, ...rubySoftScopeNodeTypes]);
-
-function isRubyLocalVariable(node: Parser.SyntaxNode, bindingsCache: Map<number, Map<string, number>>): boolean {
-  const name = node.text;
-  for (
-    let scope = findEnclosingRubyScope(node.parent);
-    scope;
-    scope = rubyHardScopeNodeTypes.has(scope.type) ? undefined : findEnclosingRubyScope(scope.parent)
-  ) {
-    let bindings = bindingsCache.get(scope.id);
-    if (!bindings) {
-      bindings = collectRubyScopeBindings(scope);
-      bindingsCache.set(scope.id, bindings);
-    }
-    const bindingIndex = bindings.get(name);
-    if (bindingIndex !== undefined && bindingIndex < node.startIndex) {
-      return true;
-    }
-  }
-  return false;
-}
-
-function findEnclosingRubyScope(node: Parser.SyntaxNode | null | undefined): Parser.SyntaxNode | undefined {
-  for (let current = node; current; current = current.parent) {
-    if (rubyScopeNodeTypes.has(current.type)) {
-      return current;
-    }
-  }
-  return undefined;
-}
-
-/**
- * Earliest binding position of each local name a scope binds directly. Bindings inside nested
- * scopes never escape them (block-local scoping), so nested scope subtrees are skipped; the
- * nested scopes' own bindings are consulted when the walk in isRubyLocalVariable passes them.
- */
-function collectRubyScopeBindings(scope: Parser.SyntaxNode): Map<string, number> {
-  const bindings = new Map<string, number>();
-  const add = (name: string, index: number): void => {
-    const existing = bindings.get(name);
-    if (existing === undefined || index < existing) {
-      bindings.set(name, index);
-    }
-  };
-
-  collectRubyParameterBindings(scope.childForFieldName('parameters'), add);
-
-  // A parameter-less block/lambda implicitly binds the numbered parameters `_1`..`_9` (2.7+) and
-  // `it` (3.4+) from its start, so such reads are (potential) parameter reads, not method sends.
-  if (rubySoftScopeNodeTypes.has(scope.type) && !scope.childForFieldName('parameters')) {
-    add('it', scope.startIndex);
-    for (let numbered = 1; numbered <= 9; numbered += 1) {
-      add(`_${numbered}`, scope.startIndex);
-    }
-  }
-
-  function visit(node: Parser.SyntaxNode): void {
-    for (const child of node.namedChildren) {
-      if (rubyScopeNodeTypes.has(child.type)) {
-        continue;
-      }
-      collectRubyNodeBindings(child, add);
-      visit(child);
-    }
-  }
-
-  visit(scope);
-  return bindings;
-}
-
-function collectRubyNodeBindings(node: Parser.SyntaxNode, add: (name: string, index: number) => void): void {
-  switch (node.type) {
-    case 'assignment': {
-      addRubyAssignmentTargets(node.childForFieldName('left'), add);
-      break;
-    }
-    case 'operator_assignment': {
-      const left = node.childForFieldName('left');
-      if (left?.type === 'identifier') {
-        add(left.text, left.startIndex);
-      }
-      break;
-    }
-    case 'for': {
-      addRubyAssignmentTargets(node.childForFieldName('pattern'), add);
-      break;
-    }
-    case 'exception_variable': {
-      const variable = node.namedChild(0);
-      if (variable?.type === 'identifier') {
-        add(variable.text, variable.startIndex);
-      }
-      break;
-    }
-    // `case/in` patterns and rightward assignment (`v => x`) bind their captures.
-    case 'in_clause':
-    case 'match_pattern': {
-      const pattern = node.childForFieldName('pattern');
-      if (pattern) {
-        addRubyPatternBindings(pattern, add);
-      }
-      break;
-    }
-    // `/(?<year>...)/ =~ value` binds each named capture as a local, but ONLY when the regexp
-    // literal is the LEFT operand (Regexp#=~); `value =~ /(?<year>...)/` binds nothing. Both the
-    // angle (`(?<name>`) and quote (`(?'name'`) capture syntaxes bind. The binding takes effect
-    // at the END of the `=~` expression: a name read inside the right operand is still unbound
-    // (Ruby raises NameError there), so it stays a counted send.
-    case 'binary': {
-      if (node.children.some((child) => !child.isNamed && child.text === '=~')) {
-        const regexNode = node.childForFieldName('left');
-        if (regexNode?.type === 'regex') {
-          for (const match of regexNode.text.matchAll(
-            /\(\?(?:<([A-Za-z_][A-Za-z0-9_]*)>|'([A-Za-z_][A-Za-z0-9_]*)')/gu
-          )) {
-            const captureName = match[1] ?? match[2];
-            if (captureName) {
-              add(captureName, node.endIndex);
-            }
-          }
-        }
-      }
-      break;
-    }
-    default: {
-      break;
-    }
-  }
-}
-
-function addRubyAssignmentTargets(target: Parser.SyntaxNode | null, add: (name: string, index: number) => void): void {
-  if (!target) {
-    return;
-  }
-  if (target.type === 'identifier') {
-    add(target.text, target.startIndex);
-    return;
-  }
-  if (
-    target.type === 'left_assignment_list' ||
-    target.type === 'destructured_left_assignment' ||
-    target.type === 'rest_assignment'
-  ) {
-    for (const child of target.namedChildren) {
-      addRubyAssignmentTargets(child, add);
-    }
-  }
-}
-
-/** Every identifier in a pattern binds; a valueless `in {name:}` key binds the key's name too. */
-function addRubyPatternBindings(pattern: Parser.SyntaxNode, add: (name: string, index: number) => void): void {
-  if (pattern.type === 'identifier') {
-    add(pattern.text, pattern.startIndex);
-    return;
-  }
-  if (pattern.type === 'keyword_pattern' && pattern.namedChildCount === 1) {
-    const key = pattern.childForFieldName('key');
-    if (key) {
-      add(key.text, key.startIndex);
-    }
-  }
-  for (const child of pattern.namedChildren) {
-    addRubyPatternBindings(child, add);
-  }
-}
-
-function collectRubyParameterBindings(
-  parameters: Parser.SyntaxNode | null | undefined,
-  add: (name: string, index: number) => void
-): void {
-  if (!parameters) {
-    return;
-  }
-  for (const child of parameters.namedChildren) {
-    if (child.type === 'identifier') {
-      add(child.text, child.startIndex);
-    } else if (child.type === 'destructured_parameter') {
-      collectRubyParameterBindings(child, add);
-    } else {
-      const nameNode = child.childForFieldName('name');
-      if (nameNode?.type === 'identifier') {
-        add(nameNode.text, nameNode.startIndex);
-      }
-    }
-  }
-}
-
-function collectIdentifiers(root: Parser.SyntaxNode): Set<string> {
-  const identifiers = new Set<string>();
-
-  function visit(node: Parser.SyntaxNode): void {
-    if (
-      node.type === 'identifier' ||
-      node.type === 'property_identifier' ||
-      node.type === 'field_identifier' ||
-      node.type === 'constant' ||
-      node.type === 'instance_variable' ||
-      node.type === 'class_variable' ||
-      node.type === 'global_variable'
-    ) {
-      identifiers.add(node.text);
-    }
-
-    for (const child of node.namedChildren) {
-      visit(child);
-    }
-  }
-
-  visit(root);
-  return identifiers;
-}
-
-/** C/C++ `struct Foo`-style type references reuse the declaration node type, so a body is required. */
-function countClasses(root: Parser.SyntaxNode, language: LanguageDefinition): number {
-  return collectNodes(root, new Set(language.classNodeTypes)).filter(isCountableClassNode).length;
-}
-
-/**
- * C/C++ `struct Foo;` forward declarations define no class, and Java `new Runnable() { ... }` /
- * enum constants define an anonymous class only when they carry a `class_body` (JLS 15.9.5).
- */
-function isCountableClassNode(node: Parser.SyntaxNode): boolean {
-  if (node.type === 'object_creation_expression' || node.type === 'enum_constant') {
-    return node.namedChildren.some((child) => child.type === 'class_body');
-  }
-  return !node.type.endsWith('_specifier') || node.childForFieldName('body') !== null;
-}
-
 function collectNodes(root: Parser.SyntaxNode, nodeTypes: Set<string>): Parser.SyntaxNode[] {
   const nodes: Parser.SyntaxNode[] = [];
 
@@ -2459,1161 +1029,6 @@ function collectNodes(root: Parser.SyntaxNode, nodeTypes: Set<string>): Parser.S
 
   visit(root);
   return nodes;
-}
-
-function returnsJsx(root: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  const functionNodeTypes = new Set(language.functionNodeTypes);
-
-  function visit(node: Parser.SyntaxNode, insideRoot: boolean): boolean {
-    if (!insideRoot && functionNodeTypes.has(node.type)) {
-      return false;
-    }
-
-    if (node.type === 'return_statement') {
-      return containsJsxExpression(node, functionNodeTypes) || containsReactCreateElementCall(node, functionNodeTypes);
-    }
-
-    // Node identity must be compared by id: node-tree-sitter's per-tree wrapper cache does not
-    // survive garbage collection, so `===` between wrappers obtained through different accessors
-    // intermittently fails under memory pressure (observed as flaky returnsJsx=false in fuzzing).
-    if (
-      root.type === 'arrow_function' &&
-      node.id === getArrowFunctionBody(root)?.id &&
-      node.type !== 'statement_block' &&
-      !functionNodeTypes.has(node.type)
-    ) {
-      return containsJsxExpression(node, functionNodeTypes) || containsReactCreateElementCall(node, functionNodeTypes);
-    }
-
-    for (const child of node.namedChildren) {
-      if (visit(child, false)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  return visit(root, true);
-}
-
-function getArrowFunctionBody(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
-  return node.childForFieldName('body') ?? node.namedChild(node.namedChildCount - 1) ?? undefined;
-}
-
-function containsJsxExpression(root: Parser.SyntaxNode, functionNodeTypes: Set<string>): boolean {
-  return containsNode(
-    root,
-    functionNodeTypes,
-    (node) => node.type.startsWith('jsx_') || isJsxMappingCall(node, functionNodeTypes)
-  );
-}
-
-function containsReactCreateElementCall(root: Parser.SyntaxNode, functionNodeTypes: Set<string>): boolean {
-  return containsNode(root, functionNodeTypes, isReactCreateElementCall);
-}
-
-function containsNode(
-  root: Parser.SyntaxNode,
-  functionNodeTypes: Set<string>,
-  predicate: (node: Parser.SyntaxNode) => boolean
-): boolean {
-  function visit(node: Parser.SyntaxNode, insideRoot: boolean): boolean {
-    if (!insideRoot && functionNodeTypes.has(node.type)) {
-      return false;
-    }
-
-    if (predicate(node)) {
-      return true;
-    }
-
-    for (const child of node.namedChildren) {
-      if (visit(child, false)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  return visit(root, true);
-}
-
-function isJsxMappingCall(node: Parser.SyntaxNode, functionNodeTypes: Set<string>): boolean {
-  if (!isCallNode(node) || !isArrayMappingCallee(node.childForFieldName('function') ?? node.namedChild(0))) {
-    return false;
-  }
-
-  return node.namedChildren.some((child) => containsReturnedJsxFunction(child, functionNodeTypes));
-}
-
-function isArrayMappingCallee(node: Parser.SyntaxNode | null): boolean {
-  if (!node) {
-    return false;
-  }
-
-  const calleeName = findRightmostIdentifier(node);
-  return calleeName === 'map' || calleeName === 'flatMap';
-}
-
-function containsReturnedJsxFunction(root: Parser.SyntaxNode, functionNodeTypes: Set<string>): boolean {
-  if (functionNodeTypes.has(root.type)) {
-    return returnsJsxFromFunctionNode(root, functionNodeTypes);
-  }
-
-  return root.namedChildren.some((child) => containsReturnedJsxFunction(child, functionNodeTypes));
-}
-
-function returnsJsxFromFunctionNode(root: Parser.SyntaxNode, functionNodeTypes: Set<string>): boolean {
-  const body = root.type === 'arrow_function' ? getArrowFunctionBody(root) : undefined;
-  if (body && body.type !== 'statement_block' && !functionNodeTypes.has(body.type)) {
-    return containsJsxExpression(body, functionNodeTypes) || containsReactCreateElementCall(body, functionNodeTypes);
-  }
-
-  return containsOwnReturnNode(
-    root,
-    functionNodeTypes,
-    (node) => containsJsxExpression(node, functionNodeTypes) || containsReactCreateElementCall(node, functionNodeTypes)
-  );
-}
-
-function containsOwnReturnNode(
-  root: Parser.SyntaxNode,
-  functionNodeTypes: Set<string>,
-  predicate: (node: Parser.SyntaxNode) => boolean
-): boolean {
-  function visit(node: Parser.SyntaxNode, insideRoot: boolean): boolean {
-    if (!insideRoot && functionNodeTypes.has(node.type)) {
-      return false;
-    }
-
-    if (node.type === 'return_statement' && predicate(node)) {
-      return true;
-    }
-
-    for (const child of node.namedChildren) {
-      if (visit(child, false)) {
-        return true;
-      }
-    }
-    return false;
-  }
-
-  return visit(root, true);
-}
-
-function measureModule(root: Parser.SyntaxNode, language: LanguageDefinition): ModuleMetrics {
-  const importSources = new Set<string>();
-
-  function visitImports(node: Parser.SyntaxNode): void {
-    if (isImportSourceNode(node, language)) {
-      for (const source of findImportSources(node, language, { expandPythonSubmodules: true })) {
-        importSources.add(source);
-      }
-    }
-
-    for (const child of node.namedChildren) {
-      visitImports(child);
-    }
-  }
-
-  visitImports(root);
-
-  return {
-    declarations: collectModuleDeclarations(root, language),
-    importSources: [...importSources],
-  };
-}
-
-function collectModuleDeclarations(root: Parser.SyntaxNode, language: LanguageDefinition): DeclarationMetrics[] {
-  const exportedNames = collectExportedNames(root);
-  const scope = language.name === 'java' ? findJavaPackageScope(root) : '';
-  return root.namedChildren
-    .flatMap((child) => collectTopLevelDeclarations(child, false, scope, language.name))
-    .map((declaration) =>
-      !declaration.exported &&
-      (exportedNames.has(declaration.name) || isGoExportedDeclarationName(declaration, language))
-        ? { ...declaration, exported: true }
-        : declaration
-    );
-}
-
-/** Go method declarations are named `Receiver.Method`; the method's own capitalization decides. */
-function isGoExportedDeclarationName(declaration: DeclarationMetrics, language: LanguageDefinition): boolean {
-  return language.name === 'go' && isGoExportedName(declaration.name.split('.').at(-1) ?? '');
-}
-
-/** Java top-level declarations are qualified by their package so simple names stay distinct. */
-function findJavaPackageScope(root: Parser.SyntaxNode): string {
-  const packageNode = root.namedChildren.find((child) => child.type === 'package_declaration');
-  const nameNode = packageNode?.namedChildren.find(
-    (child) => child.type === 'scoped_identifier' || child.type === 'identifier'
-  );
-  return nameNode ? `${nameNode.text}::` : '';
-}
-
-const rubyTypeNodeTypes = new Set(['module', 'class', 'singleton_class']);
-
-function collectTopLevelDeclarations(
-  node: Parser.SyntaxNode,
-  exported: boolean,
-  scope = '',
-  languageName = ''
-): DeclarationMetrics[] {
-  const isCpp = languageName === 'cpp';
-  if (isModuleExportNode(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, true, scope, languageName));
-  }
-
-  // C++ namespaces qualify their contents so `Alpha::ServiceThing` and `Beta::ServiceThing` stay
-  // distinct in cross-file symbol groups; anonymous namespaces give internal linkage and declare
-  // no cross-file symbols at all.
-  if (node.type === 'namespace_definition') {
-    const name = node.childForFieldName('name')?.text;
-    if (!name) {
-      return [];
-    }
-    const bodyNode = node.childForFieldName('body');
-    return (bodyNode?.namedChildren ?? []).flatMap((child) =>
-      collectTopLevelDeclarations(child, exported, `${scope}${name}::`, languageName)
-    );
-  }
-
-  if (isDeclarationContainer(node)) {
-    return node.namedChildren.flatMap((child) => collectTopLevelDeclarations(child, exported, scope, languageName));
-  }
-
-  // C/C++ global variables live in `declaration` nodes with one or more declarators.
-  if (node.type === 'declaration') {
-    return qualifyDeclarations(declarationsFromCDeclaration(node, exported, isCpp), scope);
-  }
-
-  // C `typedef` declares alias name(s) and possibly a tagged type in one node.
-  if (node.type === 'type_definition') {
-    return qualifyDeclarations(declarationsFromTypeDefinition(node, exported), scope);
-  }
-
-  // Ruby modules/classes nest further types in their body, like C++ namespaces.
-  if (rubyTypeNodeTypes.has(node.type)) {
-    return declarationsFromRubyType(node, exported, scope);
-  }
-
-  // Ruby constant assignment (`FOO = 1`, `MIN, MAX = 1, 10`, `LIMIT ||= 10`) is the language's
-  // only constant syntax; constants are a module's canonical public API. Other grammars never
-  // put a `constant` node on an assignment LHS.
-  if (node.type === 'assignment' || node.type === 'operator_assignment') {
-    return qualifyDeclarations(rubyConstantDeclarations(node, exported), scope, true);
-  }
-
-  // A Rust item is exported by its own `pub` modifier, not by a wrapping export statement. Only
-  // unrestricted `pub` counts — see isExportedRustVisibility (issue #14).
-  const isExported = exported || (languageName === 'rust' && hasUnrestrictedRustPub(node));
-  return qualifyDeclarations(declarationFromNode(node, isExported), scope);
-}
-
-/** The item carries a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction). */
-function hasUnrestrictedRustPub(node: Parser.SyntaxNode): boolean {
-  return node.namedChildren.some((child) => child.type === 'visibility_modifier' && child.namedChildCount === 0);
-}
-
-/**
- * Prefixes declarations with the enclosing scope. Ruby callers pass `skipQualified` because
- * `class A::B` / `A::C = 1` names are already qualified and re-prefixing would double them
- * (`A::A::B`); C++ out-of-line names (`Widget::process`) must still gain their namespace prefix.
- */
-function qualifyDeclarations(
-  declarations: DeclarationMetrics[],
-  scope: string,
-  skipQualified = false
-): DeclarationMetrics[] {
-  if (!scope) {
-    return declarations;
-  }
-  return declarations.map((declaration) =>
-    skipQualified && declaration.name.includes('::')
-      ? declaration
-      : { ...declaration, name: `${scope}${declaration.name}` }
-  );
-}
-
-/**
- * Emits a Ruby type and its nested types. Methods are intentionally not collected as module
- * declarations: names like `initialize` repeat everywhere and would flood cross-file
- * duplicate-symbol groups.
- */
-function declarationsFromRubyType(node: Parser.SyntaxNode, exported: boolean, scope = ''): DeclarationMetrics[] {
-  const declarations = qualifyDeclarations(declarationFromNode(node, exported), scope, true);
-  // Nested types and constants are qualified by their enclosing module path (`Alpha::LIMIT`) so
-  // same-named symbols under different modules stay distinct in cross-file symbol groups.
-  const childScope = declarations[0] ? `${declarations[0].name}::` : scope;
-  const bodyNode = node.childForFieldName('body');
-  for (const child of bodyNode?.namedChildren ?? []) {
-    if (rubyTypeNodeTypes.has(child.type)) {
-      declarations.push(...declarationsFromRubyType(child, exported, childScope));
-    } else if (child.type === 'assignment' || child.type === 'operator_assignment') {
-      declarations.push(...qualifyDeclarations(rubyConstantDeclarations(child, exported), childScope, true));
-    }
-  }
-  return declarations;
-}
-
-/**
- * Emits declarations for Ruby constant assignments: `CONST = ...`, qualified `A::CONST = ...`,
- * multiple `MIN, MAX = ...`, and `CONST ||= ...` (the only operator assignment that can define an
- * unset constant); other assignments (locals, ivars, `Foo.bar =` setters) declare nothing.
- */
-function rubyConstantDeclarations(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  if (node.type === 'operator_assignment' && !node.children.some((child) => !child.isNamed && child.text === '||=')) {
-    return [];
-  }
-  const left = node.childForFieldName('left');
-  if (!left) {
-    return [];
-  }
-  const targets = left.type === 'left_assignment_list' ? left.namedChildren : [left];
-  return targets
-    .filter(
-      (target) =>
-        target.type === 'constant' ||
-        (target.type === 'scope_resolution' && target.childForFieldName('name')?.type === 'constant')
-    )
-    .map((target) => ({ exported, name: target.text, startLine: target.startPosition.row + 1 }));
-}
-
-function declarationsFromTypeDefinition(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  // `typedef struct Foo { ... } Bar;` declares both the tag `Foo` and the alias `Bar`.
-  const typeNode = node.childForFieldName('type');
-  const declarations = typeNode ? declarationFromNode(typeNode, exported) : [];
-  // The opaque-type idiom `typedef struct X X;` only forward-declares a tag defined elsewhere —
-  // like a function prototype — so its alias must not collide with the tag's definition.
-  const bodylessTagName =
-    typeNode?.type.endsWith('_specifier') && !typeNode.childForFieldName('body')
-      ? typeNode.childForFieldName('name')?.text
-      : undefined;
-  const seenNames = new Set(declarations.map((declaration) => declaration.name));
-  for (const declarator of findChildrenByFieldName(node, 'declarator')) {
-    const name = declarator.type === 'type_identifier' ? declarator.text : unwrapDeclaratorName(declarator);
-    if (name && name !== bodylessTagName && !seenNames.has(name)) {
-      seenNames.add(name);
-      declarations.push({ exported, name, startLine: declarator.startPosition.row + 1 });
-    }
-  }
-  return declarations;
-}
-
-const cVariableDeclaratorTypes = new Set([
-  'init_declarator',
-  'pointer_declarator',
-  'array_declarator',
-  'reference_declarator',
-  'identifier',
-  // C/C++ struct/class members
-  'field_identifier',
-]);
-
-/**
- * A bare `function_declarator` (`int f(int);`) is a prototype, but one whose name is parenthesized
- * (`int (*fp)(int);`) declares a function-pointer variable. Pointer/reference-returning prototypes
- * (`int *f(void);`) wrap the function declarator and are prototypes all the same.
- */
-function isCVariableDeclarator(node: Parser.SyntaxNode): boolean {
-  if (node.type === 'pointer_declarator' || node.type === 'reference_declarator') {
-    let current: Parser.SyntaxNode | null | undefined = node;
-    while (
-      current &&
-      (current.type === 'pointer_declarator' ||
-        current.type === 'reference_declarator' ||
-        current.type === 'array_declarator')
-    ) {
-      current = nextDeclarator(current);
-    }
-    if (current?.type === 'function_declarator') {
-      return current.childForFieldName('declarator')?.type === 'parenthesized_declarator';
-    }
-    return true;
-  }
-
-  if (cVariableDeclaratorTypes.has(node.type)) {
-    return true;
-  }
-
-  return (
-    node.type === 'function_declarator' && node.childForFieldName('declarator')?.type === 'parenthesized_declarator'
-  );
-}
-
-/** `storage_class_specifier` exists only in the C/C++ grammars, so this is language-safe. */
-function hasStorageClass(node: Parser.SyntaxNode, keyword: string): boolean {
-  return node.children.some((child) => child.type === 'storage_class_specifier' && child.text === keyword);
-}
-
-/**
- * tree-sitter-cpp has no C++20 module support, so `export module foo;` / `import bar;` misparse as
- * `declaration` nodes whose "type" is the keyword; they declare nothing and bind nothing. A file
- * that visibly aliases the name as a type (`typedef int module;`) makes such declarations ordinary
- * variables again — `module`/`import` are keywords only within recognized module directives.
- */
-function isMisparsedCppModuleDeclaration(node: Parser.SyntaxNode): boolean {
-  const typeNode = node.childForFieldName('type');
-  if (
-    typeNode?.type !== 'type_identifier' ||
-    (typeNode.text !== 'import' && typeNode.text !== 'export' && typeNode.text !== 'module')
-  ) {
-    return false;
-  }
-  return !hasVisibleTypeAlias(node, typeNode.text);
-}
-
-/** Whether the file typedefs/aliases `name` as a type, disambiguating module-keyword misparses. */
-function hasVisibleTypeAlias(node: Parser.SyntaxNode, name: string): boolean {
-  let root = node;
-  while (root.parent) {
-    root = root.parent;
-  }
-  return collectNodes(root, new Set(['type_definition', 'alias_declaration'])).some((definition) => {
-    const declarator = definition.childForFieldName('declarator') ?? definition.childForFieldName('name');
-    return declarator?.text === name;
-  });
-}
-
-/**
- * Extracts each declared variable from a C/C++ `declaration`. Prototypes intentionally declare no
- * symbol: emitting them would pair every header prototype with its definition in another file and
- * flood cross-file duplicate-symbol groups.
- */
-function declarationsFromCDeclaration(node: Parser.SyntaxNode, exported: boolean, isCpp = false): DeclarationMetrics[] {
-  if ((isCpp && isMisparsedCppModuleDeclaration(node)) || hasStorageClass(node, 'static')) {
-    return [];
-  }
-  // `struct Foo { int x; } value;` defines the tag `Foo` alongside the variable; body-less type
-  // references (`struct Foo value;`) are rejected by declarationFromNode's body check.
-  const typeNode = node.childForFieldName('type');
-  const declarations = typeNode ? declarationFromNode(typeNode, exported) : [];
-  const seenNames = new Set(declarations.map((declaration) => declaration.name));
-  const isExtern = hasStorageClass(node, 'extern');
-  for (const child of node.namedChildren.filter(isCVariableDeclarator)) {
-    // A non-initializing `extern` declarator only re-declares a symbol defined elsewhere — like a
-    // prototype — and must not collide with that definition in symbol groups.
-    if (isExtern && child.type !== 'init_declarator') {
-      continue;
-    }
-    // C++ (unlike C) gives namespace-scope const variables internal linkage unless they are
-    // extern, inline, or references, so they are file-local rather than cross-file symbols.
-    if (
-      isCpp &&
-      !isExtern &&
-      !hasStorageClass(node, 'inline') &&
-      !declaratorChainContainsReference(child) &&
-      !isCMutableBinding(node, child)
-    ) {
-      continue;
-    }
-    const name = unwrapDeclaratorName(child);
-    if (name && !seenNames.has(name)) {
-      seenNames.add(name);
-      declarations.push({ exported, name, startLine: child.startPosition.row + 1 });
-    }
-  }
-  return declarations;
-}
-
-function declaratorChainContainsReference(declarator: Parser.SyntaxNode): boolean {
-  let current: Parser.SyntaxNode | null | undefined =
-    declarator.type === 'init_declarator' ? (declarator.childForFieldName('declarator') ?? declarator) : declarator;
-  while (current) {
-    if (current.type === 'reference_declarator') {
-      return true;
-    }
-    current = nextDeclarator(current);
-  }
-  return false;
-}
-
-function declarationFromNode(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  // C/C++ `struct Foo;`-style forward declarations reuse the declaration node type; only
-  // definitions with a body declare a module-level symbol.
-  if (!isTopLevelDeclarationNode(node) || (node.type.endsWith('_specifier') && !node.childForFieldName('body'))) {
-    return [];
-  }
-
-  // C/C++ `static` gives internal linkage: the symbol is file-local, not a cross-file module symbol.
-  if (hasStorageClass(node, 'static')) {
-    return [];
-  }
-
-  // C/C++ enumerators are constants declared in the surrounding scope; scoped-enum (`enum class`)
-  // members are qualified by the enum name instead.
-  if (node.type === 'enum_specifier') {
-    return declarationsFromEnumSpecifier(node, exported);
-  }
-
-  const name = findDeclarationName(node);
-  return name ? [{ exported, name, startLine: node.startPosition.row + 1 }] : [];
-}
-
-function declarationsFromEnumSpecifier(node: Parser.SyntaxNode, exported: boolean): DeclarationMetrics[] {
-  const declarations: DeclarationMetrics[] = [];
-  const tagName = node.childForFieldName('name')?.text;
-  if (tagName) {
-    declarations.push({ exported, name: tagName, startLine: node.startPosition.row + 1 });
-  }
-  const isScoped = node.children.some((child) => !child.isNamed && (child.text === 'class' || child.text === 'struct'));
-  for (const enumerator of node.childForFieldName('body')?.namedChildren ?? []) {
-    if (enumerator.type !== 'enumerator') {
-      continue;
-    }
-    const name = enumerator.childForFieldName('name')?.text;
-    if (name) {
-      declarations.push({
-        exported,
-        name: isScoped && tagName ? `${tagName}::${name}` : name,
-        startLine: enumerator.startPosition.row + 1,
-      });
-    }
-  }
-  return declarations;
-}
-
-function findDeclarationName(node: Parser.SyntaxNode): string | undefined {
-  if (node.type === 'method_declaration' && node.childForFieldName('receiver')) {
-    return findGoMethodDeclarationName(node);
-  }
-
-  let nameNode = node.childForFieldName('name');
-  // C++ class/struct template specializations name the type via a `template_type` wrapper
-  // (`template<> class Box<int>`); the unqualified inner name keeps specializations in the same
-  // symbol group as the primary template.
-  if (nameNode?.type === 'template_type') {
-    nameNode = nameNode.childForFieldName('name');
-  }
-  // Ruby `class A::B` names the type via `scope_resolution`; keep the qualified `A::B` so same-named
-  // types under different namespaces stay distinct in symbol groups.
-  if (nameNode?.type === 'scope_resolution') {
-    return nameNode.text;
-  }
-  if (nameNode) {
-    return isDeclarationNameNode(nameNode) ? nameNode.text : undefined;
-  }
-
-  // C/C++ function definitions name the function inside the declarator chain; this must run before
-  // the generic fallback, which would otherwise pick up the return type's `type_identifier`.
-  const declaratorName = unwrapDeclaratorName(node.childForFieldName('declarator'), true);
-  if (declaratorName) {
-    return declaratorName;
-  }
-
-  return node.namedChildren.find(isDeclarationNameNode)?.text;
-}
-
-function isModuleExportNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'export_statement' || node.type === 'export_declaration';
-}
-
-function isDeclarationContainer(node: Parser.SyntaxNode): boolean {
-  return (
-    node.type === 'lexical_declaration' ||
-    node.type === 'variable_declaration' ||
-    node.type === 'decorated_definition' ||
-    node.type === 'type_declaration' ||
-    node.type === 'const_declaration' ||
-    node.type === 'var_declaration' ||
-    node.type === 'var_spec_list' ||
-    // C/C++ wrappers around top-level symbols (namespaces are handled separately to thread their
-    // scope); declarations in inactive preprocessor arms are still collected, which is the norm
-    // for un-preprocessed analysis.
-    node.type === 'linkage_specification' ||
-    node.type === 'template_declaration' ||
-    node.type === 'declaration_list' ||
-    node.type === 'preproc_ifdef' ||
-    node.type === 'preproc_if' ||
-    node.type === 'preproc_else' ||
-    node.type === 'preproc_elif'
-  );
-}
-
-function isTopLevelDeclarationNode(node: Parser.SyntaxNode): boolean {
-  return (
-    node.type === 'function_declaration' ||
-    node.type === 'function_definition' ||
-    node.type === 'function_item' ||
-    node.type === 'method_declaration' ||
-    node.type === 'class_declaration' ||
-    node.type === 'class_definition' ||
-    node.type === 'interface_declaration' ||
-    node.type === 'type_alias_declaration' ||
-    node.type === 'type_declaration' ||
-    node.type === 'type_spec' ||
-    // Go `type Alias = int`
-    node.type === 'type_alias' ||
-    node.type === 'const_spec' ||
-    node.type === 'var_spec' ||
-    node.type === 'variable_declarator' ||
-    node.type === 'struct_item' ||
-    node.type === 'enum_item' ||
-    node.type === 'union_item' ||
-    node.type === 'trait_item' ||
-    node.type === 'type_item' ||
-    node.type === 'const_item' ||
-    node.type === 'static_item' ||
-    node.type === 'mod_item' ||
-    // Java
-    node.type === 'enum_declaration' ||
-    node.type === 'record_declaration' ||
-    node.type === 'annotation_type_declaration' ||
-    // Ruby (keyword-like node types exist only in the Ruby grammar as named nodes; in other
-    // grammars a top-level `class`/`method` never appears as a direct named child of the root)
-    node.type === 'method' ||
-    node.type === 'singleton_method' ||
-    node.type === 'class' ||
-    node.type === 'module' ||
-    // C/C++ (body-less forward declarations are filtered in declarationFromNode)
-    node.type === 'alias_declaration' ||
-    node.type === 'struct_specifier' ||
-    node.type === 'class_specifier' ||
-    node.type === 'enum_specifier' ||
-    node.type === 'union_specifier'
-  );
-}
-
-function isDeclarationNameNode(node: Parser.SyntaxNode): boolean {
-  return (
-    node.type === 'identifier' ||
-    node.type === 'type_identifier' ||
-    node.type === 'property_identifier' ||
-    node.type === 'field_identifier' ||
-    // Ruby classes/modules are named by a `constant`.
-    node.type === 'constant'
-  );
-}
-
-function collectExportedNames(root: Parser.SyntaxNode): Set<string> {
-  const exportedNames = new Set<string>();
-
-  function visit(node: Parser.SyntaxNode, insideSourcedExport: boolean): void {
-    if (!insideSourcedExport && isExportSpecifierNode(node)) {
-      const name = findExportedName(node);
-      if (name) {
-        exportedNames.add(name);
-      }
-    }
-
-    const isSourcedExport =
-      insideSourcedExport || (isModuleExportNode(node) && node.childForFieldName('source') !== null);
-    for (const child of node.namedChildren) {
-      visit(child, isSourcedExport);
-    }
-  }
-
-  visit(root, false);
-  return exportedNames;
-}
-
-function isExportSpecifierNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'export_specifier' || node.type === 'namespace_export';
-}
-
-function findExportedName(node: Parser.SyntaxNode): string | undefined {
-  const nameNode =
-    node.childForFieldName('name') ?? node.childForFieldName('alias') ?? node.namedChildren.find(isDeclarationNameNode);
-  return nameNode && isDeclarationNameNode(nameNode) ? nameNode.text : undefined;
-}
-
-function findGoMethodDeclarationName(node: Parser.SyntaxNode): string | undefined {
-  const nameNode = node.childForFieldName('name');
-  const receiverTypeNode = node.childForFieldName('receiver')?.namedChildren[0]?.childForFieldName('type');
-  if (!nameNode || !isDeclarationNameNode(nameNode) || !receiverTypeNode) {
-    return nameNode && isDeclarationNameNode(nameNode) ? nameNode.text : undefined;
-  }
-
-  return `${normalizeGoReceiverType(receiverTypeNode.text)}.${nameNode.text}`;
-}
-
-function normalizeGoReceiverType(receiverType: string): string {
-  return receiverType.replaceAll(/\s+/gu, '').replace(/^\*+/u, '');
-}
-
-function measureCoupling(root: Parser.SyntaxNode, language: LanguageDefinition): CouplingMetrics {
-  const importSources = new Set<string>();
-  let importCount = 0;
-  let exportCount = 0;
-
-  function visit(node: Parser.SyntaxNode): void {
-    // Go nests import_spec inside import_spec_list inside import_declaration; only the leaf spec
-    // is one import, or the block would count 2-4x.
-    const isGoImportWrapper =
-      language.name === 'go' && (node.type === 'import_declaration' || node.type === 'import_spec_list');
-    if (
-      !isGoImportWrapper &&
-      (isImportNode(node) ||
-        isRustModDeclaration(node, language) ||
-        isCppModuleImport(node, language) ||
-        isDynamicImportNode(node) ||
-        isRubyRequireCall(node, language))
-    ) {
-      importCount += 1;
-    }
-
-    if (isImportSourceNode(node, language)) {
-      for (const source of findImportSources(node, language, { expandPythonSubmodules: false })) {
-        importSources.add(source);
-      }
-    }
-
-    if (isExportNode(node, language)) {
-      exportCount += 1;
-    }
-    if (language.name === 'go') {
-      exportCount += countGoExportedNames(node);
-    }
-
-    for (const child of node.namedChildren) {
-      visit(child);
-    }
-  }
-
-  visit(root);
-
-  const relativeImportCount = [...importSources].filter((source) =>
-    isRelativeImportSource(source, language.name)
-  ).length;
-
-  return {
-    importCount,
-    importSourceCount: importSources.size,
-    relativeImportCount,
-    externalImportCount: importSources.size - relativeImportCount,
-    exportCount,
-  };
-}
-
-function measureSyntaxFeatures(root: Parser.SyntaxNode, languageName: string): SyntaxFeatureMetrics {
-  const metrics: SyntaxFeatureMetrics = {
-    assignmentCount: 0,
-    awaitExpressionCount: 0,
-    loopStatementCount: 0,
-    mutableBindingCount: 0,
-    returnStatementCount: 0,
-    throwStatementCount: 0,
-    tryStatementCount: 0,
-  };
-
-  function visit(node: Parser.SyntaxNode): void {
-    if (isAssignmentNode(node)) {
-      metrics.assignmentCount += 1;
-    }
-    if (isAwaitNode(node)) {
-      metrics.awaitExpressionCount += 1;
-    }
-    if (isLoopNode(node)) {
-      metrics.loopStatementCount += 1;
-    }
-    metrics.mutableBindingCount += countMutableBindings(node, languageName);
-    if (isReturnNode(node)) {
-      metrics.returnStatementCount += 1;
-    }
-    if (isThrowNode(node)) {
-      metrics.throwStatementCount += 1;
-    }
-    if (isTryNode(node)) {
-      metrics.tryStatementCount += 1;
-    }
-
-    for (const child of node.namedChildren) {
-      visit(child);
-    }
-  }
-
-  visit(root);
-  return metrics;
-}
-
-function isAssignmentNode(node: Parser.SyntaxNode): boolean {
-  return (
-    node.type === 'assignment_expression' ||
-    node.type === 'augmented_assignment_expression' ||
-    node.type === 'assignment_statement' ||
-    node.type === 'assignment' ||
-    node.type === 'augmented_assignment' ||
-    node.type === 'operator_assignment' ||
-    node.type === 'short_var_declaration' ||
-    node.type === 'compound_assignment_expr' ||
-    // Python's walrus (`if (n := len(xs)):`) binds like an assignment.
-    node.type === 'named_expression' ||
-    // Increment/decrement mutate their operand: JS/TS/Java/C/C++ `i++`, Go `i++`/`i--` statements.
-    node.type === 'update_expression' ||
-    node.type === 'inc_statement' ||
-    node.type === 'dec_statement'
-  );
-}
-
-function isAwaitNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'await_expression' || node.type === 'await' || node.type === 'co_await_expression';
-}
-
-function isLoopNode(node: Parser.SyntaxNode): boolean {
-  return (
-    node.type === 'for_statement' ||
-    node.type === 'for_in_statement' ||
-    node.type === 'enhanced_for_statement' ||
-    node.type === 'for_range_loop' ||
-    node.type === 'while_statement' ||
-    node.type === 'do_statement' ||
-    node.type === 'for_expression' ||
-    node.type === 'while_expression' ||
-    node.type === 'loop_expression' ||
-    // Ruby loop nodes are keyword-named; only named nodes reach this check.
-    node.type === 'while' ||
-    node.type === 'until' ||
-    node.type === 'for' ||
-    node.type === 'while_modifier' ||
-    node.type === 'until_modifier'
-  );
-}
-
-/**
- * Java and C/C++ declare several bindings per statement, so each mutable declarator counts. The
- * C/C++ branches are language-gated because `field_declaration` is a shared node type: Go and
- * Rust struct fields would otherwise count as mutable bindings.
- */
-function countMutableBindings(node: Parser.SyntaxNode, languageName: string): number {
-  const isC = languageName === 'c' || languageName === 'cpp';
-  if (node.type === 'local_variable_declaration' || (node.type === 'field_declaration' && languageName === 'java')) {
-    const javaDeclarators = node.namedChildren.filter((child) => child.type === 'variable_declarator');
-    return isJavaMutableDeclaration(node) ? javaDeclarators.length : 0;
-  }
-
-  if (isC && (node.type === 'declaration' || node.type === 'field_declaration')) {
-    return countCMutableBindings(node, languageName === 'cpp');
-  }
-
-  // tree-sitter-cpp parses the in-class `int count = 0;` member as a pure-virtual-like
-  // `function_definition` whose declarator is a bare field name; real functions have a
-  // `function_declarator` and stay excluded.
-  if (isC && node.type === 'function_definition') {
-    const declarator = node.childForFieldName('declarator');
-    if (declarator?.type === 'field_identifier' || declarator?.type === 'identifier') {
-      return countCMutableBindings(node, languageName === 'cpp');
-    }
-    return 0;
-  }
-
-  // Java `for (String x : xs)` binds its loop variable directly on the statement node.
-  if (node.type === 'enhanced_for_statement') {
-    return isJavaMutableDeclaration(node) ? 1 : 0;
-  }
-
-  // Java pattern variables (`o instanceof String s`, `case String s ->`, record-pattern
-  // components) are reassignable local variables unless final (JLS 4.12.4). `final` appears as an
-  // anonymous keyword leaf on the pattern, not inside a `modifiers` node.
-  if (
-    languageName === 'java' &&
-    (node.type === 'instanceof_expression' || node.type === 'type_pattern' || node.type === 'record_pattern_component')
-  ) {
-    const bindsName =
-      node.type === 'instanceof_expression'
-        ? node.childForFieldName('name') !== null
-        : node.namedChildren.some((child) => child.type === 'identifier');
-    const isFinal = node.children.some((child) => !child.isNamed && child.text === 'final');
-    return bindsName && !isFinal ? 1 : 0;
-  }
-
-  // C++ `for (int x : xs)` binds directly in the loop's declarator field.
-  if (isC && node.type === 'for_range_loop') {
-    const declarator = node.childForFieldName('declarator');
-    return declarator && isCMutableBinding(node, declarator) ? countCBoundIdentifiers(declarator) : 0;
-  }
-
-  return isMutableBindingNode(node) ? 1 : 0;
-}
-
-function countCMutableBindings(node: Parser.SyntaxNode, isCpp: boolean): number {
-  // The module-syntax misparse only exists in the C++ grammar; in C, `module` is an identifier.
-  if (isCpp && isMisparsedCppModuleDeclaration(node)) {
-    return 0;
-  }
-  return sum(
-    node.namedChildren
-      .filter((child) => isCVariableDeclarator(child) && isCMutableBinding(node, child))
-      .map(countCBoundIdentifiers)
-  );
-}
-
-/** A C++ structured binding (`auto [a, b] = ...`) introduces one binding per bound identifier. */
-function countCBoundIdentifiers(declarator: Parser.SyntaxNode): number {
-  const inner =
-    declarator.type === 'init_declarator' ? (declarator.childForFieldName('declarator') ?? declarator) : declarator;
-  if (inner.type === 'structured_binding_declarator') {
-    return Math.max(1, inner.namedChildren.filter((child) => child.type === 'identifier').length);
-  }
-  return 1;
-}
-
-function isMutableBindingNode(node: Parser.SyntaxNode): boolean {
-  return (
-    (node.type === 'lexical_declaration' && node.firstChild?.text === 'let') ||
-    (node.type === 'variable_declaration' && node.firstChild?.text === 'var') ||
-    node.type === 'var_declaration' ||
-    (node.type === 'let_declaration' && hasRustMutableLetBinding(node))
-  );
-}
-
-/** Java variable/field declarations bind mutably unless marked `final`. */
-function isJavaMutableDeclaration(node: Parser.SyntaxNode): boolean {
-  const modifiers = node.namedChildren.find((child) => child.type === 'modifiers');
-  return !modifiers?.children.some((child) => child.text === 'final');
-}
-
-/**
- * A base-type `const` (`const int x`) freezes a plain binding but not a pointer binding
- * (`const int *p` leaves `p` reassignable), while a pointer-level `const` on the level that
- * directly declares the name (`int * const p`, `int ** const s`) freezes it; `volatile` and
- * `restrict` never do.
- */
-function isCMutableBinding(declaration: Parser.SyntaxNode, declarator: Parser.SyntaxNode): boolean {
-  let current =
-    declarator.type === 'init_declarator' ? (declarator.childForFieldName('declarator') ?? declarator) : declarator;
-  let insidePointer = false;
-  while (
-    current.type === 'reference_declarator' ||
-    current.type === 'pointer_declarator' ||
-    current.type === 'array_declarator' ||
-    current.type === 'parenthesized_declarator' ||
-    current.type === 'function_declarator'
-  ) {
-    // A C++ reference binding can never be reseated, so it is immutable regardless of qualifiers;
-    // references can nest under pointers (`int *&rp`), so the whole chain is checked.
-    if (current.type === 'reference_declarator') {
-      return false;
-    }
-    const inner = nextDeclarator(current);
-    if (!inner) {
-      break;
-    }
-    if (current.type === 'pointer_declarator') {
-      insidePointer = true;
-      // `const` on the pointer level that owns the name freezes the binding even when array or
-      // function wrappers sit between the pointer and the name (`int * const a[3]`).
-      if (hasConstQualifier(current) && !declaratorChainContainsPointer(inner)) {
-        return false;
-      }
-    }
-    current = inner;
-  }
-
-  return insidePointer || !hasConstQualifier(declaration);
-}
-
-function declaratorChainContainsPointer(declarator: Parser.SyntaxNode): boolean {
-  let current: Parser.SyntaxNode | null | undefined = declarator;
-  while (current) {
-    if (current.type === 'pointer_declarator') {
-      return true;
-    }
-    current = nextDeclarator(current);
-  }
-  return false;
-}
-
-function hasConstQualifier(node: Parser.SyntaxNode): boolean {
-  return node.namedChildren.some(
-    (child) => child.type === 'type_qualifier' && (child.text === 'const' || child.text === 'constexpr')
-  );
-}
-
-/**
- * A Rust `let` binds mutably via a direct `mut` (`let mut x = ...`) or a `mut` inside its
- * destructuring pattern — a `mut_pattern` (`let (mut a, b) = ...`) or a shorthand `field_pattern`
- * (`let Point { mut x } = ...`). Only the pattern is inspected so a borrow in the value such as
- * `let x = &mut y;` is not miscounted, and a `mut` under a `reference_pattern` (`let &mut x = y;`,
- * which binds `x` immutably) is excluded.
- */
-function hasRustMutableLetBinding(node: Parser.SyntaxNode): boolean {
-  if (node.children.some((child) => child.type === 'mutable_specifier')) {
-    return true;
-  }
-
-  const pattern = node.childForFieldName('pattern');
-  if (!pattern) {
-    return false;
-  }
-
-  return pattern
-    .descendantsOfType('mutable_specifier')
-    .some((specifier) => specifier.parent?.type !== 'reference_pattern');
-}
-
-function isReturnNode(node: Parser.SyntaxNode): boolean {
-  // Ruby's named `return` node is safe here: the visitor walks named children only, so the
-  // anonymous `return` keyword leaf is never seen. `co_return` is the only way a C++ coroutine
-  // returns; `co_yield` suspends like a generator yield and is not a return.
-  return (
-    node.type === 'return_statement' ||
-    node.type === 'return_expression' ||
-    node.type === 'return' ||
-    node.type === 'co_return_statement'
-  );
-}
-
-function isThrowNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'throw_statement' || node.type === 'raise_statement' || isRubyRaiseCall(node);
-}
-
-/** Ruby raises via receiverless `raise`/`fail` calls; a receiver call like `object.raise` is not one. */
-function isRubyRaiseCall(node: Parser.SyntaxNode): boolean {
-  if (node.type !== 'call' || node.childForFieldName('receiver')) {
-    return false;
-  }
-
-  const methodNode = node.childForFieldName('method');
-  return methodNode?.type === 'identifier' && (methodNode.text === 'raise' || methodNode.text === 'fail');
-}
-
-function isTryNode(node: Parser.SyntaxNode): boolean {
-  return (
-    node.type === 'try_statement' ||
-    node.type === 'try_with_resources_statement' ||
-    // Ruby's `risky_call rescue fallback` modifier protects an expression like a one-clause begin.
-    node.type === 'rescue_modifier' ||
-    isRubyRescueConstruct(node)
-  );
-}
-
-/**
- * Ruby protects code with `rescue` clauses directly under an explicit `begin` or an implicit
- * method/block `body_statement`; counting the construct (not each clause) matches try-statement
- * counting in other languages.
- */
-function isRubyRescueConstruct(node: Parser.SyntaxNode): boolean {
-  // `ensure`-only constructs (`begin ... ensure ... end`) handle exceptions like try/finally.
-  return (
-    (node.type === 'begin' || node.type === 'body_statement') &&
-    node.namedChildren.some((child) => child.type === 'rescue' || child.type === 'ensure')
-  );
-}
-
-/** Caps the pairwise overlap computation so files with thousands of functions stay fast. */
-const maxCohesionPairCount = 250_000;
-
-function measureCohesion(analyses: FunctionAnalysis[]): CohesionMetrics {
-  // An identifier is shared iff it appears in at least two functions, so a frequency map computes
-  // both identifier counts exactly without enumerating function pairs.
-  const functionCountByIdentifier = new Map<string, number>();
-  for (const analysis of analyses) {
-    for (const identifier of analysis.identifiers) {
-      functionCountByIdentifier.set(identifier, (functionCountByIdentifier.get(identifier) ?? 0) + 1);
-    }
-  }
-  let sharedIdentifierCount = 0;
-  for (const count of functionCountByIdentifier.values()) {
-    if (count >= 2) {
-      sharedIdentifierCount += 1;
-    }
-  }
-
-  // The average pairwise Jaccard overlap is quadratic in the function count, so beyond the cap it
-  // is estimated from an evenly strided, deterministic sample of pairs. Sampled linear pair
-  // indexes are converted to (left, right) by walking triangular rows, so the traversal cost is
-  // O(sample + functions) rather than all n(n-1)/2 pairs.
-  const functionCount = analyses.length;
-  const totalPairCount = (functionCount * (functionCount - 1)) / 2;
-  const stride = Math.max(1, Math.ceil(totalPairCount / maxCohesionPairCount));
-  let overlapTotal = 0;
-  let sampledPairCount = 0;
-  let leftIndex = 0;
-  let rowStartPairIndex = 0;
-  let rowLength = functionCount - 1;
-  for (let pairIndex = 0; pairIndex < totalPairCount; pairIndex += stride) {
-    while (pairIndex >= rowStartPairIndex + rowLength) {
-      rowStartPairIndex += rowLength;
-      leftIndex += 1;
-      rowLength = functionCount - 1 - leftIndex;
-    }
-    const rightIndex = leftIndex + 1 + (pairIndex - rowStartPairIndex);
-
-    const left = analyses[leftIndex];
-    const right = analyses[rightIndex];
-    if (!left || !right) {
-      continue;
-    }
-
-    const intersectionSize = countIntersection(left.identifiers, right.identifiers);
-    const unionSize = left.identifiers.size + right.identifiers.size - intersectionSize;
-    overlapTotal += unionSize === 0 ? 0 : intersectionSize / unionSize;
-    sampledPairCount += 1;
-  }
-
-  return {
-    averageFunctionIdentifierOverlap: sampledPairCount === 0 ? 1 : overlapTotal / sampledPairCount,
-    sharedIdentifierCount,
-    uniqueIdentifierCount: functionCountByIdentifier.size,
-  };
-}
-
-function measureTypeComplexity(root: Parser.SyntaxNode): TypeComplexityMetrics {
-  const metrics: TypeComplexityMetrics = {
-    typeAnnotationCount: 0,
-    typeAliasCount: 0,
-    interfaceCount: 0,
-    genericParameterCount: 0,
-    unionTypeCount: 0,
-    intersectionTypeCount: 0,
-    conditionalTypeCount: 0,
-    typeAssertionCount: 0,
-    nonNullAssertionCount: 0,
-    satisfiesExpressionCount: 0,
-  };
-
-  function visit(node: Parser.SyntaxNode): void {
-    switch (node.type) {
-      case 'type_annotation': {
-        metrics.typeAnnotationCount += 1;
-        break;
-      }
-      case 'type_alias_declaration': {
-        metrics.typeAliasCount += 1;
-        break;
-      }
-      case 'interface_declaration': {
-        metrics.interfaceCount += 1;
-        break;
-      }
-      case 'type_parameters':
-      case 'type_parameter': {
-        metrics.genericParameterCount += node.type === 'type_parameter' ? 1 : 0;
-        break;
-      }
-      case 'union_type': {
-        metrics.unionTypeCount += 1;
-        break;
-      }
-      case 'intersection_type': {
-        metrics.intersectionTypeCount += 1;
-        break;
-      }
-      case 'conditional_type': {
-        metrics.conditionalTypeCount += 1;
-        break;
-      }
-      case 'as_expression':
-      case 'type_assertion': {
-        metrics.typeAssertionCount += 1;
-        break;
-      }
-      case 'non_null_expression': {
-        metrics.nonNullAssertionCount += 1;
-        break;
-      }
-      case 'satisfies_expression': {
-        metrics.satisfiesExpressionCount += 1;
-        break;
-      }
-    }
-
-    for (const child of node.namedChildren) {
-      visit(child);
-    }
-  }
-
-  visit(root);
-  return metrics;
 }
 
 /**
@@ -3763,10 +1178,7 @@ function deriveHalsteadMetrics(counts: NativeHalsteadCounts): HalsteadMetrics {
     vocabulary,
     length,
     volume,
-    difficulty,
     effort,
-    time: effort / 18,
-    bugs: volume / 3000,
   };
 }
 
@@ -3833,14 +1245,9 @@ function findDeclaratorName(node: Parser.SyntaxNode): string | undefined {
  * Unwraps a C/C++ declarator chain to the declared name, handling parenthesized declarators
  * (function pointers), qualified names, destructors, and operator overloads explicitly; a
  * rightmost-identifier fallback would pick up parameter names from nested `function_declarator`s.
- * With `qualified`, out-of-line scopes are kept with `::` (`Foo::process` stays `Foo::process`,
- * matching namespace qualification so both spellings of a symbol group together; unlike Go's
- * `Receiver.Method` declarations) so same-named methods of different types do not collide in
- * cross-file duplicate-symbol groups; call-graph names stay unqualified so callee matching works.
  */
-function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null, qualified = false): string | undefined {
+function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null): string | undefined {
   let current: Parser.SyntaxNode | null | undefined = declarator;
-  let scopePrefix = '';
   while (current) {
     switch (current.type) {
       case 'identifier':
@@ -3848,26 +1255,16 @@ function unwrapDeclaratorName(declarator: Parser.SyntaxNode | null, qualified = 
       case 'type_identifier':
       case 'destructor_name':
       case 'operator_name': {
-        return scopePrefix ? `${scopePrefix}::${current.text}` : current.text;
+        return current.text;
       }
       // A C++ conversion operator (`operator int()`) is its own declarator node whose text spans
       // the parameter list and qualifiers; only `operator <type>` is the name.
       case 'operator_cast': {
-        const name = `operator ${current.childForFieldName('type')?.text ?? ''}`.trimEnd();
-        return scopePrefix ? `${scopePrefix}::${name}` : name;
+        return `operator ${current.childForFieldName('type')?.text ?? ''}`.trimEnd();
       }
       // Template specializations (`id<int>`) and qualified names both carry a `name` field.
-      case 'template_function': {
-        current = current.childForFieldName('name');
-        break;
-      }
+      case 'template_function':
       case 'qualified_identifier': {
-        if (qualified) {
-          const scope = current.childForFieldName('scope')?.text.replaceAll(/\s+/gu, '');
-          if (scope) {
-            scopePrefix = scopePrefix ? `${scopePrefix}::${scope}` : scope;
-          }
-        }
         current = current.childForFieldName('name');
         break;
       }
@@ -3969,124 +1366,6 @@ function isReactComponentWrapperCall(node: Parser.SyntaxNode): boolean {
   );
 }
 
-function isCallNode(node: Parser.SyntaxNode): boolean {
-  return (
-    node.type === 'call_expression' ||
-    node.type === 'call' ||
-    node.type === 'method_invocation' ||
-    node.type === 'macro_invocation' ||
-    // Constructor invocations are calls: JS/C++ `new_expression`, Java `object_creation_expression`
-    // and `this(...)`/`super(...)`.
-    node.type === 'new_expression' ||
-    node.type === 'object_creation_expression' ||
-    node.type === 'explicit_constructor_invocation'
-  );
-}
-
-/** Reconstructs `operator+` / `operator int` from tree-sitter-cpp's ERROR-wrapped misparses. */
-function findCppExplicitOperatorName(node: Parser.SyntaxNode): string | undefined {
-  // `this->operator+(y)`: the operator_name lands inside an ERROR child of the call itself.
-  for (const child of node.children) {
-    if (child.type === 'ERROR') {
-      const operatorName = child.children.find((grandChild) => grandChild.type === 'operator_name');
-      if (operatorName) {
-        return operatorName.text;
-      }
-    }
-  }
-  // `x.operator int()`: the field_expression holds an ERROR `operator` before the field name.
-  const callee = node.childForFieldName('function');
-  if (callee?.type === 'field_expression') {
-    const errorIndex = callee.children.findIndex((child) => child.type === 'ERROR' && child.text === 'operator');
-    const fieldNode = errorIndex === -1 ? undefined : callee.children[errorIndex + 1];
-    if (fieldNode?.type === 'field_identifier' || fieldNode?.type === 'primitive_type') {
-      return `operator ${fieldNode.text}`;
-    }
-  }
-  return undefined;
-}
-
-/** Function-literal node types across supported grammars whose invocation names no callee. */
-const anonymousCallableNodeTypes = new Set([
-  'arrow_function', // JS/TS
-  'function_expression', // JS/TS
-  'function', // older JS grammars / Python-style
-  'lambda', // Python, Ruby
-  'lambda_expression', // C++, Java
-  'closure_expression', // Rust
-  'func_literal', // Go
-  'anonymous_function', // misc grammars
-]);
-
-function findCalleeName(node: Parser.SyntaxNode): string | undefined {
-  // Java `method_invocation` names its callee `name` and Ruby `call` names it `method`. The
-  // `namedChild(0)` fallback covers Rust `macro_invocation` (whose callee is the `macro` field,
-  // not `function`), so macros resolve to their name. `findRightmostIdentifier` must be kept rather
-  // than reading `calleeNode.text`: member calls like `self.map.get(key)` must resolve to `get`, not
-  // the full `self.map.get`, so intra-file call-graph name matching stays correct.
-  // Ruby lambdas/procs are invoked via `helper.call(...)`; the receiver is the real callee.
-  // `helper[...]` (element_reference) is intentionally NOT treated as a call: it is
-  // indistinguishable from ordinary array/hash indexing and would distort call counts.
-  if (node.type === 'call') {
-    const methodNode = node.childForFieldName('method');
-    const receiverNode = node.childForFieldName('receiver');
-    if (methodNode?.text === 'call' && receiverNode?.type === 'identifier') {
-      return receiverNode.text;
-    }
-    // A Ruby setter send (`self.foo = x`) invokes the method named `foo=`, matching its definition.
-    if (methodNode && node.parent?.type === 'assignment' && node.parent.childForFieldName('left')?.id === node.id) {
-      return `${methodNode.text}=`;
-    }
-    // Explicit operator sends (`self.+(other)`) name the operator method directly.
-    if (methodNode?.type === 'operator') {
-      return methodNode.text;
-    }
-  }
-
-  // tree-sitter-cpp misparses explicit operator calls with ERROR wrappers (`this->operator+(y)`,
-  // `x.operator int()`); reconstruct the definition-style name instead of dropping the callee or
-  // fabricating one from the operand type.
-  if (node.type === 'call_expression') {
-    const operatorName = findCppExplicitOperatorName(node);
-    if (operatorName) {
-      return operatorName;
-    }
-  }
-
-  const calleeNode =
-    node.childForFieldName('function') ??
-    node.childForFieldName('name') ??
-    node.childForFieldName('method') ??
-    // Constructor calls name the constructed type (`constructor` in JS, `type` in Java/C++).
-    node.childForFieldName('constructor') ??
-    node.childForFieldName('type') ??
-    node.namedChild(0);
-  if (!calleeNode) {
-    return undefined;
-  }
-
-  // Immediately invoked anonymous callables (`(() => target)()`, `([](){ ... })()`) have no stable
-  // callee name; searching their body would fabricate an edge to whatever identifier appears last.
-  const unwrappedCallee = unwrapParenthesizedExpression(calleeNode);
-  if (anonymousCallableNodeTypes.has(unwrappedCallee.type)) {
-    return undefined;
-  }
-
-  return findRightmostIdentifier(unwrappedCallee);
-}
-
-function unwrapParenthesizedExpression(node: Parser.SyntaxNode): Parser.SyntaxNode {
-  let current = node;
-  while (current.type === 'parenthesized_expression' && current.namedChildCount === 1) {
-    const inner = current.namedChild(0);
-    if (!inner) {
-      break;
-    }
-    current = inner;
-  }
-  return current;
-}
-
 /** Ternary/conditional and Rust try parents make `?` an operator; TS optional markers do not. */
 const questionOperatorParentTypes = new Set([
   'ternary_expression',
@@ -4110,429 +1389,6 @@ function isCountableContextualToken(node: Parser.SyntaxNode, text: string): bool
   return parentType !== undefined && questionOperatorParentTypes.has(parentType);
 }
 
-function findRightmostIdentifier(node: Parser.SyntaxNode): string | undefined {
-  // Generic-call wrappers (Rust `helper::<T>()`, C++ `helper<T>()`/`obj.get<T>()`) put type
-  // arguments after the callee, so the right-to-left search below would return the type argument;
-  // the callee lives in the `function`/`name` field.
-  if (node.type === 'generic_function' || node.type === 'template_function' || node.type === 'template_method') {
-    const calleeNode = node.childForFieldName('function') ?? node.childForFieldName('name');
-    if (calleeNode) {
-      return findRightmostIdentifier(calleeNode);
-    }
-  }
-
-  // Explicit destructor calls (`x.~Foo()`) must keep the atomic `~Foo` to match their definition.
-  if (node.type === 'destructor_name') {
-    return node.text;
-  }
-
-  // Java `new Box<String>()` names the base type first; the right-to-left search below would
-  // otherwise return the type argument `String`.
-  if (node.type === 'generic_type') {
-    const baseNode = node.namedChildren.find(
-      (child) => child.type === 'type_identifier' || child.type === 'scoped_type_identifier'
-    );
-    if (baseNode) {
-      return findRightmostIdentifier(baseNode);
-    }
-  }
-
-  if (
-    node.type === 'identifier' ||
-    node.type === 'property_identifier' ||
-    node.type === 'field_identifier' ||
-    node.type === 'type_identifier' ||
-    node.type === 'attribute'
-  ) {
-    return node.text;
-  }
-
-  for (let index = node.namedChildCount - 1; index >= 0; index -= 1) {
-    const child = node.namedChild(index);
-    if (!child) {
-      continue;
-    }
-
-    const identifier = findRightmostIdentifier(child);
-    if (identifier) {
-      return identifier;
-    }
-  }
-
-  return undefined;
-}
-
-function isReactCreateElementCall(node: Parser.SyntaxNode): boolean {
-  if (!isCallNode(node)) {
-    return false;
-  }
-
-  const calleeNode = node.childForFieldName('function') ?? node.namedChild(0);
-  return calleeNode?.text === 'React.createElement' || calleeNode?.text === 'createElement';
-}
-
-function isImportNode(node: Parser.SyntaxNode): boolean {
-  return (
-    node.type === 'import_statement' ||
-    node.type === 'import_declaration' ||
-    node.type === 'import_from_statement' ||
-    node.type === 'import_spec' ||
-    node.type === 'import_spec_list' ||
-    node.type === 'use_declaration' ||
-    node.type === 'extern_crate_declaration' ||
-    // JPMS `requires` directives in module-info.java declare module dependences (JLS 7.7.1).
-    node.type === 'requires_module_directive' ||
-    node.type === 'preproc_include'
-  );
-}
-
-function isImportSourceNode(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  return (
-    isImportNode(node) ||
-    isRustModDeclaration(node, language) ||
-    isCppModuleImport(node, language) ||
-    isDynamicImportNode(node) ||
-    isRubyRequireCall(node, language) ||
-    (isExportNode(node, language) && node.childForFieldName('source') !== null)
-  );
-}
-
-/**
- * C++20 imports misparse without grammar module support: `import name;` as a declaration typed
- * `import`, `export import name;` as one typed `export`, and partition/header-unit forms
- * (`import :part;`, `import "h.h";`, `import <vector>;`) as labeled or expression statements.
- */
-function isCppModuleImport(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  if (language.name !== 'cpp') {
-    return false;
-  }
-  if (node.type === 'declaration') {
-    const typeNode = node.childForFieldName('type');
-    if (typeNode?.type !== 'type_identifier') {
-      return false;
-    }
-    if (typeNode.text === 'import') {
-      return !hasVisibleTypeAlias(node, 'import');
-    }
-    return typeNode.text === 'export' && /^export\s+import\b/u.test(node.text);
-  }
-  if (node.type === 'labeled_statement' || node.type === 'expression_statement') {
-    return node.parent?.type === 'translation_unit' && /^import\s+[:"<]/u.test(node.text);
-  }
-  return false;
-}
-
-/** A bodyless `mod name;` declares an out-of-line child module loaded from `name.rs`/`name/mod.rs`. */
-function isRustModDeclaration(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  return language.name === 'rust' && node.type === 'mod_item' && !node.childForFieldName('body');
-}
-
-function isDynamicImportNode(node: Parser.SyntaxNode): boolean {
-  if (!isCallNode(node)) {
-    return false;
-  }
-
-  const calleeNode = node.childForFieldName('function') ?? node.namedChild(0);
-  return calleeNode?.text === 'import';
-}
-
-function findImportSources(
-  node: Parser.SyntaxNode,
-  language: LanguageDefinition,
-  options: { expandPythonSubmodules: boolean }
-): string[] {
-  if (language.name === 'python') {
-    const pythonSources = findPythonImportSources(node, options);
-    if (pythonSources.length > 0) {
-      return pythonSources;
-    }
-  }
-
-  if (language.name === 'rust') {
-    return findRustImportSources(node);
-  }
-
-  // JPMS `requires [transitive|static] module.name;` names the depended-on module.
-  if (language.name === 'java' && node.type === 'requires_module_directive') {
-    const moduleNode = node.childForFieldName('module');
-    return moduleNode ? [normalizeImportSource(moduleNode.text)] : [];
-  }
-
-  if (language.name === 'java' && node.type === 'import_declaration') {
-    const importedPath = node.namedChild(0);
-    if (!importedPath) {
-      return [];
-    }
-    // The `.*` suffix is preserved so wildcard (package) imports stay unresolvable to a single
-    // file. A static wildcard (`import static X.Helper.*`) names one specific type (JLS 7.5.4),
-    // so it resolves like a plain import of that type.
-    const isStatic = node.children.some((child) => child.type === 'static');
-    const isWildcard = node.namedChildren.some((child) => child.type === 'asterisk');
-    const source = normalizeImportSource(importedPath.text);
-    return [isWildcard && !isStatic ? `${source}.*` : source];
-  }
-
-  // The misparsed C++20 module import keeps its source in the node text: a module/partition name,
-  // or a header unit, which resolves like a quoted include (file-relative).
-  if (isCppModuleImport(node, language)) {
-    const match = /^(?:export\s+)?import\s+([\w.:]+|"[^"]+"|<[^>]+>)/u.exec(node.text);
-    const source = match?.[1];
-    if (!source) {
-      return [];
-    }
-    return source.startsWith('"') ? [`./${unquote(source)}`] : [source];
-  }
-
-  if (isRubyRequireCall(node, language)) {
-    return findRubyRequireSources(node);
-  }
-
-  // C/C++ `#include` paths live in the `path` field as a string literal or `<...>` token. Quoted
-  // includes resolve relative to the including file, unlike `<...>` system includes.
-  if (node.type === 'preproc_include') {
-    const pathNode = node.childForFieldName('path');
-    if (!pathNode) {
-      return [];
-    }
-    const source = unquote(pathNode.text);
-    const isLocal = pathNode.type === 'string_literal' && !source.startsWith('.') && !source.startsWith('/');
-    return [isLocal ? `./${source}` : source];
-  }
-
-  if (isDynamicImportNode(node)) {
-    return findDynamicImportSources(node);
-  }
-
-  const sourceNode = node.childForFieldName('source') ?? findFirstStringNode(node);
-  return sourceNode ? [unquote(sourceNode.text)] : [];
-}
-
-const rubyRequireMethods = new Set(['require', 'require_relative', 'load']);
-
-/** Only receiverless Kernel-style calls import; `loader.require(...)` is an ordinary method call. */
-function isRubyRequireCall(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  if (language.name !== 'ruby' || node.type !== 'call') {
-    return false;
-  }
-
-  const methodNode = node.childForFieldName('method');
-  if (methodNode?.type !== 'identifier') {
-    return false;
-  }
-  // `autoload :User, './user'` registers a `require`; it may carry a module receiver
-  // (`Object.autoload ...`), unlike the receiverless Kernel-style require forms.
-  if (methodNode.text === 'autoload') {
-    const receiver = node.childForFieldName('receiver');
-    return receiver === null || receiver.type === 'constant' || receiver.type === 'scope_resolution';
-  }
-  return node.childForFieldName('receiver') === null && rubyRequireMethods.has(methodNode.text);
-}
-
-/** Resolves `require`/`require_relative`/`load` sources; `require_relative` is always file-relative. */
-function findRubyRequireSources(node: Parser.SyntaxNode): string[] {
-  const argumentsNode = node.childForFieldName('arguments');
-  // `autoload :Name, 'path'` names its source in the second argument.
-  const isAutoload = node.childForFieldName('method')?.text === 'autoload';
-  const firstArgument = argumentsNode?.namedChild(isAutoload ? 1 : 0);
-  if (!firstArgument || firstArgument.type !== 'string') {
-    return [];
-  }
-
-  // Dynamic requires (`require "#{name}"`) name no static source.
-  if (firstArgument.namedChildren.some((child) => child.type === 'interpolation')) {
-    return [];
-  }
-
-  // Percent literals (`%q(foo)`) keep their delimiters in `text`; the content children are exact.
-  // Escape sequences interleave with content and must be decoded, not dropped.
-  const contentNodes = firstArgument.namedChildren.filter(
-    (child) => child.type === 'string_content' || child.type === 'escape_sequence'
-  );
-  const source =
-    contentNodes.length > 0
-      ? contentNodes
-          .map((child) => (child.type === 'escape_sequence' ? decodeRubyEscapeSequence(child.text) : child.text))
-          .join('')
-      : unquote(firstArgument.text);
-  const isRelative = node.childForFieldName('method')?.text === 'require_relative';
-  if (isRelative) {
-    return [source.startsWith('.') ? source : `./${source}`];
-  }
-  // Plain `require`/`load` resolve `./`/`../` paths against the process CWD, not the requiring
-  // file, so the relative prefix is stripped to keep the source unresolvable as file-relative.
-  return [source.replace(/^(?:\.\.?\/)+/u, '')];
-}
-
-const rubyEscapeCharacters = new Map([
-  ['n', '\n'],
-  ['t', '\t'],
-  ['r', '\r'],
-  ['s', ' '],
-  ['0', '\0'],
-]);
-
-/** Decodes a Ruby escape (`\\` -> `\`, `\/` -> `/`, `\n` -> newline) inside a require path. */
-function decodeRubyEscapeSequence(text: string): string {
-  const escaped = text.slice(1);
-  return rubyEscapeCharacters.get(escaped) ?? escaped;
-}
-
-function findDynamicImportSources(node: Parser.SyntaxNode): string[] {
-  const argumentsNode = node.childForFieldName('arguments');
-  const firstArgument = argumentsNode?.namedChild(0);
-  return firstArgument && isStringNode(firstArgument) ? [unquote(firstArgument.text)] : [];
-}
-
-function isRelativeImportSource(source: string, language: LanguageName): boolean {
-  if (source.startsWith('.') || source.startsWith('/')) {
-    return true;
-  }
-
-  // `crate`/`self`/`super` are local only in Rust; other languages may legitimately import a module
-  // literally named that, so the in-crate rule must not leak across languages.
-  return language === 'rust' && isRustLocalImportSource(source);
-}
-
-/** Rust in-crate imports address the module tree through `crate`, `self`, or `super`. */
-function isRustLocalImportSource(source: string): boolean {
-  return /^(?:crate|self|super)(?:::|$)/u.test(source);
-}
-
-/**
- * Extracts the module path(s) a Rust `use` declaration reaches into, dropping the imported leaf item(s).
- * Grouped imports are fully expanded so each imported item resolves to its own module, e.g.
- * `use std::{collections::HashMap, fmt};` yields `std::collections` and `std`, matching the single-item
- * forms `use std::collections::HashMap;` and `use std::fmt;`.
- */
-function findRustImportSources(node: Parser.SyntaxNode): string[] {
-  // `mod b;` (no body) pulls the child module's file into the tree, like an import of `self::b`.
-  if (node.type === 'mod_item') {
-    const nameNode = node.childForFieldName('name');
-    return nameNode ? [`self::${normalizeImportSource(nameNode.text)}`] : [];
-  }
-  // `extern crate serde as s;` names the crate directly; the alias is irrelevant to the source.
-  if (node.type === 'extern_crate_declaration') {
-    const nameNode = node.childForFieldName('name');
-    return nameNode ? [normalizeImportSource(nameNode.text)] : [];
-  }
-
-  const argument = node.childForFieldName('argument');
-  return argument ? rustImportSources(argument, '') : [];
-}
-
-/** Resolves the module source(s) of a `use` tree node, given the module `prefix` accumulated from ancestors. */
-function rustImportSources(node: Parser.SyntaxNode, prefix: string): string[] {
-  switch (node.type) {
-    case 'use_list': {
-      return node.namedChildren.flatMap((child) => rustImportSources(child, prefix));
-    }
-    case 'scoped_use_list': {
-      const listNode = node.childForFieldName('list');
-      const nextPrefix = joinModulePath(prefix, rustPathText(node.childForFieldName('path')));
-      return listNode ? rustImportSources(listNode, nextPrefix) : withModulePrefix(nextPrefix);
-    }
-    case 'scoped_identifier': {
-      // In-crate paths keep the leaf: `use crate::b;` names module `b`, and the resolver probes
-      // the parent module as a fallback when the leaf turns out to be an item, not a module.
-      const fullPath = joinModulePath(prefix, normalizeImportSource(node.text));
-      if (isRustLocalImportSource(fullPath)) {
-        return withModulePrefix(fullPath);
-      }
-      // Drop the leaf item: the source is the prefix plus this node's own `path` field.
-      return withModulePrefix(joinModulePath(prefix, rustPathText(node.childForFieldName('path'))));
-    }
-    case 'use_wildcard': {
-      // `use a::b::*;` imports from `a::b`; the wildcard has no `path` field, so its whole inner path counts.
-      return withModulePrefix(joinModulePath(prefix, rustPathText(node.namedChild(0))));
-    }
-    case 'use_as_clause': {
-      const pathNode = node.childForFieldName('path');
-      return pathNode ? rustImportSources(pathNode, prefix) : [];
-    }
-    case 'self': {
-      // `self` in a group (`use std::io::{self, Write};`) refers to the prefix module itself.
-      return withModulePrefix(prefix);
-    }
-    case 'identifier':
-    case 'crate':
-    case 'super': {
-      // Inside an in-crate group (`use crate::{a, b};`) each leaf may itself be a module; keep it
-      // and let the resolver fall back to the prefix module.
-      if (node.type === 'identifier' && isRustLocalImportSource(prefix)) {
-        return withModulePrefix(joinModulePath(prefix, normalizeImportSource(node.text)));
-      }
-      // A bare leaf item: at the top level (`use tokio;`) it is the module; inside a group its module is the prefix.
-      return withModulePrefix(prefix === '' ? normalizeImportSource(node.text) : prefix);
-    }
-    default: {
-      return [];
-    }
-  }
-}
-
-function rustPathText(node: Parser.SyntaxNode | null): string {
-  return node ? normalizeImportSource(node.text) : '';
-}
-
-function joinModulePath(prefix: string, segment: string): string {
-  if (!segment) {
-    return prefix;
-  }
-  return prefix ? `${prefix}::${segment}` : segment;
-}
-
-function withModulePrefix(source: string): string[] {
-  return source ? [source] : [];
-}
-
-function findPythonImportSources(node: Parser.SyntaxNode, options: { expandPythonSubmodules: boolean }): string[] {
-  if (node.type === 'import_from_statement') {
-    const moduleNode = node.childForFieldName('module_name');
-    if (!moduleNode) {
-      return [];
-    }
-
-    const moduleSource = normalizeImportSource(moduleNode.text);
-    const nameNodes = findChildrenByFieldName(node, 'name');
-    if (!options.expandPythonSubmodules || !moduleSource.startsWith('.')) {
-      return [moduleSource];
-    }
-    if (/^\.+$/u.test(moduleSource) && nameNodes.length > 0) {
-      return nameNodes.flatMap(findPythonImportNames).map((name) => `${moduleSource}${name}`);
-    }
-    const submoduleSources = nameNodes.flatMap(findPythonImportNames).map((name) => `${moduleSource}.${name}`);
-    if (submoduleSources.length > 0) {
-      return [moduleSource, ...submoduleSources];
-    }
-    return [moduleSource];
-  }
-
-  if (node.type !== 'import_statement') {
-    return [];
-  }
-
-  return node.namedChildren
-    .map((child) => findPythonImportedModuleName(child))
-    .filter((source) => source !== undefined);
-}
-
-function findPythonImportNames(node: Parser.SyntaxNode): string[] {
-  if (node.type === 'aliased_import') {
-    const nameNode = node.childForFieldName('name');
-    return nameNode ? findPythonImportNames(nameNode) : [];
-  }
-
-  if (node.type === 'identifier') {
-    return [node.text];
-  }
-
-  if (node.type === 'dotted_name') {
-    return [normalizeImportSource(node.text)];
-  }
-
-  return node.namedChildren.flatMap(findPythonImportNames);
-}
-
 function findChildrenByFieldName(node: Parser.SyntaxNode, fieldName: string): Parser.SyntaxNode[] {
   const children: Parser.SyntaxNode[] = [];
   for (let index = 0; index < node.childCount; index += 1) {
@@ -4544,305 +1400,12 @@ function findChildrenByFieldName(node: Parser.SyntaxNode, fieldName: string): Pa
   return children;
 }
 
-function findPythonImportedModuleName(node: Parser.SyntaxNode): string | undefined {
-  if (node.type === 'dotted_name' || node.type === 'relative_import') {
-    return normalizeImportSource(node.text);
-  }
-
-  const nameNode = node.childForFieldName('name');
-  if (nameNode) {
-    return normalizeImportSource(nameNode.text);
-  }
-
-  for (const child of node.namedChildren) {
-    const source = findPythonImportedModuleName(child);
-    if (source) {
-      return source;
-    }
-  }
-
-  return undefined;
-}
-
-function normalizeImportSource(source: string): string {
-  return source.replaceAll(/\s+/gu, '');
-}
-
-function findFirstStringNode(node: Parser.SyntaxNode): Parser.SyntaxNode | undefined {
-  if (isStringNode(node)) {
-    return node;
-  }
-
-  for (const child of node.namedChildren) {
-    const stringNode = findFirstStringNode(child);
-    if (stringNode) {
-      return stringNode;
-    }
-  }
-
-  return undefined;
-}
-
-function isStringNode(node: Parser.SyntaxNode): boolean {
-  return node.type === 'string' || node.type === 'string_literal' || node.type === 'interpreted_string_literal';
-}
-
-function unquote(value: string): string {
-  return value.replaceAll(/^['"`<]|['"`>]$/gu, '');
-}
-
-function isExportNode(node: Parser.SyntaxNode, language: LanguageDefinition): boolean {
-  // Rust visibility is a modifier, not an export statement; each exported `visibility_modifier`
-  // counts once — including pub fields/methods, matching how JS counts `public_field_definition`
-  // (issue #14). See isExportedRustVisibility for what "exported" means.
-  if (language.name === 'rust') {
-    return node.type === 'visibility_modifier' && isExportedRustVisibility(node);
-  }
-  // Go exports by capitalization; each capitalized top-level declared name is one export.
-  if (language.name === 'go') {
-    return false;
-  }
-  // Java's JPMS `exports com.example.api;` directive is module wiring, not a symbol export.
-  return (
-    (node.type.startsWith('export') && node.type !== 'exports_module_directive') ||
-    node.type === 'public_field_definition'
-  );
-}
-
-/** Container items whose non-`pub` visibility blocks reachability of everything inside them. */
-const rustContainerItemTypes = new Set(['struct_item', 'enum_item', 'union_item', 'trait_item']);
-
-/**
- * Rust's exported surface is the unrestricted-`pub` API reachable from the crate root — the
- * convention rustdoc, cargo-public-api, and rustc's `unreachable_pub` lint agree on (issue #14).
- * File-local approximation: a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction) whose
- * enclosing inline `mod`s and container items (struct/enum/union/trait) in this file are all
- * bare-`pub` themselves, whose enclosing `impl`s target a file-locally exported (or file-locally
- * undeclared, assumed reachable) type, and which sits in no function body.
- */
-function isExportedRustVisibility(node: Parser.SyntaxNode): boolean {
-  // Restricted variants (`pub(crate)` etc.) carry the restriction as a named child; bare `pub`
-  // has none.
-  if (node.namedChildCount > 0) {
-    return false;
-  }
-  // Skip the item carrying this modifier: its own reachability is judged by its ancestors (and
-  // the modifier under test IS its unrestricted `pub`).
-  for (let ancestor = node.parent?.parent; ancestor; ancestor = ancestor.parent) {
-    // Items inside a function body (`fn outer() { pub fn nested() {} }`) are never reachable.
-    if (ancestor.type === 'block' || ancestor.type === 'function_item') {
-      return false;
-    }
-    if (
-      (ancestor.type === 'mod_item' || rustContainerItemTypes.has(ancestor.type)) &&
-      !hasUnrestrictedRustPub(ancestor)
-    ) {
-      return false;
-    }
-    if (ancestor.type === 'impl_item' && !isRustImplTargetExported(ancestor)) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
- * Whether an `impl` block's items can be externally reachable: judged by the implemented type's
- * own visibility when that type is declared in this file. A type not declared here (another
- * module's type, a generic instantiation of one) is assumed reachable — the conservative side of
- * the file-local approximation, counting possibly-exported items rather than dropping them.
- */
-function isRustImplTargetExported(implNode: Parser.SyntaxNode): boolean {
-  const typeName = findRustTypeBaseName(implNode.childForFieldName('type'));
-  if (typeName === undefined) {
-    return true;
-  }
-  let root = implNode;
-  while (root.parent) {
-    root = root.parent;
-  }
-  const declaration = findRustTypeDeclaration(root, typeName);
-  if (!declaration) {
-    return true;
-  }
-  const visibility = declaration.namedChildren.find((child) => child.type === 'visibility_modifier');
-  return visibility !== undefined && isExportedRustVisibility(visibility);
-}
-
-const rustTypeDeclarationTypes = new Set([...rustContainerItemTypes, 'type_item']);
-
-function findRustTypeDeclaration(root: Parser.SyntaxNode, typeName: string): Parser.SyntaxNode | undefined {
-  return collectNodes(root, rustTypeDeclarationTypes).find((node) => node.childForFieldName('name')?.text === typeName);
-}
-
-/** The base identifier of an impl target (`Foo` in `Foo<T>`, `crate::a::Foo`, `&mut Foo`). */
-function findRustTypeBaseName(node: Parser.SyntaxNode | null): string | undefined {
-  let current: Parser.SyntaxNode | undefined = node ?? undefined;
-  while (current) {
-    if (current.type === 'type_identifier') {
-      return current.text;
-    }
-    current = current.childForFieldName('name') ?? current.childForFieldName('type') ?? current.namedChildren.at(-1);
-  }
-  return undefined;
-}
-
-/** Capitalized names a top-level Go declaration exports (`var A, b = ...` exports only `A`). */
-function countGoExportedNames(node: Parser.SyntaxNode): number {
-  if (
-    node.type === 'function_declaration' ||
-    node.type === 'method_declaration' ||
-    node.type === 'type_spec' ||
-    // `type Alias = int` parses as `type_alias`, not `type_spec`.
-    node.type === 'type_alias'
-  ) {
-    const name = node.childForFieldName('name')?.text;
-    return name !== undefined && isGoExportedName(name) && isGoTopLevelDeclaration(node) ? 1 : 0;
-  }
-  if ((node.type === 'const_spec' || node.type === 'var_spec') && isGoTopLevelDeclaration(node)) {
-    return findChildrenByFieldName(node, 'name').filter((nameNode) => isGoExportedName(nameNode.text)).length;
-  }
-  return 0;
-}
-
-// Grouped `var ( ... )` wraps its specs in an extra `var_spec_list` level.
-const goDeclarationWrapperTypes = new Set([
-  'type_declaration',
-  'const_declaration',
-  'var_declaration',
-  'var_spec_list',
-]);
-
-/** Whether a Go spec/declaration sits at package level (possibly inside a grouped declaration). */
-function isGoTopLevelDeclaration(node: Parser.SyntaxNode): boolean {
-  let parent = node.parent;
-  while (parent && goDeclarationWrapperTypes.has(parent.type)) {
-    parent = parent.parent;
-  }
-  return parent?.type === 'source_file';
-}
-
-/** Go exports identifiers whose first character is an upper-case letter (Go spec, "Exported identifiers"). */
-function isGoExportedName(name: string): boolean {
-  return /^\p{Lu}/u.test(name);
-}
-
-function findRecursiveIndexes(graph: Map<number, Set<number>>): Set<number> {
-  const recursiveIndexes = new Set<number>();
-
-  for (const index of graph.keys()) {
-    if (canReach(index, index, graph, new Set())) {
-      recursiveIndexes.add(index);
-    }
-  }
-
-  return recursiveIndexes;
-}
-
-function canReach(start: number, target: number, graph: Map<number, Set<number>>, visited: Set<number>): boolean {
-  const callees = graph.get(start);
-  if (!callees) {
-    return false;
-  }
-
-  for (const callee of callees) {
-    if (callee === target) {
-      return true;
-    }
-
-    if (!visited.has(callee)) {
-      visited.add(callee);
-      if (canReach(callee, target, graph, visited)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
-function measureMaxCallDepth(graph: Map<number, Set<number>>): number {
-  const depthByIndex = new Map<number, number>();
-  let maxDepth = 0;
-  for (const index of graph.keys()) {
-    maxDepth = Math.max(maxDepth, measureCallDepth(index, graph, new Set(), depthByIndex).depth);
-  }
-  return maxDepth;
-}
-
-/**
- * Longest-path DFS with memoization (O(V+E) on acyclic regions); a per-path copy of the on-stack
- * set made this exponential in path count. A depth computed under an on-stack cycle cut is valid
- * only for that path, so tainted results are NOT memoized — other entry points recompute them,
- * keeping values identical to the per-path algorithm while acyclic regions stay memoized.
- */
-function measureCallDepth(
-  index: number,
-  graph: Map<number, Set<number>>,
-  pathIndexes: Set<number>,
-  depthByIndex: Map<number, number>
-): { depth: number; tainted: boolean } {
-  const memoized = depthByIndex.get(index);
-  if (memoized !== undefined) {
-    return { depth: memoized, tainted: false };
-  }
-  const callees = graph.get(index);
-  if (!callees || callees.size === 0) {
-    return { depth: 0, tainted: false };
-  }
-  if (pathIndexes.has(index)) {
-    return { depth: 0, tainted: true };
-  }
-
-  pathIndexes.add(index);
-  let maxDepth = 0;
-  let tainted = false;
-  for (const callee of callees) {
-    const result = measureCallDepth(callee, graph, pathIndexes, depthByIndex);
-    maxDepth = Math.max(maxDepth, 1 + result.depth);
-    tainted ||= result.tainted;
-  }
-  pathIndexes.delete(index);
-  if (!tainted) {
-    depthByIndex.set(index, maxDepth);
-  }
-  return { depth: maxDepth, tainted };
-}
-
-function countIntersection(left: Set<string>, right: Set<string>): number {
-  const [smaller, larger] = left.size <= right.size ? [left, right] : [right, left];
-  let count = 0;
-  for (const value of smaller) {
-    if (larger.has(value)) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
-function calculateMaintainabilityIndex(volume: number, complexity: number, loc: number): number {
-  if (loc === 0) {
-    return 100;
-  }
-
-  const raw = 171 - 5.2 * Math.log(Math.max(volume, 1)) - 0.23 * complexity - 16.2 * Math.log(loc);
-  return Math.max(0, Math.min(100, (raw * 100) / 171));
-}
-
 function incrementCount(map: Map<string, number>, value: string): void {
   map.set(value, (map.get(value) ?? 0) + 1);
 }
 
-function maxMetric(functions: FunctionMetrics[], key: 'cyclomaticComplexity' | 'cognitiveComplexity'): number {
-  return functions.length === 0 ? 0 : Math.max(...functions.map((fn) => fn[key]));
-}
-
-function maxMapValue(map: Map<unknown, number>): number {
-  let maximum = 0;
-  for (const value of map.values()) {
-    maximum = Math.max(maximum, value);
-  }
-  return maximum;
+function maxCognitiveComplexity(functions: FunctionMetrics[]): number {
+  return functions.length === 0 ? 0 : Math.max(...functions.map((fn) => fn.cognitiveComplexity));
 }
 
 function sum(values: Iterable<number>): number {
