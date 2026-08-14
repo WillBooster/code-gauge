@@ -67,7 +67,11 @@ export function measureCrossFileDuplication(
   const candidates: SelectableCandidate[] = files.flatMap(({ file, candidates }, fileIndex) =>
     candidates.map((candidate) => ({ ...candidate, regionBucket: fileIndex, file }))
   );
-  candidates.push(...collectWindowCandidates(files, minTokens));
+  // Pushed one by one: spreading the project-scale window-candidate array as call arguments
+  // overflows V8's argument limit (~124k) and crashes on Node, though Bun/JSC tolerates it.
+  for (const candidate of collectWindowCandidates(files, minTokens)) {
+    candidates.push(candidate);
+  }
   const counted = selectMaximalGroups(
     candidates,
     spansMultipleFiles,
@@ -152,8 +156,13 @@ function summarize(groups: CrossFileOccurrence[][]): CrossFileDuplicationMetrics
   for (const group of groups) {
     // Mirrors within-file counting: each redundant occurrence contributes one count per matched
     // fragment, so gapped merging consolidates the grouping without halving the count.
-    const segmentCounts = group.map((occurrence) => occurrence.segments.length);
-    duplicateBlockCount += segmentCounts.reduce((sum, count) => sum + count, 0) - Math.max(...segmentCounts, 0);
+    let fragmentCount = 0;
+    let maxFragmentCount = 0;
+    for (const occurrence of group) {
+      fragmentCount += occurrence.segments.length;
+      maxFragmentCount = Math.max(maxFragmentCount, occurrence.segments.length);
+    }
+    duplicateBlockCount += fragmentCount - maxFragmentCount;
     const occurrences = group
       .map(({ file, startLine, endLine }) => ({ file, startLine, endLine }))
       .toSorted((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);

@@ -1553,13 +1553,23 @@ fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrenc
     if occurrences.len() == 1 {
         return occurrences.into_iter().next().expect("non-empty");
     }
-    let mut segments: Vec<(usize, usize)> = occurrences
+    // A partial gapped merge retains the leftover group with ALL its occurrences, so a copy's
+    // fragments can arrive both standalone and embedded in a merged occurrence: union overlapping
+    // segments so no token span is reported or counted twice.
+    let mut sorted: Vec<(usize, usize)> = occurrences
         .iter()
         .flat_map(|occurrence| occurrence.segments.iter().copied())
         .collect();
-    segments.sort_by_key(|segment| segment.0);
+    sorted.sort_by_key(|segment| *segment);
+    let mut segments: Vec<(usize, usize)> = Vec::with_capacity(sorted.len());
+    for segment in sorted {
+        match segments.last_mut() {
+            Some(last) if segment.0 < last.1 => last.1 = last.1.max(segment.1),
+            _ => segments.push(segment),
+        }
+    }
     CountedOccurrence {
-        token_count: occurrences.iter().map(|o| o.token_count).sum(),
+        token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
         start_token_index: occurrences
             .iter()
             .map(|o| o.start_token_index)

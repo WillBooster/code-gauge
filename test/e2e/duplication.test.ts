@@ -2,11 +2,12 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  collectDuplicationCandidates,
+  collectCrossFileDuplicationFileData,
   measureCode,
   measureCrossFileDuplication,
   type LanguageName,
 } from '../../src/index.js';
+import type { Token, TokenRange } from '../../src/duplication.js';
 import { fixturesDir } from './fixtureCorpus.js';
 
 // End-to-end coverage of the duplication detector across every supported language, plus the
@@ -171,6 +172,37 @@ describe('duplication: partial gapped-clone merging', () => {
     const mergedGroup = metrics.duplication.duplicateBlockGroups.find((group) => group.length === 2) ?? [];
     // Each merged occurrence spans a whole function body, gap included.
     expect((mergedGroup[0]?.endLine ?? 0) - (mergedGroup[0]?.startLine ?? 0)).toBeGreaterThan(15);
+  });
+
+  it('does not double-count spans where a retained group overlaps the merged group', () => {
+    // alpha repeats the prefix run AFTER its suffix, so the prefix group (x3: alpha start, beta,
+    // alpha tail) survives a partial merge alongside the merged gapped group (alpha, beta), and
+    // the two OVERLAP. delta is a near-miss copy of beta, so the anchored rebuild coalesces both
+    // groups' fragments per copy: overlapping fragments must union, not concatenate — naive
+    // summing reported a duplicated segment with tokenCount 171 (union: 128), inflating
+    // maxDuplicateBlockSize (171 vs 139) and duplicateBlockCount (5 vs 4).
+    const longSuffix = `${suffixHalf.replace('  return total + count + big - small;\n', '')}  let more = 0;
+  for (const item of items) {
+    if (item.flagged) {
+      more = more + item.amount;
+    }
+  }
+  return total + count + big - small + more;
+`;
+    const alpha = `function alpha(items) {${prefixHalf}  console.log("midpoint", total);\n${longSuffix}${prefixHalf}}\n`;
+    const beta = `function beta(items) {${prefixHalf}  console.warn("midpoint", total);\n${longSuffix}}\n`;
+    const delta = beta
+      .replace('function beta', 'function delta')
+      .replaceAll('total = total + item.amount', 'total = total - item.amount')
+      .replaceAll('small = small + 1', 'small = small - 1');
+    const metrics = measureCode(alpha + beta + delta, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(4);
+    // Segment counts per occurrence are [2, 1, 2, 1]: sum minus the largest.
+    expect(metrics.duplication.duplicateBlockCount).toBe(4);
+    // The largest occurrence is delta's whole near-miss block, not a double-counted alpha span.
+    expect(metrics.duplication.maxDuplicateBlockSize).toBe(139);
   });
 
   it('loses no duplicated-line coverage compared to unmerged reporting', () => {
@@ -569,9 +601,9 @@ describe('duplication: cross-file clones', () => {
 
   it('detects a consistently renamed clone across files', () => {
     const metrics = measureCrossFileDuplication([
-      { file: 'a.js', ...collectDuplicationCandidates(fileA, { language: 'javascript' }) },
-      { file: 'b.js', ...collectDuplicationCandidates(fileB, { language: 'javascript' }) },
-      { file: 'c.js', ...collectDuplicationCandidates(unrelated, { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(fileB, { language: 'javascript' }) },
+      { file: 'c.js', ...collectCrossFileDuplicationFileData(unrelated, { language: 'javascript' }) },
     ]);
 
     expect(metrics.groups.length).toBe(1);
@@ -584,8 +616,8 @@ describe('duplication: cross-file clones', () => {
     // Renaming the invoked member (.amount -> .price) is a semantic change, not a rename.
     const differentApi = fileB.replaceAll('.amount', '.price');
     const metrics = measureCrossFileDuplication([
-      { file: 'a.js', ...collectDuplicationCandidates(fileA, { language: 'javascript' }) },
-      { file: 'b.js', ...collectDuplicationCandidates(differentApi, { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(differentApi, { language: 'javascript' }) },
     ]);
 
     expect(metrics.groups).toEqual([]);
@@ -594,8 +626,8 @@ describe('duplication: cross-file clones', () => {
   it('ignores repeats confined to a single file', () => {
     const doubled = fileA + logicClone('beta', 'console.log("midpoint", total);');
     const metrics = measureCrossFileDuplication([
-      { file: 'a.js', ...collectDuplicationCandidates(doubled, { language: 'javascript' }) },
-      { file: 'b.js', ...collectDuplicationCandidates(unrelated, { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(doubled, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(unrelated, { language: 'javascript' }) },
     ]);
 
     expect(metrics.groups).toEqual([]);
@@ -608,11 +640,11 @@ describe('duplication: cross-file clones', () => {
       [
         {
           file: 'a.js',
-          ...collectDuplicationCandidates(fileA, { language: 'javascript', duplication: { minTokens: 500 } }),
+          ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript', duplication: { minTokens: 500 } }),
         },
         {
           file: 'b.js',
-          ...collectDuplicationCandidates(fileB, { language: 'javascript', duplication: { minTokens: 500 } }),
+          ...collectCrossFileDuplicationFileData(fileB, { language: 'javascript', duplication: { minTokens: 500 } }),
         },
       ],
       { minTokens: 500 }
@@ -623,8 +655,8 @@ describe('duplication: cross-file clones', () => {
 
   it('counts groups correctly for files named like Object.prototype members', () => {
     const metrics = measureCrossFileDuplication([
-      { file: 'constructor', ...collectDuplicationCandidates(fileA, { language: 'javascript' }) },
-      { file: 'toString', ...collectDuplicationCandidates(fileA, { language: 'javascript' }) },
+      { file: 'constructor', ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript' }) },
+      { file: 'toString', ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript' }) },
     ]);
 
     expect(metrics.duplicateBlockGroupCountByFile).toEqual({ constructor: 1, toString: 1 });
@@ -640,8 +672,8 @@ describe('duplication: cross-file clones', () => {
 };
 `;
     const metrics = measureCrossFileDuplication([
-      { file: 'a.js', ...collectDuplicationCandidates(singleStatementFile, { language: 'javascript' }) },
-      { file: 'b.js', ...collectDuplicationCandidates(singleStatementFile, { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(singleStatementFile, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(singleStatementFile, { language: 'javascript' }) },
     ]);
 
     expect(metrics.groups.length).toBe(1);
@@ -652,8 +684,8 @@ describe('duplication: cross-file clones', () => {
     // Two top-level statements make the file's statement run the matching candidate.
     const wholeFile = 'const limit = 10;\n' + logicClone('gamma', 'console.log("midpoint", total);');
     const metrics = measureCrossFileDuplication([
-      { file: 'a.js', ...collectDuplicationCandidates(wholeFile, { language: 'javascript' }) },
-      { file: 'b.js', ...collectDuplicationCandidates(wholeFile, { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(wholeFile, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(wholeFile, { language: 'javascript' }) },
     ]);
 
     expect(metrics.groups.length).toBe(1);
@@ -669,8 +701,8 @@ describe('duplication: cross-file clones', () => {
     const fileA = `function alpha(items) {\n  initialize(items);${embeddedRun('items', 'items')}}\n`;
     const fileB = `function beta(rows) {\n  const prepared = prepare(rows);${embeddedRun('rows', 'prepared')}}\n`;
     const metrics = measureCrossFileDuplication([
-      { file: 'a.js', ...collectDuplicationCandidates(fileA, { language: 'javascript' }) },
-      { file: 'b.js', ...collectDuplicationCandidates(fileB, { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(fileB, { language: 'javascript' }) },
     ]);
 
     expect(metrics.groups.length).toBe(1);
@@ -687,8 +719,8 @@ describe('duplication: cross-file clones', () => {
       .replaceAll('item', 'entry')
       .replaceAll('total', 'sum');
     const sources = [
-      { file: 'a.js', ...collectDuplicationCandidates(gappedA, { language: 'javascript' }) },
-      { file: 'b.js', ...collectDuplicationCandidates(gappedB, { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(gappedA, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(gappedB, { language: 'javascript' }) },
     ];
     const merged = measureCrossFileDuplication(sources);
     const split = measureCrossFileDuplication(sources, { maxGapTokens: 0 });
@@ -701,5 +733,48 @@ describe('duplication: cross-file clones', () => {
     // Both matched fragments still count, mirroring within-file gap-merge counting.
     expect(merged.duplicateBlockCount).toBe(2);
     expect(split.groups.length).toBe(2);
+  });
+
+  it('handles project-scale window candidate counts', () => {
+    // 220 files x 600 shared statement pairs yield ~132k cross-file window candidates, past V8's
+    // ~124k call-argument limit: spreading the candidate array (e.g. `push(...)`) crashes with
+    // RangeError under Node while Bun/JSC tolerates it, so this guards the accumulation pattern.
+    // Tokens are synthesized directly (no parsing) to keep the corpus cheap: each pair is its own
+    // two-statement container whose window repeats in every file, so each occurrence is maximal.
+    const files = [];
+    for (let fileIndex = 0; fileIndex < 220; fileIndex++) {
+      const tokens: Token[] = [];
+      const containerStatements: TokenRange[][] = [];
+      for (let pair = 0; pair < 600; pair++) {
+        const statements: TokenRange[] = [];
+        for (const part of ['a', 'b']) {
+          const start = tokens.length;
+          for (let position = 0; position < 3; position++) {
+            const text = `s${pair}${part}${position}`;
+            let hash = 5381;
+            let hash2 = 2_166_136_261;
+            for (const character of text) {
+              hash = Math.imul(hash, 33) + (character.codePointAt(0) ?? 0);
+              hash2 = Math.imul(hash2 ^ (character.codePointAt(0) ?? 0), 16_777_619);
+            }
+            tokens.push({ kind: 'text', text, textHash: hash, textHash2: hash2, startRow: start, endRow: start });
+          }
+          statements.push({
+            startTokenIndex: start,
+            endTokenIndex: tokens.length,
+            startIndex: start,
+            endIndex: tokens.length,
+            startLine: start,
+            endLine: tokens.length,
+          });
+        }
+        containerStatements.push(statements);
+      }
+      files.push({ file: `file${fileIndex}.js`, candidates: [], tokens, containerStatements });
+    }
+
+    const metrics = measureCrossFileDuplication(files, { minTokens: 6, maxGapTokens: 0 });
+
+    expect(metrics.groups.length).toBeGreaterThan(0);
   });
 });

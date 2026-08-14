@@ -486,8 +486,34 @@ describe('measureCode: call graph', () => {
     expect(byName.get('rescue_binding')).toMatchObject({ callCount: 1 });
     expect(byName.get('pattern_binding')).toMatchObject({ callCount: 0 });
     expect(byName.get('regex_binding')).toMatchObject({ callCount: 1 }); // `month` only; `year` is bound
+    // The regexp literal must be the LEFT operand of =~ to bind named captures; the reversed form
+    // binds nothing, so the bare `year` read stays a method send.
+    expect(byName.get('reversed_regex_binding')).toMatchObject({ callCount: 1 });
+    // Parameter-less blocks bind `_1`..`_9` and `it` implicitly; outside such blocks they are sends.
+    expect(byName.get('numbered_params')).toMatchObject({ callCount: 3 }); // 2x map + bare _1 outside a block
+    // Each `{ _1.name }` / `{ it.label }` block counts only its member send, not `_1`/`it` itself.
+    expect(metrics.functions.filter((fn) => fn.nodeType === 'block').map((fn) => fn.callCount)).toEqual([1, 1]);
+    // `alias c a` operands are method-name references, not calls.
+    expect(byName.get('aliasing')).toMatchObject({ callCount: 1 }); // helper only
     expect(byName.get('introspection')).toMatchObject({ callCount: 0 }); // defined?(helper) does not invoke
-    expect(byName.get('helper')).toMatchObject({ fanIn: 3 }); // run, the each block, rescue_binding
+    expect(byName.get('helper')).toMatchObject({ fanIn: 4 }); // run, the each block, rescue_binding, aliasing
+  });
+
+  // Same-named nested classes under different outers must not collapse into one scope, which
+  // would leave their same-arity self-calls ambiguous and edgeless.
+  it('distinguishes same-named nested classes by their enclosing scope chain', () => {
+    const code =
+      'class OuterA {\n  static class Worker {\n    void helper() {}\n    void run() { helper(); }\n  }\n}\nclass OuterB {\n  static class Worker {\n    void helper() {}\n    void run() { helper(); }\n  }\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.functions.filter((fn) => fn.name === 'run').map((fn) => fn.fanOut)).toEqual([1, 1]);
+  });
+
+  it('resolves Rust Self:: associated-function calls within their own impl', () => {
+    const code =
+      'struct A;\nstruct B;\nimpl A {\n  fn helper() {}\n  fn run() { Self::helper(); }\n}\nimpl B {\n  fn helper() {}\n  fn run() { Self::helper(); }\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
   });
 });
 

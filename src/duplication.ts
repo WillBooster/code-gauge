@@ -1218,11 +1218,25 @@ function coalesceOccurrences(occurrences: CountedOccurrence[]): CountedOccurrenc
   if (!first || occurrences.length === 1) {
     return first ?? toEmptyOccurrence();
   }
+  // A partial gapped merge retains the leftover group with ALL its occurrences, so a copy's
+  // fragments can arrive both standalone and embedded in a merged occurrence: union overlapping
+  // segments so no token span is reported or counted twice.
+  const segments: TokenSegment[] = [];
+  for (const segment of occurrences
+    .flatMap((occurrence) => occurrence.segments)
+    .toSorted(
+      (left, right) => left.startTokenIndex - right.startTokenIndex || left.endTokenIndex - right.endTokenIndex
+    )) {
+    const last = segments.at(-1);
+    if (last && segment.startTokenIndex < last.endTokenIndex) {
+      last.endTokenIndex = Math.max(last.endTokenIndex, segment.endTokenIndex);
+    } else {
+      segments.push({ ...segment });
+    }
+  }
   return {
-    segments: occurrences
-      .flatMap((occurrence) => occurrence.segments)
-      .toSorted((left, right) => left.startTokenIndex - right.startTokenIndex),
-    tokenCount: occurrences.reduce((sum, occurrence) => sum + occurrence.tokenCount, 0),
+    segments,
+    tokenCount: segments.reduce((sum, segment) => sum + segment.endTokenIndex - segment.startTokenIndex, 0),
     startTokenIndex: Math.min(...occurrences.map((occurrence) => occurrence.startTokenIndex)),
     endTokenIndex: Math.max(...occurrences.map((occurrence) => occurrence.endTokenIndex)),
     startIndex: Math.min(...occurrences.map((occurrence) => occurrence.startIndex)),
@@ -1726,8 +1740,13 @@ function summarizeDuplicates(
     // Occurrence shapes can differ within one group (a gap-merged exact pair plus an appended
     // whole-block near-miss copy), so every occurrence's fragments are summed and one
     // representative — the largest — is deducted, keeping the count independent of source order.
-    const segmentCounts = group.map((occurrence) => occurrence.segments.length);
-    duplicateBlockCount += segmentCounts.reduce((sum, count) => sum + count, 0) - Math.max(...segmentCounts, 0);
+    let fragmentCount = 0;
+    let maxFragmentCount = 0;
+    for (const occurrence of group) {
+      fragmentCount += occurrence.segments.length;
+      maxFragmentCount = Math.max(maxFragmentCount, occurrence.segments.length);
+    }
+    duplicateBlockCount += fragmentCount - maxFragmentCount;
     for (const occurrence of group) {
       maxDuplicateBlockSize = Math.max(maxDuplicateBlockSize, occurrence.tokenCount);
       // Only CODE lines carrying segment tokens count: comments and blank gaps inside an

@@ -3,6 +3,7 @@ import {
   collectCrossFileDuplicateCandidates,
   defaultDuplicationOptions,
   measureDuplication,
+  type CrossFileDuplicateCandidate,
   type CrossFileDuplicationFileData,
 } from './duplication.js';
 import { createLanguageRegistry } from './languages.js';
@@ -331,12 +332,17 @@ export class TreeMeasurer {
     };
   }
 
+  /** Collects one file's duplicate candidates for cross-file clone detection. */
+  collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
+    return this.collectCrossFileDuplicationFileData(code, options).candidates;
+  }
+
   /**
    * Collects one file's duplicate candidates, normalized tokens, and statement structure for
    * cross-file clone detection with measureCrossFileDuplication. Always measured by the
    * TypeScript backend.
    */
-  collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicationFileData {
+  collectCrossFileDuplicationFileData(code: string, options: MeasureOptions): CrossFileDuplicationFileData {
     const language = this.registry.get(options.language);
     if (!language) {
       throw new Error(`Unsupported language: ${options.language}`);
@@ -368,8 +374,16 @@ export function measureCode(code: string, options: MeasureOptions): CodeMetrics 
 }
 
 /** Standalone helper mirroring measureCode for the default measurer. */
-export function collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicationFileData {
+export function collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
   return defaultMeasurer.collectDuplicationCandidates(code, options);
+}
+
+/** Standalone helper mirroring measureCode for the default measurer. */
+export function collectCrossFileDuplicationFileData(
+  code: string,
+  options: MeasureOptions
+): CrossFileDuplicationFileData {
+  return defaultMeasurer.collectCrossFileDuplicationFileData(code, options);
 }
 
 /**
@@ -529,11 +543,13 @@ const scopeNodeTypes = new Set([
 ]);
 
 /**
- * Name of the nearest class-like scope enclosing a function, so same-named methods of different
- * classes stay distinguishable in call-graph resolution. Go methods carry their scope on the
+ * Qualified name of the class-like scope chain enclosing a function (`Outer::Worker`), so
+ * same-named methods of different classes — including same-named NESTED classes under different
+ * outers — stay distinguishable in call-graph resolution. Go methods carry their scope on the
  * receiver, and C++ out-of-line members (`void Widget::process()`) on the qualified declarator.
  */
 function findFunctionScopeName(node: Parser.SyntaxNode): string | undefined {
+  const segments: string[] = [];
   for (let current = node.parent; current; current = current.parent) {
     if (!scopeNodeTypes.has(current.type)) {
       continue;
@@ -546,10 +562,14 @@ function findFunctionScopeName(node: Parser.SyntaxNode): string | undefined {
       continue;
     }
     // Rust `impl` blocks scope by the implementing type rather than a `name` field.
-    if (current.type === 'impl_item') {
-      return current.childForFieldName('type')?.text ?? anonymousScopeName(current);
-    }
-    return current.childForFieldName('name')?.text ?? anonymousScopeName(current);
+    const name =
+      current.type === 'impl_item'
+        ? (current.childForFieldName('type')?.text ?? anonymousScopeName(current))
+        : (current.childForFieldName('name')?.text ?? anonymousScopeName(current));
+    segments.unshift(name);
+  }
+  if (segments.length > 0) {
+    return segments.join('::');
   }
 
   if (node.type === 'method_declaration') {
@@ -1484,6 +1504,10 @@ function classifyCallReceiver(node: Parser.SyntaxNode, language: LanguageDefinit
     if (unwrapped.type === 'identifier') {
       return 'none';
     }
+    // Rust `Self::helper()` invokes an associated function of the caller's own impl.
+    if (unwrapped.type === 'scoped_identifier' && unwrapped.childForFieldName('path')?.text === 'Self') {
+      return 'self';
+    }
     const receiverNode =
       unwrapped.type === 'member_expression'
         ? unwrapped.childForFieldName('object')
@@ -1653,7 +1677,9 @@ function isRubyExpressionIdentifier(node: Parser.SyntaxNode): boolean {
     }
     case 'method':
     case 'singleton_method':
-    case 'setter': {
+    case 'setter':
+    // `alias c a` operands are method-name references; neither invokes anything.
+    case 'alias': {
       return false;
     }
     // Binding targets: `x = 1`, `x ||= 1`, `for x in ...`, `rescue => x`, and every parameter form.
@@ -1775,6 +1801,15 @@ function collectRubyScopeBindings(scope: Parser.SyntaxNode): Map<string, number>
 
   collectRubyParameterBindings(scope.childForFieldName('parameters'), add);
 
+  // A parameter-less block/lambda implicitly binds the numbered parameters `_1`..`_9` (2.7+) and
+  // `it` (3.4+) from its start, so such reads are (potential) parameter reads, not method sends.
+  if (rubySoftScopeNodeTypes.has(scope.type) && !scope.childForFieldName('parameters')) {
+    add('it', scope.startIndex);
+    for (let numbered = 1; numbered <= 9; numbered += 1) {
+      add(`_${numbered}`, scope.startIndex);
+    }
+  }
+
   function visit(node: Parser.SyntaxNode): void {
     for (const child of node.namedChildren) {
       if (rubyScopeNodeTypes.has(child.type)) {
@@ -1822,11 +1857,12 @@ function collectRubyNodeBindings(node: Parser.SyntaxNode, add: (name: string, in
       }
       break;
     }
-    // `/(?<year>...)/ =~ value` binds each named capture as a local.
+    // `/(?<year>...)/ =~ value` binds each named capture as a local, but ONLY when the regexp
+    // literal is the LEFT operand (Regexp#=~); `value =~ /(?<year>...)/` binds nothing.
     case 'binary': {
       if (node.children.some((child) => !child.isNamed && child.text === '=~')) {
-        const regexNode = node.namedChildren.find((child) => child.type === 'regex');
-        if (regexNode) {
+        const regexNode = node.childForFieldName('left');
+        if (regexNode?.type === 'regex') {
           for (const match of regexNode.text.matchAll(/\(\?<([A-Za-z_][A-Za-z0-9_]*)>/gu)) {
             const captureName = match[1];
             if (captureName) {

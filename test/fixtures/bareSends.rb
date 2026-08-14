@@ -53,6 +53,22 @@ def regex_binding(text)
   month
 end
 
+def reversed_regex_binding(text)
+  text =~ /(?<year>\d+)/
+  year
+end
+
+def numbered_params(list)
+  list.map { _1.name }
+  list.map { it.label }
+  _1
+end
+
+def aliasing
+  alias c a
+  helper
+end
+
 def introspection
   defined?(helper)
 end

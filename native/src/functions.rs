@@ -140,10 +140,11 @@ const SCOPE_NODE_TYPES: &[&str] = &[
     "impl_item",
 ];
 
-/// Name of the nearest class-like scope enclosing a function; see findFunctionScopeName in
-/// metrics.ts. Go methods carry their scope on the receiver, and C++ out-of-line members
-/// (`void Widget::process()`) on the qualified declarator.
+/// Qualified name of the class-like scope chain enclosing a function (`Outer::Worker`); see
+/// findFunctionScopeName in metrics.ts. Go methods carry their scope on the receiver, and C++
+/// out-of-line members (`void Widget::process()`) on the qualified declarator.
 fn find_function_scope_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let mut segments: Vec<String> = Vec::new();
     let mut current = node.parent();
     while let Some(ancestor) = current {
         current = ancestor.parent();
@@ -164,10 +165,14 @@ fn find_function_scope_name(node: Node<'_>, code: &Source<'_>) -> Option<String>
         } else {
             ancestor.child_by_field_name("name")
         };
-        return Some(match name_node {
+        segments.push(match name_node {
             Some(name_node) => node_text(name_node, code).to_string(),
             None => anonymous_scope_name(ancestor),
         });
+    }
+    if !segments.is_empty() {
+        segments.reverse();
+        return Some(segments.join("::"));
     }
 
     if node.kind() == "method_declaration" {
@@ -460,6 +465,14 @@ fn classify_call_receiver(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>
         if unwrapped.kind() == "identifier" {
             return CallReceiver::None;
         }
+        // Rust `Self::helper()` invokes an associated function of the caller's own impl.
+        if unwrapped.kind() == "scoped_identifier"
+            && unwrapped
+                .child_by_field_name("path")
+                .is_some_and(|path| node_text(path, code) == "Self")
+        {
+            return CallReceiver::SelfLike;
+        }
         let receiver_node = match unwrapped.kind() {
             "member_expression" => unwrapped.child_by_field_name("object"),
             "field_expression" => unwrapped
@@ -668,7 +681,8 @@ fn is_ruby_expression_identifier(node: Node<'_>) -> bool {
         {
             return false;
         }
-        "method" | "singleton_method" | "setter" => {
+        // `alias c a` operands are method-name references; neither invokes anything.
+        "method" | "singleton_method" | "setter" | "alias" => {
             return false;
         }
         // Binding targets: `x = 1`, `x ||= 1`, `for x in ...`, `rescue => x`, and every parameter form.
@@ -810,6 +824,17 @@ fn collect_ruby_scope_bindings(scope: Node<'_>, code: &Source<'_>) -> HashMap<St
 
     collect_ruby_parameter_bindings(scope.child_by_field_name("parameters"), code, &mut bindings);
 
+    // A parameter-less block/lambda implicitly binds the numbered parameters `_1`..`_9` (2.7+) and
+    // `it` (3.4+) from its start, so such reads are (potential) parameter reads, not method sends.
+    if RUBY_SOFT_SCOPE_NODE_TYPES.contains(&scope.kind())
+        && scope.child_by_field_name("parameters").is_none()
+    {
+        add_ruby_binding(&mut bindings, "it", scope.start_byte());
+        for numbered in 1..=9 {
+            add_ruby_binding(&mut bindings, &format!("_{numbered}"), scope.start_byte());
+        }
+    }
+
     fn visit(node: Node<'_>, code: &Source<'_>, bindings: &mut HashMap<String, usize>) {
         for child in named_children(node) {
             if is_ruby_scope_node(child.kind()) {
@@ -865,15 +890,16 @@ fn collect_ruby_node_bindings(
                 add_ruby_pattern_bindings(pattern, code, bindings);
             }
         }
-        // `/(?<year>...)/ =~ value` binds each named capture as a local.
+        // `/(?<year>...)/ =~ value` binds each named capture as a local, but ONLY when the regexp
+        // literal is the LEFT operand (Regexp#=~); `value =~ /(?<year>...)/` binds nothing.
         "binary" => {
             let has_match_operator = all_children(node)
                 .iter()
                 .any(|child| !child.is_named() && node_text(*child, code) == "=~");
             if has_match_operator {
-                if let Some(regex_node) = named_children(node)
-                    .into_iter()
-                    .find(|child| child.kind() == "regex")
+                if let Some(regex_node) = node
+                    .child_by_field_name("left")
+                    .filter(|left| left.kind() == "regex")
                 {
                     for capture_name in ruby_regex_named_captures(node_text(regex_node, code)) {
                         add_ruby_binding(bindings, &capture_name, node.start_byte());
