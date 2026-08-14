@@ -19,11 +19,13 @@ import type { LanguageName } from '../../src/index.js';
  *   JavaScript, TypeScript, JSX, and TSX.
  *
  * C, C++, Ruby, and Rust have NO per-function oracle: their only per-function reference tool
- * (lizard) measured cyclomatic complexity, which code-gauge no longer reports, and no readily
- * runnable open-source tool implements SonarSource cognitive complexity for them. Their
- * `oracleFunctions` lists are empty, the per-function tests are skipped visibly for them, and
- * only the aggregate expectations (regenerated from code-gauge itself) plus the cloc/tokei line
- * oracle guard those files.
+ * (lizard) measured cyclomatic complexity, which code-gauge no longer reports. Ruby has no
+ * readily runnable open-source implementation of SonarSource cognitive complexity; for C, C++,
+ * and Rust the one candidate — Mozilla's rust-code-analysis — implements its own
+ * cognitive-complexity variant that has not been reconciled with the SonarSource model here, so
+ * its values are not adopted as oracles (yet). Their `oracleFunctions` lists are empty, the
+ * per-function tests are skipped visibly for them, and only the aggregate expectations
+ * (regenerated from code-gauge itself) plus the cloc/tokei line oracle guard those files.
  *
  * Line metrics in `aggregates` were verified against cloc 2.06 for all files (code/comment/blank
  * identical; code-gauge additionally counts the empty line after a trailing final newline as one
