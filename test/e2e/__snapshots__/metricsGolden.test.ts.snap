@@ -182,7 +182,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "cognitiveComplexity": 0,
-      "depDegree": 4,
+      "depDegree": 3,
       "endLine": 31,
       "halstead": {
         "distinctOperands": 8,
@@ -4910,7 +4910,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "cognitiveComplexity": 0,
-      "depDegree": 1,
+      "depDegree": 2,
       "endLine": 61,
       "halstead": {
         "distinctOperands": 4,

@@ -354,6 +354,22 @@ function isWithinDirectory(candidate: string, directory: string): boolean {
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
+/**
+ * Whether a repository-relative path would be scanned: no ignored or excluded-test directory
+ * segment and a supported, non-test file name. The diff gate uses this for base-revision
+ * eligibility, so code renamed into scan scope gates as new code instead of ratcheting against
+ * a blob the scanner would never have measured.
+ */
+export function isScannedPath(relativePath: string, options: ScanOptions): boolean {
+  const segments = relativePath.split('/');
+  for (const segment of segments.slice(0, -1)) {
+    if (ignoredDirectoryNames.has(segment) || (!options.includeTests && testDirectoryNames.has(segment))) {
+      return false;
+    }
+  }
+  return getLanguage(relativePath, options) !== undefined;
+}
+
 export function getLanguage(file: string, options: ScanOptions, explicitTarget = false): LanguageName | undefined {
   const lowerFile = file.toLowerCase();
   if (

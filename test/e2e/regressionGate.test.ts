@@ -193,6 +193,10 @@ describe('evaluateRegressionGate', () => {
   });
 });
 
+function makeClassWithFoo(name: string, body: string): string {
+  return `class ${name} { foo(x: number): number { ${body} } }\n`;
+}
+
 const emptyHalstead = {
   distinctOperators: 1,
   distinctOperands: 1,
@@ -294,7 +298,60 @@ describe('file-level backstops (synthetic aggregates)', () => {
   });
 
   it('does not restate a function-level cognitive violation as a file violation', () => {
-    const result = evaluateRegressionGate([makeInput(baseCode, worsenedCode)], defaultGateOptions);
-    expect(result.violations.filter((violation) => violation.gate === 'file-regression')).toStrictEqual([]);
+    // g disappears, so the backstops run; f's worsening is already reported at function level, so
+    // the file max-cognitive backstop must stay silent instead of restating it.
+    const input = makeSyntheticInput(
+      makeMetrics([makeFunction('f', { cognitiveComplexity: 10 }), makeFunction('g', { cognitiveComplexity: 3 })]),
+      makeMetrics([makeFunction('f', { cognitiveComplexity: 20 })])
+    );
+    const result = evaluateRegressionGate([input], defaultGateOptions);
+    expect(result.violations.map((violation) => [violation.gate, violation.metric])).toStrictEqual([
+      ['function-regression', 'cognitive complexity'],
+    ]);
+  });
+
+  it('matches a function moved to another changed file instead of gating it as new code', () => {
+    const moveSource = makeInput(complexNewFunction, '', { file: 'src/a.ts' });
+    const moveTarget = makeInput(undefined, complexNewFunction, { file: 'src/b.ts' });
+    const result = evaluateRegressionGate([moveSource, moveTarget], defaultGateOptions);
+    expect(result.violations).toStrictEqual([]);
+    expect(result.newFunctionCount).toBe(0);
+  });
+
+  it('pairs same-name methods by similarity, so an inserted method cannot shift the pairing', () => {
+    const simpleBody = 'return x + 1;';
+    const complexBody = `
+    if (x > 0) {
+      if (x > 10) {
+        for (let i = 0; i < x; i++) {
+          if (i % 2 === 0 && i % 3 === 0) { x += i; }
+        }
+      } else if (x > 5) {
+        x -= 1;
+      }
+    }
+    return x > 100 ? 100 : x < -100 ? -100 : x;`;
+    const base = makeClassWithFoo('A', simpleBody) + makeClassWithFoo('B', complexBody);
+    const head = makeClassWithFoo('Z', 'return x - 1;') + base;
+    const result = evaluateRegressionGate([makeInput(base, head)], defaultGateOptions);
+    expect(result.violations).toStrictEqual([]);
+    expect(result.newFunctionCount).toBe(1);
+  });
+
+  it('scales the Halstead volume allowance with the base value', () => {
+    const largeVolume = 1000;
+    const pass = makeSyntheticInput(
+      makeMetrics([makeFunction('f', { halstead: { ...emptyHalstead, volume: largeVolume } })]),
+      makeMetrics([makeFunction('f', { halstead: { ...emptyHalstead, volume: largeVolume + 220 } })])
+    );
+    expect(evaluateRegressionGate([pass], defaultGateOptions).violations).toStrictEqual([]);
+
+    const fail = makeSyntheticInput(
+      makeMetrics([makeFunction('f', { halstead: { ...emptyHalstead, volume: largeVolume } })]),
+      makeMetrics([makeFunction('f', { halstead: { ...emptyHalstead, volume: largeVolume + 300 } })])
+    );
+    expect(evaluateRegressionGate([fail], defaultGateOptions).violations).toMatchObject([
+      { gate: 'function-regression', metric: 'Halstead volume', allowedValue: largeVolume + 250 },
+    ]);
   });
 });

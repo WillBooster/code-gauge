@@ -67,7 +67,7 @@ pub fn measure(
                 ncss: body_metrics.ncss,
                 parameter_count: count_parameters(*node, code),
                 halstead_counts: measure_halstead(*node, code),
-                dep_degree: measure_dep_degree(*node, code),
+                dep_degree: measure_dep_degree(*node, code, &sets.function_nodes),
             }
         })
         .collect();

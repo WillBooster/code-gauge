@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
 
+use crate::complexity::is_lambda_body_block;
 use crate::util::{node_text, Source};
 
 /// Leaf node types treated as variable references by the def-use approximation.
@@ -51,62 +52,146 @@ const DEFINITION_LIST_HOLDER_TYPES: &[&str] = &[
 /// Parameter-position fields that annotate or initialize rather than bind (`x: T`, `x = default`).
 const NON_BINDING_PARAMETER_FIELDS: &[&str] = &["type", "value"];
 
+/// One leaf of the def-use walk: its field in the parent and its function-scope chain.
+struct DepDegreeLeaf<'t> {
+    node: Node<'t>,
+    field_name: Option<&'static str>,
+    /// Chain of nested-function scope ids below the measured function: "" for its own body,
+    /// then "/0", "/0/1", ...
+    scope: String,
+}
+
 /// Approximate def-use pairs of the function's subtree; mirrors measureDepDegree in metrics.ts.
-pub fn measure_dep_degree(function_node: Node<'_>, code: &Source<'_>) -> u64 {
+pub fn measure_dep_degree(
+    function_node: Node<'_>,
+    code: &Source<'_>,
+    function_nodes: &HashSet<&'static str>,
+) -> u64 {
     let mut leaves = Vec::new();
-    collect_non_comment_leaves(function_node, &mut leaves);
-    let mut defined: HashSet<&str> = HashSet::new();
+    let mut next_scope_id = 0usize;
+    collect_dep_degree_leaves(
+        function_node,
+        None,
+        "",
+        &mut next_scope_id,
+        function_nodes,
+        &mut leaves,
+        true,
+    );
+    let mut definition_scopes_by_name: HashMap<&str, Vec<String>> = HashMap::new();
     let mut pairs = 0u64;
     for index in 0..leaves.len() {
-        let leaf = leaves[index];
-        if !VARIABLE_NODE_TYPES.contains(&leaf.kind()) {
+        let leaf = &leaves[index];
+        if !VARIABLE_NODE_TYPES.contains(&leaf.node.kind()) {
             continue;
         }
-        let name = node_text(leaf, code);
-        let next_text = leaves.get(index + 1).map(|next| node_text(*next, code));
+        let name = node_text(leaf.node, code);
+        let next_text = leaves.get(index + 1).map(|next| node_text(next.node, code));
         if next_text.is_some_and(|next| COMPOUND_ASSIGNMENT_OPERATORS.contains(&next)) {
-            if defined.contains(name) {
+            if is_definition_visible(definition_scopes_by_name.get(name), &leaf.scope) {
                 pairs += 1;
             }
-            defined.insert(name);
+            add_definition(&mut definition_scopes_by_name, name, &leaf.scope);
             continue;
         }
         if next_text.is_some_and(|next| PURE_ASSIGNMENT_OPERATORS.contains(&next))
             || is_structural_definition(leaf)
             || is_parameter_definition(leaf)
         {
-            defined.insert(name);
+            add_definition(&mut definition_scopes_by_name, name, &leaf.scope);
             continue;
         }
-        if defined.contains(name) {
+        if is_definition_visible(definition_scopes_by_name.get(name), &leaf.scope) {
             pairs += 1;
         }
     }
     pairs
 }
 
-fn collect_non_comment_leaves<'t>(node: Node<'t>, leaves: &mut Vec<Node<'t>>) {
+/// Collects non-comment leaves with their parent field (one cursor pass, so children of
+/// high-arity nodes cost O(1)) and function-scope chain; mirrors collectDepDegreeLeaves.
+#[allow(clippy::too_many_arguments)]
+fn collect_dep_degree_leaves<'t>(
+    node: Node<'t>,
+    field_name: Option<&'static str>,
+    scope: &str,
+    next_scope_id: &mut usize,
+    function_nodes: &HashSet<&'static str>,
+    leaves: &mut Vec<DepDegreeLeaf<'t>>,
+    is_measured_root: bool,
+) {
     if matches!(node.kind(), "comment" | "line_comment" | "block_comment") {
         return;
     }
     if node.child_count() == 0 {
-        leaves.push(node);
+        leaves.push(DepDegreeLeaf {
+            node,
+            field_name,
+            scope: scope.to_string(),
+        });
         return;
     }
-    for child in crate::util::all_children(node) {
-        collect_non_comment_leaves(child, leaves);
+    let child_scope = if !is_measured_root && is_function_boundary(node, function_nodes) {
+        let scope = format!("{scope}/{next_scope_id}");
+        *next_scope_id += 1;
+        scope
+    } else {
+        scope.to_string()
+    };
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            collect_dep_degree_leaves(
+                cursor.node(),
+                cursor.field_name(),
+                &child_scope,
+                next_scope_id,
+                function_nodes,
+                leaves,
+                false,
+            );
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
     }
 }
 
-fn is_structural_definition(node: Node<'_>) -> bool {
-    let Some(parent) = node.parent() else {
+fn is_function_boundary(node: Node<'_>, function_nodes: &HashSet<&'static str>) -> bool {
+    function_nodes.contains(node.kind()) && !is_lambda_body_block(node)
+}
+
+fn add_definition<'a>(
+    definition_scopes_by_name: &mut HashMap<&'a str, Vec<String>>,
+    name: &'a str,
+    scope: &str,
+) {
+    let scopes = definition_scopes_by_name.entry(name).or_default();
+    if !scopes.iter().any(|existing| existing == scope) {
+        scopes.push(scope.to_string());
+    }
+}
+
+/// A definition reaches a read only from the read's own or an enclosing function scope.
+fn is_definition_visible(definition_scopes: Option<&Vec<String>>, scope: &str) -> bool {
+    definition_scopes.is_some_and(|scopes| {
+        scopes.iter().any(|definition_scope| {
+            scope == definition_scope
+                || (scope.len() > definition_scope.len()
+                    && scope.starts_with(definition_scope.as_str())
+                    && scope.as_bytes()[definition_scope.len()] == b'/')
+        })
+    })
+}
+
+fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
+    let Some(parent) = leaf.node.parent() else {
         return false;
     };
-    let field = field_name_in_parent(node, parent);
     if DEFINITION_FIELD_BY_PARENT_TYPE
         .iter()
         .any(|(parent_type, definition_field)| {
-            *parent_type == parent.kind() && field == Some(definition_field)
+            *parent_type == parent.kind() && leaf.field_name == Some(definition_field)
         })
     {
         return true;
@@ -121,29 +206,41 @@ fn is_structural_definition(node: Node<'_>) -> bool {
         && field_name_in_parent(parent, holder) == Some("left")
 }
 
-/// Mirrors isParameterDefinition in metrics.ts: the identifier binds a parameter when its parent
-/// (or grandparent, for wrapped declarators) is a parameter-ish node, or it directly occupies a
-/// parameter field; type annotations and default values inside parameter nodes bind nothing.
-fn is_parameter_definition(node: Node<'_>) -> bool {
-    let mut current = node;
-    for depth in 0..2 {
+/// Mirrors isParameterDefinition in metrics.ts: an ancestor reached through declarator wrappers
+/// (C/C++ function-pointer or array parameters) is a parameter-ish node, or the identifier
+/// directly occupies a parameter field; type annotations and default values bind nothing.
+fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
+    let mut current = leaf.node;
+    let mut depth = 0usize;
+    loop {
         let Some(parent) = current.parent() else {
             return false;
         };
-        let field = field_name_in_parent(current, parent);
+        let parent_is_parameterish = parent.kind().contains("parameter");
+        // Beyond the grandparent, only declarator wrappers keep climbing; checking this before
+        // the field lookup also keeps reads inside high-arity nodes O(1).
+        if depth >= 1 && !parent_is_parameterish && !parent.kind().contains("declarator") {
+            return false;
+        }
+        let field = if depth == 0 {
+            leaf.field_name
+        } else {
+            field_name_in_parent(current, parent)
+        };
         if field.is_some_and(|name| NON_BINDING_PARAMETER_FIELDS.contains(&name)) {
             return false;
         }
-        if parent.kind().contains("parameter")
+        if parent_is_parameterish
             || (depth == 0 && field.is_some_and(|name| name.contains("parameter")))
         {
             return true;
         }
         current = parent;
+        depth += 1;
     }
-    false
 }
 
+/// Only called with small-arity parents (declarator wrappers, definition-list holders).
 fn field_name_in_parent(node: Node<'_>, parent: Node<'_>) -> Option<&'static str> {
     for index in 0..parent.child_count() {
         if let Some(child) = parent.child(index) {

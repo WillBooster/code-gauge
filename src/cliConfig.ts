@@ -192,12 +192,14 @@ function validateGateObject(value: unknown, configFile: string): GateConfig {
   const gate: GateConfig = {};
   for (const [key, setting] of Object.entries(value as Record<string, unknown>)) {
     if (key === 'newFunction') {
+      // Zero is a meaningful upper bound (branch-free or unnested new functions), so the limits
+      // are validated as non-negative rather than positive.
       gate.newFunction = validateGateNumberObject(
         setting,
         'gate.newFunction',
         Object.keys(defaultGateOptions.newFunction),
         configFile,
-        requirePositiveInteger
+        requireNonNegativeInteger
       ) as Partial<NewFunctionThresholds>;
     } else if (key === 'tolerance') {
       gate.tolerance = validateGateNumberObject(

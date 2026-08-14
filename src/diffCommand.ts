@@ -3,21 +3,34 @@ import path from 'node:path';
 import { loadConfig, resolveGateOptions, resolveOptions, type ResolvedOptions } from './cliConfig.js';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
-import { listChangedFiles, readFileAtRevision, resolveMergeBase, resolveRepoRoot, type ChangedFile } from './git.js';
+import {
+  listChangedFiles,
+  listRepositoryFiles,
+  readFileAtRevision,
+  resolveMergeBase,
+  resolveRepoRoot,
+  type ChangedFile,
+} from './git.js';
 import { collectCrossFileDuplicationFileData, collectFunctionTokenSequences, measureCode } from './metrics.js';
-import { evaluateRegressionGate, type GateFileInput, type GateResult } from './regressionGate.js';
+import {
+  evaluateRegressionGate,
+  type CheckedFunctionReport,
+  type GateFileInput,
+  type GateFunctionValues,
+  type GateResult,
+} from './regressionGate.js';
 import {
   collectDuplicatedLineNumbers,
   configSearchDirectory,
   formatError,
   formatPath,
   getLanguage,
+  isScannedPath,
   resolveTarget,
   scanTarget,
   writeStderr,
   writeStdout,
   type FileMetrics,
-  type ScanResult,
 } from './scan.js';
 import type { CodeMetrics, LanguageName } from './types.js';
 
@@ -47,10 +60,16 @@ interface PreparedFile {
   headFunctionTokens?: Int32Array[];
 }
 
+/** A scanned file that git considers part of the project, keyed by its repository-relative path. */
+interface ScannedFile {
+  relativePath: string;
+  file: FileMetrics;
+}
+
 /**
  * Runs the regression gate: measures the files changed relative to the merge-base with the base
  * ref, at both revisions (`git cat-file`; no checkout, no persisted baseline), and reports only
- * violations. Exit codes: 0 all gates passed, 1 violations, 2 files could not be measured.
+ * violations. Exit codes: 0 all gates passed, 1 violations, 2 changed files could not be measured.
  */
 export async function runDiffCommand(target: string, cliOptions: DiffCliOptions): Promise<void> {
   try {
@@ -73,30 +92,54 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
 
   // The whole repository is scanned at head: it provides the head metrics of changed files and
   // the project-wide duplication universe, so copy-paste from unchanged code into changed files
-  // is caught. Unchanged files are byte-identical at both revisions, so the base universe is the
-  // same scan with the changed files' contents swapped for their merge-base blobs.
+  // is caught. Only git-visible files (tracked or untracked non-ignored) participate: a local
+  // ignored artifact exists in neither the base commit nor CI, so letting it into the universes
+  // would skew duplication counts. Unchanged files are byte-identical at both revisions, so the
+  // base universe is the same scan with the changed files' contents swapped for their merge-base
+  // blobs.
   const scan = await scanTarget(repoRoot, options);
   if (scan.fatalError) {
     throw new Error(scan.fatalError);
   }
-  const errors = [...scan.errors];
+  const repositoryFiles = await listRepositoryFiles(repoRoot);
+  const scannedFiles: ScannedFile[] = scan.files
+    .map((file) => ({ relativePath: formatPath(file.file, scan.displayRoot), file }))
+    .filter(({ relativePath }) => repositoryFiles.has(relativePath));
+
+  // Only failures affecting gateable changed files force exit 2: a broken symlink or unreadable
+  // directory elsewhere in the repository (or an unsupported changed path) must not turn every
+  // diff run red.
+  const changedPaths = new Set(
+    changedFiles
+      .flatMap((changed) => [changed.headPath, ...(changed.basePath === undefined ? [] : [changed.basePath])])
+      .filter((changedPath) => isScannedPath(changedPath, options))
+  );
+  const errors: string[] = [];
   const warnings = [...scan.warnings];
+  for (const error of scan.errors) {
+    if ([...changedPaths].some((changedPath) => error.startsWith(`${changedPath}:`))) {
+      errors.push(error);
+    } else {
+      warnings.push(error);
+    }
+  }
+
   const canonicalTarget = await canonicalizeTarget(resolvedTarget);
   const prepared = await prepareChangedFiles(
     changedFiles,
-    { repoRoot, mergeBase, canonicalTarget, options, scan },
+    { repoRoot, mergeBase, canonicalTarget, options, scannedFiles },
     errors,
     warnings
   );
 
-  const { baseCross, headCross } = measureDuplicationUniverses(prepared, scan, options);
+  const { baseCross, headCross } = measureDuplicationUniverses(prepared, scannedFiles, options);
   const inputs = prepared.filter((file) => file.gated).map((file) => toGateInput(file, baseCross, headCross));
   const result = evaluateRegressionGate(inputs, gateOptions);
 
   if (cliOptions.json) {
     printJsonReport(cliOptions, mergeBase, result, inputs, errors, warnings);
   } else {
-    printTextReport(cliOptions, mergeBase, result, inputs, errors, warnings);
+    printTextReport(cliOptions, mergeBase, result, errors, warnings);
   }
 
   if (errors.length > 0) {
@@ -120,7 +163,7 @@ interface GateContext {
   mergeBase: string;
   canonicalTarget: string;
   options: ResolvedOptions;
-  scan: ScanResult;
+  scannedFiles: ScannedFile[];
 }
 
 async function prepareChangedFiles(
@@ -129,7 +172,7 @@ async function prepareChangedFiles(
   errors: string[],
   warnings: string[]
 ): Promise<PreparedFile[]> {
-  const headByPath = new Map(context.scan.files.map((file) => [formatPath(file.file, context.scan.displayRoot), file]));
+  const headByPath = new Map(context.scannedFiles.map(({ relativePath, file }) => [relativePath, file]));
   const prepared: PreparedFile[] = [];
   for (const changed of changedFiles) {
     const file = await prepareChangedFile(changed, context, headByPath, errors, warnings);
@@ -148,15 +191,15 @@ async function prepareChangedFile(
   warnings: string[]
 ): Promise<PreparedFile | undefined> {
   const displayFile = changed.status === 'deleted' ? (changed.basePath as string) : changed.headPath;
-  const language = getLanguage(displayFile, context.options);
-  if (!language) {
+  if (!isScannedPath(displayFile, context.options)) {
     return undefined;
   }
+  const language = getLanguage(displayFile, context.options) as LanguageName;
 
   const headFile = changed.status === 'deleted' ? undefined : headByPath.get(changed.headPath);
   if (changed.status !== 'deleted' && !headFile) {
-    // Changed but not scanned: ignored directory, or the scan itself failed on it (already an
-    // error). Either way there is nothing to gate.
+    // Changed but not scanned: the scan itself failed on it (already an error) or it fell to an
+    // ignore rule the path check cannot see. Either way there is nothing to gate.
     return undefined;
   }
 
@@ -167,10 +210,12 @@ async function prepareChangedFile(
     headFile,
   };
 
-  if (
-    changed.basePath !== undefined &&
-    !(await measureBaseRevision(file, changed.basePath, language, context, errors))
-  ) {
+  // A base path outside the scan scope (renamed from a test/ignored directory, or an unsupported
+  // extension) was never measurable code: its content gates as new code instead of ratcheting
+  // against a blob the scanner would not have measured.
+  const basePath =
+    changed.basePath !== undefined && isScannedPath(changed.basePath, context.options) ? changed.basePath : undefined;
+  if (basePath !== undefined && !(await measureBaseRevision(file, basePath, context, errors, warnings))) {
     return undefined;
   }
 
@@ -190,26 +235,41 @@ async function prepareChangedFile(
   return file;
 }
 
-/** Measures the merge-base blob into `file`; false (with an error recorded) when that fails. */
+/**
+ * Measures the merge-base blob into `file`; false (with an error recorded) only when the metrics
+ * themselves cannot be measured. The auxiliary collections (duplication candidates, token
+ * sequences) always parse with the JavaScript binding, which can give up where the native backend
+ * measured fine, so their failure only degrades duplication data and rename re-matching — the
+ * function-level ratchets still run.
+ */
 async function measureBaseRevision(
   file: PreparedFile,
   basePath: string,
-  headLanguage: LanguageName,
   context: GateContext,
-  errors: string[]
+  errors: string[],
+  warnings: string[]
 ): Promise<boolean> {
+  const measureOptions = {
+    language: getLanguage(basePath, context.options) as LanguageName,
+    duplication: context.options.duplication,
+  };
+  let baseContent;
   try {
-    const baseContent = await readFileAtRevision(context.repoRoot, context.mergeBase, basePath);
-    const language = getLanguage(basePath, context.options) ?? headLanguage;
-    const measureOptions = { language, duplication: context.options.duplication };
+    baseContent = await readFileAtRevision(context.repoRoot, context.mergeBase, basePath);
     file.baseMetrics = measureCode(baseContent, measureOptions);
-    file.baseCandidates = collectCrossFileDuplicationFileData(baseContent, measureOptions);
-    file.baseFunctionTokens = collectFunctionTokenSequences(baseContent, measureOptions);
-    return true;
   } catch (error) {
     errors.push(`${basePath} (at merge-base): ${formatError(error)}`);
     return false;
   }
+  try {
+    file.baseCandidates = collectCrossFileDuplicationFileData(baseContent, measureOptions);
+    file.baseFunctionTokens = collectFunctionTokenSequences(baseContent, measureOptions);
+  } catch (error) {
+    warnings.push(
+      `${basePath} (at merge-base): duplication candidates and token sequences unavailable: ${formatError(error)}`
+    );
+  }
+  return true;
 }
 
 function isWithinTarget(candidate: string, targetDirectory: string): boolean {
@@ -219,11 +279,11 @@ function isWithinTarget(candidate: string, targetDirectory: string): boolean {
 
 function measureDuplicationUniverses(
   prepared: PreparedFile[],
-  scan: ScanResult,
+  scannedFiles: ScannedFile[],
   options: ResolvedOptions
 ): { baseCross?: CrossFileDuplicationMetrics; headCross?: CrossFileDuplicationMetrics } {
-  const headSources = scan.files.flatMap(({ file, duplicationCandidates }) =>
-    duplicationCandidates ? [{ file: formatPath(file, scan.displayRoot), ...duplicationCandidates }] : []
+  const headSources = scannedFiles.flatMap(({ relativePath, file }) =>
+    file.duplicationCandidates ? [{ file: relativePath, ...file.duplicationCandidates }] : []
   );
 
   const changedHeadPaths = new Set(
@@ -254,7 +314,7 @@ function toGateInput(
     baseFunctionTokens: file.baseFunctionTokens,
     headFunctionTokens: file.headFunctionTokens,
     baseDuplicatedLineCount:
-      file.changed.basePath === undefined
+      file.baseMetrics === undefined || file.changed.basePath === undefined
         ? 0
         : countDuplicatedLines(file.baseMetrics, baseCross, file.changed.basePath),
     headDuplicatedLineCount:
@@ -294,12 +354,18 @@ function printTextReport(
   cliOptions: DiffCliOptions,
   mergeBase: string,
   result: GateResult,
-  inputs: GateFileInput[],
   errors: string[],
   warnings: string[]
 ): void {
   const shortBase = mergeBase.slice(0, 12);
-  if (result.violations.length === 0) {
+  if (errors.length > 0) {
+    // Unmeasured files were not gated, so "0 violations" would be vacuous; never claim a pass.
+    writeStdout(
+      `Regression gate could not complete: ${errors.length} measurement failures (details on stderr)` +
+        `${result.violations.length > 0 ? `; ${result.violations.length} violations in the measured files` : ''} (base ${cliOptions.base}, merge-base ${shortBase}).\n`
+    );
+    printViolations(result);
+  } else if (result.violations.length === 0) {
     writeStdout(
       `Regression gate passed: ${result.checkedFileCount} changed files, ${result.checkedFunctionCount} functions checked (base ${cliOptions.base}, merge-base ${shortBase}).\n`
     );
@@ -307,13 +373,11 @@ function printTextReport(
     writeStdout(
       `Regression gate vs ${cliOptions.base} (merge-base ${shortBase}): ${result.violations.length} violations\n`
     );
-    for (const [index, violation] of result.violations.entries()) {
-      writeStdout(`${index + 1}. ${violation.message}\n`);
-    }
+    printViolations(result);
   }
 
   if (cliOptions.full) {
-    printFullDetails(inputs);
+    printFullDetails(result);
   }
 
   for (const warning of warnings) {
@@ -324,23 +388,42 @@ function printTextReport(
   }
 }
 
-/** Per-file base -> head values of the gated aggregates; kept behind --full for humans. */
-function printFullDetails(inputs: GateFileInput[]): void {
-  if (inputs.length === 0) {
+function printViolations(result: GateResult): void {
+  for (const [index, violation] of result.violations.entries()) {
+    writeStdout(`${index + 1}. ${violation.message}\n`);
+  }
+}
+
+/** Base -> head values of every checked function; kept behind --full for humans and trending. */
+function printFullDetails(result: GateResult): void {
+  if (result.checkedFunctions.length === 0) {
     return;
   }
-  writeStdout('\nChanged files (base -> head):\n');
-  for (const input of inputs) {
-    const base = input.baseMetrics;
-    const head = input.headMetrics;
-    const parts = [
-      `functions ${base?.functions.length ?? 0} -> ${head?.functions.length ?? 0}`,
-      `NCSS ${base?.ncssCount ?? 0} -> ${head?.ncssCount ?? 0}`,
-      `max cognitive ${base?.maxCognitiveComplexity ?? 0} -> ${head?.maxCognitiveComplexity ?? 0}`,
-      `duplicated lines ${input.baseDuplicatedLineCount} -> ${input.headDuplicatedLineCount}`,
-    ];
-    writeStdout(`- ${input.file}: ${parts.join(', ')}\n`);
+  writeStdout('\nChecked functions (base -> head):\n');
+  for (const report of result.checkedFunctions) {
+    writeStdout(`- ${formatFunctionReport(report)}\n`);
   }
+}
+
+function formatFunctionReport(report: CheckedFunctionReport): string {
+  const range = (
+    select: (values: GateFunctionValues) => number,
+    format: (value: number) => string = String
+  ): string => {
+    const head = format(select(report.head));
+    return report.base ? `${format(select(report.base))} -> ${head}` : head;
+  };
+  const values = [
+    `cognitive ${range((fn) => fn.cognitiveComplexity)}`,
+    `NCSS ${range((fn) => fn.ncss)}`,
+    `nesting ${range((fn) => fn.nestingDepth)}`,
+    `DepDegree ${range((fn) => fn.depDegree)}`,
+    `volume ${range(
+      (fn) => fn.halsteadVolume,
+      (value) => value.toFixed(1)
+    )}`,
+  ];
+  return `${report.file}:${report.startLine}-${report.endLine} ${report.name}${report.base ? '' : ' (new)'}: ${values.join(', ')}`;
 }
 
 function printJsonReport(
@@ -374,6 +457,7 @@ function printJsonReport(
       baseDuplicatedLineCount: input.baseDuplicatedLineCount,
       headDuplicatedLineCount: input.headDuplicatedLineCount,
       duplicationPartners: input.duplicationPartners,
+      functions: result.checkedFunctions.filter((fn) => fn.file === input.file),
     }));
   }
   writeStdout(JSON.stringify(report, undefined, 2) + '\n');

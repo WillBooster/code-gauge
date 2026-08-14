@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -160,10 +160,10 @@ describe('code-gauge diff --base', () => {
     writeFileSync(path.join(repoDir, 'src', 'copy.ts'), reportSource.replaceAll('reportTotal', 'copiedTotal'));
     const result = runCli(['diff', '--base', 'main'], repoDir);
     expect(result.status).toBe(1);
-    expect(result.stdout).toContain('src/copy.ts: duplicated lines increased 0 -> ');
+    expect(result.stdout).toMatch(/src\/copy\.ts:1-\d+: duplicated lines increased 0 -> /u);
     expect(result.stdout).toContain('Deduplicate against src/report.ts');
     // Only the new copy is flagged: report.ts itself did not change.
-    expect(result.stdout).not.toContain('src/report.ts: duplicated lines');
+    expect(result.stdout).not.toMatch(/src\/report\.ts:1-\d+: duplicated lines/u);
   });
 
   it('prints machine-readable JSON with --json', () => {
@@ -193,6 +193,65 @@ describe('code-gauge diff --base', () => {
     const result = runCli(['diff', '--base', 'main'], repoDir);
     expect(result.status).toBe(0);
     expect(result.stdout).toMatch(/^Regression gate passed/u);
+  });
+
+  it('tolerates scan errors outside the change set but reports them as warnings', () => {
+    symlinkSync('/nonexistent-code-gauge-target', path.join(repoDir, 'src', 'broken.link'));
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), baseCalc + 'export const extra = 1;\n');
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed/u);
+    expect(result.stderr).toContain('broken.link');
+  });
+
+  it('excludes git-ignored artifacts from the duplication universes', () => {
+    // The ignored twin exists in neither the base commit nor CI; if it entered the universes it
+    // would surface as a partner and could mask duplication deltas of tracked files.
+    writeFileSync(path.join(repoDir, '.gitignore'), 'src/generated.ts\n');
+    writeFileSync(path.join(repoDir, 'src', 'generated.ts'), reportSource.replaceAll('reportTotal', 'generatedTotal'));
+    writeFileSync(path.join(repoDir, 'src', 'copy.ts'), reportSource.replaceAll('reportTotal', 'copiedTotal'));
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('Deduplicate against src/report.ts');
+    expect(result.stdout).not.toContain('generated.ts');
+  });
+
+  it('gates code renamed from an excluded directory as new code', () => {
+    // test/ is excluded from scans, so the moved content was never measurable: it must meet the
+    // new-code thresholds instead of ratcheting against an out-of-scope base blob.
+    mkdirSync(path.join(repoDir, 'test'), { recursive: true });
+    writeFileSync(path.join(repoDir, 'test', 'decide.ts'), complexNewFile);
+    runGit(['add', '-A'], repoDir);
+    runGit(['commit', '-q', '-m', 'add test helper'], repoDir);
+    runGit(['mv', 'test/decide.ts', 'src/decide.ts'], repoDir);
+    const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+    // Discards the staged move and drops the helper commit, restoring the shared base state.
+    runGit(['reset', '-q', '--hard', 'HEAD~1'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('new function decide: cognitive complexity 24 exceeds the new-code limit 15');
+  });
+
+  it('prints per-function values with --full', () => {
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
+    const result = runCli(['diff', '--base', 'main', '--full'], repoDir);
+    expect(result.stdout).toContain('Checked functions (base -> head):');
+    expect(result.stdout).toMatch(
+      /src\/calc\.ts:1-\d+ total: cognitive 1 -> 12, NCSS 5 -> 15, nesting 1 -> 3, DepDegree \d+ -> \d+, volume [\d.]+ -> [\d.]+/u
+    );
+  });
+
+  it('accepts zero as a new-function threshold', () => {
+    writeFileSync(
+      path.join(repoDir, 'code-gauge.config.json'),
+      JSON.stringify({ gate: { newFunction: { maxNestingDepth: 0 } } })
+    );
+    writeFileSync(
+      path.join(repoDir, 'src', 'nested.ts'),
+      'export function pick(a: number): number {\n  if (a > 0) {\n    return 1;\n  }\n  return 0;\n}\n'
+    );
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('max nesting depth 1 exceeds the new-code limit 0');
   });
 
   it('rejects unknown gate settings loudly', () => {

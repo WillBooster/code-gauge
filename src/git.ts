@@ -92,6 +92,16 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
   }
 }
 
+/**
+ * Repository-relative paths git considers part of the project: tracked files plus untracked
+ * non-ignored ones. The diff gate restricts its duplication universes to these so local ignored
+ * artifacts (build output, generated copies) cannot skew base/head duplication counts.
+ */
+export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>> {
+  const output = await runGit(repoRoot, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']);
+  return new Set(output.split('\0').filter((path) => path !== ''));
+}
+
 /** The file's content at the given commit; the path is repository-relative with forward slashes. */
 export async function readFileAtRevision(repoRoot: string, revision: string, path: string): Promise<string> {
   return await runGit(repoRoot, ['cat-file', 'blob', `${revision}:${path}`]);

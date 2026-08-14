@@ -1,4 +1,5 @@
 import Parser from 'tree-sitter';
+import { measureDepDegree } from './depDegree.js';
 import {
   collectCrossFileDuplicateCandidates,
   defaultDuplicationOptions,
@@ -385,6 +386,7 @@ function collectFunctionMetrics(
   code: string
 ): FunctionMetrics[] {
   const bodyMetricsByNodeId = measureFunctionBodyMetrics(root, language);
+  const { functionNodes } = getComplexityNodeSets(language);
   return functions.map((node) => {
     const bodyMetrics = bodyMetricsByNodeId.get(node.id);
     if (!bodyMetrics) {
@@ -401,7 +403,7 @@ function collectFunctionMetrics(
       ncss: bodyMetrics.ncss,
       parameterCount: countParameters(node),
       halstead: measureHalstead(node, code),
-      depDegree: measureDepDegree(node),
+      depDegree: measureDepDegree(node, (nested) => isFunctionBoundary(nested, functionNodes)),
     };
   });
 }
@@ -1257,171 +1259,6 @@ function collectTokenSymbols(node: Parser.SyntaxNode, symbols: number[], idIndex
   // Remaining operand leaves are literals, normalized by kind; everything else (keywords,
   // operators, punctuation) is kept verbatim.
   symbols.push(hashText(operandNodeTypes.has(node.type) ? node.type : node.text));
-}
-
-/** Leaf node types treated as variable references by the def-use approximation. */
-const variableNodeTypes = new Set(['identifier', 'instance_variable', 'class_variable', 'global_variable']);
-
-/** Tokens directly after a variable that write it without reading it (`x = 1`, `x := 1`). */
-const pureAssignmentOperators = new Set(['=', ':=']);
-
-/** Tokens directly after a variable that read then write it (`x += 1` depends on x's definition). */
-const compoundAssignmentOperators = new Set([
-  '+=',
-  '-=',
-  '*=',
-  '/=',
-  '%=',
-  '**=',
-  '//=',
-  '<<=',
-  '>>=',
-  '>>>=',
-  '&=',
-  '|=',
-  '^=',
-  '&&=',
-  '||=',
-  '??=',
-  '@=',
-  '&^=',
-]);
-
-/**
- * Parent type -> field under which an identifier is a definition target even when a type
- * annotation separates it from the `=` token (`const x: T = ...`, `let x: T = ...`,
- * `x: int = ...`, `var x T = ...`), plus loop bindings that carry no assignment token at all.
- */
-const definitionFieldByParentType = new Map([
-  ['variable_declarator', 'name'],
-  ['let_declaration', 'pattern'],
-  ['assignment', 'left'],
-  ['var_spec', 'name'],
-  ['init_declarator', 'declarator'],
-  ['enhanced_for_statement', 'name'],
-  ['for_statement', 'left'],
-  ['for_in_statement', 'left'],
-  ['for_in_clause', 'left'],
-  ['for_range_loop', 'declarator'],
-  ['for_expression', 'pattern'],
-]);
-
-/** Multi-target lists (`a, b = ...`, `a, b := ...`) whose holder's `left` field marks definitions. */
-const definitionListNodeTypes = new Set(['expression_list', 'pattern_list', 'tuple_pattern']);
-const definitionListHolderTypes = new Set([
-  'assignment',
-  'assignment_statement',
-  'short_var_declaration',
-  'for_statement',
-  'for_in_clause',
-  'range_clause',
-]);
-
-/** Parameter-position fields that annotate or initialize rather than bind (`x: T`, `x = default`). */
-const nonBindingParameterFields = new Set(['type', 'value']);
-
-/**
- * Approximate def-use pairs of the function's subtree (see FunctionMetrics.depDegree): the number
- * of variable reads with a preceding same-name definition in the same function. Definitions are
- * recognized token-wise (a variable directly followed by an assignment operator), structurally
- * (declarator/assignment/loop-binding fields, so annotated declarations count), and positionally
- * (parameters). Reads through destructuring patterns and member accesses are not modeled; the
- * approximation only needs to be stable, since the regression gate compares deltas.
- */
-function measureDepDegree(functionNode: Parser.SyntaxNode): number {
-  const leaves: Parser.SyntaxNode[] = [];
-  collectNonCommentLeaves(functionNode, leaves);
-  const defined = new Set<string>();
-  let pairs = 0;
-  for (const [index, leaf] of leaves.entries()) {
-    if (!variableNodeTypes.has(leaf.type)) {
-      continue;
-    }
-    const name = leaf.text;
-    const nextText = leaves[index + 1]?.text;
-    if (nextText !== undefined && compoundAssignmentOperators.has(nextText)) {
-      if (defined.has(name)) {
-        pairs += 1;
-      }
-      defined.add(name);
-      continue;
-    }
-    if (
-      (nextText !== undefined && pureAssignmentOperators.has(nextText)) ||
-      isStructuralDefinition(leaf) ||
-      isParameterDefinition(leaf)
-    ) {
-      defined.add(name);
-      continue;
-    }
-    if (defined.has(name)) {
-      pairs += 1;
-    }
-  }
-  return pairs;
-}
-
-function collectNonCommentLeaves(node: Parser.SyntaxNode, leaves: Parser.SyntaxNode[]): void {
-  if (node.type === 'comment' || node.type === 'line_comment' || node.type === 'block_comment') {
-    return;
-  }
-  if (node.childCount === 0) {
-    leaves.push(node);
-    return;
-  }
-  for (const child of node.children) {
-    collectNonCommentLeaves(child, leaves);
-  }
-}
-
-function isStructuralDefinition(node: Parser.SyntaxNode): boolean {
-  const parent = node.parent;
-  if (!parent) {
-    return false;
-  }
-  const definitionField = definitionFieldByParentType.get(parent.type);
-  if (definitionField !== undefined && definitionField === fieldNameInParent(node, parent)) {
-    return true;
-  }
-  if (!definitionListNodeTypes.has(parent.type)) {
-    return false;
-  }
-  const holder = parent.parent;
-  return holder !== null && definitionListHolderTypes.has(holder.type) && fieldNameInParent(parent, holder) === 'left';
-}
-
-/**
- * Whether the identifier binds a parameter: its parent (or grandparent, for wrapped declarators
- * like C pointer parameters) is a parameter-ish node, or it directly occupies a parameter field
- * (bare arrow-function/lambda parameters, catch-clause bindings). Type annotations and default
- * values inside parameter nodes bind nothing.
- */
-function isParameterDefinition(node: Parser.SyntaxNode): boolean {
-  let current = node;
-  for (let depth = 0; depth < 2; depth += 1) {
-    const parent = current.parent;
-    if (!parent) {
-      return false;
-    }
-    const field = fieldNameInParent(current, parent);
-    if (field !== undefined && nonBindingParameterFields.has(field)) {
-      return false;
-    }
-    if (parent.type.includes('parameter') || (depth === 0 && (field?.includes('parameter') ?? false))) {
-      return true;
-    }
-    current = parent;
-  }
-  return false;
-}
-
-function fieldNameInParent(node: Parser.SyntaxNode, parent: Parser.SyntaxNode): string | undefined {
-  for (let index = 0; index < parent.childCount; index += 1) {
-    if (parent.child(index)?.id === node.id) {
-      return parent.fieldNameForChild(index) ?? undefined;
-    }
-  }
-  return undefined;
 }
 
 function findFunctionName(node: Parser.SyntaxNode): string | undefined {

@@ -44,8 +44,9 @@ export const defaultGateOptions: GateOptions = {
   // nesting saturates (Peitek et al. 2021); 60 matches PMD's NcssCount method default.
   newFunction: { maxCognitiveComplexity: 15, maxNcss: 60, maxNestingDepth: 4 },
   // The per-metric allowances are calibrated to admit roughly the same edit: ~5 added statements
-  // (ncss 5 ~ depDegree 10 ~ Halstead volume 150), so one ratchet cannot block an addition the
-  // others deliberately allow.
+  // (ncss 5 ~ depDegree 10 ~ Halstead volume 150; the volume allowance additionally scales with
+  // the base value, see ratchetMetrics), so one ratchet cannot block an addition the others
+  // deliberately allow.
   tolerance: {
     cognitiveComplexity: 2,
     ncss: 5,
@@ -92,17 +93,40 @@ export interface GateViolation {
   message: string;
 }
 
+/** The gated per-function values of one checked (matched or new) function, for `--full` output. */
+export interface CheckedFunctionReport {
+  /** The head file (a cross-file move is reported where the function now lives). */
+  file: string;
+  name: string;
+  startLine: number;
+  endLine: number;
+  /** Absent for new functions. */
+  base?: GateFunctionValues;
+  head: GateFunctionValues;
+}
+
+export interface GateFunctionValues {
+  cognitiveComplexity: number;
+  ncss: number;
+  nestingDepth: number;
+  depDegree: number;
+  halsteadVolume: number;
+}
+
 export interface GateResult {
   violations: GateViolation[];
   checkedFileCount: number;
   checkedFunctionCount: number;
   newFunctionCount: number;
+  /** Every checked function with its gated values, ordered by file and line. */
+  checkedFunctions: CheckedFunctionReport[];
 }
 
 interface RatchetMetric {
   metric: string;
   value: (fn: FunctionMetrics) => number;
-  tolerance: (tolerances: GateTolerances) => number;
+  /** The growth allowed on top of the base value before the ratchet fires. */
+  allowance: (tolerances: GateTolerances, baseValue: number) => number;
   remediation: string;
   format: (value: number) => string;
 }
@@ -119,35 +143,38 @@ const ratchetMetrics: RatchetMetric[] = [
   {
     metric: 'cognitive complexity',
     value: (fn) => fn.cognitiveComplexity,
-    tolerance: (tolerances) => tolerances.cognitiveComplexity,
+    allowance: (tolerances) => tolerances.cognitiveComplexity,
     remediation: 'Simplify the added branching or split the function.',
     format: formatInteger,
   },
   {
     metric: 'NCSS',
     value: (fn) => fn.ncss,
-    tolerance: (tolerances) => tolerances.ncss,
+    allowance: (tolerances) => tolerances.ncss,
     remediation: 'Extract the added statements into helper functions or remove them.',
     format: formatInteger,
   },
   {
     metric: 'max nesting depth',
     value: (fn) => fn.nestingDepth,
-    tolerance: (tolerances) => tolerances.nestingDepth,
+    allowance: (tolerances) => tolerances.nestingDepth,
     remediation: 'Flatten the added nesting with early returns or extracted helpers.',
     format: formatInteger,
   },
   {
     metric: 'DepDegree',
     value: (fn) => fn.depDegree,
-    tolerance: (tolerances) => tolerances.depDegree,
+    allowance: (tolerances) => tolerances.depDegree,
     remediation: 'Reduce how many earlier definitions the code reads, e.g. by splitting the data flow.',
     format: formatInteger,
   },
   {
     metric: 'Halstead volume',
     value: (fn) => fn.halstead.volume,
-    tolerance: (tolerances) => tolerances.halsteadVolume,
+    // Volume grows as length * log2(vocabulary), so a flat allowance that admits ~5 statements in
+    // a small function admits barely one in a large-vocabulary function; the relative term keeps
+    // the ~5-statement calibration at every function size.
+    allowance: (tolerances, baseValue) => Math.max(tolerances.halsteadVolume, baseValue * 0.25),
     remediation: 'Shrink the function: fewer distinct names and operations.',
     format: formatFloat,
   },
@@ -187,141 +214,252 @@ const newFunctionMetrics: NewFunctionMetric[] = [
  * consuming agent almost no tokens.
  */
 export function evaluateRegressionGate(files: GateFileInput[], options: GateOptions): GateResult {
+  const matching = matchAllFunctions(files, options.matchSimilarityPercent);
   const violations: GateViolation[] = [];
-  let checkedFunctionCount = 0;
+  const checkedFunctions: CheckedFunctionReport[] = [];
   let newFunctionCount = 0;
 
-  for (const file of files) {
-    const matching = matchFunctions(file, options.matchSimilarityPercent);
-    checkedFunctionCount += matching.pairs.length + matching.newFunctions.length;
-    newFunctionCount += matching.newFunctions.length;
+  for (const pair of matching.pairs) {
+    const file = (files[pair.headFileIndex] as GateFileInput).file;
+    violations.push(...checkRatchets(file, pair.base, pair.head, options.tolerance));
+    checkedFunctions.push(toFunctionReport(file, pair.head, pair.base));
+  }
 
-    for (const pair of matching.pairs) {
-      violations.push(...checkRatchets(file.file, pair.base, pair.head, options.tolerance));
-    }
-    for (const fn of matching.newFunctions) {
+  for (const [fileIndex, file] of files.entries()) {
+    const headFunctions = file.headMetrics?.functions ?? [];
+    const headMatched = matching.headMatched[fileIndex] as boolean[];
+    for (const [functionIndex, fn] of headFunctions.entries()) {
+      if (headMatched[functionIndex]) {
+        continue;
+      }
+      newFunctionCount += 1;
       violations.push(...checkNewFunction(file.file, fn, options.newFunction));
+      checkedFunctions.push(toFunctionReport(file.file, fn));
     }
-    violations.push(...checkFileBackstops(file, matching.removedFunctionCount, violations, options));
+    // Only a NAMED base function disappearing arms the backstops: split-gaming necessarily
+    // removes the named original, while anonymous lambdas get rewritten (and lose their fragile
+    // token identity) in everyday edits that reset nothing.
+    const baseFunctions = file.baseMetrics?.functions ?? [];
+    const removedFunctionCount = (matching.baseMatched[fileIndex] as boolean[]).filter(
+      (matched, functionIndex) => !matched && baseFunctions[functionIndex]?.name !== undefined
+    ).length;
+    violations.push(...checkFileBackstops(file, removedFunctionCount, violations, options));
     violations.push(...checkDuplication(file, options.tolerance));
   }
 
   violations.sort((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);
-  return { violations, checkedFileCount: files.length, checkedFunctionCount, newFunctionCount };
+  checkedFunctions.sort((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);
+  return {
+    violations,
+    checkedFileCount: files.length,
+    checkedFunctionCount: matching.pairs.length + newFunctionCount,
+    newFunctionCount,
+    checkedFunctions,
+  };
+}
+
+function toFunctionReport(file: string, head: FunctionMetrics, base?: FunctionMetrics): CheckedFunctionReport {
+  return {
+    file,
+    name: head.name ?? '<anonymous>',
+    startLine: head.startLine,
+    endLine: head.endLine,
+    base: base ? toFunctionValues(base) : undefined,
+    head: toFunctionValues(head),
+  };
+}
+
+function toFunctionValues(fn: FunctionMetrics): GateFunctionValues {
+  return {
+    cognitiveComplexity: fn.cognitiveComplexity,
+    ncss: fn.ncss,
+    nestingDepth: fn.nestingDepth,
+    depDegree: fn.depDegree,
+    halsteadVolume: fn.halstead.volume,
+  };
+}
+
+/** One side of a match candidate: a function of one changed file plus its token sequence. */
+interface IndexedFunction {
+  fileIndex: number;
+  functionIndex: number;
+  fn: FunctionMetrics;
+  tokens: Int32Array | undefined;
+}
+
+interface MatchedPair {
+  base: FunctionMetrics;
+  head: FunctionMetrics;
+  headFileIndex: number;
 }
 
 interface FunctionMatching {
-  pairs: { base: FunctionMetrics; head: FunctionMetrics }[];
-  newFunctions: FunctionMetrics[];
-  removedFunctionCount: number;
+  pairs: MatchedPair[];
+  /** Per file, per function index: whether it found a counterpart (anywhere in the change set). */
+  baseMatched: boolean[][];
+  headMatched: boolean[][];
+}
+
+interface SimilarityCandidate {
+  similarity: number;
+  basePosition: number;
+  headPosition: number;
 }
 
 /**
- * Matches head functions to base functions: first by name + arity, then by name alone (signature
- * changes), and finally by normalized-token LCS similarity (renames/moves, reusing the near-miss
- * clone machinery), so refactorings don't appear as delete+add and hit the new-code thresholds.
+ * Matches head functions to base functions: within each file first by name + arity, then by name
+ * alone (signature changes) — resolving ambiguous same-name groups by token similarity instead of
+ * list position, so an inserted overload cannot shift the pairing — and finally by
+ * normalized-token LCS similarity across ALL changed files (renames and moves between files,
+ * reusing the near-miss clone machinery), so refactorings don't appear as delete+add and hit the
+ * new-code thresholds.
  */
-function matchFunctions(file: GateFileInput, matchSimilarityPercent: number): FunctionMatching {
-  const baseFunctions = file.baseMetrics?.functions ?? [];
-  const headFunctions = file.headMetrics?.functions ?? [];
-  const baseMatched = baseFunctions.map(() => false);
-  const headMatched = headFunctions.map(() => false);
-  const pairs: FunctionMatching['pairs'] = [];
+function matchAllFunctions(files: GateFileInput[], matchSimilarityPercent: number): FunctionMatching {
+  const baseMatched = files.map((file) => (file.baseMetrics?.functions ?? []).map(() => false));
+  const headMatched = files.map((file) => (file.headMetrics?.functions ?? []).map(() => false));
+  const pairs: MatchedPair[] = [];
 
-  const pairByKey = (key: (fn: FunctionMetrics) => string | undefined): void => {
-    const baseByKey = groupIndexesByKey(baseFunctions, baseMatched, key);
-    const headByKey = groupIndexesByKey(headFunctions, headMatched, key);
-    for (const [groupKey, baseIndexes] of baseByKey) {
-      const headIndexes = headByKey.get(groupKey) ?? [];
-      for (let position = 0; position < Math.min(baseIndexes.length, headIndexes.length); position += 1) {
-        const baseIndex = baseIndexes[position] as number;
-        const headIndex = headIndexes[position] as number;
-        baseMatched[baseIndex] = true;
-        headMatched[headIndex] = true;
-        pairs.push({
-          base: baseFunctions[baseIndex] as FunctionMetrics,
-          head: headFunctions[headIndex] as FunctionMetrics,
-        });
+  for (const fileIndex of files.keys()) {
+    const pairByKey = (key: (fn: FunctionMetrics) => string | undefined): void => {
+      const baseByKey = groupByKey(collectUnmatched(files, baseMatched, 'base', fileIndex), key);
+      const headByKey = groupByKey(collectUnmatched(files, headMatched, 'head', fileIndex), key);
+      for (const [groupKey, baseGroup] of baseByKey) {
+        pairGroup(baseGroup, headByKey.get(groupKey) ?? [], baseMatched, headMatched, pairs);
       }
-    }
-  };
+    };
+    pairByKey((fn) => (fn.name === undefined ? undefined : `${fn.name}\u0000${fn.parameterCount}`));
+    pairByKey((fn) => fn.name);
+  }
 
-  pairByKey((fn) => (fn.name === undefined ? undefined : `${fn.name} ${fn.parameterCount}`));
-  pairByKey((fn) => fn.name);
-  pairBySimilarity(file, baseFunctions, headFunctions, baseMatched, headMatched, pairs, matchSimilarityPercent);
-
-  return {
-    pairs,
-    newFunctions: headFunctions.filter((_, index) => !headMatched[index]),
-    removedFunctionCount: baseMatched.filter((matched) => !matched).length,
-  };
+  pairAcrossChangeSet(files, baseMatched, headMatched, pairs, matchSimilarityPercent);
+  return { pairs, baseMatched, headMatched };
 }
 
-function groupIndexesByKey(
-  functions: FunctionMetrics[],
-  matched: boolean[],
-  key: (fn: FunctionMetrics) => string | undefined
-): Map<string, number[]> {
-  const indexesByKey = new Map<string, number[]>();
-  for (const [index, fn] of functions.entries()) {
-    if (matched[index]) {
+/** Unmatched functions of one file (or of every file when onlyFileIndex is undefined). */
+function collectUnmatched(
+  files: GateFileInput[],
+  matchedByFile: boolean[][],
+  side: 'base' | 'head',
+  onlyFileIndex?: number
+): IndexedFunction[] {
+  const unmatched: IndexedFunction[] = [];
+  for (const [fileIndex, file] of files.entries()) {
+    if (onlyFileIndex !== undefined && fileIndex !== onlyFileIndex) {
       continue;
     }
-    const groupKey = key(fn);
+    const matched = matchedByFile[fileIndex] as boolean[];
+    const metrics = side === 'base' ? file.baseMetrics : file.headMetrics;
+    const tokens = side === 'base' ? file.baseFunctionTokens : file.headFunctionTokens;
+    for (const [functionIndex, fn] of (metrics?.functions ?? []).entries()) {
+      if (!matched[functionIndex]) {
+        unmatched.push({ fileIndex, functionIndex, fn, tokens: tokens?.[functionIndex] });
+      }
+    }
+  }
+  return unmatched;
+}
+
+function groupByKey(
+  functions: IndexedFunction[],
+  key: (fn: FunctionMetrics) => string | undefined
+): Map<string, IndexedFunction[]> {
+  const groups = new Map<string, IndexedFunction[]>();
+  for (const indexed of functions) {
+    const groupKey = key(indexed.fn);
     if (groupKey === undefined) {
       continue;
     }
-    const indexes = indexesByKey.get(groupKey) ?? [];
-    indexes.push(index);
-    indexesByKey.set(groupKey, indexes);
+    const group = groups.get(groupKey) ?? [];
+    group.push(indexed);
+    groups.set(groupKey, group);
   }
-  return indexesByKey;
+  return groups;
 }
 
-/** Bounds the quadratic similarity pass; beyond this, leftovers gate as new/removed functions. */
+/** Bounds the quadratic similarity passes; beyond this, leftovers gate as new/removed functions. */
 const maxSimilarityComparisons = 10_000;
 
-function pairBySimilarity(
-  file: GateFileInput,
-  baseFunctions: FunctionMetrics[],
-  headFunctions: FunctionMetrics[],
-  baseMatched: boolean[],
-  headMatched: boolean[],
-  pairs: FunctionMatching['pairs'],
+/**
+ * Pairs one key group. An unambiguous 1x1 group matches directly; a larger group (same-name
+ * methods of different classes, overload sets) is assigned best-similarity-first so an inserted
+ * function cannot shift the pairing of the others. The names already match, so any pairing is
+ * acceptable: similarity only ORDERS the assignment (no threshold), and without token sequences
+ * (or in an oversized group) the stable tie-break reproduces positional order.
+ */
+function pairGroup(
+  baseGroup: IndexedFunction[],
+  headGroup: IndexedFunction[],
+  baseMatched: boolean[][],
+  headMatched: boolean[][],
+  pairs: MatchedPair[]
+): void {
+  const ambiguous =
+    baseGroup.length + headGroup.length > 2 && baseGroup.length * headGroup.length <= maxSimilarityComparisons;
+  const candidates: SimilarityCandidate[] = [];
+  for (const [basePosition, base] of baseGroup.entries()) {
+    for (const [headPosition, head] of headGroup.entries()) {
+      candidates.push({
+        similarity: ambiguous ? tokenSimilarityPercent(base.tokens, head.tokens, 0) : 0,
+        basePosition,
+        headPosition,
+      });
+    }
+  }
+  takeGreedyMatches(candidates, baseGroup, headGroup, baseMatched, headMatched, pairs);
+}
+
+/** Cross-file (and remaining within-file) similarity matching over every unmatched function. */
+function pairAcrossChangeSet(
+  files: GateFileInput[],
+  baseMatched: boolean[][],
+  headMatched: boolean[][],
+  pairs: MatchedPair[],
   matchSimilarityPercent: number
 ): void {
-  const baseTokens = file.baseFunctionTokens;
-  const headTokens = file.headFunctionTokens;
-  if (!baseTokens || !headTokens) {
-    return;
-  }
-  const unmatchedBase = baseFunctions.flatMap((_, index) => (baseMatched[index] ? [] : [index]));
-  const unmatchedHead = headFunctions.flatMap((_, index) => (headMatched[index] ? [] : [index]));
+  const unmatchedBase = collectUnmatched(files, baseMatched, 'base');
+  const unmatchedHead = collectUnmatched(files, headMatched, 'head');
   if (unmatchedBase.length * unmatchedHead.length > maxSimilarityComparisons) {
     return;
   }
 
-  const candidates = unmatchedBase.flatMap((baseIndex) =>
-    unmatchedHead.flatMap((headIndex) => {
-      const similarity = tokenSimilarityPercent(baseTokens[baseIndex], headTokens[headIndex], matchSimilarityPercent);
-      return similarity >= matchSimilarityPercent ? [{ similarity, baseIndex, headIndex }] : [];
-    })
-  );
+  const candidates: SimilarityCandidate[] = [];
+  for (const [basePosition, base] of unmatchedBase.entries()) {
+    for (const [headPosition, head] of unmatchedHead.entries()) {
+      const similarity = tokenSimilarityPercent(base.tokens, head.tokens, matchSimilarityPercent);
+      if (similarity >= matchSimilarityPercent) {
+        candidates.push({ similarity, basePosition, headPosition });
+      }
+    }
+  }
+  takeGreedyMatches(candidates, unmatchedBase, unmatchedHead, baseMatched, headMatched, pairs);
+}
 
+/** Greedily takes the best-similarity candidates first (order tie-breaks keep this deterministic). */
+function takeGreedyMatches(
+  candidates: SimilarityCandidate[],
+  baseGroup: IndexedFunction[],
+  headGroup: IndexedFunction[],
+  baseMatched: boolean[][],
+  headMatched: boolean[][],
+  pairs: MatchedPair[]
+): void {
   candidates.sort(
     (left, right) =>
-      right.similarity - left.similarity || left.baseIndex - right.baseIndex || left.headIndex - right.headIndex
+      right.similarity - left.similarity ||
+      left.basePosition - right.basePosition ||
+      left.headPosition - right.headPosition
   );
   for (const candidate of candidates) {
-    if (baseMatched[candidate.baseIndex] || headMatched[candidate.headIndex]) {
+    const base = baseGroup[candidate.basePosition] as IndexedFunction;
+    const head = headGroup[candidate.headPosition] as IndexedFunction;
+    const baseFlags = baseMatched[base.fileIndex] as boolean[];
+    const headFlags = headMatched[head.fileIndex] as boolean[];
+    if (baseFlags[base.functionIndex] || headFlags[head.functionIndex]) {
       continue;
     }
-    baseMatched[candidate.baseIndex] = true;
-    headMatched[candidate.headIndex] = true;
-    pairs.push({
-      base: baseFunctions[candidate.baseIndex] as FunctionMetrics,
-      head: headFunctions[candidate.headIndex] as FunctionMetrics,
-    });
+    baseFlags[base.functionIndex] = true;
+    headFlags[head.functionIndex] = true;
+    pairs.push({ base: base.fn, head: head.fn, headFileIndex: head.fileIndex });
   }
 }
 
@@ -352,7 +490,7 @@ function checkRatchets(
   for (const ratchet of ratchetMetrics) {
     const baseValue = ratchet.value(base);
     const headValue = ratchet.value(head);
-    const allowedValue = baseValue + ratchet.tolerance(tolerances);
+    const allowedValue = baseValue + ratchet.allowance(tolerances, baseValue);
     if (headValue > allowedValue) {
       const name = head.name ?? '<anonymous>';
       violations.push({
@@ -431,20 +569,23 @@ function checkFileBackstops(
   const allowedMaxCognitive = baseMetrics.maxCognitiveComplexity + tolerances.cognitiveComplexity;
   if (!cognitiveAlreadyReported && headMetrics.maxCognitiveComplexity > allowedMaxCognitive) {
     const worst = findMostComplexFunction(headMetrics.functions);
+    const startLine = worst?.startLine ?? 1;
+    const endLine = worst?.endLine ?? headMetrics.lines.total;
     violations.push({
       gate: 'file-regression',
       metric: 'file max cognitive complexity',
       file: file.file,
       functionName: worst?.name ?? undefined,
-      startLine: worst?.startLine ?? 1,
-      endLine: worst?.endLine ?? headMetrics.lines.total,
+      startLine,
+      endLine,
       baseValue: baseMetrics.maxCognitiveComplexity,
       headValue: headMetrics.maxCognitiveComplexity,
       allowedValue: allowedMaxCognitive,
       message:
-        `${file.file}: the file's max cognitive complexity worsened ${baseMetrics.maxCognitiveComplexity} -> ` +
-        `${headMetrics.maxCognitiveComplexity} (allowed <= ${allowedMaxCognitive}). Simplify or split the most ` +
-        `complex function${worst ? ` (${worst.name ?? '<anonymous>'} at L${worst.startLine}-${worst.endLine})` : ''}.`,
+        `${file.file}:${startLine}-${endLine}: the file's max cognitive complexity worsened ` +
+        `${baseMetrics.maxCognitiveComplexity} -> ${headMetrics.maxCognitiveComplexity} ` +
+        `(allowed <= ${allowedMaxCognitive}). Simplify or split the most complex ` +
+        `function${worst ? ` (${worst.name ?? '<anonymous>'})` : ''}.`,
     });
   }
 
@@ -460,7 +601,7 @@ function checkFileBackstops(
       headValue: headMetrics.ncssCount,
       allowedValue: allowedFileNcss,
       message:
-        `${file.file}: functions were removed or split while the file grew from NCSS ` +
+        `${file.file}:1-${headMetrics.lines.total}: functions were removed or split while the file grew from NCSS ` +
         `${baseMetrics.ncssCount} to ${headMetrics.ncssCount} (allowed <= ${allowedFileNcss}). ` +
         `Remove the added statements or move genuinely new code into its own module.`,
     });
@@ -490,18 +631,19 @@ function checkDuplication(file: GateFileInput, tolerances: GateTolerances): Gate
     return [];
   }
   const partners = file.duplicationPartners.slice(0, 3).join(', ');
+  const endLine = file.headMetrics?.lines.total ?? 1;
   return [
     {
       gate: 'duplication',
       metric: 'duplicated lines',
       file: file.file,
       startLine: 1,
-      endLine: file.headMetrics?.lines.total ?? 1,
+      endLine,
       baseValue: file.baseDuplicatedLineCount,
       headValue: file.headDuplicatedLineCount,
       allowedValue,
       message:
-        `${file.file}: duplicated lines increased ${file.baseDuplicatedLineCount} -> ` +
+        `${file.file}:1-${endLine}: duplicated lines increased ${file.baseDuplicatedLineCount} -> ` +
         `${file.headDuplicatedLineCount} (allowed <= ${allowedValue}). Deduplicate` +
         `${partners ? ` against ${partners}` : ' the repeated code'} by extracting a shared helper.`,
     },

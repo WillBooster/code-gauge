@@ -96,8 +96,12 @@ normalized-token LCS similarity, so renames and moves don't appear as delete+add
   worsening behind the laxer new-code thresholds, so when base functions disappear from a file its
   max cognitive complexity and total NCSS ratchet too; purely additive changes stay ungated.
 
-`--full` additionally prints the base → head aggregates of every checked file; `--json` prints a
+`--full` additionally prints the base → head values of every checked function; `--json` prints a
 machine-readable report. The duplication flags and `--include-tests` work like the ranking command.
+The duplication universes contain only git-visible files (tracked or untracked non-ignored), so
+local ignored artifacts cannot skew the counts, and the Halstead volume allowance scales with the
+base value (25%, floored at the configured tolerance) so it admits the same ~5-statement edit at
+every function size.
 
 ## Configuration
 
