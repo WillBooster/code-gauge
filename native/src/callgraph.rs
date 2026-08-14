@@ -17,7 +17,6 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) ->
     let mut fan_out_by_index: HashMap<usize, usize> = HashMap::new();
     let mut graph: IndexMap<usize, IndexSet<usize>> = IndexMap::new();
     let mut call_count: u64 = 0;
-    let mut internal_call_count: usize = 0;
     let mut all_callees: HashSet<&str> = HashSet::new();
 
     for analysis in analyses {
@@ -35,9 +34,6 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) ->
                 language_name,
             ) {
                 resolved_indexes.insert(resolved);
-                // Call occurrences, not unique edges: two calls to the same callee count twice
-                // here while internal_edge_count still counts them once (issue #22).
-                internal_call_count += 1;
             }
         }
 
@@ -56,7 +52,8 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) ->
         metrics: CallGraphMetrics {
             call_count,
             unique_callee_count: all_callees.len(),
-            internal_call_count,
+            // Occurrence-level internal call counts were removed as redundant/unactionable
+            // (issue #22); internal_edge_count reports unique caller→callee edges.
             internal_edge_count,
             recursive_function_count: recursive_indexes.len(),
             max_fan_in: fan_in_by_index.values().copied().max().unwrap_or(0),

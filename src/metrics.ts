@@ -665,7 +665,6 @@ function measureCallGraph(
   const fanOutByIndex = new Map<number, number>();
   const graph = new Map<number, Set<number>>();
   let callCount = 0;
-  let internalCallCount = 0;
   const allCallees = new Set<string>();
 
   for (const analysis of analyses) {
@@ -679,9 +678,6 @@ function measureCallGraph(
       const resolved = resolveCallSite(site, analysis.scopeName, candidatesByName.get(site.name), languageName);
       if (resolved !== undefined) {
         resolvedIndexes.add(resolved);
-        // Call occurrences, not unique edges: two calls to the same callee count twice here while
-        // internalEdgeCount still counts them once (issue #22).
-        internalCallCount += 1;
       }
     }
 
@@ -701,7 +697,8 @@ function measureCallGraph(
     metrics: {
       callCount,
       uniqueCalleeCount: allCallees.size,
-      internalCallCount,
+      // Occurrence-level internal call counts were removed as redundant/unactionable (issue #22);
+      // internalEdgeCount reports unique caller→callee edges.
       internalEdgeCount: sum([...graph.values()].map((callees) => callees.size)),
       recursiveFunctionCount: recursiveIndexes.size,
       maxFanIn: maxMapValue(fanInByIndex),

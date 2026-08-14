@@ -5,7 +5,6 @@ exports[`measureCode: golden edge cases > matches the golden metrics for empty i
   "bytes": 0,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -97,7 +96,6 @@ exports[`measureCode: golden edge cases > matches the golden metrics for whitesp
   "bytes": 7,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -191,7 +189,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 594,
   "callGraph": {
     "callCount": 8,
-    "internalCallCount": 4,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 3,
@@ -510,7 +507,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 228,
   "callGraph": {
     "callCount": 4,
-    "internalCallCount": 4,
     "internalEdgeCount": 3,
     "maxCallDepth": 2,
     "maxFanIn": 2,
@@ -673,7 +669,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 233,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -790,7 +785,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 320,
   "callGraph": {
     "callCount": 3,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -917,7 +911,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 599,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -1068,7 +1061,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1346,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -1246,7 +1238,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1394,
   "callGraph": {
     "callCount": 2,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -1425,7 +1416,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1123,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -1622,7 +1612,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1340,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -1804,7 +1793,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1133,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -2001,7 +1989,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1435,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -2208,7 +2195,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1102,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -2405,7 +2391,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1023,
   "callGraph": {
     "callCount": 2,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -2638,7 +2623,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1280,
   "callGraph": {
     "callCount": 4,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -2835,7 +2819,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1295,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -3032,7 +3015,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1655,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -3244,7 +3226,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 134,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -3361,7 +3342,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 180,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -3478,7 +3458,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 35,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -3589,7 +3568,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 40,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -3686,7 +3664,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 80,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -3844,7 +3821,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 130,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -3961,7 +3937,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 356,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -4129,7 +4104,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 50,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -4221,7 +4195,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 139,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -4361,7 +4334,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 169,
   "callGraph": {
     "callCount": 3,
-    "internalCallCount": 3,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -4555,7 +4527,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 5248,
   "callGraph": {
     "callCount": 72,
-    "internalCallCount": 10,
     "internalEdgeCount": 10,
     "maxCallDepth": 3,
     "maxFanIn": 3,
@@ -4890,7 +4861,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 945,
   "callGraph": {
     "callCount": 2,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -5097,7 +5067,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 919,
   "callGraph": {
     "callCount": 3,
-    "internalCallCount": 1,
     "internalEdgeCount": 1,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -5304,7 +5273,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 653,
   "callGraph": {
     "callCount": 6,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -5529,7 +5497,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1005,
   "callGraph": {
     "callCount": 1,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -5754,7 +5721,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 791,
   "callGraph": {
     "callCount": 5,
-    "internalCallCount": 1,
     "internalEdgeCount": 1,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -5979,7 +5945,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1513,
   "callGraph": {
     "callCount": 7,
-    "internalCallCount": 5,
     "internalEdgeCount": 4,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -6237,7 +6202,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1837,
   "callGraph": {
     "callCount": 16,
-    "internalCallCount": 10,
     "internalEdgeCount": 6,
     "maxCallDepth": 2,
     "maxFanIn": 2,
@@ -6584,7 +6548,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1416,
   "callGraph": {
     "callCount": 9,
-    "internalCallCount": 4,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -6886,7 +6849,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 2216,
   "callGraph": {
     "callCount": 26,
-    "internalCallCount": 3,
     "internalEdgeCount": 2,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -7171,7 +7133,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1406,
   "callGraph": {
     "callCount": 19,
-    "internalCallCount": 6,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -7417,7 +7378,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 872,
   "callGraph": {
     "callCount": 5,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -7619,7 +7579,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 2012,
   "callGraph": {
     "callCount": 15,
-    "internalCallCount": 2,
     "internalEdgeCount": 2,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -7892,7 +7851,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1491,
   "callGraph": {
     "callCount": 27,
-    "internalCallCount": 11,
     "internalEdgeCount": 5,
     "maxCallDepth": 2,
     "maxFanIn": 2,
@@ -8242,7 +8200,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 2177,
   "callGraph": {
     "callCount": 26,
-    "internalCallCount": 6,
     "internalEdgeCount": 3,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -8520,7 +8477,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 2613,
   "callGraph": {
     "callCount": 13,
-    "internalCallCount": 6,
     "internalEdgeCount": 4,
     "maxCallDepth": 2,
     "maxFanIn": 2,
@@ -8811,7 +8767,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 1322,
   "callGraph": {
     "callCount": 8,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -9095,7 +9050,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 81,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -9212,7 +9166,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 120,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -9329,7 +9282,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 99,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -9446,7 +9398,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 124,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -9563,7 +9514,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 157,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -9685,7 +9635,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 101,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -9802,7 +9751,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 73,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -9919,7 +9867,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 66,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -10036,7 +9983,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 88,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -10153,7 +10099,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 94,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -10270,7 +10215,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 143,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -10392,7 +10336,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 275,
   "callGraph": {
     "callCount": 2,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -10509,7 +10452,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 295,
   "callGraph": {
     "callCount": 0,
-    "internalCallCount": 0,
     "internalEdgeCount": 0,
     "maxCallDepth": 0,
     "maxFanIn": 0,
@@ -10646,7 +10588,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 306,
   "callGraph": {
     "callCount": 1,
-    "internalCallCount": 1,
     "internalEdgeCount": 1,
     "maxCallDepth": 1,
     "maxFanIn": 1,
@@ -10852,7 +10793,6 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   "bytes": 422,
   "callGraph": {
     "callCount": 1,
-    "internalCallCount": 1,
     "internalEdgeCount": 1,
     "maxCallDepth": 1,
     "maxFanIn": 1,

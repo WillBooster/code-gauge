@@ -867,7 +867,7 @@ function printTextReport(target: string, result: ScanResult, risks: RiskFinding[
     `LOC ${summary.linesOfCode}, NCSS ${summary.ncssCount}, functions ${summary.functionCount}, max cyclomatic ${summary.maxCyclomaticComplexity}, max cognitive ${summary.maxCognitiveComplexity}\n`
   );
   writeStdout(
-    `Calls ${summary.callCount}, internal calls ${summary.internalCallCount}, max call depth ${summary.maxCallDepth}, imports ${summary.importSourceCount}, exports ${summary.exportCount}\n`
+    `Calls ${summary.callCount}, max call depth ${summary.maxCallDepth}, imports ${summary.importSourceCount}, exports ${summary.exportCount}\n`
   );
   writeStdout(
     `Type annotations ${summary.typeAnnotationCount}, type aliases ${summary.typeAliasCount}, interfaces ${summary.interfaceCount}, avg cohesion ${summary.averageFunctionIdentifierOverlap.toFixed(2)}\n`
@@ -1021,7 +1021,6 @@ function summarize(files: FileMetrics[]): {
   maxCyclomaticComplexity: number;
   ncssCount: number;
   callCount: number;
-  internalCallCount: number;
   maxCallDepth: number;
   importSourceCount: number;
   relativeImportCount: number;
@@ -1039,7 +1038,6 @@ function summarize(files: FileMetrics[]): {
   let maxCognitiveComplexity = 0;
   let ncssCount = 0;
   let callCount = 0;
-  let internalCallCount = 0;
   let maxCallDepth = 0;
   let importSourceCount = 0;
   let relativeImportCount = 0;
@@ -1058,7 +1056,6 @@ function summarize(files: FileMetrics[]): {
     maxCognitiveComplexity = Math.max(maxCognitiveComplexity, file.metrics.maxCognitiveComplexity);
     ncssCount += file.metrics.ncssCount;
     callCount += file.metrics.callGraph.callCount;
-    internalCallCount += file.metrics.callGraph.internalCallCount;
     maxCallDepth = Math.max(maxCallDepth, file.metrics.callGraph.maxCallDepth);
     importSourceCount += file.metrics.coupling.importSourceCount;
     relativeImportCount += file.metrics.coupling.relativeImportCount;
@@ -1079,7 +1076,6 @@ function summarize(files: FileMetrics[]): {
     maxCognitiveComplexity,
     ncssCount,
     callCount,
-    internalCallCount,
     maxCallDepth,
     importSourceCount,
     relativeImportCount,

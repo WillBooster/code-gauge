@@ -112,7 +112,6 @@ export interface FunctionMetrics {
 export interface CallGraphMetrics {
   callCount: number;
   uniqueCalleeCount: number;
-  internalCallCount: number;
   internalEdgeCount: number;
   recursiveFunctionCount: number;
   maxFanIn: number;

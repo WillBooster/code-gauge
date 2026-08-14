@@ -145,7 +145,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 113,
         uniqueCalleeCount: 23,
-        internalCallCount: 17,
         internalEdgeCount: 16,
         recursiveFunctionCount: 0,
         maxFanIn: 3,
@@ -281,7 +280,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 184,
         uniqueCalleeCount: 70,
-        internalCallCount: 22,
         internalEdgeCount: 21,
         recursiveFunctionCount: 4,
         maxFanIn: 6,
@@ -599,7 +597,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 158,
         uniqueCalleeCount: 82,
-        internalCallCount: 42,
         internalEdgeCount: 40,
         recursiveFunctionCount: 3,
         maxFanIn: 5,
@@ -1068,7 +1065,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 103,
         uniqueCalleeCount: 23,
-        internalCallCount: 7,
         internalEdgeCount: 6,
         recursiveFunctionCount: 0,
         maxFanIn: 3,
@@ -1366,7 +1362,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 119,
         uniqueCalleeCount: 41,
-        internalCallCount: 0,
         internalEdgeCount: 0,
         recursiveFunctionCount: 0,
         maxFanIn: 0,
@@ -1562,7 +1557,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 57,
         uniqueCalleeCount: 37,
-        internalCallCount: 4,
         internalEdgeCount: 4,
         recursiveFunctionCount: 0,
         maxFanIn: 2,
@@ -1737,7 +1731,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 111,
         uniqueCalleeCount: 54,
-        internalCallCount: 12,
         internalEdgeCount: 12,
         recursiveFunctionCount: 0,
         maxFanIn: 3,
@@ -1853,7 +1846,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 252,
         uniqueCalleeCount: 35,
-        internalCallCount: 105,
         internalEdgeCount: 38,
         recursiveFunctionCount: 0,
         maxFanIn: 7,
@@ -2063,7 +2055,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 137,
         uniqueCalleeCount: 90,
-        internalCallCount: 9,
         internalEdgeCount: 4,
         recursiveFunctionCount: 0,
         maxFanIn: 3,
@@ -2288,7 +2279,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 265,
         uniqueCalleeCount: 94,
-        internalCallCount: 67,
         internalEdgeCount: 63,
         recursiveFunctionCount: 7,
         maxFanIn: 7,
@@ -2502,7 +2492,6 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       callGraph: {
         callCount: 92,
         uniqueCalleeCount: 28,
-        internalCallCount: 18,
         internalEdgeCount: 14,
         recursiveFunctionCount: 1,
         maxFanIn: 3,

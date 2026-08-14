@@ -417,7 +417,7 @@ describe('measureCode: call graph', () => {
     expect(metrics.functions).toHaveLength(2);
     expect(metrics.functions.filter((fn) => fn.recursive)).toHaveLength(1);
     expect(metrics.callGraph.recursiveFunctionCount).toBe(1);
-    expect(metrics.callGraph.internalCallCount).toBeGreaterThan(0);
+    expect(metrics.callGraph.internalEdgeCount).toBeGreaterThan(0);
   });
 
   it('tracks recursion, fan-in/fan-out, and call depth across a small call graph', () => {
@@ -428,11 +428,10 @@ describe('measureCode: call graph', () => {
     expect(byName.get('build')).toMatchObject({ recursive: false, fanOut: 2, callCount: 3, uniqueCalleeCount: 2 });
     expect(byName.get('combine')).toMatchObject({ fanIn: 1, fanOut: 0 });
 
-    // internalCallCount counts internal call occurrences (build→factorial ×2, build→combine,
-    // factorial→factorial); internalEdgeCount counts unique caller→callee edges (issue #22).
+    // internalEdgeCount counts unique caller→callee edges (build→factorial, build→combine,
+    // factorial→factorial), not call occurrences (issue #22).
     expect(metrics.callGraph).toMatchObject({
       callCount: 4,
-      internalCallCount: 4,
       internalEdgeCount: 3,
       recursiveFunctionCount: 1,
       maxFanIn: 2,
@@ -453,7 +452,7 @@ describe('measureCode: call graph', () => {
     // Beta.go's bare act() resolves to Beta's own act, not Alpha's.
     expect(bySignature.get('go/0@15')).toMatchObject({ fanOut: 1 });
     expect(bySignature.get('act/0@13')).toMatchObject({ fanIn: 1 });
-    expect(metrics.callGraph).toMatchObject({ internalCallCount: 3, internalEdgeCount: 3, maxFanIn: 1 });
+    expect(metrics.callGraph).toMatchObject({ internalEdgeCount: 3, maxFanIn: 1 });
   });
 
   it('leaves genuinely ambiguous same-name same-arity calls unresolved', () => {
