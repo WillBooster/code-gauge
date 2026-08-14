@@ -504,7 +504,11 @@ describe('measureCode: call graph', () => {
     // A named capture binds at the END of the `=~` expression: the RHS `year` is still an unbound
     // send (Ruby raises NameError there); the read on the next line is a bound local.
     expect(byName.get('rhs_before_binding')).toMatchObject({ callCount: 1 });
-    expect(byName.get('helper')).toMatchObject({ fanIn: 5 }); // run, the each block, rescue_binding, aliasing, undefining
+    // An endless method's body expression is a direct child of the method node; the bare `helper`
+    // there is still a send (only the definition's name/object positions are rejected).
+    expect(byName.get('endless')).toMatchObject({ callCount: 1, fanOut: 1 });
+    expect(byName.get('endless_s')).toMatchObject({ callCount: 1, fanOut: 1 });
+    expect(byName.get('helper')).toMatchObject({ fanIn: 6 }); // run, the each block, rescue_binding, aliasing, undefining, endless
   });
 
   // Same-named nested classes under different outers must not collapse into one scope, which
@@ -581,6 +585,118 @@ describe('measureCode: call graph', () => {
     expect(metrics.callGraph.internalEdgeCount).toBe(0);
   });
 
+  // Local classes exist per enclosing function: same-named local classes in different methods are
+  // unrelated scopes, so each run() must resolve to its own helper().
+  it('distinguishes same-named local classes declared in different functions', () => {
+    const code =
+      'class Outer {\n' +
+      '  void first() {\n    class Worker {\n      void helper() {}\n      void run() { helper(); }\n    }\n  }\n' +
+      '  void second() {\n    class Worker {\n      void helper() {}\n      void run() { helper(); }\n    }\n  }\n' +
+      '}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.functions.filter((fn) => fn.name === 'run').map((fn) => fn.fanOut)).toEqual([1, 1]);
+  });
+
+  // Generic scope spellings are alpha-normalized: differently named type parameters name the same
+  // scope, while genuine specializations stay distinct.
+  it('matches Rust impls of one generic type across type-parameter renames', () => {
+    const code =
+      'struct Foo<T> { v: T }\nstruct Bar;\n' +
+      'impl<T> Foo<T> {\n  fn helper(&self) {}\n}\n' +
+      'impl<U> Foo<U> {\n  fn run(&self) { self.helper(); }\n}\n' +
+      'impl Bar {\n  fn helper(&self) {}\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  it('keeps genuinely distinct Rust impl specializations distinct', () => {
+    const code =
+      'struct Foo<T> { v: T }\n' +
+      'impl Foo<u32> {\n  fn helper(&self) {}\n}\n' +
+      'impl Foo<String> {\n  fn helper(&self) {}\n}\n' +
+      'impl<T> Foo<T> {\n  fn run(&self) { self.helper(); }\n}\n';
+    const metrics = measureCode(code, { language: 'rust' });
+    // The generic impl's scope matches neither specialization, so the call stays unresolved.
+    expect(metrics.callGraph.internalEdgeCount).toBe(0);
+  });
+
+  it('matches Go generic receivers across type-parameter renames', () => {
+    const code =
+      'package p\n\ntype Pair[A any, B any] struct{ a A; b B }\ntype Other struct{}\n\n' +
+      'func (p Pair[A, B]) helper() {}\nfunc (p Pair[X, Y]) run() { p.helper() }\nfunc (o Other) helper() {}\n';
+    const metrics = measureCode(code, { language: 'go' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  it('matches C++ out-of-line template members to the in-class template scope', () => {
+    const code =
+      'template <class T>\nclass A {\n public:\n  void helper();\n  void run() { helper(); }\n};\n' +
+      'template <class T>\nvoid A<T>::helper() { run(); }\n' +
+      'class B {\n public:\n  void helper() {}\n};\n';
+    const metrics = measureCode(code, { language: 'cpp' });
+    // run -> helper and helper -> run: `A<T>::helper` shares the in-class `A` scope.
+    expect(metrics.callGraph.internalEdgeCount).toBe(2);
+    expect(metrics.callGraph.recursiveFunctionCount).toBe(2);
+  });
+
+  // Every `class << self` block of one class reopens the same eigenclass scope.
+  it('resolves Ruby calls across separate eigenclass blocks of one class', () => {
+    const code =
+      'class Outer\n  class << self\n    def helper\n    end\n  end\n  class << self\n    def run\n      helper\n    end\n  end\nend\n' +
+      'class Other\n  def helper\n  end\nend\n';
+    const metrics = measureCode(code, { language: 'ruby' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  // A Python bound method receives `self` implicitly, so `self.helper()` passes one argument
+  // fewer than `def helper(self)` declares; arity matching must be receiver-adjusted.
+  it('resolves Python self-calls to bound methods with receiver-adjusted arity', () => {
+    const code =
+      'class A:\n    def helper(self):\n        pass\n    def run(self):\n        self.helper()\n\n' +
+      'class B:\n    def helper(self):\n        pass\n';
+    const metrics = measureCode(code, { language: 'python' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+    // The reported parameter count keeps the declared `self`.
+    expect(metrics.functions.find((fn) => fn.name === 'helper')?.parameterCount).toBe(1);
+  });
+
+  // Self-like calls search the caller's file-local base classes, nearest scope first.
+  it('resolves inherited method calls through file-local base classes', () => {
+    const code =
+      'class Parent {\n  void helper() {}\n}\nclass Child extends Parent {\n  void run() { this.helper(); }\n}\n' +
+      'class Other {\n  void helper() {}\n}\n';
+    const metrics = measureCode(code, { language: 'java' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+    expect(metrics.functions.find((fn) => fn.startLine === 2)).toMatchObject({ fanIn: 1 });
+  });
+
+  // A defaulted parameter widens the accepted range only up to the declared count; it is not
+  // unbounded varargs, so f(1, 2, 3) matches neither overload.
+  it('rejects argument counts beyond the declared parameters of a defaulted signature', () => {
+    const code = 'void f(int a, int b = 0) {}\nvoid f(int a, int b, int c, int d) {}\nvoid g() { f(1, 2, 3); }\n';
+    const metrics = measureCode(code, { language: 'cpp' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(0);
+
+    const within = measureCode(
+      'void f(int a, int b = 0) {}\nvoid f(int a, int b, int c, int d) {}\nvoid g() { f(1); }\n',
+      {
+        language: 'cpp',
+      }
+    );
+    expect(within.callGraph.internalEdgeCount).toBe(1);
+  });
+
+  // A Ruby block parameter (`&blk`) binds the block, which call sites pass outside the argument
+  // list, so it counts toward no arity.
+  it('resolves Ruby calls to methods declaring only a block parameter', () => {
+    const code =
+      'class A\n  def helper(&blk)\n  end\n  def run\n    helper { 1 }\n  end\nend\n' +
+      'class B\n  def helper(&blk)\n  end\nend\n';
+    const metrics = measureCode(code, { language: 'ruby' });
+    expect(metrics.callGraph.internalEdgeCount).toBe(1);
+  });
+
   it('treats calls through the Go receiver variable as self and scopes them to the receiver type', () => {
     const code =
       'package main\n\ntype A struct{}\ntype B struct{}\n\nfunc (a A) helper() {}\nfunc (a A) run() { a.helper() }\nfunc (b B) helper() {}\n';
@@ -646,10 +762,12 @@ describe('measureCode: coupling and module structure', () => {
   it('treats Rust unrestricted pub items as exported and counts them toward exportCount', () => {
     const metrics = measureCode(readFixture('visibility.rs'), { language: 'rust' });
 
-    // pub use + LIMIT + pub id field + shared() + pub mod surface + surface::reachable = 6 bare
-    // `pub` modifiers with all-pub mod ancestors. Excluded: pub(crate) Widget, pub(super) Kind,
-    // hidden::tucked (private mod), surface::shallow (pub(crate)).
-    expect(metrics.coupling.exportCount).toBe(6);
+    // pub use + LIMIT + shared() + pub mod surface + surface::reachable = 5 bare `pub` modifiers
+    // whose whole ancestor chain is reachable. Excluded: pub(crate) Widget, pub(super) Kind,
+    // hidden::tucked (private mod), surface::shallow (pub(crate)), the pub `id` field (its struct
+    // is pub(crate)), Private::helper and Widget::tag (impls of non-exported types), and nested()
+    // (inside a function body).
+    expect(metrics.coupling.exportCount).toBe(5);
     expect(metrics.module.declarations).toEqual([
       { exported: true, name: 'LIMIT', startLine: 3 },
       { exported: false, name: 'Widget', startLine: 5 },
@@ -658,6 +776,8 @@ describe('measureCode: coupling and module structure', () => {
       { exported: false, name: 'Kind', startLine: 18 },
       { exported: false, name: 'hidden', startLine: 22 },
       { exported: true, name: 'surface', startLine: 28 },
+      { exported: false, name: 'Private', startLine: 38 },
+      { exported: false, name: 'outer', startLine: 52 },
     ]);
   });
 

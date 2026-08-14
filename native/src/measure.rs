@@ -9,8 +9,8 @@ use crate::complexity::{
 use crate::duplication::measure_duplication;
 use crate::features::measure_syntax_features;
 use crate::functions::{
-    analyze_function, collect_constructed_type_names, collect_nodes, count_classes,
-    is_implemented_function,
+    analyze_function, collect_base_scopes, collect_constructed_type_names, collect_nodes,
+    count_classes, is_implemented_function,
 };
 use crate::languages::LanguageDefinition;
 use crate::structure::{measure_coupling, measure_module};
@@ -69,7 +69,8 @@ pub fn measure(
             )
         })
         .collect();
-    let call_graph = measure_call_graph(&analyses, sets.name);
+    let base_scopes_by_scope = collect_base_scopes(root, &sets, code);
+    let call_graph = measure_call_graph(&analyses, sets.name, &base_scopes_by_scope);
     let function_metrics: Vec<FunctionMetrics> = analyses
         .iter()
         .map(|analysis| FunctionMetrics {

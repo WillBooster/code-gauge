@@ -93,3 +93,13 @@ def rhs_before_binding
   /(?<year>\d+)/ =~ year
   year
 end
+
+def endless = helper
+
+class EndlessSelf
+  def self.helper_s
+    1
+  end
+
+  def self.endless_s = helper_s
+end

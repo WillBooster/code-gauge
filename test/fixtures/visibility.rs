@@ -34,3 +34,24 @@ pub mod surface {
         4
     }
 }
+
+struct Private;
+
+impl Private {
+    pub fn helper() -> usize {
+        5
+    }
+}
+
+impl Widget {
+    pub fn tag(&self) -> u32 {
+        self.id
+    }
+}
+
+fn outer() -> usize {
+    pub fn nested() -> usize {
+        6
+    }
+    nested()
+}

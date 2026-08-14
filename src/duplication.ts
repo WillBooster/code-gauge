@@ -1703,20 +1703,27 @@ function mergeGroups<T extends CountedOccurrence>(
   second: T[],
   maxGapTokens: number
 ): MergeResult<T> | undefined {
+  // Occurrences a previous partial merge already paired into a merged group must not pair again:
+  // their spans already live inside that merged group, so re-pairing them would assemble a second,
+  // competing merged group instead of letting the existing merged group extend (and would count
+  // the same span twice). Consumption is still judged against the FULL group, so a group holding
+  // shared occurrences is never subsumed away.
+  const leadings = first.filter((occurrence) => !occurrence.sharedWithMergedGroup);
+  const trailings = second.filter((occurrence) => !occurrence.sharedWithMergedGroup);
   const pairs: [T, T][] = [];
   let leadingIndex = 0;
   let previousTrailingEnd = -1;
-  for (const trailing of second) {
+  for (const trailing of trailings) {
     // Leadings ending too far before this trailing can never pair a later (even farther) one.
-    while (leadingIndex < first.length) {
-      const leading = first[leadingIndex];
+    while (leadingIndex < leadings.length) {
+      const leading = leadings[leadingIndex];
       if (leading && leading.endTokenIndex + maxGapTokens < trailing.startTokenIndex) {
         leadingIndex += 1;
       } else {
         break;
       }
     }
-    const leading = first[leadingIndex];
+    const leading = leadings[leadingIndex];
     if (
       leading &&
       leading.endTokenIndex <= trailing.startTokenIndex &&

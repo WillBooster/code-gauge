@@ -1,5 +1,5 @@
 use indexmap::{IndexMap, IndexSet};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::functions::{CallReceiver, CallSite, FunctionAnalysis};
 use crate::types::CallGraphMetrics;
@@ -11,7 +11,11 @@ pub struct CallGraphResult {
     pub metrics: CallGraphMetrics,
 }
 
-pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) -> CallGraphResult {
+pub fn measure_call_graph(
+    analyses: &[FunctionAnalysis],
+    language_name: &str,
+    base_scopes_by_scope: &HashMap<String, Vec<String>>,
+) -> CallGraphResult {
     let candidates_by_name = map_candidates_by_name(analyses);
     let mut fan_in_by_index: HashMap<usize, usize> = HashMap::new();
     let mut fan_out_by_index: HashMap<usize, usize> = HashMap::new();
@@ -32,6 +36,7 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) ->
                 analysis.scope_name.as_deref(),
                 candidates_by_name.get(site.name.as_str()),
                 language_name,
+                base_scopes_by_scope,
             ) {
                 resolved_indexes.insert(resolved);
             }
@@ -68,9 +73,9 @@ pub fn measure_call_graph(analyses: &[FunctionAnalysis], language_name: &str) ->
 
 struct CalleeCandidate<'a> {
     index: usize,
-    parameter_count: usize,
-    min_parameter_count: usize,
-    flexible_arity: bool,
+    callable_parameter_count: usize,
+    callable_min_parameter_count: usize,
+    unbounded_arity: bool,
     scope_name: Option<&'a str>,
 }
 
@@ -94,9 +99,9 @@ fn map_candidates_by_name<'a>(
             .or_default()
             .push(CalleeCandidate {
                 index: analysis.index,
-                parameter_count: analysis.parameter_count,
-                min_parameter_count: analysis.min_parameter_count,
-                flexible_arity: analysis.flexible_arity,
+                callable_parameter_count: analysis.callable_parameter_count,
+                callable_min_parameter_count: analysis.callable_min_parameter_count,
+                unbounded_arity: analysis.unbounded_arity,
                 scope_name: analysis.scope_name.as_deref(),
             });
     }
@@ -106,12 +111,16 @@ fn map_candidates_by_name<'a>(
 /// Languages whose bare calls (`f()`) reach the enclosing class's methods, not only free functions.
 const BARE_CALL_REACHES_METHODS_LANGUAGES: &[&str] = &["java", "ruby", "cpp"];
 
-/// Resolves a call site to a function index; see resolveCallSite in metrics.ts (issue #19).
+/// Resolves a call site to a function index; see resolveCallSite in metrics.ts (issue #19):
+/// scope first (self-like calls search the caller's scope then its file-local base scopes,
+/// nearest first), then arity (defaults widen the range only up to the declared count; only true
+/// varargs accept unboundedly many).
 fn resolve_call_site(
     site: &CallSite,
     caller_scope_name: Option<&str>,
     candidates: Option<&Vec<CalleeCandidate<'_>>>,
     language_name: &str,
+    base_scopes_by_scope: &HashMap<String, Vec<String>>,
 ) -> Option<usize> {
     let candidates = candidates?;
     if candidates.is_empty() {
@@ -121,47 +130,81 @@ fn resolve_call_site(
         return candidates.first().map(|candidate| candidate.index);
     }
 
-    let same_scope: Vec<&CalleeCandidate<'_>> = candidates
-        .iter()
-        .filter(|candidate| candidate.scope_name == caller_scope_name)
-        .collect();
-    let free_functions: Vec<&CalleeCandidate<'_>> = candidates
-        .iter()
-        .filter(|candidate| candidate.scope_name.is_none())
-        .collect();
-    let pool: Vec<&CalleeCandidate<'_>> = match site.receiver {
-        CallReceiver::SelfLike => same_scope,
-        CallReceiver::None => {
-            if BARE_CALL_REACHES_METHODS_LANGUAGES.contains(&language_name)
-                && !same_scope.is_empty()
-                && caller_scope_name.is_some()
-            {
-                same_scope
+    let is_viable = |candidate: &CalleeCandidate<'_>| match site.argument_count {
+        None => true,
+        Some(argument_count) => {
+            if candidate.unbounded_arity {
+                argument_count >= candidate.callable_min_parameter_count
             } else {
-                free_functions
+                candidate.callable_min_parameter_count <= argument_count
+                    && argument_count <= candidate.callable_parameter_count
             }
         }
-        CallReceiver::Other => candidates.iter().collect(),
     };
 
-    // Arity is always validated, even for a scope-unique candidate: a fixed-arity candidate is
-    // viable only on an exact argument-count match, one with varargs/rest/splat or defaults when
-    // the count covers its required parameters (see resolveCallSite in metrics.ts).
-    let arity_matches: Vec<&&CalleeCandidate<'_>> = match site.argument_count {
-        None => pool.iter().collect(),
-        Some(argument_count) => pool
-            .iter()
-            .filter(|candidate| {
-                if candidate.flexible_arity {
-                    argument_count >= candidate.min_parameter_count
-                } else {
-                    candidate.parameter_count == argument_count
+    let is_self_like_bare_call = site.receiver == CallReceiver::None
+        && BARE_CALL_REACHES_METHODS_LANGUAGES.contains(&language_name)
+        && caller_scope_name.is_some();
+    if site.receiver == CallReceiver::SelfLike || is_self_like_bare_call {
+        // Breadth-first over the caller's scope and its file-local base scopes: the nearest scope
+        // with viable candidates decides, resolving only when it is unambiguous there.
+        let mut saw_scoped_candidate = false;
+        let mut visited_scopes: HashSet<Option<&str>> = HashSet::new();
+        visited_scopes.insert(caller_scope_name);
+        let mut scope_queue: VecDeque<Option<&str>> = VecDeque::new();
+        scope_queue.push_back(caller_scope_name);
+        while let Some(scope) = scope_queue.pop_front() {
+            let in_scope: Vec<&CalleeCandidate<'_>> = candidates
+                .iter()
+                .filter(|candidate| candidate.scope_name == scope)
+                .collect();
+            if !in_scope.is_empty() {
+                saw_scoped_candidate = true;
+                let viable: Vec<&&CalleeCandidate<'_>> = in_scope
+                    .iter()
+                    .filter(|candidate| is_viable(candidate))
+                    .collect();
+                if !viable.is_empty() {
+                    return if viable.len() == 1 {
+                        viable.first().map(|candidate| candidate.index)
+                    } else {
+                        None
+                    };
                 }
-            })
-            .collect(),
+            }
+            if let Some(scope_name) = scope {
+                for base in base_scopes_by_scope
+                    .get(scope_name)
+                    .map(|bases| bases.as_slice())
+                    .unwrap_or_default()
+                {
+                    if visited_scopes.insert(Some(base.as_str())) {
+                        scope_queue.push_back(Some(base.as_str()));
+                    }
+                }
+            }
+        }
+        // A self call, or a bare call whose scope chain declares the name (committing the call to
+        // the class even when no overload's arity fits), never falls back to free functions.
+        if site.receiver == CallReceiver::SelfLike || saw_scoped_candidate {
+            return None;
+        }
+    }
+
+    let pool: Vec<&CalleeCandidate<'_>> = if site.receiver == CallReceiver::Other {
+        candidates.iter().collect()
+    } else {
+        candidates
+            .iter()
+            .filter(|candidate| candidate.scope_name.is_none())
+            .collect()
     };
-    if arity_matches.len() == 1 {
-        arity_matches.first().map(|candidate| candidate.index)
+    let viable: Vec<&&CalleeCandidate<'_>> = pool
+        .iter()
+        .filter(|candidate| is_viable(candidate))
+        .collect();
+    if viable.len() == 1 {
+        viable.first().map(|candidate| candidate.index)
     } else {
         None
     }

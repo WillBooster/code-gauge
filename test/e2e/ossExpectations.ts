@@ -2052,14 +2052,18 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       maxCognitiveComplexity: 26,
       nestingDepth: 3,
       ncssCount: 294,
+      // Python `self.helper()` sends resolve to bound methods (receiver-adjusted arity), and
+      // self-calls search file-local base classes: `request` is invoked by the seven HTTP verb
+      // helpers (maxFanIn 7), and `Session.send` and `SessionRedirectMixin.resolve_redirects`
+      // call each other through the mixin base (recursiveFunctionCount 2).
       callGraph: {
         callCount: 137,
         uniqueCalleeCount: 90,
-        internalEdgeCount: 4,
-        recursiveFunctionCount: 0,
-        maxFanIn: 3,
-        maxFanOut: 2,
-        maxCallDepth: 2,
+        internalEdgeCount: 24,
+        recursiveFunctionCount: 2,
+        maxFanIn: 7,
+        maxFanOut: 5,
+        maxCallDepth: 5,
       },
       coupling: {
         importCount: 16,

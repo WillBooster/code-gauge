@@ -1222,23 +1222,37 @@ fn merge_groups(
     second: &[CountedOccurrence],
     max_gap_tokens: usize,
 ) -> Option<MergeResult> {
+    // Occurrences a previous partial merge already paired into a merged group must not pair
+    // again: their spans already live inside that merged group, so re-pairing them would assemble
+    // a second, competing merged group instead of letting the existing merged group extend (and
+    // would count the same span twice). Consumption is still judged against the FULL group, so a
+    // group holding shared occurrences is never subsumed away.
+    let leadings: Vec<usize> = (0..first.len())
+        .filter(|&index| !first[index].shared_with_merged_group)
+        .collect();
+    let trailings: Vec<usize> = (0..second.len())
+        .filter(|&index| !second[index].shared_with_merged_group)
+        .collect();
     let mut pairs: Vec<(usize, usize)> = Vec::new();
-    let mut leading_index = 0usize;
+    let mut leading_position = 0usize;
     let mut previous_trailing_end: Option<usize> = None;
-    for (trailing_index, trailing) in second.iter().enumerate() {
+    for &trailing_index in &trailings {
+        let trailing = &second[trailing_index];
         // Leadings ending too far before this trailing can never pair a later (even farther) one.
-        while leading_index < first.len()
-            && first[leading_index].end_token_index + max_gap_tokens < trailing.start_token_index
+        while leading_position < leadings.len()
+            && first[leadings[leading_position]].end_token_index + max_gap_tokens
+                < trailing.start_token_index
         {
-            leading_index += 1;
+            leading_position += 1;
         }
-        if let Some(leading) = first.get(leading_index) {
+        if let Some(&leading_index) = leadings.get(leading_position) {
+            let leading = &first[leading_index];
             if leading.end_token_index <= trailing.start_token_index
                 && previous_trailing_end.is_none_or(|end| leading.start_token_index >= end)
             {
                 pairs.push((leading_index, trailing_index));
                 previous_trailing_end = Some(trailing.end_token_index);
-                leading_index += 1;
+                leading_position += 1;
             }
         }
     }
@@ -1308,7 +1322,12 @@ fn collect_near_miss_groups(
                 && !is_literal_dense(literal_count, token_count)
         })
         .collect();
-    eligible.sort_by_key(|range| (range.start_token_index, std::cmp::Reverse(range.end_token_index)));
+    eligible.sort_by_key(|range| {
+        (
+            range.start_token_index,
+            std::cmp::Reverse(range.end_token_index),
+        )
+    });
     let comparable = select_comparable_blocks(&eligible);
     if comparable.len() < 2 {
         return Vec::new();
@@ -1368,7 +1387,9 @@ fn collect_near_miss_groups(
         {
             continue;
         }
-        let min_ngrams = ngram_sets[left_index].len().min(ngram_sets[right_index].len());
+        let min_ngrams = ngram_sets[left_index]
+            .len()
+            .min(ngram_sets[right_index].len());
         if shared * 100 < NEAR_MISS_FILTRATION_PERCENT * min_ngrams {
             continue;
         }
@@ -1495,7 +1516,9 @@ fn collect_near_miss_groups(
                     merged.push(to_occurrence(comparable[member_index]));
                 }
             }
-            merged.sort_by_key(|occurrence| (occurrence.start_token_index, occurrence.end_token_index));
+            merged.sort_by_key(|occurrence| {
+                (occurrence.start_token_index, occurrence.end_token_index)
+            });
             // The rebuild consumed every fully-clustered group, so shared-span marks from earlier
             // partial merges no longer point at a separate merged group.
             for occurrence in &mut merged {
@@ -1670,11 +1693,12 @@ fn normalize_block_sequence(
 
 /// Multiset overlap of two blocks' content-bearing symbols, for the content gate.
 fn content_overlap(left: &NormalizedBlock, right: &NormalizedBlock) -> usize {
-    let (smaller, larger) = if left.content_count_by_symbol.len() <= right.content_count_by_symbol.len() {
-        (left, right)
-    } else {
-        (right, left)
-    };
+    let (smaller, larger) =
+        if left.content_count_by_symbol.len() <= right.content_count_by_symbol.len() {
+            (left, right)
+        } else {
+            (right, left)
+        };
     smaller
         .content_count_by_symbol
         .iter()

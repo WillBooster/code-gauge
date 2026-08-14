@@ -42,10 +42,13 @@ pub struct FunctionAnalysis {
     pub ncss: u64,
     pub call_count: u64,
     pub parameter_count: usize,
-    /// Declared parameters that are required (neither variadic/rest/splat nor defaulted).
-    pub min_parameter_count: usize,
-    /// Whether the signature accepts a variable argument count (varargs/rest/splat or defaults).
-    pub flexible_arity: bool,
+    /// Largest argument count a call site can pass (receiver-adjusted for Python bound methods);
+    /// meaningless when `unbounded_arity` is set.
+    pub callable_parameter_count: usize,
+    /// Required (neither variadic/rest/splat nor defaulted) parameters, receiver-adjusted likewise.
+    pub callable_min_parameter_count: usize,
+    /// Whether the signature accepts unboundedly many arguments (true varargs/rest/splat only).
+    pub unbounded_arity: bool,
     pub callees: IndexSet<String>,
     pub call_sites: Vec<CallSite>,
     pub identifiers: HashSet<String>,
@@ -105,11 +108,18 @@ pub fn analyze_function(
         find_go_receiver_name(node, code),
     );
     let parameters = count_parameters(node, code);
+    // Python bound methods receive `self`/`cls` implicitly, so a call site passes one argument
+    // fewer than the declaration lists; the reported parameter_count keeps the declared count.
+    let receiver_offset = if sets.name == "python" {
+        count_python_bound_receiver_parameters(node, code)
+    } else {
+        0
+    };
     FunctionAnalysis {
         index,
         name: find_function_name(node, code),
         node_type: node.kind(),
-        scope_name: find_function_scope_name(node, code),
+        scope_name: find_function_scope_name(node, sets, code),
         has_implementation: has_implementation_body(node),
         start_line: node.start_position().row + 1,
         // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving yields
@@ -123,8 +133,9 @@ pub fn analyze_function(
         ncss: body_metrics.ncss,
         call_count: calls.call_count,
         parameter_count: parameters.count,
-        min_parameter_count: parameters.min_count,
-        flexible_arity: parameters.flexible,
+        callable_parameter_count: parameters.count.saturating_sub(receiver_offset),
+        callable_min_parameter_count: parameters.min_count.saturating_sub(receiver_offset),
+        unbounded_arity: parameters.unbounded,
         callees: calls.callees,
         call_sites: calls.call_sites,
         identifiers: collect_identifiers(node, code),
@@ -161,10 +172,61 @@ const NAMESPACE_SCOPE_NODE_TYPES: &[&str] = &["namespace_definition", "mod_item"
 /// findFunctionScopeName in metrics.ts. Go methods carry their scope on the receiver, and C++
 /// out-of-line members (`void Widget::process()`) on the qualified declarator, prefixed by any
 /// enclosing namespaces so `namespace X { void A::f() {} }` matches the in-class `X::A`.
-fn find_function_scope_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+fn find_function_scope_name(
+    node: Node<'_>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+) -> Option<String> {
+    let (mut segments, has_class_scope) = collect_scope_segments(node.parent(), sets, code);
+    if has_class_scope {
+        return Some(segments.join("::"));
+    }
+
+    if node.kind() == "method_declaration" {
+        let receiver_type_node = node
+            .child_by_field_name("receiver")
+            .and_then(|receiver| named_children(receiver).first().copied())
+            .and_then(|first| first.child_by_field_name("type"));
+        if let Some(receiver_type_node) = receiver_type_node {
+            // Go receiver type arguments always DECLARE fresh type parameters, so `Pair[A, B]`
+            // and `Pair[X, Y]` name the same scope; stripping them makes the spellings match.
+            let normalized = normalize_go_receiver_type(node_text(receiver_type_node, code));
+            let stripped = match normalized.find('[') {
+                Some(start) if normalized.ends_with(']') => normalized[..start].to_string(),
+                _ => normalized,
+            };
+            return Some(stripped);
+        }
+    }
+
+    let qualified_name = unwrap_declarator_name(node.child_by_field_name("declarator"), true, code);
+    if let Some(qualified_name) = qualified_name {
+        if let Some(scope_end) = qualified_name.rfind("::") {
+            if scope_end > 0 {
+                // Out-of-line C++ members spell their class's template parameters
+                // (`void A<T>::method()`); canonicalizing them makes the scope match the
+                // in-class spelling `A`.
+                let scope = canonicalize_generic_scope(
+                    &qualified_name[..scope_end],
+                    &collect_cpp_template_parameter_names(node, code),
+                );
+                segments.push(scope);
+                return Some(segments.join("::"));
+            }
+        }
+    }
+    None
+}
+
+/// Walks class-like (and qualifying namespace) ancestors of `start`; see findFunctionScopeName.
+fn collect_scope_segments(
+    start: Option<Node<'_>>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+) -> (Vec<String>, bool) {
     let mut segments: Vec<String> = Vec::new();
     let mut has_class_scope = false;
-    let mut current = node.parent();
+    let mut current = start;
     while let Some(ancestor) = current {
         current = ancestor.parent();
         if NAMESPACE_SCOPE_NODE_TYPES.contains(&ancestor.kind()) {
@@ -172,6 +234,12 @@ fn find_function_scope_name(node: Node<'_>, code: &Source<'_>) -> Option<String>
             if let Some(name_node) = ancestor.child_by_field_name("name") {
                 segments.push(node_text(name_node, code).to_string());
             }
+            continue;
+        }
+        // A class LOCAL to a function exists per enclosing function, so a stable per-function
+        // marker keeps same-named local classes in different functions from cross-matching.
+        if has_class_scope && is_function_boundary(ancestor, &sets.function_nodes) {
+            segments.push(format!("<fn:{}>", ancestor.start_byte()));
             continue;
         }
         if !SCOPE_NODE_TYPES.contains(&ancestor.kind()) {
@@ -185,47 +253,321 @@ fn find_function_scope_name(node: Node<'_>, code: &Source<'_>) -> Option<String>
         {
             continue;
         }
-        // Rust `impl` blocks scope by the implementing type rather than a `name` field.
-        let name_node = if ancestor.kind() == "impl_item" {
-            ancestor.child_by_field_name("type")
-        } else {
-            ancestor.child_by_field_name("name")
-        };
-        segments.push(match name_node {
-            Some(name_node) => node_text(name_node, code).to_string(),
-            None => anonymous_scope_name(ancestor),
-        });
+        segments.push(scope_segment_name(ancestor, code));
         has_class_scope = true;
     }
-    if has_class_scope {
-        segments.reverse();
-        return Some(segments.join("::"));
-    }
+    segments.reverse();
+    (segments, has_class_scope)
+}
 
-    if node.kind() == "method_declaration" {
-        let receiver_type_node = node
-            .child_by_field_name("receiver")
-            .and_then(|receiver| named_children(receiver).first().copied())
-            .and_then(|first| first.child_by_field_name("type"));
-        if let Some(receiver_type_node) = receiver_type_node {
-            return Some(normalize_go_receiver_type(node_text(
-                receiver_type_node,
-                code,
-            )));
+/// One scope segment for a class-like node; see scopeSegmentName in metrics.ts.
+fn scope_segment_name(node: Node<'_>, code: &Source<'_>) -> String {
+    // Rust `impl` blocks scope by the implementing type rather than a `name` field; declared type
+    // parameters are canonicalized so `impl<T> Foo<T>` and `impl<U> Foo<U>` name the same scope
+    // while genuinely distinct specializations (`impl Foo<u32>`) stay distinct.
+    if node.kind() == "impl_item" {
+        return match node.child_by_field_name("type") {
+            Some(type_node) => canonicalize_generic_scope(
+                node_text(type_node, code),
+                &declared_type_parameter_names(node.child_by_field_name("type_parameters"), code),
+            ),
+            None => anonymous_scope_name(node),
+        };
+    }
+    // A Ruby eigenclass (`class << self`) reopens the same scope every time for a given target,
+    // so it keys on the target text under the enclosing scope (`Outer::<<self`) rather than
+    // getting a per-node anonymous marker.
+    if node.kind() == "singleton_class" {
+        return match node.child_by_field_name("value") {
+            Some(value_node) => format!("<<{}", strip_js_whitespace(node_text(value_node, code))),
+            None => anonymous_scope_name(node),
+        };
+    }
+    match node.child_by_field_name("name") {
+        Some(name_node) => node_text(name_node, code).to_string(),
+        None => anonymous_scope_name(node),
+    }
+}
+
+/// Alpha-normalizes a generic scope spelling; see canonicalizeGenericScope in metrics.ts:
+/// declared type parameters are renamed positionally and a sequential full parameter list
+/// (`<$0,$1>`) is dropped so the scope matches spellings that omit it.
+fn canonicalize_generic_scope(scope: &str, parameter_names: &[String]) -> String {
+    let mut text = strip_js_whitespace(scope);
+    if parameter_names.is_empty() {
+        return text;
+    }
+    for (index, name) in parameter_names.iter().enumerate() {
+        text = replace_identifier_token(&text, name, &format!("${index}"));
+    }
+    strip_sequential_parameter_lists(&text)
+}
+
+/// Replaces whole-token occurrences of `name` (boundaries: `[A-Za-z0-9_]`, plus a preceding `'`
+/// so lifetimes never split) with `replacement`.
+fn replace_identifier_token(text: &str, name: &str, replacement: &str) -> String {
+    if name.is_empty() {
+        return text.to_string();
+    }
+    let bytes = text.as_bytes();
+    let mut result = String::with_capacity(text.len());
+    let mut position = 0usize;
+    let is_word = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'_';
+    while let Some(found) = text[position..].find(name) {
+        let start = position + found;
+        let end = start + name.len();
+        let boundary_before =
+            start == 0 || (!is_word(bytes[start - 1]) && bytes[start - 1] != b'\'');
+        let boundary_after = end == bytes.len() || !is_word(bytes[end]);
+        result.push_str(&text[position..start]);
+        if boundary_before && boundary_after {
+            result.push_str(replacement);
+        } else {
+            result.push_str(name);
+        }
+        position = end;
+    }
+    result.push_str(&text[position..]);
+    result
+}
+
+/// Removes every `<...>` group whose content is exactly the sequential list `$0,$1,...`.
+fn strip_sequential_parameter_lists(text: &str) -> String {
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(open) = rest.find('<') {
+        let Some(close_offset) = rest[open..].find('>') else {
+            break;
+        };
+        let close = open + close_offset;
+        let content = &rest[open + 1..close];
+        let sequential = !content.is_empty()
+            && content
+                .split(',')
+                .enumerate()
+                .all(|(index, part)| part == format!("${index}"));
+        if sequential {
+            result.push_str(&rest[..open]);
+        } else {
+            result.push_str(&rest[..=open]);
+            rest = &rest[open + 1..];
+            continue;
+        }
+        rest = &rest[close + 1..];
+    }
+    result.push_str(rest);
+    result
+}
+
+/// Names the type parameters a `type_parameters`/`template_parameter_list` node declares, in
+/// declaration order; see declaredTypeParameterNames in metrics.ts.
+fn declared_type_parameter_names(
+    parameters_node: Option<Node<'_>>,
+    code: &Source<'_>,
+) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let Some(parameters_node) = parameters_node else {
+        return names;
+    };
+    for child in named_children(parameters_node) {
+        if child.kind() == "comment" {
+            continue;
+        }
+        if let Some(name) = find_first_type_parameter_name(child, code) {
+            names.push(name);
         }
     }
+    names
+}
 
-    let qualified_name = unwrap_declarator_name(node.child_by_field_name("declarator"), true, code);
-    if let Some(qualified_name) = qualified_name {
-        if let Some(scope_end) = qualified_name.rfind("::") {
-            if scope_end > 0 {
-                segments.reverse();
-                segments.push(qualified_name[..scope_end].to_string());
-                return Some(segments.join("::"));
-            }
+fn find_first_type_parameter_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if matches!(node.kind(), "type_identifier" | "identifier" | "lifetime") {
+        return Some(node_text(node, code).to_string());
+    }
+    for child in named_children(node) {
+        if let Some(name) = find_first_type_parameter_name(child, code) {
+            return Some(name);
         }
     }
     None
+}
+
+/// Template parameters declared by the `template_declaration`s wrapping an out-of-line member.
+fn collect_cpp_template_parameter_names(node: Node<'_>, code: &Source<'_>) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let mut ancestor = node.parent();
+    while let Some(current) = ancestor {
+        if current.kind() == "template_declaration" {
+            let mut declared =
+                declared_type_parameter_names(current.child_by_field_name("parameters"), code);
+            declared.extend(names);
+            names = declared;
+        }
+        ancestor = current.parent();
+    }
+    names
+}
+
+/// Languages whose file-local class base relationships inform self-call resolution.
+const BASE_CLASS_LANGUAGES: &[&str] = &[
+    "java",
+    "javascript",
+    "jsx",
+    "typescript",
+    "tsx",
+    "cpp",
+    "python",
+    "ruby",
+];
+
+const BASE_CLASS_NODE_TYPES: &[&str] = &[
+    "class_declaration",
+    "interface_declaration",
+    "class_specifier",
+    "struct_specifier",
+    "class_definition",
+    "class",
+];
+
+/// File-local base-class relationships, keyed and valued by scope names; see collectBaseScopes in
+/// metrics.ts (Java/TS/JS `extends`, C++ base clauses, Python bases, Ruby `<`; Rust and Go have
+/// no class inheritance).
+pub fn collect_base_scopes(
+    root: Node<'_>,
+    sets: &LanguageSets,
+    code: &Source<'_>,
+) -> HashMap<String, Vec<String>> {
+    let mut base_scopes_by_scope: HashMap<String, Vec<String>> = HashMap::new();
+    if !BASE_CLASS_LANGUAGES.contains(&sets.name) {
+        return base_scopes_by_scope;
+    }
+
+    let class_types: HashSet<&'static str> = BASE_CLASS_NODE_TYPES.iter().copied().collect();
+    let mut known_scopes: HashSet<String> = HashSet::new();
+    let mut entries: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+    for node in collect_nodes(root, &class_types) {
+        let (segments, _) = collect_scope_segments(node.parent(), sets, code);
+        let mut scope_segments = segments.clone();
+        scope_segments.push(scope_segment_name(node, code));
+        let scope = scope_segments.join("::");
+        known_scopes.insert(scope.clone());
+        let base_names = find_base_class_names(node, sets.name, code);
+        if !base_names.is_empty() {
+            entries.push((scope, segments, base_names));
+        }
+    }
+
+    for (scope, enclosing_segments, base_names) in entries {
+        let resolved: Vec<String> = base_names
+            .iter()
+            .map(|base| resolve_base_scope(base, &enclosing_segments, &known_scopes))
+            .collect();
+        // Reopened/partial classes (Ruby) may contribute bases from several definitions of one
+        // scope.
+        let existing = base_scopes_by_scope.entry(scope).or_default();
+        for base in resolved {
+            if !existing.contains(&base) {
+                existing.push(base);
+            }
+        }
+    }
+    base_scopes_by_scope
+}
+
+/// An unqualified base written beside the child resolves under their shared enclosing scopes.
+fn resolve_base_scope(
+    base_name: &str,
+    enclosing_segments: &[String],
+    known_scopes: &HashSet<String>,
+) -> String {
+    for depth in (1..=enclosing_segments.len()).rev() {
+        let mut candidate_segments: Vec<&str> = enclosing_segments[..depth]
+            .iter()
+            .map(|segment| segment.as_str())
+            .collect();
+        candidate_segments.push(base_name);
+        let candidate = candidate_segments.join("::");
+        if known_scopes.contains(&candidate) {
+            return candidate;
+        }
+    }
+    base_name.to_string()
+}
+
+/// Normalized base-class names one class-like definition declares; see findBaseClassNames in
+/// metrics.ts.
+fn find_base_class_names(node: Node<'_>, language_name: &str, code: &Source<'_>) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    // Java `extends Parent` and Ruby `class Child < Parent` wrap the base in a `superclass` node.
+    if let Some(superclass_node) = node.child_by_field_name("superclass") {
+        let base = if superclass_node.kind() == "superclass" {
+            named_children(superclass_node).first().copied()
+        } else {
+            Some(superclass_node)
+        };
+        if let Some(base) = base {
+            names.push(node_text(base, code).to_string());
+        }
+    }
+    // TS puts an `extends_clause` (with `value` fields) inside `class_heritage`; JS puts the
+    // extended expression there directly.
+    if let Some(heritage_node) = named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "class_heritage")
+    {
+        let extends_clause = named_children(heritage_node)
+            .into_iter()
+            .find(|child| child.kind() == "extends_clause");
+        let bases = match extends_clause {
+            Some(clause) => find_children_by_field_name(clause, "value"),
+            None => named_children(heritage_node),
+        };
+        names.extend(bases.iter().map(|base| node_text(*base, code).to_string()));
+    }
+    // C++ `class Child : public Parent, Mixin` lists bases (with access specifiers) in a clause.
+    if let Some(base_clause_node) = named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == "base_class_clause")
+    {
+        names.extend(
+            named_children(base_clause_node)
+                .into_iter()
+                .filter(|child| {
+                    matches!(
+                        child.kind(),
+                        "type_identifier" | "template_type" | "qualified_identifier"
+                    )
+                })
+                .map(|base| node_text(base, code).to_string()),
+        );
+    }
+    // Python `class Child(Parent, metaclass=Meta)` lists bases as superclass arguments.
+    if let Some(superclasses_node) = node.child_by_field_name("superclasses") {
+        names.extend(
+            named_children(superclasses_node)
+                .into_iter()
+                .filter(|child| matches!(child.kind(), "identifier" | "attribute" | "subscript"))
+                .map(|base| node_text(base, code).to_string()),
+        );
+    }
+    names
+        .iter()
+        .map(|name| normalize_base_class_name(name, language_name))
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+
+/// Strips generic arguments and rewrites qualifiers so a base spelling can match a scope name.
+fn normalize_base_class_name(name: &str, language_name: &str) -> String {
+    let mut text = strip_js_whitespace(name);
+    if language_name != "cpp" && language_name != "ruby" {
+        text = text.replace('.', "::");
+    }
+    let generic_start = text.find('<').into_iter().chain(text.find('[')).min();
+    if let Some(start) = generic_start {
+        text.truncate(start);
+    }
+    text
 }
 
 /// The receiver variable of a Go method (`a` in `func (a A) run()`); reads through it are `self`.
@@ -261,42 +603,57 @@ struct ParameterCounts {
     count: usize,
     /// Only required parameters: variadic/rest/splat and defaulted parameters are excluded.
     min_count: usize,
-    /// Whether the signature accepts a variable argument count (varargs/rest/splat or defaults).
-    flexible: bool,
+    /// Whether the signature accepts unboundedly many arguments (true varargs/rest/splat only).
+    unbounded: bool,
 }
 
-/// Parameter kinds that make a signature accept a variable argument count; see
-/// flexibleParameterTypes in metrics.ts.
-const FLEXIBLE_PARAMETER_TYPES: &[&str] = &[
+/// Parameter kinds that accept unboundedly many arguments; see unboundedParameterTypes in
+/// metrics.ts. Defaulted parameters are NOT here: they widen the accepted range only up to the
+/// declared parameter count.
+const UNBOUNDED_PARAMETER_TYPES: &[&str] = &[
     "spread_parameter",
-    "optional_parameter_declaration",
     "variadic_parameter_declaration",
     "variadic_parameter",
-    "assignment_pattern",
     "rest_pattern",
-    "optional_parameter",
-    "default_parameter",
-    "typed_default_parameter",
     "list_splat_pattern",
     "dictionary_splat_pattern",
     "splat_parameter",
     "hash_splat_parameter",
 ];
 
-/// Whether one declared parameter is variadic or defaulted; see isFlexibleParameter in metrics.ts.
-fn is_flexible_parameter(node: Node<'_>) -> bool {
-    if FLEXIBLE_PARAMETER_TYPES.contains(&node.kind()) {
+/// Parameter kinds a call site may omit because they carry a default; see optionalParameterTypes
+/// in metrics.ts.
+const OPTIONAL_PARAMETER_TYPES: &[&str] = &[
+    "optional_parameter_declaration",
+    "assignment_pattern",
+    "optional_parameter",
+    "default_parameter",
+    "typed_default_parameter",
+];
+
+/// Whether one declared parameter is a true varargs/rest/splat; see isUnboundedParameter in
+/// metrics.ts.
+fn is_unbounded_parameter(node: Node<'_>) -> bool {
+    if UNBOUNDED_PARAMETER_TYPES.contains(&node.kind()) {
         return true;
     }
-    // TS wraps both defaults (`b = 1`, a `value` field) and rest params (`...rest: T[]`, a
-    // `rest_pattern` in the `pattern` field) in `required_parameter`; Ruby `k2: 2` is a
-    // `keyword_parameter` with a `value`.
-    (node.kind() == "required_parameter"
+    // TS wraps rest params (`...rest: T[]`, a `rest_pattern` in the `pattern` field) in
+    // `required_parameter`.
+    node.kind() == "required_parameter"
         && node
             .child_by_field_name("pattern")
-            .is_some_and(|pattern| pattern.kind() == "rest_pattern"))
-        || ((node.kind() == "required_parameter" || node.kind() == "keyword_parameter")
-            && node.child_by_field_name("value").is_some())
+            .is_some_and(|pattern| pattern.kind() == "rest_pattern")
+}
+
+/// Whether one declared parameter is defaulted/omittable; see isOptionalParameter in metrics.ts.
+fn is_optional_parameter(node: Node<'_>) -> bool {
+    if OPTIONAL_PARAMETER_TYPES.contains(&node.kind()) {
+        return true;
+    }
+    // TS wraps defaults (`b = 1`, a `value` field) in `required_parameter`; Ruby `k2: 2` is a
+    // `keyword_parameter` with a `value`.
+    (node.kind() == "required_parameter" || node.kind() == "keyword_parameter")
+        && node.child_by_field_name("value").is_some()
 }
 
 /// Counts declared parameters of a function/method, ignoring punctuation and comments.
@@ -306,7 +663,7 @@ fn count_parameters(node: Node<'_>, code: &Source<'_>) -> ParameterCounts {
         return ParameterCounts {
             count: 1,
             min_count: 1,
-            flexible: false,
+            unbounded: false,
         };
     }
 
@@ -314,7 +671,7 @@ fn count_parameters(node: Node<'_>, code: &Source<'_>) -> ParameterCounts {
         return ParameterCounts {
             count: 0,
             min_count: 0,
-            flexible: false,
+            unbounded: false,
         };
     };
 
@@ -323,7 +680,7 @@ fn count_parameters(node: Node<'_>, code: &Source<'_>) -> ParameterCounts {
         return ParameterCounts {
             count: 1,
             min_count: 1,
-            flexible: false,
+            unbounded: false,
         };
     }
 
@@ -334,11 +691,14 @@ fn count_parameters(node: Node<'_>, code: &Source<'_>) -> ParameterCounts {
         .collect();
     let mut count = 0usize;
     let mut min_count = 0usize;
-    let mut flexible = false;
+    let mut unbounded = false;
+    // A Ruby block parameter (`&blk`) binds the block, which call sites pass outside the argument
+    // list, so it counts toward no arity.
     for child in named_children(parameters_node) {
         if child.kind() == "comment"
             || child.kind() == "self_parameter"
             || child.kind() == "receiver_parameter"
+            || child.kind() == "block_parameter"
             || child.kind() == "positional_separator"
             || child.kind() == "keyword_separator"
             || block_local_ids.contains(&child.id())
@@ -353,9 +713,9 @@ fn count_parameters(node: Node<'_>, code: &Source<'_>) -> ParameterCounts {
             1
         };
         count += weight;
-        if is_flexible_parameter(child) {
-            flexible = true;
-        } else {
+        if is_unbounded_parameter(child) {
+            unbounded = true;
+        } else if !is_optional_parameter(child) {
             min_count += weight;
         }
     }
@@ -365,12 +725,62 @@ fn count_parameters(node: Node<'_>, code: &Source<'_>) -> ParameterCounts {
         .filter(|child| !child.is_named() && node_text(**child, code) == "...")
         .count();
     if anonymous_variadic_count > 0 {
-        flexible = true;
+        unbounded = true;
     }
     ParameterCounts {
         count: count + anonymous_variadic_count,
         min_count,
-        flexible,
+        unbounded,
+    }
+}
+
+/// 1 when a Python method's leading `self`/`cls` parameter is bound implicitly (so call sites
+/// pass one argument fewer than declared), 0 otherwise. `@staticmethod`s bind no receiver.
+fn count_python_bound_receiver_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
+    if node.kind() != "function_definition" {
+        return 0;
+    }
+    let definition = match node.parent() {
+        Some(parent) if parent.kind() == "decorated_definition" => parent,
+        _ => node,
+    };
+    let inside_class = definition.parent().is_some_and(|parent| {
+        parent.kind() == "block"
+            && parent
+                .parent()
+                .is_some_and(|grandparent| grandparent.kind() == "class_definition")
+    });
+    if !inside_class {
+        return 0;
+    }
+    if definition.kind() == "decorated_definition"
+        && named_children(definition).iter().any(|child| {
+            child.kind() == "decorator" && {
+                let text = node_text(*child, code);
+                text.strip_prefix('@').unwrap_or(text) == "staticmethod"
+            }
+        })
+    {
+        return 0;
+    }
+    let first_parameter = node
+        .child_by_field_name("parameters")
+        .map(named_children)
+        .unwrap_or_default()
+        .into_iter()
+        .find(|child| child.kind() != "comment");
+    let receiver_name = match first_parameter {
+        Some(parameter) if parameter.kind() == "identifier" => {
+            Some(node_text(parameter, code).to_string())
+        }
+        Some(parameter) if parameter.kind() == "typed_parameter" => parameter
+            .named_child(0)
+            .map(|name| node_text(name, code).to_string()),
+        _ => None,
+    };
+    match receiver_name.as_deref() {
+        Some("self") | Some("cls") => 1,
+        _ => 0,
     }
 }
 
@@ -425,9 +835,17 @@ struct CallsCollector<'a, 'code> {
 
 impl CallsCollector<'_, '_> {
     fn add_callee(&mut self, name: String, argument_count: Option<usize>, receiver: CallReceiver) {
-        self.callees.insert(name.clone());
+        // A Python self/cls attribute call names its callee `self.helper`; resolution matches the
+        // method name alone (the receiver is the caller's own class), while the callees set keeps
+        // the full spelling.
+        let resolution_name = if self.sets.name == "python" && receiver == CallReceiver::SelfLike {
+            name.rsplit('.').next().unwrap_or(&name).to_string()
+        } else {
+            name.clone()
+        };
+        self.callees.insert(name);
         self.call_sites.push(CallSite {
-            name,
+            name: resolution_name,
             argument_count,
             receiver,
         });
@@ -465,7 +883,12 @@ impl CallsCollector<'_, '_> {
                 } else {
                     count_call_arguments(node)
                 };
-                let receiver = classify_call_receiver(node, self.sets, self.code, self.go_receiver_name.as_deref());
+                let receiver = classify_call_receiver(
+                    node,
+                    self.sets,
+                    self.code,
+                    self.go_receiver_name.as_deref(),
+                );
                 self.add_callee(callee, argument_count, receiver);
             }
             // Ruby abbreviated assignment on a receiver (`self.foo += 1`) invokes the getter AND the
@@ -481,7 +904,12 @@ impl CallsCollector<'_, '_> {
             {
                 self.call_count += 1;
                 if let Some(setter_method) = node.child_by_field_name("method") {
-                    let receiver = classify_call_receiver(node, self.sets, self.code, self.go_receiver_name.as_deref());
+                    let receiver = classify_call_receiver(
+                        node,
+                        self.sets,
+                        self.code,
+                        self.go_receiver_name.as_deref(),
+                    );
                     self.add_callee(
                         format!("{}=", node_text(setter_method, self.code)),
                         Some(1),
@@ -607,7 +1035,13 @@ fn classify_call_receiver(
             _ => None,
         };
         if let Some(receiver_node) = receiver_node {
-            return if is_self_like_receiver(receiver_node, code, go_receiver_name) {
+            // Python class methods go through the conventional `cls` receiver.
+            let is_python_cls_receiver = sets.name == "python"
+                && receiver_node.kind() == "identifier"
+                && node_text(receiver_node, code) == "cls";
+            return if is_self_like_receiver(receiver_node, code, go_receiver_name)
+                || is_python_cls_receiver
+            {
                 CallReceiver::SelfLike
             } else {
                 CallReceiver::Other
@@ -619,7 +1053,11 @@ fn classify_call_receiver(
 
 /// JS `this`, Rust/Ruby `self` nodes, Python's conventional `self` identifier, and the enclosing
 /// Go method's receiver variable (`a` in `func (a A) run() { a.helper() }`).
-fn is_self_like_receiver(node: Node<'_>, code: &Source<'_>, go_receiver_name: Option<&str>) -> bool {
+fn is_self_like_receiver(
+    node: Node<'_>,
+    code: &Source<'_>,
+    go_receiver_name: Option<&str>,
+) -> bool {
     node.kind() == "this"
         || node.kind() == "self"
         || (node.kind() == "identifier"
@@ -815,8 +1253,20 @@ fn is_ruby_expression_identifier(node: Node<'_>) -> bool {
         {
             return false;
         }
+        // An endless method's body expression (`def g = helper`) is a DIRECT child of the method
+        // node, so only the definition's `name` (and `def obj.meth`'s `object`) is rejected here.
+        "method" | "singleton_method"
+            if parent
+                .child_by_field_name("name")
+                .is_some_and(|name| name.id() == node.id())
+                || parent
+                    .child_by_field_name("object")
+                    .is_some_and(|object| object.id() == node.id()) =>
+        {
+            return false;
+        }
         // `alias c a` and `undef foo` operands are method-name references; none invokes anything.
-        "method" | "singleton_method" | "setter" | "alias" | "undef" => {
+        "setter" | "alias" | "undef" => {
             return false;
         }
         // Binding targets: `x = 1`, `x ||= 1`, `for x in ...`, `rescue => x`, and every parameter form.
@@ -1054,8 +1504,14 @@ fn ruby_regex_named_captures(text: &str) -> Vec<String> {
     let mut names = Vec::new();
     let mut index = 0;
     while index + 3 < bytes.len() {
-        if &bytes[index..index + 2] == b"(?" && (bytes[index + 2] == b'<' || bytes[index + 2] == b'\'') {
-            let closer = if bytes[index + 2] == b'<' { b'>' } else { b'\'' };
+        if &bytes[index..index + 2] == b"(?"
+            && (bytes[index + 2] == b'<' || bytes[index + 2] == b'\'')
+        {
+            let closer = if bytes[index + 2] == b'<' {
+                b'>'
+            } else {
+                b'\''
+            };
             let start = index + 3;
             let mut end = start;
             if end < bytes.len() && (bytes[end].is_ascii_alphabetic() || bytes[end] == b'_') {

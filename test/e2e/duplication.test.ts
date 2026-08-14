@@ -7,7 +7,7 @@ import {
   measureCrossFileDuplication,
   type LanguageName,
 } from '../../src/index.js';
-import type { Token, TokenRange } from '../../src/duplication.js';
+import { mergeAdjacentGroups, type CountedOccurrence, type Token, type TokenRange } from '../../src/duplication.js';
 import { fixturesDir } from './fixtureCorpus.js';
 
 // End-to-end coverage of the duplication detector across every supported language, plus the
@@ -145,6 +145,18 @@ const suffixHalf = `
   return total + count + big - small;
 `;
 
+/** A single-segment occurrence spanning [start, end) for direct mergeAdjacentGroups tests. */
+const occurrence = (start: number, end: number): CountedOccurrence => ({
+  segments: [{ startTokenIndex: start, endTokenIndex: end }],
+  tokenCount: end - start,
+  startTokenIndex: start,
+  endTokenIndex: end,
+  startIndex: start,
+  endIndex: end,
+  startLine: start,
+  endLine: end,
+});
+
 describe('duplication: partial gapped-clone merging', () => {
   // The prefix run appears three times (twice followed by a gap and the suffix, once standalone),
   // the suffix run twice: the fragment group cardinalities differ, so only a partial merge can
@@ -205,6 +217,29 @@ describe('duplication: partial gapped-clone merging', () => {
     expect(metrics.duplication.duplicateBlockCount).toBe(4);
     // The largest occurrence is delta's whole near-miss block, not a double-counted alpha span.
     expect(metrics.duplication.maxDuplicateBlockSize).toBe(139);
+  });
+
+  // Three adjacent fragment groups where the first also occurs standalone: after A partially
+  // merges with B, the retained A occurrences must not pair AGAIN with C (which would build a
+  // competing A+C group); instead the merged A+B group extends with C to the A+B+C fixed point.
+  it('extends the merged group across a third adjacent group instead of re-pairing retained occurrences', () => {
+    const groupA = [occurrence(0, 10), occurrence(50, 60), occurrence(100, 110)];
+    const groupB = [occurrence(12, 22), occurrence(62, 72)];
+    const groupC = [occurrence(24, 34), occurrence(74, 84)];
+
+    const merged = mergeAdjacentGroups([groupA, groupB, groupC], 20);
+
+    expect(merged).toHaveLength(2);
+    const shapes = merged.map((group) =>
+      group.map((entry) => `${entry.startTokenIndex}..${entry.endTokenIndex}/${entry.segments.length}`)
+    );
+    // Retained A keeps all three occurrences; the single merged group holds both full A+B+C runs.
+    expect(shapes).toEqual([
+      ['0..10/1', '50..60/1', '100..110/1'],
+      ['0..34/3', '50..84/3'],
+    ]);
+    // A's two paired occurrences are marked as shared with the merged group (no double counting).
+    expect(merged[0]?.map((entry) => entry.sharedWithMergedGroup === true)).toEqual([true, true, false]);
   });
 
   it('loses no duplicated-line coverage compared to unmerged reporting', () => {

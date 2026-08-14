@@ -69,7 +69,7 @@ pub fn measure_coupling(root: Node<'_>, sets: &LanguageSets, code: &Source<'_>) 
             }
         }
 
-        if is_export_node(node, sets) {
+        if is_export_node(node, sets, code) {
             *export_count += 1;
         }
         if sets.name == "go" {
@@ -863,7 +863,7 @@ fn is_import_source_node(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>)
         || is_cpp_module_import(node, sets, code)
         || is_dynamic_import_node(node, code)
         || is_ruby_require_call(node, sets, code)
-        || (is_export_node(node, sets) && node.child_by_field_name("source").is_some())
+        || (is_export_node(node, sets, code) && node.child_by_field_name("source").is_some())
 }
 
 /// C++20 imports misparse without grammar module support; see isCppModuleImport in metrics.ts.
@@ -1390,12 +1390,12 @@ fn unquote(value: &str) -> String {
     result.to_string()
 }
 
-pub fn is_export_node(node: Node<'_>, sets: &LanguageSets) -> bool {
+pub fn is_export_node(node: Node<'_>, sets: &LanguageSets, code: &Source<'_>) -> bool {
     // Rust visibility is a modifier, not an export statement; each exported `visibility_modifier`
     // counts once — including pub fields/methods, matching how JS counts `public_field_definition`
     // (issue #14). See is_exported_rust_visibility for what "exported" means.
     if sets.name == "rust" {
-        return node.kind() == "visibility_modifier" && is_exported_rust_visibility(node);
+        return node.kind() == "visibility_modifier" && is_exported_rust_visibility(node, code);
     }
     // Go exports by capitalization; each capitalized top-level declared name is one export.
     if sets.name == "go" {
@@ -1406,24 +1406,97 @@ pub fn is_export_node(node: Node<'_>, sets: &LanguageSets) -> bool {
         || node.kind() == "public_field_definition"
 }
 
+/// Container items whose non-`pub` visibility blocks reachability of everything inside them.
+const RUST_CONTAINER_ITEM_TYPES: &[&str] =
+    &["struct_item", "enum_item", "union_item", "trait_item"];
+
 /// Rust's exported surface is the unrestricted-`pub` API reachable from the crate root — the
 /// convention rustdoc, cargo-public-api, and rustc's `unreachable_pub` lint agree on (issue #14).
 /// File-local approximation: a bare `pub` (no `(crate)`/`(super)`/`(in ...)` restriction) whose
-/// enclosing inline `mod`s in this file are all bare-`pub` themselves.
-fn is_exported_rust_visibility(node: Node<'_>) -> bool {
+/// enclosing inline `mod`s and container items (struct/enum/union/trait) in this file are all
+/// bare-`pub` themselves, whose enclosing `impl`s target a file-locally exported (or file-locally
+/// undeclared, assumed reachable) type, and which sits in no function body.
+fn is_exported_rust_visibility(node: Node<'_>, code: &Source<'_>) -> bool {
     // Restricted variants (`pub(crate)` etc.) carry the restriction as a named child; bare `pub`
     // has none.
     if node.named_child_count() > 0 {
         return false;
     }
-    let mut ancestor = node.parent();
+    // Skip the item carrying this modifier: its own reachability is judged by its ancestors (and
+    // the modifier under test IS its unrestricted `pub`).
+    let mut ancestor = node.parent().and_then(|owner| owner.parent());
     while let Some(current) = ancestor {
-        if current.kind() == "mod_item" && !has_unrestricted_rust_pub(current) {
+        // Items inside a function body (`fn outer() { pub fn nested() {} }`) are never reachable.
+        if current.kind() == "block" || current.kind() == "function_item" {
+            return false;
+        }
+        if (current.kind() == "mod_item" || RUST_CONTAINER_ITEM_TYPES.contains(&current.kind()))
+            && !has_unrestricted_rust_pub(current)
+        {
+            return false;
+        }
+        if current.kind() == "impl_item" && !is_rust_impl_target_exported(current, code) {
             return false;
         }
         ancestor = current.parent();
     }
     true
+}
+
+/// Whether an `impl` block's items can be externally reachable: judged by the implemented type's
+/// own visibility when that type is declared in this file. A type not declared here (another
+/// module's type, a generic instantiation of one) is assumed reachable — the conservative side of
+/// the file-local approximation, counting possibly-exported items rather than dropping them.
+fn is_rust_impl_target_exported(impl_node: Node<'_>, code: &Source<'_>) -> bool {
+    let Some(type_name_node) = find_rust_type_base_name(impl_node.child_by_field_name("type"))
+    else {
+        return true;
+    };
+    let mut root = impl_node;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    let Some(declaration) = find_rust_type_declaration(root, node_text(type_name_node, code), code)
+    else {
+        return true;
+    };
+    named_children(declaration)
+        .into_iter()
+        .find(|child| child.kind() == "visibility_modifier")
+        .is_some_and(|visibility| is_exported_rust_visibility(visibility, code))
+}
+
+fn find_rust_type_declaration<'t>(
+    root: Node<'t>,
+    type_name: &str,
+    code: &Source<'_>,
+) -> Option<Node<'t>> {
+    let declaration_types: HashSet<&'static str> = RUST_CONTAINER_ITEM_TYPES
+        .iter()
+        .copied()
+        .chain(std::iter::once("type_item"))
+        .collect();
+    collect_nodes(root, &declaration_types)
+        .into_iter()
+        .find(|node| {
+            node.child_by_field_name("name")
+                .is_some_and(|name| node_text(name, code) == type_name)
+        })
+}
+
+/// The base identifier of an impl target (`Foo` in `Foo<T>`, `crate::a::Foo`, `&mut Foo`).
+fn find_rust_type_base_name(node: Option<Node<'_>>) -> Option<Node<'_>> {
+    let mut current = node;
+    while let Some(current_node) = current {
+        if current_node.kind() == "type_identifier" {
+            return Some(current_node);
+        }
+        current = current_node
+            .child_by_field_name("name")
+            .or_else(|| current_node.child_by_field_name("type"))
+            .or_else(|| named_children(current_node).last().copied());
+    }
+    None
 }
 
 /// Capitalized names a top-level Go declaration exports (`var A, b = ...` exports only `A`).
