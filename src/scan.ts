@@ -1,4 +1,4 @@
-import { readdir, readFile, realpath, stat } from 'node:fs/promises';
+import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
@@ -178,9 +178,17 @@ export async function scanListedFiles(
   const context = makeScanContext(options, files, errors, warnings, rootDirectory);
   for (const relativePath of relativePaths) {
     const language = isScannedPath(relativePath, options) ? getLanguage(relativePath, options) : undefined;
-    if (language) {
-      await measureFile(path.join(rootDirectory, relativePath), language, 'directory', context);
+    if (!language) {
+      continue;
     }
+    const absolutePath = path.join(rootDirectory, relativePath);
+    // Symbolic links are not source files: git stores only their target string, so measuring
+    // through them would diverge from what any revision of the repository actually contains.
+    const stats = await lstat(absolutePath).catch(() => {});
+    if (stats?.isSymbolicLink()) {
+      continue;
+    }
+    await measureFile(absolutePath, language, 'directory', context);
   }
   return { displayRoot: rootDirectory, files, errors, warnings };
 }

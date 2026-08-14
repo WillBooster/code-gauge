@@ -110,6 +110,19 @@ export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>
   return files;
 }
 
+/** Paths that are symbolic links (blob mode 120000) at the given revision. */
+export async function listSymlinkPathsAtRevision(repoRoot: string, revision: string): Promise<Set<string>> {
+  const output = await runGit(repoRoot, ['ls-tree', '-r', '-z', revision]);
+  const links = new Set<string>();
+  for (const entry of output.split('\0')) {
+    const tabIndex = entry.indexOf('\t');
+    if (entry.startsWith('120000 ') && tabIndex !== -1) {
+      links.add(entry.slice(tabIndex + 1));
+    }
+  }
+  return links;
+}
+
 /** The file's content at the given commit; the path is repository-relative with forward slashes. */
 export async function readFileAtRevision(repoRoot: string, revision: string, path: string): Promise<string> {
   return await runGit(repoRoot, ['cat-file', 'blob', `${revision}:${path}`]);

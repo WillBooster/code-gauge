@@ -195,12 +195,15 @@ describe('code-gauge diff --base', () => {
     expect(result.stdout).toMatch(/^Regression gate passed/u);
   });
 
-  it('ignores unsupported artifacts like broken symlinks instead of failing the gate', () => {
+  it('ignores broken symlinks and symlinked source aliases instead of failing the gate', () => {
     symlinkSync('/nonexistent-code-gauge-target', path.join(repoDir, 'src', 'broken.link'));
+    // A source-extension symlink is not measurable source (git stores only the target string), so
+    // it must neither gate nor steal the measurement of its target file.
+    symlinkSync('report.ts', path.join(repoDir, 'src', 'alias.ts'));
     writeFileSync(path.join(repoDir, 'src', 'calc.ts'), baseCalc + 'export const extra = 1;\n');
     const result = runCli(['diff', '--base', 'main'], repoDir);
     expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/^Regression gate passed/u);
+    expect(result.stdout).toMatch(/^Regression gate passed: 1 changed files, 1 functions checked/u);
   });
 
   it('fails with exit 2 (and no pass claim) when a changed file cannot be measured', () => {
@@ -272,10 +275,12 @@ describe('code-gauge diff --base', () => {
 
   it('fails with exit 2 on a nonexistent target instead of passing vacuously', () => {
     writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
-    const result = runCli(['diff', '--base', 'main', 'src-typo'], repoDir);
-    expect(result.status).toBe(2);
-    expect(result.stderr).toContain('does not exist and matches no changed file');
-    expect(result.stdout).not.toContain('passed');
+    for (const typo of ['src-typo', 'src/nope/deep']) {
+      const result = runCli(['diff', '--base', 'main', typo], repoDir);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('does not exist and matches no changed file');
+      expect(result.stdout).not.toContain('passed');
+    }
   });
 
   it('matches a function moved from outside the gated target', () => {

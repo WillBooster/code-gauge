@@ -353,16 +353,41 @@ describe('file-level backstops (synthetic aggregates)', () => {
   });
 
   it('does not restate a function-level cognitive violation as a file violation', () => {
-    // g disappears, so the backstops run; f's worsening is already reported at function level, so
-    // the file max-cognitive backstop must stay silent instead of restating it.
+    // g's content reappears split in h (arming the backstops) while f worsens to the new file
+    // maximum: f's function-level violation already reports that maximum, so the file
+    // max-cognitive backstop must stay silent instead of restating it.
     const input = makeSyntheticInput(
       makeMetrics([makeFunction('f', { cognitiveComplexity: 10 }), makeFunction('g', { cognitiveComplexity: 3 })]),
-      makeMetrics([makeFunction('f', { cognitiveComplexity: 20 })])
+      makeMetrics([makeFunction('f', { cognitiveComplexity: 20 }), makeFunction('h', { cognitiveComplexity: 2 })]),
+      {
+        base: [Int32Array.from(tokenRange(600, 4)), originalTokens],
+        head: [Int32Array.from(tokenRange(600, 4)), splitFragmentTokens],
+      }
     );
     const result = evaluateRegressionGate([input], defaultGateOptions);
     expect(result.violations.map((violation) => [violation.gate, violation.metric])).toStrictEqual([
       ['function-regression', 'cognitive complexity'],
     ]);
+  });
+
+  it('assigns similarity matches with maximum cardinality instead of best-edge greed', () => {
+    // Anonymous functions with similarities A-A 90, A-B 70, B-A 70, B-B 60: a greedy walk would
+    // take A-A and strand B (a false new-function violation for the cognitive-20 head); the
+    // maximum assignment pairs A-B and B-A so every function keeps a counterpart.
+    const baseA = Int32Array.from([...tokenRange(1, 5), ...tokenRange(11, 5)]);
+    const headA = Int32Array.from([...tokenRange(1, 5), ...tokenRange(11, 4), 50]);
+    const headB = Int32Array.from([...tokenRange(1, 5), 11, 12, 60, 61, 62]);
+    const baseB = Int32Array.from([...tokenRange(1, 5), 11, 13, 70, 71, 72]);
+    const anonymous = (cognitiveComplexity: number): FunctionMetrics =>
+      makeFunction('ignored', { name: undefined, cognitiveComplexity });
+    const input = makeSyntheticInput(
+      makeMetrics([anonymous(20), anonymous(0)]),
+      makeMetrics([anonymous(0), anonymous(20)]),
+      { base: [baseA, baseB], head: [headA, headB] }
+    );
+    const result = evaluateRegressionGate([input], defaultGateOptions);
+    expect(result.violations).toStrictEqual([]);
+    expect(result.newFunctionCount).toBe(0);
   });
 
   it('matches a function moved to another changed file instead of gating it as new code', () => {

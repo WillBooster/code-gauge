@@ -1,4 +1,4 @@
-import { readFile, realpath } from 'node:fs/promises';
+import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { loadConfig, resolveGateOptions, resolveOptions, type ResolvedOptions } from './cliConfig.js';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
@@ -6,6 +6,7 @@ import type { CrossFileDuplicationFileData } from './duplication.js';
 import {
   listChangedFiles,
   listRepositoryFiles,
+  listSymlinkPathsAtRevision,
   readFileAtRevision,
   resolveMergeBase,
   resolveRepoRoot,
@@ -86,7 +87,11 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const options = resolveOptions(cliOptions, config);
   const gateOptions = resolveGateOptions(config);
 
-  const repoRoot = await realpath(await resolveRepoRoot(await configSearchDirectory(resolvedTarget)));
+  // The target may be a typo'd path whose ancestors don't exist either; repository discovery must
+  // still run so the mistyped target gets its own diagnostic instead of a git spawn failure.
+  const repoRoot = await realpath(
+    await resolveRepoRoot(await firstExistingDirectory(await configSearchDirectory(resolvedTarget)))
+  );
   const mergeBase = await resolveMergeBase(repoRoot, cliOptions.base);
   const changedFiles = await listChangedFiles(repoRoot, mergeBase);
 
@@ -98,15 +103,17 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   // Unchanged files are byte-identical at both revisions, so the base universe is the same scan
   // with the changed files' contents swapped for their merge-base blobs.
   const repositoryFiles = await listRepositoryFiles(repoRoot);
+  const baseSymlinkPaths = await listSymlinkPathsAtRevision(repoRoot, mergeBase);
   const scan = await scanListedFiles(repoRoot, repositoryFiles, options);
   const scannedFiles: ScannedFile[] = scan.files.map((file) => ({
     relativePath: formatPath(file.file, scan.displayRoot),
     file,
   }));
 
-  // Only failures affecting gateable changed files force exit 2: a broken symlink or unreadable
-  // directory elsewhere in the repository (or an unsupported changed path) must not turn every
-  // diff run red.
+  // A measurement failure on ANY scannable changed file forces exit 2 — deliberately including
+  // files outside a scoped target, because cross-file function matching and the base duplication
+  // universe for the gated files depend on them. Failures elsewhere (unchanged files) and
+  // unsupported changed paths degrade to warnings.
   const changedPaths = new Set(
     changedFiles
       .flatMap((changed) => [changed.headPath, ...(changed.basePath === undefined ? [] : [changed.basePath])])
@@ -125,7 +132,7 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
   const prepared = await prepareChangedFiles(
     changedFiles,
-    { repoRoot, mergeBase, canonicalTarget, options, scannedFiles },
+    { repoRoot, mergeBase, canonicalTarget, options, scannedFiles, baseSymlinkPaths },
     errors,
     warnings
   );
@@ -169,6 +176,8 @@ interface GateContext {
   canonicalTarget: string;
   options: ResolvedOptions;
   scannedFiles: ScannedFile[];
+  /** Paths that are symbolic links at the merge-base; like head symlinks, they are not gated. */
+  baseSymlinkPaths: Set<string>;
 }
 
 async function prepareChangedFiles(
@@ -195,11 +204,19 @@ async function prepareChangedFile(
   errors: string[],
   warnings: string[]
 ): Promise<PreparedFile | undefined> {
-  const headScannable = changed.status !== 'deleted' && isScannedPath(changed.headPath, context.options);
+  // Symbolic links are skipped on both sides, mirroring scanListedFiles: git stores only the
+  // target string, so a symlink blob is not measurable source.
+  const headScannable =
+    changed.status !== 'deleted' &&
+    isScannedPath(changed.headPath, context.options) &&
+    !(await isSymbolicLink(path.join(context.repoRoot, changed.headPath)));
   // A base path outside the scan scope (renamed from a test/ignored directory, or an unsupported
   // extension) was never measurable code: its content gates as new code instead of ratcheting
   // against a blob the scanner would not have measured.
-  const baseScannable = changed.basePath !== undefined && isScannedPath(changed.basePath, context.options);
+  const baseScannable =
+    changed.basePath !== undefined &&
+    isScannedPath(changed.basePath, context.options) &&
+    !context.baseSymlinkPaths.has(changed.basePath);
   if (!headScannable && !baseScannable) {
     return undefined;
   }
@@ -299,6 +316,28 @@ async function measureBaseRevision(
     );
   }
   return true;
+}
+
+async function isSymbolicLink(absolutePath: string): Promise<boolean> {
+  const stats = await lstat(absolutePath).catch(() => {});
+  return stats?.isSymbolicLink() ?? false;
+}
+
+/** Walks up to the nearest existing ancestor, so git commands never spawn in a missing cwd. */
+async function firstExistingDirectory(directory: string): Promise<string> {
+  let current = directory;
+  while (true) {
+    try {
+      await stat(current);
+      return current;
+    } catch {
+      const parent = path.dirname(current);
+      if (parent === current) {
+        return current;
+      }
+      current = parent;
+    }
+  }
 }
 
 function isWithinTarget(candidate: string, targetDirectory: string): boolean {

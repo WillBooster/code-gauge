@@ -454,7 +454,7 @@ function pairGroup(
       });
     }
   }
-  takeGreedyMatches(candidates, baseGroup, headGroup, baseMatched, headMatched, pairs);
+  takeMaximumMatches(candidates, baseGroup, headGroup, baseMatched, headMatched, pairs);
 }
 
 /** Cross-file (and remaining within-file) similarity matching over every unmatched function. */
@@ -480,11 +480,16 @@ function pairAcrossChangeSet(
       }
     }
   }
-  takeGreedyMatches(candidates, unmatchedBase, unmatchedHead, baseMatched, headMatched, pairs);
+  takeMaximumMatches(candidates, unmatchedBase, unmatchedHead, baseMatched, headMatched, pairs);
 }
 
-/** Greedily takes the best-similarity candidates first (order tie-breaks keep this deterministic). */
-function takeGreedyMatches(
+/**
+ * Maximum-cardinality assignment over the above-threshold candidate edges (Kuhn's augmenting
+ * paths). A greedy best-edge-first walk could strand a function whose only counterpart was taken
+ * by a slightly better pair, falsely gating it as new code; cardinality comes first, and the
+ * similarity-descending adjacency order biases the assignment toward high-similarity pairs.
+ */
+function takeMaximumMatches(
   candidates: SimilarityCandidate[],
   baseGroup: IndexedFunction[],
   headGroup: IndexedFunction[],
@@ -498,16 +503,37 @@ function takeGreedyMatches(
       left.basePosition - right.basePosition ||
       left.headPosition - right.headPosition
   );
+  const adjacency = new Map<number, number[]>();
   for (const candidate of candidates) {
-    const base = baseGroup[candidate.basePosition] as IndexedFunction;
-    const head = headGroup[candidate.headPosition] as IndexedFunction;
-    const baseFlags = baseMatched[base.fileIndex] as boolean[];
-    const headFlags = headMatched[head.fileIndex] as boolean[];
-    if (baseFlags[base.functionIndex] || headFlags[head.functionIndex]) {
-      continue;
+    const edges = adjacency.get(candidate.basePosition) ?? [];
+    edges.push(candidate.headPosition);
+    adjacency.set(candidate.basePosition, edges);
+  }
+
+  const baseOfHead = new Map<number, number>();
+  const tryAugment = (basePosition: number, visitedHeads: Set<number>): boolean => {
+    for (const headPosition of adjacency.get(basePosition) ?? []) {
+      if (visitedHeads.has(headPosition)) {
+        continue;
+      }
+      visitedHeads.add(headPosition);
+      const currentBase = baseOfHead.get(headPosition);
+      if (currentBase === undefined || tryAugment(currentBase, visitedHeads)) {
+        baseOfHead.set(headPosition, basePosition);
+        return true;
+      }
     }
-    baseFlags[base.functionIndex] = true;
-    headFlags[head.functionIndex] = true;
+    return false;
+  };
+  for (const basePosition of [...adjacency.keys()].toSorted((left, right) => left - right)) {
+    tryAugment(basePosition, new Set());
+  }
+
+  for (const [headPosition, basePosition] of [...baseOfHead.entries()].toSorted((left, right) => left[0] - right[0])) {
+    const base = baseGroup[basePosition] as IndexedFunction;
+    const head = headGroup[headPosition] as IndexedFunction;
+    (baseMatched[base.fileIndex] as boolean[])[base.functionIndex] = true;
+    (headMatched[head.fileIndex] as boolean[])[head.functionIndex] = true;
     pairs.push({ base: base.fn, head: head.fn, headFileIndex: head.fileIndex });
   }
 }
