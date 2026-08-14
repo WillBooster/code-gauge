@@ -198,8 +198,10 @@ describe('code-gauge diff --base', () => {
   it('ignores broken symlinks and symlinked source aliases instead of failing the gate', () => {
     symlinkSync('/nonexistent-code-gauge-target', path.join(repoDir, 'src', 'broken.link'));
     // A source-extension symlink is not measurable source (git stores only the target string), so
-    // it must neither gate nor steal the measurement of its target file.
-    symlinkSync('report.ts', path.join(repoDir, 'src', 'alias.ts'));
+    // it must neither gate nor steal the measurement of its CHANGED target file: alias.ts sorts
+    // before calc.ts in the git list, so without the symlink skip it would consume calc.ts's
+    // realpath in the visited-file deduplication and fail the run with an unmeasured changed file.
+    symlinkSync('calc.ts', path.join(repoDir, 'src', 'alias.ts'));
     writeFileSync(path.join(repoDir, 'src', 'calc.ts'), baseCalc + 'export const extra = 1;\n');
     const result = runCli(['diff', '--base', 'main'], repoDir);
     expect(result.status).toBe(0);
@@ -275,7 +277,7 @@ describe('code-gauge diff --base', () => {
 
   it('fails with exit 2 on a nonexistent target instead of passing vacuously', () => {
     writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
-    for (const typo of ['src-typo', 'src/nope/deep']) {
+    for (const typo of ['src-typo', 'src/nope/deep', 'src/calc.ts/nope']) {
       const result = runCli(['diff', '--base', 'main', typo], repoDir);
       expect(result.status).toBe(2);
       expect(result.stderr).toContain('does not exist and matches no changed file');

@@ -485,12 +485,14 @@ function pairAcrossChangeSet(
 
 /**
  * Assignment over the candidate edges: a greedy best-similarity-first seed, then Kuhn's
- * augmenting paths for the bases the seed left unmatched. The seed keeps every exact/strong pair
- * (and the positional order of all-tied groups) exactly as taken, because augmentation runs only
- * when it increases cardinality — a function whose only counterpart was taken by a slightly
- * better pair is then re-matched by rewiring instead of being falsely gated as new code. This
- * reaches maximum cardinality (augmenting from a maximal matching does) without letting the
- * augmentation displace pairs it never needed to touch.
+ * augmenting paths for the bases the seed left unmatched, so a function whose only counterpart
+ * was taken by a slightly better pair is re-matched by rewiring instead of being falsely gated as
+ * new code. Augmentation runs only when it increases cardinality, and an exact (100%) seed pair —
+ * certain identity — is locked and never rewired even then: trading it for two partial matches
+ * would ratchet an untouched function against some other function's rewrite. Non-exact seed pairs
+ * may be rewired, but only when that matches strictly more functions (which a maximum-weight
+ * assignment would also prefer). Without token sequences every similarity ties at 0 and the seed
+ * reproduces positional order.
  */
 function takeMaximumMatches(
   candidates: SimilarityCandidate[],
@@ -508,10 +510,11 @@ function takeMaximumMatches(
   );
   const adjacency = new Map<number, number[]>();
   const baseOfHead = new Map<number, number>();
-  const matchedBases = seedGreedyMatches(candidates, adjacency, baseOfHead);
+  const lockedHeads = new Set<number>();
+  const matchedBases = seedGreedyMatches(candidates, adjacency, baseOfHead, lockedHeads);
   for (const basePosition of [...adjacency.keys()].toSorted((left, right) => left - right)) {
     if (!matchedBases.has(basePosition)) {
-      tryAugment(basePosition, adjacency, baseOfHead, new Set());
+      tryAugment(basePosition, adjacency, baseOfHead, lockedHeads, new Set());
     }
   }
 
@@ -524,11 +527,15 @@ function takeMaximumMatches(
   }
 }
 
-/** Fills the adjacency lists and takes each best edge whose endpoints are both still free. */
+/**
+ * Fills the adjacency lists and takes each best edge whose endpoints are both still free; a taken
+ * exact (100%) edge locks its head against later rewiring.
+ */
 function seedGreedyMatches(
   candidates: SimilarityCandidate[],
   adjacency: Map<number, number[]>,
-  baseOfHead: Map<number, number>
+  baseOfHead: Map<number, number>,
+  lockedHeads: Set<number>
 ): Set<number> {
   const matchedBases = new Set<number>();
   for (const candidate of candidates) {
@@ -538,25 +545,29 @@ function seedGreedyMatches(
     if (!matchedBases.has(candidate.basePosition) && !baseOfHead.has(candidate.headPosition)) {
       baseOfHead.set(candidate.headPosition, candidate.basePosition);
       matchedBases.add(candidate.basePosition);
+      if (candidate.similarity === 100) {
+        lockedHeads.add(candidate.headPosition);
+      }
     }
   }
   return matchedBases;
 }
 
-/** One Kuhn augmentation step: rewires existing matches only when that frees a head for `basePosition`. */
+/** One Kuhn augmentation step: rewires existing (unlocked) matches only when that frees a head for `basePosition`. */
 function tryAugment(
   basePosition: number,
   adjacency: Map<number, number[]>,
   baseOfHead: Map<number, number>,
+  lockedHeads: Set<number>,
   visitedHeads: Set<number>
 ): boolean {
   for (const headPosition of adjacency.get(basePosition) ?? []) {
-    if (visitedHeads.has(headPosition)) {
+    if (visitedHeads.has(headPosition) || lockedHeads.has(headPosition)) {
       continue;
     }
     visitedHeads.add(headPosition);
     const currentBase = baseOfHead.get(headPosition);
-    if (currentBase === undefined || tryAugment(currentBase, adjacency, baseOfHead, visitedHeads)) {
+    if (currentBase === undefined || tryAugment(currentBase, adjacency, baseOfHead, lockedHeads, visitedHeads)) {
       baseOfHead.set(headPosition, basePosition);
       return true;
     }

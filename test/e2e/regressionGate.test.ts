@@ -370,6 +370,26 @@ describe('file-level backstops (synthetic aggregates)', () => {
     ]);
   });
 
+  it('never rewires an exact pairing just to match more functions', () => {
+    // Anonymous functions with edges A-A 100, A-B 70, B-A 70 (B-B below threshold): matching both
+    // would require breaking the byte-identical A-A pair and ratcheting the untouched A against
+    // B's rewrite (a false 1 -> 14 violation). The exact pair is locked; B gates as removed and
+    // headB as new code instead.
+    const anonymous = (cognitiveComplexity: number): FunctionMetrics =>
+      makeFunction('ignored', { name: undefined, cognitiveComplexity });
+    const input = makeSyntheticInput(
+      makeMetrics([anonymous(1), anonymous(20)]),
+      makeMetrics([anonymous(1), anonymous(14)]),
+      {
+        base: [Int32Array.from(tokenRange(1, 10)), Int32Array.from([1, 2, 3, 4, 5, 6, 8, ...tokenRange(70, 3)])],
+        head: [Int32Array.from(tokenRange(1, 10)), Int32Array.from([...tokenRange(1, 7), ...tokenRange(60, 3)])],
+      }
+    );
+    const result = evaluateRegressionGate([input], defaultGateOptions);
+    expect(result.violations).toStrictEqual([]);
+    expect(result.newFunctionCount).toBe(1);
+  });
+
   it('keeps an exact pairing even when a rewritten sibling prefers the same head', () => {
     // Same-name overloads: run#0 is byte-identical at both revisions while run#1 was rewritten and
     // happens to share more tokens with run#0's head than with its own rewrite. The untouched

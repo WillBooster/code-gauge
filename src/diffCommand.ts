@@ -323,20 +323,19 @@ async function isSymbolicLink(absolutePath: string): Promise<boolean> {
   return stats?.isSymbolicLink() ?? false;
 }
 
-/** Walks up to the nearest existing ancestor, so git commands never spawn in a missing cwd. */
+/** Walks up to the nearest existing DIRECTORY, so git commands never spawn in a missing or non-directory cwd. */
 async function firstExistingDirectory(directory: string): Promise<string> {
   let current = directory;
   while (true) {
-    try {
-      await stat(current);
+    const stats = await stat(current).catch(() => {});
+    if (stats?.isDirectory()) {
       return current;
-    } catch {
-      const parent = path.dirname(current);
-      if (parent === current) {
-        return current;
-      }
-      current = parent;
     }
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return current;
+    }
+    current = parent;
   }
 }
 
