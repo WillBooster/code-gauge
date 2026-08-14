@@ -60,6 +60,8 @@ pub struct DuplicationMetrics {
     pub duplicate_block_group_count: usize,
     pub duplicate_block_groups: Vec<Vec<DuplicateBlockOccurrence>>,
     pub duplicate_line_count: usize,
+    /// The 1-based lines behind duplicate_line_count, sorted ascending.
+    pub duplicate_line_numbers: Vec<usize>,
     pub duplication_ratio: f64,
     pub max_duplicate_block_size: usize,
 }

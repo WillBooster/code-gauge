@@ -484,32 +484,24 @@ function findWorstFunction(functions: FunctionMetrics[]): WorstFunction | undefi
 }
 
 /**
- * Distinct 1-based line numbers covered by within-file duplicate blocks or by this file's
- * occurrences in cross-file duplicate groups. Both sources are line ranges, so combining them as
- * a set union keeps overlapping regions from double-counting.
+ * Distinct 1-based code lines covered by within-file or cross-file duplicated content. Both
+ * sources expose the exact lines carrying matched tokens (never block bounding ranges, which
+ * would over-count comment/blank lines and the unmatched gap of a merged clone), so the union is
+ * a subset of the file's code lines and the derived ratio can never exceed 1.
  */
 function collectDuplicatedLines(
   metrics: CodeMetrics,
   crossFileDuplication: CrossFileDuplicationMetrics | undefined,
   formattedFile: string
 ): Set<number> {
-  const lines = new Set<number>();
-  const addRange = (startLine: number, endLine: number): void => {
-    for (let line = startLine; line <= endLine; line += 1) {
-      lines.add(line);
-    }
-  };
-  for (const group of metrics.duplication.duplicateBlockGroups) {
-    for (const occurrence of group) {
-      addRange(occurrence.startLine, occurrence.endLine);
-    }
-  }
-  for (const group of crossFileDuplication?.groups ?? []) {
-    for (const occurrence of group.occurrences) {
-      if (occurrence.file === formattedFile) {
-        addRange(occurrence.startLine, occurrence.endLine);
-      }
-    }
+  const lines = new Set(metrics.duplication.duplicateLineNumbers);
+  // Object.hasOwn: a file named like an Object.prototype member must not read an inherited value.
+  const crossFileLines =
+    crossFileDuplication && Object.hasOwn(crossFileDuplication.duplicateLineNumbersByFile, formattedFile)
+      ? (crossFileDuplication.duplicateLineNumbersByFile[formattedFile] ?? [])
+      : [];
+  for (const line of crossFileLines) {
+    lines.add(line);
   }
   return lines;
 }

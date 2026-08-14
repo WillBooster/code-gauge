@@ -32,8 +32,10 @@ const round = (value: number): number => Math.round(value * 10_000) / 10_000;
  * including fields added to the hand-enumerated duplication/halstead groups.
  */
 type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree'>;
+// duplicateLineNumbers is asserted structurally (its length is the pinned duplicateLineCount and
+// the golden snapshots pin the exact arrays), so the aggregate expectations stay hand-readable.
 type RoundedAggregates = Omit<Record<AggregateKey, unknown>, 'duplication' | 'halstead'> & {
-  duplication: Record<keyof DuplicationMetrics, unknown>;
+  duplication: Record<Exclude<keyof DuplicationMetrics, 'duplicateLineNumbers'>, unknown>;
   halstead: Record<keyof HalsteadMetrics, number>;
 };
 
@@ -114,6 +116,7 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
       it('matches the verified aggregate metrics', () => {
         expect(metrics.language).toBe(expectation.language);
         expect(metrics.bytes).toBe(Buffer.byteLength(code));
+        expect(metrics.duplication.duplicateLineNumbers).toHaveLength(metrics.duplication.duplicateLineCount);
         expect(roundFloats(metrics)).toEqual(expectation.aggregates);
       });
 

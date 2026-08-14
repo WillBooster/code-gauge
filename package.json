@@ -7,8 +7,10 @@
     "tree-sitter",
     "metrics",
     "loc",
-    "cyclomatic-complexity",
-    "cognitive-complexity"
+    "cognitive-complexity",
+    "ncss",
+    "duplication",
+    "refactoring"
   ],
   "repository": {
     "type": "git",

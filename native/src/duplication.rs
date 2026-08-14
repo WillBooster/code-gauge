@@ -1849,11 +1849,15 @@ fn summarize_duplicates(
     duplicate_block_groups
         .sort_by_key(|group| group.first().map(|first| first.start_line).unwrap_or(0));
 
+    let mut duplicate_line_numbers: Vec<usize> = duplicated_lines.iter().copied().collect();
+    duplicate_line_numbers.sort_unstable();
+
     DuplicationMetrics {
         duplicate_block_count,
         duplicate_block_group_count: groups.len(),
         duplicate_block_groups,
         duplicate_line_count: duplicated_lines.len(),
+        duplicate_line_numbers,
         duplication_ratio: if code_line_numbers.is_empty() {
             0.0
         } else {

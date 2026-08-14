@@ -352,6 +352,12 @@ export interface CrossFileDuplicationFileData {
   candidates: CrossFileDuplicateCandidate[];
   tokens: Token[];
   containerStatements: TokenRange[][];
+  /**
+   * 1-based lines that are neither blank nor comment-only, so cross-file line coverage counts only
+   * code lines (blank rows inside multi-row tokens such as template literals carry no content).
+   * Optional for backward compatibility; without it, every matched-token row counts.
+   */
+  codeLineNumbers?: Set<number>;
 }
 
 /**
@@ -1801,14 +1807,7 @@ function summarizeDuplicates(
       // block, edited tokens included: an LCS has no canonical per-line attribution, and
       // NiCad-style detectors treat the whole near-miss fragment as the clone.
       for (const segment of occurrence.segments) {
-        for (let index = segment.startTokenIndex; index < segment.endTokenIndex; index += 1) {
-          const token = tokens[index];
-          for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
-            if (codeLineNumbers.has(row + 1)) {
-              duplicatedLines.add(row + 1);
-            }
-          }
-        }
+        collectSegmentLines(segment, tokens, codeLineNumbers, duplicatedLines);
       }
     }
     duplicateBlockGroups.push(
@@ -1824,7 +1823,25 @@ function summarizeDuplicates(
     duplicateBlockGroupCount: groups.length,
     duplicateBlockGroups,
     duplicateLineCount: duplicatedLines.size,
+    duplicateLineNumbers: [...duplicatedLines].toSorted((left, right) => left - right),
     duplicationRatio: codeLineNumbers.size === 0 ? 0 : duplicatedLines.size / codeLineNumbers.size,
     maxDuplicateBlockSize,
   };
+}
+
+/** Adds the 1-based code lines the segment's matched tokens cover; shared with cross-file coverage. */
+export function collectSegmentLines(
+  segment: { startTokenIndex: number; endTokenIndex: number },
+  tokens: Token[],
+  codeLineNumbers: Set<number> | undefined,
+  duplicatedLines: Set<number>
+): void {
+  for (let index = segment.startTokenIndex; index < segment.endTokenIndex; index += 1) {
+    const token = tokens[index];
+    for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
+      if (!codeLineNumbers || codeLineNumbers.has(row + 1)) {
+        duplicatedLines.add(row + 1);
+      }
+    }
+  }
 }

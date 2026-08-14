@@ -219,9 +219,14 @@ describe('cli: polyglot project scan', () => {
   });
 });
 
+// The comment and blank line inside the clone are covered by the occurrence's bounding range but
+// are not duplicated content, so counting ranges instead of matched lines would report 14 lines
+// (117%) instead of 12 (100%).
 const cloneFile = (functionName: string, itemName: string): string => `export function ${functionName}(items) {
   let total = 0;
   let count = 0;
+  // A comment line inside the cloned region.
+
   for (const ${itemName} of items) {
     if (${itemName}.status === 'paid') {
       total = total + ${itemName}.amount;

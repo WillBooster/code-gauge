@@ -276,7 +276,12 @@ export class TreeMeasurer {
     if (!language) {
       throw new Error(`Unsupported language: ${options.language}`);
     }
-    return collectCrossFileDuplicateCandidates(parseRoot(code, language), options.duplication);
+    const root = parseRoot(code, language);
+    return {
+      ...collectCrossFileDuplicateCandidates(root, options.duplication),
+      // Lets cross-file line coverage count only code lines, like within-file coverage.
+      codeLineNumbers: classifyLines(code, root).codeLineNumbers,
+    };
   }
 }
 

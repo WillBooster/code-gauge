@@ -52,7 +52,7 @@ function runPass(corpus) {
   const start = performance.now();
   let functionCount = 0;
   for (const entry of corpus) {
-    functionCount += measureCode(entry.code, { language: entry.language }).functionCount;
+    functionCount += measureCode(entry.code, { language: entry.language }).functions.length;
   }
   return { elapsedMs: performance.now() - start, functionCount };
 }

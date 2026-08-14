@@ -117,6 +117,13 @@ export interface DuplicationMetrics {
   /** Number of distinct lines covered by any counted duplicate occurrence (originals included). */
   duplicateLineCount: number;
   /**
+   * The 1-based lines behind duplicateLineCount, sorted ascending: code lines carrying matched
+   * tokens. Exposed so consumers combining within-file and cross-file coverage can union exact
+   * line sets instead of over-counting from block bounding ranges (which include the unmatched gap
+   * of a merged clone and comment/blank lines).
+   */
+  duplicateLineNumbers: number[];
+  /**
    * duplicateLineCount / code lines (0 when the file has no code). Code lines are the denominator
    * because duplicated lines are counted from matched tokens, which only ever land on code lines;
    * dividing by total lines would let comment density deflate the ratio.
