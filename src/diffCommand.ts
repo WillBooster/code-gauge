@@ -105,6 +105,11 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const repositoryFiles = await listRepositoryFiles(repoRoot);
   const baseSymlinkPaths = await listSymlinkPathsAtRevision(repoRoot, mergeBase);
   const scan = await scanListedFiles(repoRoot, repositoryFiles, options);
+  // A run-wide failure (a missing native addon) invalidates the whole gate: surface it once as
+  // the fatal error (exit 2) instead of diagnosing every changed file as unmeasured.
+  if (scan.fatalError) {
+    throw new Error(scan.fatalError);
+  }
   const scannedFiles: ScannedFile[] = scan.files.map((file) => ({
     relativePath: formatPath(file.file, scan.displayRoot),
     file,
@@ -284,9 +289,8 @@ async function collectHeadFunctionTokens(
 /**
  * Measures the merge-base blob into `file`; false (with an error recorded) only when the metrics
  * themselves cannot be measured. The auxiliary collections (duplication candidates, token
- * sequences) always parse with the JavaScript binding, which can give up where the native backend
- * measured fine, so their failure only degrades duplication data and rename re-matching — the
- * function-level ratchets still run.
+ * sequences) may fail independently of the metrics, so their failure only degrades duplication
+ * data and rename re-matching — the function-level ratchets still run.
  */
 async function measureBaseRevision(
   file: PreparedFile,

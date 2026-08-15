@@ -1491,8 +1491,8 @@ fn collect_near_miss_groups(
         })
         .collect();
 
-    // Interned per call so a file's symbol ids (and thus its n-gram hashes) match the TypeScript
-    // backend's first-encounter assignment order exactly.
+    // Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
+    // other files the process measured before it.
     let mut symbol_id_by_token_hashes: HashMap<(i32, i32, i32, i32), i32> = HashMap::new();
     let sequences: Vec<NormalizedBlock> = comparable
         .iter()

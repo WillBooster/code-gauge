@@ -45,7 +45,7 @@
     "build-native": "node scripts/buildNative.mjs",
     "cleanup": "bun wb lint --fix --format",
     "format": "bun wb lint --format",
-    "postinstall": "node scripts/installNative.mjs || true",
+    "postinstall": "node scripts/installNative.mjs",
     "lint": "bun wb lint",
     "lint-fix": "bun wb lint --fix",
     "prepare": "bun lefthook install || true",

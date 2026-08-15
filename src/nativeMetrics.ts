@@ -175,11 +175,14 @@ function loadBinding(): NativeBinding {
 /**
  * The platform-package suffix in the napi-rs naming convention: Linux targets are qualified by
  * libc ABI (`linux-x64-gnu` / `linux-x64-musl`) because a glibc-linked addon cannot load on
- * Alpine/musl; other platforms have a single ABI. Must match scripts/installNative.mjs and the
- * build-native workflow's target list.
+ * Alpine/musl, and Windows by toolchain ABI (`win32-x64-msvc`), matching what napi-rs tooling
+ * generates. Must match scripts/installNative.mjs and the build-native workflow's target list.
  */
 function platformTriplet(): string {
   const base = `${process.platform}-${process.arch}`;
+  if (process.platform === 'win32') {
+    return `${base}-msvc`;
+  }
   if (process.platform !== 'linux') {
     return base;
   }

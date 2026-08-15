@@ -13,6 +13,23 @@ export const defaultDuplicationOptions: Required<DuplicationOptions> = {
   minSimilarityPercent: 70,
 };
 
+/**
+ * Fills defaults for absent settings, treating NaN (e.g. `Number(unsetEnvVariable)`) as absent —
+ * the same rule the native boundary applies in clampToU32 — so the TypeScript half of cross-file
+ * matching cannot diverge from the natively collected candidates on such input.
+ */
+export function resolveDuplicationOptions(options?: DuplicationOptions): Required<DuplicationOptions> {
+  return {
+    minTokens: resolveOption(options?.minTokens, defaultDuplicationOptions.minTokens),
+    maxGapTokens: resolveOption(options?.maxGapTokens, defaultDuplicationOptions.maxGapTokens),
+    minSimilarityPercent: resolveOption(options?.minSimilarityPercent, defaultDuplicationOptions.minSimilarityPercent),
+  };
+}
+
+function resolveOption(value: number | undefined, fallback: number): number {
+  return value === undefined || Number.isNaN(value) ? fallback : value;
+}
+
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
 const minSequenceStatementCount = 2;
 /**
@@ -540,7 +557,7 @@ function fingerprintHashPair(
 }
 
 /** djb2-style hash; XOR keeps the value in signed 32-bit range, which is fine for a grouping key. */
-export function hashText(text: string): number {
+function hashText(text: string): number {
   let hash = 5381;
   for (let index = 0; index < text.length; index += 1) {
     // oxlint-disable-next-line unicorn/prefer-code-point -- djb2 hashes UTF-16 code units; codePointAt would hash surrogate pairs twice (full code point, then the lone low surrogate).

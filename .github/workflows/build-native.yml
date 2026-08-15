@@ -14,26 +14,38 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # GNU legs build in manylinux_2_28 containers: Node 24 supports Linux hosts down to
+          # glibc 2.28, and building on the runner's Ubuntu would raise the artifact's glibc
+          # floor to 2.34. The audit step fails the leg if a higher symbol version slips in.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             library: libcode_gauge_native.so
-            smoke: true
+            container: quay.io/pypa/manylinux_2_28_x86_64
+            setup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            glibcMax: '2.28'
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             library: libcode_gauge_native.so
-            smoke: true
-          # Musl legs cross-compile on glibc runners, so the artifact cannot be smoke-loaded there.
-          # Rust musl targets default to a static CRT, which cannot produce a cdylib.
+            container: quay.io/pypa/manylinux_2_28_aarch64
+            setup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal && echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            glibcMax: '2.28'
+          # Musl legs build natively in Alpine containers so the artifacts actually link musl
+          # (a -crt-static cross-build on a glibc runner links glibc) and smoke-load with a musl
+          # Node. Rust musl targets default to a static CRT, which cannot produce a cdylib.
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
             library: libcode_gauge_native.so
-            setup: sudo apt-get update && sudo apt-get install -y musl-tools
+            container: rust:alpine
+            setup: apk add --no-cache build-base git nodejs
             rustflags: -C target-feature=-crt-static
+            smoke: true
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-musl
             library: libcode_gauge_native.so
-            setup: sudo apt-get update && sudo apt-get install -y musl-tools
+            container: rust:alpine
+            setup: apk add --no-cache build-base git nodejs
             rustflags: -C target-feature=-crt-static
+            smoke: true
           - os: macos-latest
             target: aarch64-apple-darwin
             library: libcode_gauge_native.dylib
@@ -47,20 +59,31 @@ jobs:
             library: code_gauge_native.dll
             smoke: true
     runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
     steps:
       - uses: actions/checkout@v5
-      - run: rustup target add ${{ matrix.target }}
       - if: matrix.setup
         run: ${{ matrix.setup }}
-      - run: cargo build --release --target ${{ matrix.target }}
+      # Each leg builds for its environment's host target, so the container's toolchain (glibc
+      # 2.28 or musl) — not a cross-linker — produces the artifact.
+      - run: cargo build --release
         working-directory: native
         env:
           RUSTFLAGS: ${{ matrix.rustflags }}
+      - if: matrix.glibcMax
+        run: |
+          highest=$(objdump -T "native/target/release/${{ matrix.library }}" | grep -oE 'GLIBC_[0-9]+\.[0-9]+' | sort -uV | tail -1)
+          echo "highest required glibc symbol version: $highest"
+          ceiling="GLIBC_${{ matrix.glibcMax }}"
+          if [ "$(printf '%s\n%s\n' "$highest" "$ceiling" | sort -V | tail -1)" != "$ceiling" ]; then
+            echo "glibc floor $highest exceeds Node's supported baseline $ceiling"
+            exit 1
+          fi
       # Loading the addon from Node catches link/ABI failures that a successful compile hides.
       - if: matrix.smoke
         shell: bash
         run: |
-          cp "native/target/${{ matrix.target }}/release/${{ matrix.library }}" native/code-gauge.node
+          cp "native/target/release/${{ matrix.library }}" native/code-gauge.node
           node -e "
             const binding = require('./native/code-gauge.node');
             const metrics = JSON.parse(binding.measureCodeNative('function a() { return 1; }', 'javascript', false));
@@ -72,5 +95,5 @@ jobs:
       - uses: actions/upload-artifact@v6
         with:
           name: code-gauge-${{ matrix.target }}
-          path: native/target/${{ matrix.target }}/release/${{ matrix.library }}
+          path: native/target/release/${{ matrix.library }}
           if-no-files-found: error

@@ -157,7 +157,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
     try {
       await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
     } catch (error) {
-      return toFatalResult(error, displayRoot, files, warnings);
+      return toFatalResult(error, displayRoot, files, errors, warnings);
     }
     return { displayRoot, files, errors, warnings };
   }
@@ -165,7 +165,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
   try {
     await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, warnings, canonicalTarget));
   } catch (error) {
-    return toFatalResult(error, canonicalTarget, files, warnings);
+    return toFatalResult(error, canonicalTarget, files, errors, warnings);
   }
   return { displayRoot: canonicalTarget, files, errors, warnings };
 }
@@ -200,19 +200,26 @@ export async function scanListedFiles(
     try {
       await measureFile(absolutePath, language, 'directory', context);
     } catch (error) {
-      return toFatalResult(error, rootDirectory, files, warnings);
+      return toFatalResult(error, rootDirectory, files, errors, warnings);
     }
   }
   return { displayRoot: rootDirectory, files, errors, warnings };
 }
 
 /** A run-wide failure (a missing native addon) as a fatal result; anything else keeps throwing. */
-function toFatalResult(error: unknown, displayRoot: string, files: FileMetrics[], warnings: string[]): ScanResult {
+function toFatalResult(
+  error: unknown,
+  displayRoot: string,
+  files: FileMetrics[],
+  errors: string[],
+  warnings: string[]
+): ScanResult {
   if (!(error instanceof NativeAddonError)) {
     throw error;
   }
   const fatalError = formatError(error);
-  return { displayRoot, files, errors: [fatalError], warnings, fatalError };
+  // Errors the walk accumulated before the fatal failure stay reported alongside it.
+  return { displayRoot, files, errors: [...errors, fatalError], warnings, fatalError };
 }
 
 function makeScanContext(
@@ -335,8 +342,8 @@ async function measureFile(
     const measureOptions = { language, duplication: context.options.duplication };
     const fileMetrics: FileMetrics = { file, metrics: measureCode(code, measureOptions) };
     // Only directory scans compare files against each other; a single-file target has no peers.
-    // Candidate collection failing (it always parses with the JavaScript binding, which can give
-    // up where the native backend measured fine) must not discard the measured metrics.
+    // Candidate collection is an auxiliary pass: if it fails where measureCode succeeded (an
+    // addon error specific to this pass), that must not discard the measured metrics.
     if (mode === 'directory') {
       try {
         fileMetrics.duplicationCandidates = collectCrossFileDuplicationFileData(code, measureOptions);
