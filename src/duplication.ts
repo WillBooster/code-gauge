@@ -14,9 +14,10 @@ export const defaultDuplicationOptions: Required<DuplicationOptions> = {
 };
 
 /**
- * Fills defaults for absent settings, treating NaN (e.g. `Number(unsetEnvVariable)`) as absent —
- * the same rule the native boundary applies in clampToU32 — so the TypeScript half of cross-file
- * matching cannot diverge from the natively collected candidates on such input.
+ * Fills defaults for absent settings, applying the same normalization as the native boundary's
+ * clampToU32 — NaN (e.g. `Number(unsetEnvVariable)`) counts as absent, and other values truncate
+ * and clamp to [0, u32::MAX] — so the TypeScript half of cross-file matching cannot diverge from
+ * the natively collected candidates on such input.
  */
 export function resolveDuplicationOptions(options?: DuplicationOptions): Required<DuplicationOptions> {
   return {
@@ -27,7 +28,9 @@ export function resolveDuplicationOptions(options?: DuplicationOptions): Require
 }
 
 function resolveOption(value: number | undefined, fallback: number): number {
-  return value === undefined || Number.isNaN(value) ? fallback : value;
+  return value === undefined || Number.isNaN(value)
+    ? fallback
+    : Math.min(Math.max(Math.trunc(value), 0), 0xFF_FF_FF_FF);
 }
 
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */

@@ -15,12 +15,14 @@ import { fileURLToPath } from 'node:url';
 
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
+// No explicit process.exit: nothing here keeps the event loop alive, so the process ends with
+// code 0 on its own once the synchronous work returns — and exit() could truncate the warning's
+// asynchronous stderr write (stderr is a pipe under npm, which is asynchronous on Windows).
 try {
   installNativeAddon();
 } catch (error) {
   warnBuildFailure(error);
 }
-process.exit(0);
 
 function installNativeAddon() {
   // The authoritative payload version lives in the bundled Rust source; a parse failure yields
