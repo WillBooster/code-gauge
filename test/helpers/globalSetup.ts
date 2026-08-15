@@ -2,15 +2,21 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 /**
- * Builds the CLI once before any test file runs. The CLI E2E suites spawn dist/cli.js; building
- * inside their own beforeAll would race when vitest runs the files in parallel workers.
+ * Builds the native addon and the CLI once before any test file runs. Every measurement crosses
+ * into the Rust addon, and the CLI E2E suites spawn dist/cli.js; building inside their own
+ * beforeAll would race when vitest runs the files in parallel workers.
  */
 export default function globalSetup(): void {
   const repoRoot = path.join(import.meta.dirname, '..', '..');
-  const build = spawnSync('bun', ['run', 'build'], { cwd: repoRoot, encoding: 'utf8', timeout: 100_000 });
-  if (build.status !== 0) {
+  run(repoRoot, 'bun', ['run', 'build-native'], 600_000);
+  run(repoRoot, 'bun', ['run', 'build'], 100_000);
+}
+
+function run(cwd: string, command: string, args: string[], timeout: number): void {
+  const result = spawnSync(command, args, { cwd, encoding: 'utf8', timeout });
+  if (result.status !== 0) {
     throw new Error(
-      `Failed to build the CLI before running E2E tests:\n${build.error?.message ?? ''}\n${build.stdout}\n${build.stderr}`
+      `Failed to run \`${command} ${args.join(' ')}\` before running E2E tests:\n${result.error?.message ?? ''}\n${result.stdout}\n${result.stderr}`
     );
   }
 }

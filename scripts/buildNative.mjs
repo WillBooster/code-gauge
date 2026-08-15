@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 // Builds the native Rust addon and places it at native/code-gauge.node, where the TypeScript
-// loader picks it up. Requires a Rust toolchain; the library falls back to the TypeScript
-// implementation when the addon has not been built.
+// loader picks it up. Requires a Rust toolchain.
 
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync } from 'node:fs';

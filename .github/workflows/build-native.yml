@@ -1,0 +1,42 @@
+name: Build Native
+'on':
+  pull_request: null
+  push:
+    branches:
+      - main
+  workflow_dispatch: null
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            library: libcode_gauge_native.so
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            library: libcode_gauge_native.so
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            library: libcode_gauge_native.dylib
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+            library: libcode_gauge_native.dylib
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            library: code_gauge_native.dll
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - run: rustup target add ${{ matrix.target }}
+      - run: cargo build --release --target ${{ matrix.target }}
+        working-directory: native
+      - uses: actions/upload-artifact@v6
+        with:
+          name: code-gauge-${{ matrix.target }}
+          path: native/target/${{ matrix.target }}/release/${{ matrix.library }}
+          if-no-files-found: error

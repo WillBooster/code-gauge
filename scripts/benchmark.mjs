@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 // Benchmarks measureCode over a fixed corpus: every test fixture plus this repository's own
-// TypeScript sources. Run `yarn build` first; switch backends with CODE_GAUGE_NATIVE=0/1.
+// TypeScript sources. Run `bun run build` and `bun run build-native` first.
 // Usage: node scripts/benchmark.mjs [passes]
 
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
-import { isNativeBackendAvailable, measureCode } from '../dist/index.js';
+import { measureCode } from '../dist/index.js';
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -66,7 +66,6 @@ const corpus = collectCorpus();
 const totalBytes = corpus.reduce((sum, entry) => sum + Buffer.byteLength(entry.code), 0);
 const totalLines = corpus.reduce((sum, entry) => sum + entry.code.split('\n').length, 0);
 
-console.log(`Backend: ${isNativeBackendAvailable() ? 'native (Rust)' : 'typescript'}`);
 console.log(`Corpus: ${corpus.length} files, ${totalLines} lines, ${(totalBytes / 1024).toFixed(1)} KiB`);
 
 // Warmup (JIT, parser initialization).

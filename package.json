@@ -31,7 +31,13 @@
   "types": "dist/index.d.ts",
   "bin": "dist/cli.js",
   "files": [
-    "dist/"
+    "dist/",
+    "native/build.rs",
+    "native/Cargo.lock",
+    "native/Cargo.toml",
+    "native/src/",
+    "scripts/buildNative.mjs",
+    "scripts/installNative.mjs"
   ],
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
@@ -39,27 +45,18 @@
     "build-native": "node scripts/buildNative.mjs",
     "cleanup": "bun wb lint --fix --format",
     "format": "bun wb lint --format",
+    "postinstall": "node scripts/installNative.mjs || true",
     "lint": "bun wb lint",
     "lint-fix": "bun wb lint --fix",
     "prepare": "bun lefthook install || true",
     "test": "bun wb test",
-    "test/ci": "bun run build-native && CODE_GAUGE_EXPECT_NATIVE=1 vitest",
+    "test/ci": "bun run build-native && vitest",
     "typecheck": "bun wb typecheck",
     "verify": "bun wb verify",
     "verify-full": "bun wb verify --full"
   },
   "dependencies": {
-    "commander": "15.0.0",
-    "tree-sitter": "^0.21.1",
-    "tree-sitter-c": "^0.21.0",
-    "tree-sitter-cpp": "^0.22.0",
-    "tree-sitter-go": "^0.21.2",
-    "tree-sitter-java": "^0.21.0",
-    "tree-sitter-javascript": "^0.21.4",
-    "tree-sitter-python": "^0.21.0",
-    "tree-sitter-ruby": "^0.21.0",
-    "tree-sitter-rust": "^0.21.0",
-    "tree-sitter-typescript": "^0.21.2"
+    "commander": "15.0.0"
   },
   "devDependencies": {
     "@tsconfig/bun": "1.0.10",
