@@ -40,14 +40,20 @@ function installNativeAddon() {
 
   try {
     execFileSync(process.execPath, [path.join(packageRoot, 'scripts', 'buildNative.mjs')], { stdio: 'inherit' });
-    // In an installed package the cargo build tree (hundreds of MB) buys nothing once the addon
-    // is copied out; a repository checkout (recognized by its sources) keeps it as the build
-    // cache.
-    if (!existsSync(path.join(packageRoot, 'src'))) {
-      rmSync(path.join(packageRoot, 'native', 'target'), { recursive: true, force: true });
-    }
   } catch (error) {
     warnBuildFailure(error);
+    return;
+  }
+  // In an installed package the cargo build tree (hundreds of MB) buys nothing once the addon is
+  // copied out; a repository checkout (recognized by its sources) keeps it as the build cache.
+  // Guarded separately: a cleanup failure (e.g. a held Windows file handle) leaves a usable addon
+  // behind and must not be reported as a build failure.
+  if (!existsSync(path.join(packageRoot, 'src'))) {
+    try {
+      rmSync(path.join(packageRoot, 'native', 'target'), { recursive: true, force: true });
+    } catch {
+      // The leftover build tree only costs disk space.
+    }
   }
 }
 
