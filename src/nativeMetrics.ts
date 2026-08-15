@@ -106,17 +106,34 @@ function toWellFormed(code: string): string {
  * The duplication settings cross the boundary as u32, whose JavaScript conversion wraps modulo
  * 2^32 (2 ** 32 would become 0 and match everything). The public API accepts any safe integer, so
  * out-of-range values clamp to [0, u32::MAX] — no source can hold 2^32 tokens, so a clamped
- * threshold behaves identically to the requested one.
+ * threshold behaves identically to the requested one. NaN (e.g. `Number(unsetEnvVariable)`)
+ * survives clamping arithmetic and would also convert to 0, so it is treated as an absent setting
+ * instead.
  */
 function clampToU32(value: number | undefined): number | undefined {
-  return value === undefined ? undefined : Math.min(Math.max(Math.trunc(value), 0), 0xFF_FF_FF_FF);
+  return value === undefined || Number.isNaN(value)
+    ? undefined
+    : Math.min(Math.max(Math.trunc(value), 0), 0xFF_FF_FF_FF);
 }
 
+/**
+ * Raised when no usable native addon can be loaded. Every measurement fails identically until the
+ * addon is built, so callers measuring many files (the CLI scan) treat it as fatal for the whole
+ * run instead of recording one "skipped" entry per file.
+ */
+export class NativeAddonError extends Error {}
+
 let cachedBinding: NativeBinding | undefined;
+let cachedFailure: NativeAddonError | undefined;
 
 function loadBinding(): NativeBinding {
   if (cachedBinding) {
     return cachedBinding;
+  }
+  // The failure is memoized too: resolution (including platformTriplet's diagnostic-report call
+  // on Linux) would otherwise repeat for every measured file of an already-failing run.
+  if (cachedFailure) {
+    throw cachedFailure;
   }
   // Resolved relative to this file, so both src/ (tests) and dist/ (build) find the addon.
   const requireNative = createRequire(import.meta.url);
@@ -146,12 +163,13 @@ function loadBinding(): NativeBinding {
     cachedBinding = binding;
     return binding;
   }
-  throw new Error(
+  cachedFailure = new NativeAddonError(
     `The code-gauge native addon is not available for ${platformTriplet()}. Build it with ` +
       '`node scripts/buildNative.mjs` in the code-gauge package directory (requires a Rust ' +
       'toolchain); when installing with npm, also allow install scripts for code-gauge so its ' +
       `postinstall build can run.\n${failures.join('\n')}`
   );
+  throw cachedFailure;
 }
 
 /**

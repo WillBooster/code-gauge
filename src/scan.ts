@@ -4,6 +4,7 @@ import path from 'node:path';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
 import { collectCrossFileDuplicationFileData, measureCode } from './metrics.js';
+import { NativeAddonError } from './nativeMetrics.js';
 import type { CodeMetrics, DuplicationOptions, LanguageName } from './types.js';
 
 /** The scan settings shared by every command (a structural subset of each command's options). */
@@ -153,11 +154,19 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
     }
 
     const context = makeScanContext(options, files, errors, warnings, displayRoot);
-    await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
+    try {
+      await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
+    } catch (error) {
+      return toFatalResult(error, displayRoot, files, warnings);
+    }
     return { displayRoot, files, errors, warnings };
   }
 
-  await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, warnings, canonicalTarget));
+  try {
+    await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, warnings, canonicalTarget));
+  } catch (error) {
+    return toFatalResult(error, canonicalTarget, files, warnings);
+  }
   return { displayRoot: canonicalTarget, files, errors, warnings };
 }
 
@@ -188,9 +197,22 @@ export async function scanListedFiles(
     if (stats?.isSymbolicLink()) {
       continue;
     }
-    await measureFile(absolutePath, language, 'directory', context);
+    try {
+      await measureFile(absolutePath, language, 'directory', context);
+    } catch (error) {
+      return toFatalResult(error, rootDirectory, files, warnings);
+    }
   }
   return { displayRoot: rootDirectory, files, errors, warnings };
+}
+
+/** A run-wide failure (a missing native addon) as a fatal result; anything else keeps throwing. */
+function toFatalResult(error: unknown, displayRoot: string, files: FileMetrics[], warnings: string[]): ScanResult {
+  if (!(error instanceof NativeAddonError)) {
+    throw error;
+  }
+  const fatalError = formatError(error);
+  return { displayRoot, files, errors: [fatalError], warnings, fatalError };
 }
 
 function makeScanContext(
@@ -328,6 +350,11 @@ async function measureFile(
     }
     context.files.push(fileMetrics);
   } catch (error) {
+    // A missing native addon fails every file identically: propagate it once as a fatal scan
+    // error instead of recording one "skipped" entry per file behind a successful exit code.
+    if (error instanceof NativeAddonError) {
+      throw error;
+    }
     context.errors.push(`${formatPath(file, context.rootDirectory)}: ${formatError(error)}`);
   }
 }
