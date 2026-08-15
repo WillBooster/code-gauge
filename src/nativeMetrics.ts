@@ -67,9 +67,9 @@ export function measureCodeNative(
       toWellFormed(code),
       language,
       includeSyntaxTree,
-      duplication?.minTokens,
-      duplication?.maxGapTokens,
-      duplication?.minSimilarityPercent
+      clampToU32(duplication?.minTokens),
+      clampToU32(duplication?.maxGapTokens),
+      clampToU32(duplication?.minSimilarityPercent)
     )
   ) as NativeMetricsPayload;
 }
@@ -81,7 +81,7 @@ export function collectCrossFileDataNative(
   minTokens?: number
 ): NativeCrossFileDataPayload {
   return JSON.parse(
-    loadBinding().collectCrossFileDataNative(toWellFormed(code), language, minTokens)
+    loadBinding().collectCrossFileDataNative(toWellFormed(code), language, clampToU32(minTokens))
   ) as NativeCrossFileDataPayload;
 }
 
@@ -102,6 +102,16 @@ function toWellFormed(code: string): string {
   return code.isWellFormed() ? code : code.toWellFormed();
 }
 
+/**
+ * The duplication settings cross the boundary as u32, whose JavaScript conversion wraps modulo
+ * 2^32 (2 ** 32 would become 0 and match everything). The public API accepts any safe integer, so
+ * out-of-range values clamp to [0, u32::MAX] — no source can hold 2^32 tokens, so a clamped
+ * threshold behaves identically to the requested one.
+ */
+function clampToU32(value: number | undefined): number | undefined {
+  return value === undefined ? undefined : Math.min(Math.max(Math.trunc(value), 0), 0xFF_FF_FF_FF);
+}
+
 let cachedBinding: NativeBinding | undefined;
 
 function loadBinding(): NativeBinding {
@@ -112,7 +122,7 @@ function loadBinding(): NativeBinding {
   const requireNative = createRequire(import.meta.url);
   const specifiers = [
     // A prebuilt platform package, when published for this platform.
-    `code-gauge-${process.platform}-${process.arch}`,
+    `code-gauge-${platformTriplet()}`,
     // A locally built addon (`bun run build-native`).
     '../native/code-gauge.node',
   ];
@@ -137,7 +147,25 @@ function loadBinding(): NativeBinding {
     return binding;
   }
   throw new Error(
-    `The code-gauge native addon is not available for ${process.platform}-${process.arch}. ` +
-      `Build it with \`bun run build-native\` (requires a Rust toolchain).\n${failures.join('\n')}`
+    `The code-gauge native addon is not available for ${platformTriplet()}. Build it with ` +
+      '`node scripts/buildNative.mjs` in the code-gauge package directory (requires a Rust ' +
+      'toolchain); when installing with npm, also allow install scripts for code-gauge so its ' +
+      `postinstall build can run.\n${failures.join('\n')}`
   );
+}
+
+/**
+ * The platform-package suffix in the napi-rs naming convention: Linux targets are qualified by
+ * libc ABI (`linux-x64-gnu` / `linux-x64-musl`) because a glibc-linked addon cannot load on
+ * Alpine/musl; other platforms have a single ABI. Must match scripts/installNative.mjs and the
+ * build-native workflow's target list.
+ */
+function platformTriplet(): string {
+  const base = `${process.platform}-${process.arch}`;
+  if (process.platform !== 'linux') {
+    return base;
+  }
+  // Musl builds of Node report no glibc runtime version; see napi-rs's isMusl detection.
+  const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined;
+  return report?.header?.glibcVersionRuntime ? `${base}-gnu` : `${base}-musl`;
 }

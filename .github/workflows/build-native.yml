@@ -17,24 +17,58 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             library: libcode_gauge_native.so
+            smoke: true
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             library: libcode_gauge_native.so
+            smoke: true
+          # Musl legs cross-compile on glibc runners, so the artifact cannot be smoke-loaded there.
+          # Rust musl targets default to a static CRT, which cannot produce a cdylib.
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            library: libcode_gauge_native.so
+            setup: sudo apt-get update && sudo apt-get install -y musl-tools
+            rustflags: -C target-feature=-crt-static
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            library: libcode_gauge_native.so
+            setup: sudo apt-get update && sudo apt-get install -y musl-tools
+            rustflags: -C target-feature=-crt-static
           - os: macos-latest
             target: aarch64-apple-darwin
             library: libcode_gauge_native.dylib
+            smoke: true
           - os: macos-15-intel
             target: x86_64-apple-darwin
             library: libcode_gauge_native.dylib
+            smoke: true
           - os: windows-latest
             target: x86_64-pc-windows-msvc
             library: code_gauge_native.dll
+            smoke: true
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - run: rustup target add ${{ matrix.target }}
+      - if: matrix.setup
+        run: ${{ matrix.setup }}
       - run: cargo build --release --target ${{ matrix.target }}
         working-directory: native
+        env:
+          RUSTFLAGS: ${{ matrix.rustflags }}
+      # Loading the addon from Node catches link/ABI failures that a successful compile hides.
+      - if: matrix.smoke
+        shell: bash
+        run: |
+          cp "native/target/${{ matrix.target }}/release/${{ matrix.library }}" native/code-gauge.node
+          node -e "
+            const binding = require('./native/code-gauge.node');
+            const metrics = JSON.parse(binding.measureCodeNative('function a() { return 1; }', 'javascript', false));
+            if (metrics.language !== 'javascript' || metrics.functions.length !== 1) {
+              throw new Error('unexpected smoke-test payload: ' + JSON.stringify(metrics));
+            }
+            console.log('smoke OK (payload version ' + binding.payloadVersion() + ')');
+          "
       - uses: actions/upload-artifact@v6
         with:
           name: code-gauge-${{ matrix.target }}

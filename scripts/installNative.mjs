@@ -13,8 +13,19 @@ import { fileURLToPath } from 'node:url';
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
 
+// The platform-package suffix in the napi-rs naming convention: Linux targets are qualified by
+// libc ABI because a glibc-linked addon cannot load on Alpine/musl. Must match platformTriplet in
+// src/nativeMetrics.ts.
+function platformTriplet() {
+  const base = `${process.platform}-${process.arch}`;
+  if (process.platform !== 'linux') {
+    return base;
+  }
+  return process.report?.getReport()?.header?.glibcVersionRuntime ? `${base}-gnu` : `${base}-musl`;
+}
+
 try {
-  require.resolve(`code-gauge-${process.platform}-${process.arch}`);
+  require.resolve(`code-gauge-${platformTriplet()}`);
   process.exit(0);
 } catch {
   // No prebuilt platform package; fall through to a local build.

@@ -201,13 +201,18 @@ Parsing and every metric pass run in a Rust addon (tree-sitter); the thin TypeSc
 the CLI, cross-file matching, and the Halstead float derivations. At install time, `postinstall`
 keeps a prebuilt platform package or an already-built `native/code-gauge.node`, and otherwise
 builds the addon from the bundled sources — which requires a [Rust toolchain](https://rustup.rs).
-To build it manually:
+
+Package managers that block dependency install scripts by default (recent npm versions, and Bun
+unless `code-gauge` is listed in `trustedDependencies`) skip that build; either approve
+`code-gauge`'s install script, or build the addon manually inside the installed package (the
+runtime error message points here too):
 
 ```sh
-bun run build-native
+node node_modules/code-gauge/scripts/buildNative.mjs
 ```
 
-Benchmark with `bun run benchmark` (requires `bun run build` first).
+In this repository, build it with `bun run build-native` and benchmark with `bun run benchmark`
+(requires `bun run build` first).
 
 ## Programmatic API
 
