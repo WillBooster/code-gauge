@@ -16,12 +16,13 @@ serde_json = "1"
 indexmap = "2"
 regex = "1"
 
-# Grammar crates are pinned to the exact versions of their npm counterparts so the native parser
-# produces byte-identical trees to the node-tree-sitter backend. Core 0.22.6 parses identically to
-# the core node-tree-sitter 0.21.1 vendors (0.21.0 does not: it lacks several parser fixes and can
-# abort on malformed input); its one observed behavioral difference — extra (error-recovery)
-# children no longer inherit fields in ts_node_field_name_for_child — is compensated in
-# util::find_children_by_field_name.
+# Grammar crates are pinned exactly: every metric (and the golden-based test suite) is calibrated
+# against these grammar versions, so upgrades are deliberate, test-verified changes. The versions
+# match the npm grammar packages the former node-tree-sitter backend used, keeping historical
+# outputs stable. Core 0.22.6 parses identically to node-tree-sitter 0.21.1's vendored core
+# (0.21.0 does not: it lacks several parser fixes and can abort on malformed input); its one
+# behavioral difference — extra (error-recovery) children no longer inherit fields in
+# ts_node_field_name_for_child — is compensated in util::find_children_by_field_name.
 tree-sitter = "=0.22.6"
 tree-sitter-c = "=0.21.4"
 tree-sitter-cpp = "=0.22.3"
@@ -30,7 +31,10 @@ tree-sitter-java = "=0.21.0"
 tree-sitter-javascript = "=0.21.4"
 tree-sitter-python = "=0.21.0"
 tree-sitter-ruby = "=0.21.0"
-tree-sitter-rust = "=0.21.0"
+# 0.21.0 breaks MSVC (its build script passes the GCC-only -Wno-unused-parameter
+# unconditionally; cl.exe fails with D8021); 0.21.2 gates the flag and the golden-based test
+# suite verifies its grammar changes leave every measured metric unchanged.
+tree-sitter-rust = "=0.21.2"
 tree-sitter-typescript = "=0.21.2"
 
 [build-dependencies]

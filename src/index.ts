@@ -15,7 +15,6 @@ export {
   defaultMeasurer,
   measureCode,
 } from './metrics.js';
-export { isNativeBackendAvailable } from './nativeMetrics.js';
 export { defaultGateOptions, evaluateRegressionGate } from './regressionGate.js';
 export type {
   GateFileInput,

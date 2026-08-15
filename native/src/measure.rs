@@ -6,36 +6,27 @@ use crate::complexity::{
     is_lambda_body_block, measure_complexity, measure_function_body_metrics, LanguageSets,
 };
 use crate::dep_degree::measure_dep_degree;
-use crate::duplication::measure_duplication;
+use crate::duplication::{
+    collect_cross_file_file_data, hash_text, measure_duplication, DuplicationSettings,
+};
 use crate::functions::{
     collect_nodes, count_parameters, find_function_name, is_implemented_function,
 };
 use crate::languages::LanguageDefinition;
-use crate::types::{FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics};
+use crate::types::{
+    CrossFileFileData, FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics,
+};
 use crate::util::{all_children, is_js_whitespace, named_children, node_text, split_lines, Source};
 
 pub fn measure(
     code: &str,
     language: &LanguageDefinition,
     include_syntax_tree: bool,
+    duplication_settings: &DuplicationSettings,
 ) -> Result<NativeMetrics, String> {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&language.grammar())
-        .map_err(|error| error.to_string())?;
     let source = Source::new(code);
-    // Parsed as UTF-16 to match node-tree-sitter exactly: tree-sitter's error recovery differs
-    // between input encodings for malformed non-ASCII source.
-    let tree = parser
-        .parse_utf16(source.to_utf16(), None)
-        .ok_or_else(|| "parse failed".to_string())?;
+    let tree = parse_source(&source, language)?;
     let root = tree.root_node();
-    // The metric passes recurse per tree level and overflow the native stack (a process-killing
-    // SIGSEGV, not a catchable error) around depth ~20k; refusing far below that makes the caller
-    // fall back to the TypeScript backend, which raises a catchable RangeError for such input.
-    if tree_depth(root) > MAX_TREE_DEPTH {
-        return Err(format!("tree depth exceeds {MAX_TREE_DEPTH}"));
-    }
     let code = &source;
     let sets = LanguageSets::new(language);
 
@@ -56,7 +47,7 @@ pub fn measure(
                 node_type: node.kind().to_string(),
                 start_line: node.start_position().row + 1,
                 // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving
-                // yields the code-unit column node-tree-sitter reports.
+                // yields the JavaScript string (UTF-16 code unit) column.
                 start_column: node.start_position().column / 2,
                 end_line: node.end_position().row + 1,
                 // Sonar's written spec adds +1 cognitive complexity per function in a recursion
@@ -88,7 +79,7 @@ pub fn measure(
             .unwrap_or(0),
         nesting_depth: global_complexity.nesting_depth,
         ncss_count: crate::ncss::count_ncss(root, &sets.ncss_nodes, &sets.ncss_containers),
-        duplication: measure_duplication(root, &code_line_numbers, code),
+        duplication: measure_duplication(root, &code_line_numbers, code, duplication_settings),
         halstead_counts,
         functions: function_metrics,
         syntax_tree: if include_syntax_tree {
@@ -99,7 +90,120 @@ pub fn measure(
     })
 }
 
-/// See the depth check in measure(); computed iteratively so the check itself cannot overflow.
+/// Collects one file's cross-file clone-detection contribution; see CrossFileFileData.
+pub fn collect_cross_file_data(
+    code: &str,
+    language: &LanguageDefinition,
+    min_tokens: usize,
+) -> Result<CrossFileFileData, String> {
+    let source = Source::new(code);
+    let tree = parse_source(&source, language)?;
+    let root = tree.root_node();
+    let (candidates, tokens, container_statements) =
+        collect_cross_file_file_data(root, &source, min_tokens);
+    let (_, code_line_numbers) = classify_lines(&source, root);
+    let mut code_line_numbers: Vec<usize> = code_line_numbers.into_iter().collect();
+    code_line_numbers.sort_unstable();
+    Ok(CrossFileFileData {
+        candidates,
+        tokens,
+        container_statements,
+        code_line_numbers,
+    })
+}
+
+/// Name-carrying leaf types anonymized by tokenize_function so consistent renames still match.
+const IDENTIFIER_LEAF_NODE_TYPES: &[&str] = &[
+    "identifier",
+    "property_identifier",
+    "field_identifier",
+    "type_identifier",
+    "constant",
+    "instance_variable",
+    "class_variable",
+    "global_variable",
+];
+
+/// Normalized token hash sequences of every function, index-parallel to the functions array of
+/// measure(); a faithful port of tokenizeFunction in src/metrics.ts.
+pub fn collect_function_token_sequences(
+    code: &str,
+    language: &LanguageDefinition,
+) -> Result<Vec<Vec<i32>>, String> {
+    let source = Source::new(code);
+    let tree = parse_source(&source, language)?;
+    let root = tree.root_node();
+    let sets = LanguageSets::new(language);
+    Ok(collect_nodes(root, &sets.function_nodes)
+        .into_iter()
+        .filter(|node| !is_lambda_body_block(*node) && is_implemented_function(*node))
+        .map(|node| {
+            let mut symbols = Vec::new();
+            let mut id_index_by_name: HashMap<String, usize> = HashMap::new();
+            collect_token_symbols(node, &source, &mut symbols, &mut id_index_by_name);
+            symbols
+        })
+        .collect())
+}
+
+fn collect_token_symbols(
+    node: Node<'_>,
+    code: &Source<'_>,
+    symbols: &mut Vec<i32>,
+    id_index_by_name: &mut HashMap<String, usize>,
+) {
+    if matches!(node.kind(), "comment" | "line_comment" | "block_comment") {
+        return;
+    }
+    if atomic_operand_node_types().contains(node.kind()) {
+        symbols.push(hash_text(node.kind()));
+        return;
+    }
+    if node.child_count() > 0 {
+        for child in all_children(node) {
+            collect_token_symbols(child, code, symbols, id_index_by_name);
+        }
+        return;
+    }
+    if IDENTIFIER_LEAF_NODE_TYPES.contains(&node.kind()) {
+        let next_index = id_index_by_name.len();
+        let index = *id_index_by_name
+            .entry(node_text(node, code).to_string())
+            .or_insert(next_index);
+        symbols.push(hash_text(&format!("id{index}")));
+        return;
+    }
+    // Remaining operand leaves are literals, normalized by kind; everything else (keywords,
+    // operators, punctuation) is kept verbatim.
+    symbols.push(hash_text(if operand_node_types().contains(node.kind()) {
+        node.kind()
+    } else {
+        node_text(node, code)
+    }));
+}
+
+/// Parses the source from UTF-16 (matching node-tree-sitter's JavaScript string semantics:
+/// tree-sitter's error recovery differs between input encodings for malformed non-ASCII source)
+/// and refuses pathologically deep trees: the metric passes recurse per tree level and would
+/// overflow the native stack (a process-killing SIGSEGV, not a catchable error) around depth ~20k.
+fn parse_source(
+    source: &Source<'_>,
+    language: &LanguageDefinition,
+) -> Result<tree_sitter::Tree, String> {
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&language.grammar())
+        .map_err(|error| error.to_string())?;
+    let tree = parser
+        .parse_utf16(source.to_utf16(), None)
+        .ok_or_else(|| "parse failed".to_string())?;
+    if tree_depth(tree.root_node()) > MAX_TREE_DEPTH {
+        return Err(format!("tree depth exceeds {MAX_TREE_DEPTH}"));
+    }
+    Ok(tree)
+}
+
+/// See the depth check in parse_source(); computed iteratively so the check itself cannot overflow.
 const MAX_TREE_DEPTH: usize = 5_000;
 
 fn tree_depth(root: Node<'_>) -> usize {

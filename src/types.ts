@@ -12,22 +12,14 @@ export type SupportedLanguage =
   | 'tsx';
 
 export type LanguageName = SupportedLanguage | (string & {});
-export type ParserLanguage = unknown;
 
+/**
+ * A built-in language as enumerated by the API. Grammars and per-language node-type configuration
+ * live in the Rust addon, so a definition only names the language and its accepted aliases.
+ */
 export interface LanguageDefinition {
   name: LanguageName;
-  parserLanguage: ParserLanguage;
   aliases?: readonly string[];
-  functionNodeTypes?: readonly string[];
-  decisionNodeTypes?: readonly string[];
-  nestingNodeTypes?: readonly string[];
-  /** Node types that each count as one non-commenting source statement (NCSS). */
-  ncssNodeTypes?: readonly string[];
-  /**
-   * Node types whose direct named children count as statements even without a dedicated statement
-   * node type (expression-oriented grammars: Ruby bodies, Rust trailing block expressions).
-   */
-  ncssContainerNodeTypes?: readonly string[];
 }
 
 /** Detection settings for within-file and cross-file duplication. */
@@ -53,7 +45,7 @@ export interface DuplicationOptions {
 export interface MeasureOptions {
   language: LanguageName;
   includeSyntaxTree?: boolean;
-  /** Duplication detection settings; non-default values disable the native backend for the call. */
+  /** Duplication detection settings. */
   duplication?: DuplicationOptions;
 }
 

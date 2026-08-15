@@ -4,8 +4,8 @@ import {
   collectSegmentLines,
   collectSequenceWindowCandidates,
   countRedundantFragments,
-  defaultDuplicationOptions,
   mergeAdjacentGroups,
+  resolveDuplicationOptions,
   type CountedOccurrence,
   type CrossFileDuplicateCandidate,
   type CrossFileDuplicationFileData,
@@ -73,8 +73,7 @@ export function measureCrossFileDuplication(
   files: CrossFileDuplicationSourceFile[],
   options?: DuplicationOptions
 ): CrossFileDuplicationMetrics {
-  const minTokens = options?.minTokens ?? defaultDuplicationOptions.minTokens;
-  const maxGapTokens = options?.maxGapTokens ?? defaultDuplicationOptions.maxGapTokens;
+  const { minTokens, maxGapTokens } = resolveDuplicationOptions(options);
   const candidates: SelectableCandidate[] = files.flatMap(({ file, candidates }, fileIndex) =>
     candidates.map((candidate) => ({ ...candidate, regionBucket: fileIndex, file }))
   );

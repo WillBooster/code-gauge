@@ -158,9 +158,6 @@ The `duplication` section tunes how clones are detected:
   both blocks are at least this similar and share more than half of their content-bearing tokens.
   `100` disables near-miss detection. Applies to within-file detection only.
 
-Custom detection settings are measured by the TypeScript backend; the native backend implements the
-defaults only.
-
 ## Metrics
 
 `measureCode` reports, per file:
@@ -195,23 +192,27 @@ maintainability index, and similar) are intentionally not measured; see
 ## Supported languages
 
 Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++.
-Additional tree-sitter grammars can be registered with `TreeMeasurer.registerLanguage`.
+The language set is fixed by design: every metric is calibrated per grammar, and supporting
+arbitrary grammars would mean shipping incomplete metrics for them.
 
-## Native (Rust) backend
+## Native (Rust) engine
 
-Measurement is also implemented as a Rust addon that produces bit-identical metrics roughly 13x
-faster than the TypeScript backend (the tree-sitter grammar crates are pinned to the same versions
-as the npm grammar packages). With a [Rust toolchain](https://rustup.rs) installed, build it once:
+Parsing and every metric pass run in a Rust addon (tree-sitter); the thin TypeScript layer handles
+the CLI, cross-file matching, and the Halstead float derivations. At install time, `postinstall`
+keeps a prebuilt platform package or an already-built `native/code-gauge.node`, and otherwise
+builds the addon from the bundled sources — which requires a [Rust toolchain](https://rustup.rs).
+
+Package managers that block dependency install scripts by default (recent npm versions, and Bun
+unless `code-gauge` is listed in `trustedDependencies`) skip that build; either approve
+`code-gauge`'s install script, or build the addon manually inside the installed package (the
+runtime error message points here too):
 
 ```sh
-yarn build-native
+node node_modules/code-gauge/scripts/buildNative.mjs
 ```
 
-`measureCode` and the CLI pick up `native/code-gauge.node` automatically and fall back to the
-TypeScript implementation when the addon is missing (for example, on npm installs) or when a custom
-language has been registered. Set `CODE_GAUGE_NATIVE=0` to force the TypeScript backend, and compare
-both with `yarn benchmark` (requires `yarn build` first). `isNativeBackendAvailable()` reports which
-backend is in use.
+In this repository, build it with `bun run build-native` and benchmark with `bun run benchmark`
+(requires `bun run build` first).
 
 ## Programmatic API
 

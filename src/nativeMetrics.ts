@@ -1,11 +1,12 @@
 import { createRequire } from 'node:module';
-import { defaultLanguages } from './languages.js';
-import type { CodeMetrics, FunctionMetrics, LanguageDefinition } from './types.js';
+import type { CrossFileDuplicateCandidate, Token, TokenRange } from './duplication.js';
+import type { CodeMetrics, DuplicationOptions, FunctionMetrics } from './types.js';
 
 /**
  * Halstead counts measured natively; the derived float metrics (volume, effort, ...) are
- * computed in TypeScript because V8 and Rust disagree on the last bit of log/log2 results, and
- * the native backend must be bit-identical to the TypeScript one.
+ * computed in TypeScript because they involve transcendental functions (log2) whose last-bit
+ * results can differ between V8 and Rust's libm, and results must not depend on the Rust side's
+ * libm build.
  */
 export interface NativeHalsteadCounts {
   distinctOperators: number;
@@ -24,91 +25,168 @@ export interface NativeMetricsPayload extends Omit<CodeMetrics, 'halstead' | 'fu
   syntaxTree?: string;
 }
 
+/** One file's cross-file clone-detection contribution as serialized by the native addon. */
+export interface NativeCrossFileDataPayload {
+  candidates: CrossFileDuplicateCandidate[];
+  tokens: Token[];
+  containerStatements: TokenRange[][];
+  /** 1-based lines that are neither blank nor comment-only, sorted ascending. */
+  codeLineNumbers: number[];
+}
+
 interface NativeBinding {
-  measureCodeNative(code: string, language: string, includeSyntaxTree: boolean): string;
-  /** Absent on stale builds that predate payload versioning. */
+  measureCodeNative(
+    code: string,
+    language: string,
+    includeSyntaxTree: boolean,
+    minTokens?: number,
+    maxGapTokens?: number,
+    minSimilarityPercent?: number
+  ): string;
+  collectCrossFileDataNative(code: string, language: string, minTokens?: number): string;
+  collectFunctionTokenSequencesNative(code: string, language: string): string;
   payloadVersion?(): number;
 }
 
 /**
  * Must equal `payload_version` in native/src/lib.rs. A previously built addon survives a
  * `git pull` untouched, so without this handshake it would silently return payloads missing
- * newer fields (e.g. duplication.duplicateLineNumbers) instead of falling back to the
- * TypeScript backend.
+ * newer fields instead of failing with a clear rebuild message.
  */
-const expectedPayloadVersion = 3;
+const expectedPayloadVersion = 4;
 
-const defaultLanguageByName = new Map(defaultLanguages.map((language) => [language.name, language]));
+/** Measures one file via the native addon, returning the raw payload for assembly in metrics.ts. */
+export function measureCodeNative(
+  code: string,
+  language: string,
+  includeSyntaxTree: boolean,
+  duplication?: DuplicationOptions
+): NativeMetricsPayload {
+  return JSON.parse(
+    loadBinding().measureCodeNative(
+      toWellFormed(code),
+      language,
+      includeSyntaxTree,
+      clampToU32(duplication?.minTokens),
+      clampToU32(duplication?.maxGapTokens),
+      clampToU32(duplication?.minSimilarityPercent)
+    )
+  ) as NativeMetricsPayload;
+}
 
-let bindingLoadAttempted = false;
-let cachedBinding: NativeBinding | undefined;
+/** Collects one file's cross-file clone-detection contribution via the native addon. */
+export function collectCrossFileDataNative(
+  code: string,
+  language: string,
+  minTokens?: number
+): NativeCrossFileDataPayload {
+  return JSON.parse(
+    loadBinding().collectCrossFileDataNative(toWellFormed(code), language, clampToU32(minTokens))
+  ) as NativeCrossFileDataPayload;
+}
+
+/** Collects normalized token hash sequences of every function via the native addon. */
+export function collectFunctionTokenSequencesNative(code: string, language: string): Int32Array[] {
+  const sequences = JSON.parse(
+    loadBinding().collectFunctionTokenSequencesNative(toWellFormed(code), language)
+  ) as number[][];
+  return sequences.map((sequence) => Int32Array.from(sequence));
+}
 
 /**
- * Measures via the Rust addon when it is built and applicable, or returns undefined so the caller
- * falls back to the TypeScript implementation. Custom-registered languages always fall back: the
- * addon only embeds the built-in grammars.
+ * Lone surrogates cannot cross the N-API boundary losslessly, so ill-formed strings (invalid
+ * UTF-16 occasionally present in real-world files) are measured with U+FFFD replacements — the
+ * same code units V8's own UTF-8 conversion would substitute.
  */
-export function measureWithNativeBackend(
-  code: string,
-  language: LanguageDefinition,
-  includeSyntaxTree: boolean
-): NativeMetricsPayload | undefined {
-  if (!isNativeBackendEnabled() || defaultLanguageByName.get(language.name) !== language) {
-    return undefined;
-  }
-
-  // Lone surrogates cannot cross the N-API boundary losslessly (they become U+FFFD), so
-  // ill-formed strings measure through the TypeScript backend, which sees them as-is.
-  if (!code.isWellFormed()) {
-    return undefined;
-  }
-
-  const binding = loadBinding();
-  if (!binding) {
-    return undefined;
-  }
-
-  try {
-    return JSON.parse(binding.measureCodeNative(code, language.name, includeSyntaxTree)) as NativeMetricsPayload;
-  } catch (error) {
-    // Parity tests set the strict flag: without it, a binding that starts throwing would silently
-    // degrade the "native" side of every comparison into a TypeScript-vs-TypeScript check.
-    if (process.env.CODE_GAUGE_NATIVE_STRICT === '1') {
-      throw error;
-    }
-    // A native failure (e.g. the tree-depth guard on pathological input) falls back to the
-    // TypeScript backend instead of turning measureCode into a throwing API.
-    return undefined;
-  }
+function toWellFormed(code: string): string {
+  return code.isWellFormed() ? code : code.toWellFormed();
 }
 
-/** Whether measureCode currently uses the native backend for built-in languages. */
-export function isNativeBackendAvailable(): boolean {
-  return isNativeBackendEnabled() && loadBinding() !== undefined;
+/**
+ * The duplication settings cross the boundary as u32, whose JavaScript conversion wraps modulo
+ * 2^32 (2 ** 32 would become 0 and match everything). The public API accepts any safe integer, so
+ * out-of-range values clamp to [0, u32::MAX] — no source can hold 2^32 tokens, so a clamped
+ * threshold behaves identically to the requested one. NaN (e.g. `Number(unsetEnvVariable)`)
+ * survives clamping arithmetic and would also convert to 0, so it is treated as an absent setting
+ * instead.
+ */
+function clampToU32(value: number | undefined): number | undefined {
+  return value === undefined || Number.isNaN(value)
+    ? undefined
+    : Math.min(Math.max(Math.trunc(value), 0), 0xFF_FF_FF_FF);
 }
 
-/** Checked per call (not cached) so tests can flip backends within one process. */
-function isNativeBackendEnabled(): boolean {
-  return process.env.CODE_GAUGE_NATIVE !== '0';
-}
+/**
+ * Raised when no usable native addon can be loaded. Every measurement fails identically until the
+ * addon is built, so callers measuring many files (the CLI scan) treat it as fatal for the whole
+ * run instead of recording one "skipped" entry per file.
+ */
+export class NativeAddonError extends Error {}
 
-function loadBinding(): NativeBinding | undefined {
-  if (bindingLoadAttempted) {
+let cachedBinding: NativeBinding | undefined;
+let cachedFailure: NativeAddonError | undefined;
+
+function loadBinding(): NativeBinding {
+  if (cachedBinding) {
     return cachedBinding;
   }
-  bindingLoadAttempted = true;
-
-  try {
-    // Resolved relative to this file, so both src/ (tests) and dist/ (build) find native/.
-    const requireNative = createRequire(import.meta.url);
-    const binding = requireNative('../native/code-gauge.node') as NativeBinding;
-    if (binding.payloadVersion?.() === expectedPayloadVersion) {
-      cachedBinding = binding;
-    }
-    // A version mismatch (or a build too old to report one) leaves the binding unused, like a
-    // missing addon: rebuild with `yarn build-native` to re-enable the native backend.
-  } catch {
-    // The addon has not been built (or this platform/module format cannot load it).
+  // The failure is memoized too: resolution (including platformTriplet's diagnostic-report call
+  // on Linux) would otherwise repeat for every measured file of an already-failing run.
+  if (cachedFailure) {
+    throw cachedFailure;
   }
-  return cachedBinding;
+  // Resolved relative to this file, so both src/ (tests) and dist/ (build) find the addon.
+  const requireNative = createRequire(import.meta.url);
+  const specifiers = [
+    // A prebuilt platform package, when published for this platform.
+    `code-gauge-${platformTriplet()}`,
+    // A locally built addon (`bun run build-native`).
+    '../native/code-gauge.node',
+  ];
+  const failures: string[] = [];
+  for (const specifier of specifiers) {
+    let binding: NativeBinding;
+    try {
+      binding = requireNative(specifier) as NativeBinding;
+    } catch (error) {
+      failures.push(`  ${specifier}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`);
+      continue;
+    }
+    const version = binding.payloadVersion?.();
+    if (version !== expectedPayloadVersion) {
+      failures.push(
+        `  ${specifier}: payload version ${version ?? 'unknown'} does not match the expected ` +
+          `${expectedPayloadVersion}; rebuild the addon with \`bun run build-native\``
+      );
+      continue;
+    }
+    cachedBinding = binding;
+    return binding;
+  }
+  cachedFailure = new NativeAddonError(
+    `The code-gauge native addon is not available for ${platformTriplet()}. Build it with ` +
+      '`node scripts/buildNative.mjs` in the code-gauge package directory (requires a Rust ' +
+      'toolchain); when installing with npm, also allow install scripts for code-gauge so its ' +
+      `postinstall build can run.\n${failures.join('\n')}`
+  );
+  throw cachedFailure;
+}
+
+/**
+ * The platform-package suffix in the napi-rs naming convention: Linux targets are qualified by
+ * libc ABI (`linux-x64-gnu` / `linux-x64-musl`) because a glibc-linked addon cannot load on
+ * Alpine/musl, and Windows by toolchain ABI (`win32-x64-msvc`), matching what napi-rs tooling
+ * generates. Must match scripts/installNative.mjs and the build-native workflow's target list.
+ */
+function platformTriplet(): string {
+  const base = `${process.platform}-${process.arch}`;
+  if (process.platform === 'win32') {
+    return `${base}-msvc`;
+  }
+  if (process.platform !== 'linux') {
+    return base;
+  }
+  // Musl builds of Node report no glibc runtime version; see napi-rs's isMusl detection.
+  const report = process.report?.getReport() as { header?: { glibcVersionRuntime?: string } } | undefined;
+  return report?.header?.glibcVersionRuntime ? `${base}-gnu` : `${base}-musl`;
 }

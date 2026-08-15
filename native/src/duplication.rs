@@ -4,7 +4,10 @@ use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tree_sitter::Node;
 
-use crate::types::{DuplicateBlockOccurrence, DuplicationMetrics};
+use crate::types::{
+    CrossFileCandidate, CrossFileToken, CrossFileTokenRange, DuplicateBlockOccurrence,
+    DuplicationMetrics,
+};
 use crate::util::{all_children, named_children, node_text, to_int32, Source};
 
 /// Block-like nodes considered as whole-subtree duplicate candidates; see duplication.ts.
@@ -180,14 +183,30 @@ const STRING_CONTENT_FRAGMENT_TYPES: &[&str] = &[
     "heredoc_content",
 ];
 
-const MIN_DUPLICATE_TOKEN_COUNT: usize = 40;
 const MIN_SEQUENCE_STATEMENT_COUNT: usize = 2;
 const MAX_SEQUENCE_STATEMENT_COUNT: usize = 100;
 const MAX_SELECTION_RERUN_COUNT: usize = 20;
-/// Maximum normalized-token gap between adjacent duplicate groups merged into one gapped clone.
-const MAX_GAP_TOKEN_COUNT: usize = 30;
-/// Minimum LCS similarity percent for near-miss (Type-3) clone blocks; see duplication.ts.
-const MIN_SIMILARITY_PERCENT: usize = 70;
+
+/// Detection settings, defaulting to defaultDuplicationOptions in src/duplication.ts.
+#[derive(Clone, Copy)]
+pub struct DuplicationSettings {
+    /// Minimum normalized token count for a region to be considered for duplication.
+    pub min_tokens: usize,
+    /// Maximum normalized-token gap between adjacent duplicate groups merged into one gapped clone.
+    pub max_gap_tokens: usize,
+    /// Minimum LCS similarity percent for near-miss (Type-3) clone blocks; 100 disables near-miss.
+    pub min_similarity_percent: usize,
+}
+
+impl Default for DuplicationSettings {
+    fn default() -> Self {
+        DuplicationSettings {
+            min_tokens: 40,
+            max_gap_tokens: 30,
+            min_similarity_percent: 70,
+        }
+    }
+}
 /// N-gram size for the near-miss candidate index (NIL's default); see duplication.ts.
 const NEAR_MISS_NGRAM_SIZE: usize = 5;
 /// Filtration threshold: shared distinct n-grams over the smaller set; see duplication.ts.
@@ -257,6 +276,7 @@ pub fn measure_duplication(
     root: Node<'_>,
     code_line_numbers: &HashSet<usize>,
     code: &Source<'_>,
+    settings: &DuplicationSettings,
 ) -> DuplicationMetrics {
     let mut tokens: Vec<Token<'_>> = Vec::new();
     let mut block_ranges: Vec<TokenRange> = Vec::new();
@@ -270,20 +290,137 @@ pub fn measure_duplication(
     );
 
     let literal_count_prefix = build_literal_count_prefix(&tokens);
-    let mut candidates = collect_block_candidates(&tokens, &literal_count_prefix, &block_ranges);
+    let mut candidates = collect_block_candidates(
+        &tokens,
+        &literal_count_prefix,
+        &block_ranges,
+        settings.min_tokens,
+    );
     candidates.extend(collect_sequence_candidates(
         &tokens,
         &literal_count_prefix,
         &container_statement_ranges,
+        settings.min_tokens,
     ));
     let counted = select_maximal_duplicates(candidates);
-    let mut groups = merge_adjacent_groups(to_counted_groups(&counted), MAX_GAP_TOKEN_COUNT);
-    let near_miss =
-        collect_near_miss_groups(&tokens, &literal_count_prefix, &block_ranges, &mut groups);
+    let mut groups = merge_adjacent_groups(to_counted_groups(&counted), settings.max_gap_tokens);
+    let near_miss = collect_near_miss_groups(
+        &tokens,
+        &literal_count_prefix,
+        &block_ranges,
+        settings,
+        &mut groups,
+    );
     // Near-miss clustering can merge exact groups away, leaving empty entries behind.
     groups.retain(|group| !group.is_empty());
     groups.extend(near_miss);
     summarize_duplicates(&groups, code_line_numbers, &tokens)
+}
+
+/// Collects one file's contribution to cross-file clone detection: catalogued candidates (whole
+/// block subtrees plus each statement container's full run) together with the normalized token
+/// stream and statement structure. A faithful port of collectCrossFileDuplicateCandidates in
+/// duplication.ts. Source indexes are emitted in UTF-16 code units (the tree is parsed from
+/// UTF-16, so node byte offsets are halved) to match JavaScript string indexes.
+pub fn collect_cross_file_file_data(
+    root: Node<'_>,
+    code: &Source<'_>,
+    min_tokens: usize,
+) -> (
+    Vec<CrossFileCandidate>,
+    Vec<CrossFileToken>,
+    Vec<Vec<CrossFileTokenRange>>,
+) {
+    let mut tokens: Vec<Token<'_>> = Vec::new();
+    let mut block_ranges: Vec<TokenRange> = Vec::new();
+    let mut container_statement_ranges: Vec<Vec<TokenRange>> = Vec::new();
+    collect_tokens(
+        root,
+        code,
+        &mut tokens,
+        &mut block_ranges,
+        &mut container_statement_ranges,
+    );
+    let literal_count_prefix = build_literal_count_prefix(&tokens);
+
+    let mut candidates =
+        collect_block_candidates(&tokens, &literal_count_prefix, &block_ranges, min_tokens);
+    // Single-statement containers are catalogued too: a file whose only top-level statement is not
+    // a block type (a lone exported table) must still be matchable when wholly copied.
+    for statements in &container_statement_ranges {
+        let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
+            continue;
+        };
+        let token_count = last.end_token_index - first.start_token_index;
+        if token_count < min_tokens {
+            continue;
+        }
+        let fingerprint = format!(
+            "s:{}",
+            fingerprint_key(
+                &tokens,
+                &literal_count_prefix,
+                first.start_token_index,
+                last.end_token_index
+            )
+        );
+        candidates.push(to_candidate(
+            fingerprint,
+            first.start_token_index,
+            last.end_token_index,
+            first,
+            last,
+        ));
+    }
+
+    let candidate_payloads = dedupe_by_region(candidates)
+        .into_iter()
+        .map(|candidate| CrossFileCandidate {
+            fingerprint: candidate.fingerprint.to_string(),
+            token_count: candidate.token_count,
+            start_token_index: candidate.start_token_index,
+            end_token_index: candidate.end_token_index,
+            start_index: candidate.start_index / 2,
+            end_index: candidate.end_index / 2,
+            start_line: candidate.start_line,
+            end_line: candidate.end_line,
+        })
+        .collect();
+    let token_payloads = tokens
+        .iter()
+        .map(|token| CrossFileToken {
+            kind: if token.is_id { "id" } else { "text" },
+            text: token.text.to_string(),
+            text_hash: token.text_hash,
+            text_hash2: token.text_hash2,
+            literal_hash: token.literal_hash,
+            literal_hash2: token.literal_hash2,
+            is_name: token.is_name,
+            start_row: token.start_row,
+            end_row: token.end_row,
+        })
+        .collect();
+    let container_statement_payloads = container_statement_ranges
+        .iter()
+        .map(|statements| {
+            statements
+                .iter()
+                .map(|range| CrossFileTokenRange {
+                    start_token_index: range.start_token_index,
+                    end_token_index: range.end_token_index,
+                    start_index: range.start_index / 2,
+                    end_index: range.end_index / 2,
+                    start_line: range.start_line,
+                    end_line: range.end_line,
+                })
+                .collect()
+        })
+        .collect();
+    (
+        candidate_payloads,
+        token_payloads,
+        container_statement_payloads,
+    )
 }
 
 fn collect_tokens<'a>(
@@ -623,11 +760,12 @@ fn collect_block_candidates(
     tokens: &[Token<'_>],
     literal_count_prefix: &[usize],
     block_ranges: &[TokenRange],
+    min_tokens: usize,
 ) -> Vec<DuplicateCandidate> {
     let mut candidates = Vec::new();
     for range in block_ranges {
         let token_count = range.end_token_index - range.start_token_index;
-        if token_count < MIN_DUPLICATE_TOKEN_COUNT {
+        if token_count < min_tokens {
             continue;
         }
         let fingerprint = format!(
@@ -678,12 +816,13 @@ fn collect_sequence_candidates(
     tokens: &[Token<'_>],
     literal_count_prefix: &[usize],
     containers: &[Vec<TokenRange>],
+    min_tokens: usize,
 ) -> Vec<DuplicateCandidate> {
     let mut candidates = Vec::new();
     let mut occurrences_by_window_key: HashMap<i64, WindowOccurrences> = HashMap::new();
     let container_windows: Vec<ContainerWindows> = containers
         .iter()
-        .map(|statements| enumerate_container_windows(tokens, statements))
+        .map(|statements| enumerate_container_windows(tokens, statements, min_tokens))
         .collect();
     for (container_index, windows) in container_windows.iter().enumerate() {
         for (start, row) in windows.window_keys_by_start.iter().enumerate() {
@@ -843,6 +982,7 @@ fn collect_sequence_candidates(
 fn enumerate_container_windows(
     tokens: &[Token<'_>],
     statements: &[TokenRange],
+    min_tokens: usize,
 ) -> ContainerWindows {
     let statement_hashes: Vec<i32> = statements
         .iter()
@@ -866,13 +1006,12 @@ fn enumerate_container_windows(
             hash = combine_hashes(hash, statement_hash as i64);
             token_count += statement.end_token_index - statement.start_token_index;
             let statement_count = end - start + 1;
-            let key = if statement_count >= MIN_SEQUENCE_STATEMENT_COUNT
-                && token_count >= MIN_DUPLICATE_TOKEN_COUNT
-            {
-                Some(combine_hashes(hash, statement_count as i64))
-            } else {
-                None
-            };
+            let key =
+                if statement_count >= MIN_SEQUENCE_STATEMENT_COUNT && token_count >= min_tokens {
+                    Some(combine_hashes(hash, statement_count as i64))
+                } else {
+                    None
+                };
             if row.len() <= statement_count {
                 row.resize(statement_count + 1, None);
             }
@@ -979,7 +1118,7 @@ fn fingerprint_hash_pair(
 }
 
 /// djb2-style hash over UTF-16 code units, matching hashText in duplication.ts exactly.
-fn hash_text(text: &str) -> i32 {
+pub fn hash_text(text: &str) -> i32 {
     let mut hash: i32 = 5381;
     for unit in text.encode_utf16() {
         hash = hash.wrapping_mul(33) ^ (unit as i32);
@@ -1301,9 +1440,10 @@ fn collect_near_miss_groups(
     tokens: &[Token<'_>],
     literal_count_prefix: &[usize],
     block_ranges: &[TokenRange],
+    settings: &DuplicationSettings,
     reported_groups: &mut [Vec<CountedOccurrence>],
 ) -> Vec<Vec<CountedOccurrence>> {
-    if MIN_SIMILARITY_PERCENT >= 100 {
+    if settings.min_similarity_percent >= 100 {
         return Vec::new();
     }
     let mut eligible: Vec<&TokenRange> = block_ranges
@@ -1318,8 +1458,7 @@ fn collect_near_miss_groups(
                     .get(range.start_token_index)
                     .copied()
                     .unwrap_or(0);
-            token_count >= MIN_DUPLICATE_TOKEN_COUNT
-                && !is_literal_dense(literal_count, token_count)
+            token_count >= settings.min_tokens && !is_literal_dense(literal_count, token_count)
         })
         .collect();
     eligible.sort_by_key(|range| {
@@ -1352,8 +1491,8 @@ fn collect_near_miss_groups(
         })
         .collect();
 
-    // Interned per call so a file's symbol ids (and thus its n-gram hashes) match the TypeScript
-    // backend's first-encounter assignment order exactly.
+    // Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
+    // other files the process measured before it.
     let mut symbol_id_by_token_hashes: HashMap<(i32, i32, i32, i32), i32> = HashMap::new();
     let sequences: Vec<NormalizedBlock> = comparable
         .iter()
@@ -1402,7 +1541,7 @@ fn collect_near_miss_groups(
         }
         // Per-fragment similarity against the larger block (NiCad semantics).
         if lcs_length(&left.sequence, &right.sequence) * 100
-            >= MIN_SIMILARITY_PERCENT * left.sequence.len().max(right.sequence.len())
+            >= settings.min_similarity_percent * left.sequence.len().max(right.sequence.len())
         {
             let left_root = find(&mut parent, left_index);
             let right_root = find(&mut parent, right_index);
@@ -1753,7 +1892,7 @@ fn count_shared_ngrams(ngram_sets: &[HashSet<i32>]) -> HashMap<(usize, usize), u
 
 /// Longest-common-subsequence LENGTH via the Allison–Dix bit-parallel recurrence. Only the length
 /// is needed and LCS length is algorithm-independent, so u64 words are safe even though the
-/// TypeScript backend uses 32-bit words.
+/// TypeScript port in src/duplication.ts uses 32-bit words.
 fn lcs_length(a: &[i32], b: &[i32]) -> usize {
     if a.is_empty() || b.is_empty() {
         return 0;

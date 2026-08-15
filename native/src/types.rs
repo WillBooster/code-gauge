@@ -2,8 +2,8 @@ use serde::Serialize;
 
 /// Result payload of the native measurer. Mirrors CodeMetrics from src/types.ts, except that
 /// Halstead's derived values are computed on the TypeScript side: they involve transcendental
-/// functions (log/log2) whose last-bit results can differ between V8 and Rust's libm, and
-/// bit-exact parity with the TypeScript backend is a hard requirement.
+/// functions (log/log2) whose last-bit results can differ between V8 and Rust's libm, and results
+/// must not vary with the platform's libm build.
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct NativeMetrics {
@@ -67,6 +67,62 @@ pub struct DuplicationMetrics {
     pub duplicate_line_numbers: Vec<usize>,
     pub duplication_ratio: f64,
     pub max_duplicate_block_size: usize,
+}
+
+/// One file's contribution to cross-file clone detection. Mirrors CrossFileDuplicationFileData in
+/// src/duplication.ts; `code_line_numbers` is revived into a Set on the TypeScript side.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossFileFileData {
+    pub candidates: Vec<CrossFileCandidate>,
+    pub tokens: Vec<CrossFileToken>,
+    pub container_statements: Vec<Vec<CrossFileTokenRange>>,
+    /// 1-based lines that are neither blank nor comment-only, sorted ascending.
+    pub code_line_numbers: Vec<usize>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossFileCandidate {
+    pub fingerprint: String,
+    pub token_count: usize,
+    pub start_token_index: usize,
+    pub end_token_index: usize,
+    pub start_index: usize,
+    pub end_index: usize,
+    pub start_line: usize,
+    pub end_line: usize,
+}
+
+/// A normalized token as consumed by the TypeScript project-level matcher (the Token interface in
+/// src/duplication.ts). Optional fields are omitted rather than null: the TypeScript side
+/// distinguishes absent from undefined-valued keys with `!== undefined` checks.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossFileToken {
+    pub kind: &'static str,
+    pub text: String,
+    pub text_hash: i32,
+    pub text_hash2: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub literal_hash: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub literal_hash2: Option<i32>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub is_name: bool,
+    pub start_row: usize,
+    pub end_row: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CrossFileTokenRange {
+    pub start_token_index: usize,
+    pub end_token_index: usize,
+    pub start_index: usize,
+    pub end_index: usize,
+    pub start_line: usize,
+    pub end_line: usize,
 }
 
 #[derive(Serialize)]
