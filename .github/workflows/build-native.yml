@@ -7,7 +7,10 @@ name: Build Native
   workflow_dispatch: null
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Only pull-request runs may be cancelled by a newer push: the release pipeline
+  # (scripts/prepareNativePackages.mjs) waits for THIS commit's main-push run, and a later merge
+  # cancelling it would fail that release.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
     strategy:

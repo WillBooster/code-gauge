@@ -1,16 +1,22 @@
 #!/usr/bin/env node
 // Release-time pipeline for the prebuilt napi platform packages (#52), driven by
-// @semantic-release/exec: `prepare` waits for the released commit's "Build Native" workflow run,
-// downloads its artifacts, wraps each in a `code-gauge-<platform>` package, and injects them into
-// the main package's optionalDependencies at the released version (only in the packed tarball —
-// the committed package.json stays version-less, like the 0.0.0-semantically-released version
-// field); `publish` publishes the platform packages before @semantic-release/npm publishes the
-// main package. Platform packages are published with NPM_TOKEN (npm trusted publishing cannot
-// create a package, so first publishes need a token); once every platform package exists on the
-// registry, a tokenless run proceeds and relies on per-package trusted publishers. Until either
-// holds, the pipeline skips with a warning instead of failing the main release, and skipping also
-// leaves optionalDependencies uninjected so the main package never references unpublished
-// versions — installs then keep today's source-build fallback.
+// @semantic-release/exec's prepareCmd: wait for the released commit's "Build Native" workflow
+// run, download its artifacts, wrap each in a `code-gauge-<platform>` package, publish the
+// platform packages, and inject them into the main package's optionalDependencies at the
+// released version (only in the packed tarball — the committed package.json stays version-less,
+// like the 0.0.0-semantically-released version field). Everything runs in the PREPARE phase on
+// purpose: semantic-release pushes the release tag after prepare and before the publish
+// plugins, so a failure here aborts the release before anything is tagged and a plain re-run
+// recovers (recomputing the same version; already-published platform versions are verified
+// against the local artifacts and skipped). Platform packages published by a release that later
+// fails are harmless orphans.
+//
+// Auth: NPM_TOKEN (npm trusted publishing cannot create a package, so first publishes need a
+// token); once every platform package exists on the registry and shares a maintainer with the
+// main package, a tokenless run proceeds and relies on per-package trusted publishers. Until
+// either holds, the pipeline skips with a warning instead of failing the main release, leaving
+// optionalDependencies uninjected so the main package never references unpublished versions —
+// installs then keep today's source-build fallback.
 
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
@@ -18,7 +24,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-const stateFilePath = path.join(packageRoot, '.tmp', 'native-release.json');
 const registryUrl = 'https://registry.npmjs.org/';
 
 // The platform-package suffixes follow the napi-rs naming convention the runtime loader and
@@ -82,21 +87,18 @@ const platformTargets = [
 const [mode, version] = process.argv.slice(2);
 if (mode === 'prepare' && version) {
   await prepare(version);
-} else if (mode === 'publish') {
-  await publish();
 } else {
-  console.error('Usage: prepareNativePackages.mjs prepare <version> | publish');
+  console.error('Usage: prepareNativePackages.mjs prepare <version>');
   process.exit(1);
 }
 
 async function prepare(newVersion) {
-  if (!process.env.NPM_TOKEN && !(await allPlatformPackagesExist())) {
+  if (!process.env.NPM_TOKEN && !(await allPlatformPackagesPublishable())) {
     console.warn(
       'Skipping the platform packages: NPM_TOKEN is not set and not every code-gauge-* platform ' +
         'package exists on registry.npmjs.org yet. Complete the bootstrap steps in ' +
         'https://github.com/WillBooster/code-gauge/issues/52 to enable prebuilt publishes.'
     );
-    writeState({ publish: false });
     return;
   }
 
@@ -132,87 +134,121 @@ async function prepare(newVersion) {
     packageDirPaths.push(packageDirPath);
   }
 
+  // The token goes through npm's env-var expansion instead of being written to disk. Without a
+  // token the userconfig line expands to empty, and npm's trusted-publishing OIDC exchange (which
+  // runs unconditionally in GitHub Actions and overrides the userconfig token on success) takes
+  // over, matching the bootstrap-then-OIDC plan.
+  const userconfigPath = path.join(packagesDirPath, '.npmrc');
+  // oxlint-disable-next-line no-template-curly-in-string -- npm expands the reference at run time.
+  writeFileSync(userconfigPath, '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n');
+  for (const packageDirPath of packageDirPaths) {
+    await publishPlatformPackage(packageDirPath, newVersion, userconfigPath);
+  }
+
+  // Injected only after every platform publish succeeded, so the main package can never
+  // reference an unpublished version.
   mainPackageJson.optionalDependencies = Object.fromEntries(
     platformTargets.map((target) => [`code-gauge-${target.suffix}`, newVersion])
   );
   writeFileSync(path.join(packageRoot, 'package.json'), `${JSON.stringify(mainPackageJson, undefined, 2)}\n`);
-
-  writeState({ publish: true, version: newVersion, packageDirPaths });
 }
 
-async function publish() {
-  const state = JSON.parse(readFileSync(stateFilePath, 'utf8'));
-  if (!state.publish) {
-    console.warn('Skipping the platform-package publish (see the prepare step warning).');
-    return;
-  }
-  // The token goes through npm's env-var expansion instead of being written to disk. Without a
-  // token the userconfig is still written (empty-expanding) but npm's trusted-publishing OIDC
-  // exchange takes precedence on registry.npmjs.org, matching the bootstrap-then-OIDC plan.
-  const userconfigPath = path.join(packageRoot, '.tmp', 'npm-native', '.npmrc');
-  // oxlint-disable-next-line no-template-curly-in-string -- npm expands the reference at run time.
-  writeFileSync(userconfigPath, '//registry.npmjs.org/:_authToken=${NPM_TOKEN}\n');
-  for (const packageDirPath of state.packageDirPaths) {
-    const packageName = path.basename(packageDirPath);
-    // A re-run of a partially failed release must not fail on the packages it already published.
-    if (await packageVersionExists(packageName, state.version)) {
-      console.warn(`Skipping ${packageName}@${state.version}: already published.`);
-      continue;
+async function publishPlatformPackage(packageDirPath, newVersion, userconfigPath) {
+  const packageName = path.basename(packageDirPath);
+  // The deterministic local tarball integrity lets an already-published version be classified:
+  // identical integrity means a previous (partially failed) run of THIS release published it and
+  // it is safe to skip; anything else is a squatted or corrupted package that must never end up
+  // referenced by optionalDependencies.
+  const localIntegrity = JSON.parse(
+    execFileSync('npm', ['pack', '--dry-run', '--json'], { cwd: packageDirPath, encoding: 'utf8' })
+  )[0].integrity;
+  const verifyPublished = async () => {
+    const published = await fetchPackageVersion(packageName, newVersion);
+    if (!published) return false;
+    if (published.dist?.integrity !== localIntegrity) {
+      throw new Error(
+        `${packageName}@${newVersion} already exists on the registry with integrity ` +
+          `${published.dist?.integrity}, but this release built ${localIntegrity}. Refusing to ` +
+          'reference a tarball this release did not produce (name squatting or corruption).'
+      );
     }
-    const publishArgs = ['publish', '--userconfig', userconfigPath];
+    console.warn(`Skipping ${packageName}@${newVersion}: already published with matching integrity.`);
+    return true;
+  };
+
+  if (await verifyPublished()) return;
+  const publishOnce = () =>
+    execFileSync('npm', ['publish', '--userconfig', userconfigPath], {
+      cwd: packageDirPath,
+      stdio: 'inherit',
+      env: { ...process.env, NPM_TOKEN: process.env.NPM_TOKEN ?? '' },
+    });
+  try {
+    publishOnce();
+  } catch {
+    // The registry may have accepted the upload while the client saw an error (dropped response,
+    // 5xx after commit), so re-check before retrying — a blind retry of the immutable
+    // name/version would fail with EPUBLISHCONFLICT despite the desired state being reached.
+    await sleep(10_000);
+    if (await verifyPublished()) return;
     try {
-      execFileSync('npm', publishArgs, {
-        cwd: packageDirPath,
-        stdio: 'inherit',
-        env: { ...process.env, NPM_TOKEN: process.env.NPM_TOKEN ?? '' },
-      });
-    } catch {
-      // One retry covers transient registry failures; a reproducible failure must abort the
-      // release before the main package references unpublished platform packages.
-      execFileSync('npm', publishArgs, {
-        cwd: packageDirPath,
-        stdio: 'inherit',
-        env: { ...process.env, NPM_TOKEN: process.env.NPM_TOKEN ?? '' },
-      });
+      publishOnce();
+    } catch (error) {
+      await sleep(10_000);
+      if (await verifyPublished()) return;
+      throw error;
     }
   }
 }
 
 async function waitForBuildNativeRun() {
-  // Build Native starts from the same push that triggered the release, so poll until its run for
-  // this commit completes. Re-releases of old commits can outlive the 90-day artifact retention;
-  // the download then fails loudly and the release must be re-run from a fresh build.
+  // Build Native starts from the same push that triggered the release, so poll until a run for
+  // this commit succeeds. Transient `gh` failures count as "not ready yet" — the deadline bounds
+  // a persistently broken gh. Re-releases of old commits can outlive the 90-day artifact
+  // retention; the download then fails loudly and the release must be re-run from a fresh build.
+  const commitSha = requireEnv('GITHUB_SHA');
   const deadline = Date.now() + 45 * 60 * 1000;
   for (;;) {
-    const runsJson = execFileSync(
-      'gh',
-      [
-        'run',
-        'list',
-        '--workflow',
-        'build-native.yml',
-        '--commit',
-        requireEnv('GITHUB_SHA'),
-        '--json',
-        'databaseId,status,conclusion',
-      ],
-      { encoding: 'utf8' }
-    );
-    const runs = JSON.parse(runsJson);
-    const completed = runs.find((run) => run.status === 'completed');
-    if (completed?.conclusion === 'success') return completed.databaseId;
-    if (completed) {
-      throw new Error(
-        `Build Native run ${completed.databaseId} for ${process.env.GITHUB_SHA} concluded: ${completed.conclusion}`
+    let runs;
+    try {
+      runs = JSON.parse(
+        execFileSync(
+          'gh',
+          [
+            'run',
+            'list',
+            '--workflow',
+            'build-native.yml',
+            '--commit',
+            commitSha,
+            '--json',
+            'databaseId,status,conclusion',
+          ],
+          { encoding: 'utf8' }
+        )
+      );
+    } catch (error) {
+      console.warn(
+        `Listing Build Native runs failed (${error instanceof Error ? error.message : String(error)}); retrying...`
       );
     }
-    if (Date.now() > deadline) {
-      throw new Error(`Timed out waiting for a successful Build Native run for ${process.env.GITHUB_SHA}`);
+    if (runs) {
+      const succeeded = runs.find((run) => run.status === 'completed' && run.conclusion === 'success');
+      if (succeeded) return succeeded.databaseId;
+      // Only a state no waiting can fix fails fast: every run finished and none succeeded.
+      if (runs.length > 0 && runs.every((run) => run.status === 'completed')) {
+        throw new Error(
+          `No successful Build Native run for ${commitSha} ` +
+            `(conclusions: ${runs.map((run) => run.conclusion).join(', ')}). Re-run it for this ` +
+            'commit with `gh run rerun <run-id>` and then re-run the release.'
+        );
+      }
     }
-    console.info(
-      `Waiting for the Build Native run for ${process.env.GITHUB_SHA} (${runs.length} run(s) in progress)...`
-    );
-    await new Promise((resolve) => setTimeout(resolve, 30_000));
+    if (Date.now() > deadline) {
+      throw new Error(`Timed out waiting for a successful Build Native run for ${commitSha}`);
+    }
+    console.info(`Waiting for the Build Native run for ${commitSha}...`);
+    await sleep(30_000);
   }
 }
 
@@ -233,24 +269,56 @@ function createPlatformPackageJson(target, newVersion, mainPackageJson) {
   };
 }
 
-async function allPlatformPackagesExist() {
-  const results = await Promise.all(
-    platformTargets.map(async (target) => {
-      const response = await fetch(`${registryUrl}code-gauge-${target.suffix}`, { method: 'HEAD' });
-      return response.ok;
-    })
-  );
-  return results.every(Boolean);
+// The tokenless (post-bootstrap) gate. Mere registry existence must not enable the flow: anyone
+// can claim an unscoped name, and treating a squatted package as "bootstrap done" would wire it
+// into optionalDependencies. Every platform package must share a maintainer with the main
+// package — an attacker cannot list one of our maintainers on their package.
+async function allPlatformPackagesPublishable() {
+  const mainMaintainers = maintainerNames(await fetchPackageDocument('code-gauge'));
+  for (const target of platformTargets) {
+    const name = `code-gauge-${target.suffix}`;
+    const document = await fetchPackageDocument(name);
+    if (!document) return false;
+    if (!maintainerNames(document).some((maintainer) => mainMaintainers.includes(maintainer))) {
+      throw new Error(
+        `${name} exists on the registry but shares no maintainer with code-gauge — the name ` +
+          'appears to be squatted. Resolve ownership before enabling prebuilt publishes (#52).'
+      );
+    }
+  }
+  return true;
 }
 
-async function packageVersionExists(packageName, packageVersion) {
-  const response = await fetch(`${registryUrl}${packageName}/${encodeURIComponent(packageVersion)}`);
-  return response.ok;
+function maintainerNames(document) {
+  return (document?.maintainers ?? []).map((maintainer) => maintainer.name);
 }
 
-function writeState(state) {
-  mkdirSync(path.dirname(stateFilePath), { recursive: true });
-  writeFileSync(stateFilePath, `${JSON.stringify(state)}\n`);
+async function fetchPackageDocument(packageName) {
+  return await fetchRegistryJson(`${registryUrl}${packageName}`);
+}
+
+async function fetchPackageVersion(packageName, packageVersion) {
+  return await fetchRegistryJson(`${registryUrl}${packageName}/${encodeURIComponent(packageVersion)}`);
+}
+
+// undefined for 404; one retry for transient failures, then throw — nothing is tagged during
+// prepare, so failing loudly keeps the release re-runnable instead of publishing a main package
+// with silently missing prebuilds.
+async function fetchRegistryJson(url, isRetry = false) {
+  try {
+    const response = await fetch(url);
+    if (response.status === 404) return;
+    if (!response.ok) throw new Error(`GET ${url} responded ${response.status}`);
+    return await response.json();
+  } catch (error) {
+    if (isRetry) throw error;
+    await sleep(5000);
+    return await fetchRegistryJson(url, true);
+  }
+}
+
+function sleep(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
 function requireEnv(name) {

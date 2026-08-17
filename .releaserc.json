@@ -11,8 +11,7 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "node scripts/prepareNativePackages.mjs prepare ${nextRelease.version}",
-        "publishCmd": "node scripts/prepareNativePackages.mjs publish"
+        "prepareCmd": "node scripts/prepareNativePackages.mjs prepare ${nextRelease.version}"
       }
     ],
     "@semantic-release/npm",
