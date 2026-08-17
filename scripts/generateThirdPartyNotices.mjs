@@ -16,6 +16,29 @@ const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..'
 const nativeDirPath = path.join(packageRoot, 'native');
 const vendorDirPath = path.join(packageRoot, '.tmp', 'vendor');
 
+// Upstream copyright notices for the MIT crates whose PUBLISHED sources bundle no license file
+// (MIT requires the copyright notice to accompany distributions, and Cargo authors are not a
+// substitute). Taken from each repository's LICENSE at the pinned version's tag. Generation
+// fails fast on any crate that bundles no license file and has no entry here, so a future
+// dependency (or license change) forces an explicit decision instead of a wrong notice.
+const upstreamCopyrights = {
+  napi: 'Copyright (c) 2020-present LongYinan',
+  'napi-build': 'Copyright (c) 2020-present LongYinan',
+  'napi-derive': 'Copyright (c) 2020-present LongYinan',
+  'napi-derive-backend': 'Copyright (c) 2020-present LongYinan',
+  'napi-sys': 'Copyright (c) 2020-present LongYinan',
+  'tree-sitter': 'Copyright (c) 2018-2024 Max Brunsfeld',
+  'tree-sitter-c': 'Copyright (c) 2014 Max Brunsfeld',
+  'tree-sitter-cpp': 'Copyright (c) 2014 Max Brunsfeld',
+  'tree-sitter-go': 'Copyright (c) 2014 Max Brunsfeld',
+  'tree-sitter-java': 'Copyright (c) 2017 Ayman Nadeem',
+  'tree-sitter-javascript': 'Copyright (c) 2014 Max Brunsfeld',
+  'tree-sitter-python': 'Copyright (c) 2016 Max Brunsfeld',
+  'tree-sitter-ruby': 'Copyright (c) 2016 Rob Rix',
+  'tree-sitter-rust': 'Copyright (c) 2017 Maxim Sokolov',
+  'tree-sitter-typescript': 'Copyright (c) 2017 Max Brunsfeld',
+};
+
 const metadata = JSON.parse(
   execFileSync('cargo', ['metadata', '--format-version', '1'], {
     cwd: nativeDirPath,
@@ -54,13 +77,18 @@ const sections = crates.map((crate) => {
     // A crate absent from the vendor tree falls through to the no-file fallback below.
   }
   if (licenseFileNames.length === 0) {
-    // e.g. the tree-sitter crates publish no license file at all; attribute via the declared
-    // license and authors, with the canonical license text reproduced once in the appendix.
-    const authors = (crate.authors ?? []).join(', ');
+    const copyright = upstreamCopyrights[crate.name];
+    if (!copyright || crate.license !== 'MIT') {
+      throw new Error(
+        `${crate.name}@${crate.version} (license: ${crate.license}) bundles no license file and has no ` +
+          'checked-in upstream copyright notice; add its notice to upstreamCopyrights (and its license ' +
+          'text to the appendix if it is not MIT).'
+      );
+    }
     return (
-      `${header}\nThis crate's published sources bundle no license file. Declared license: ` +
-      `${crate.license ?? 'unknown'}.${authors ? ` Authors: ${authors}.` : ''} The canonical text of the MIT ` +
-      'license is reproduced in the appendix at the end of this document.\n'
+      `${header}\nThis crate's published sources bundle no license file; the upstream notice is:\n` +
+      `${copyright}\nThe canonical text of the MIT license is reproduced in the appendix at the end of ` +
+      'this document.\n'
     );
   }
   const texts = licenseFileNames.map(

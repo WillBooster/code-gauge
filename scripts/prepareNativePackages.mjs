@@ -189,9 +189,12 @@ async function publishPlatformPackage(packageDirPath, newVersion, userconfigPath
         isOurs
           ? `${packageName}@${newVersion} was already published (likely by an earlier partially ` +
               `failed release) from different artifacts (registry integrity ${published.dist?.integrity}, ` +
-              `this release built ${localIntegrity}). Land a release-worthy commit so the next release ` +
-              'computes a higher version — unpublishing does not help, because npm never allows ' +
-              'republishing an already-used name and version combination.'
+              `this release built ${localIntegrity}). Recover by re-running the release for the exact ` +
+              'commit whose Build Native artifacts were published (the integrity then matches and the ' +
+              'published versions are skipped), or by landing a commit with a HIGHER bump level than ' +
+              'the failed release (no tag was pushed, so a same-level commit recomputes the same ' +
+              'version). Unpublishing does not help: npm never allows republishing an already-used ' +
+              'name and version combination.'
           : `${packageName}@${newVersion} already exists on the registry with integrity ` +
               `${published.dist?.integrity}, but this release built ${localIntegrity}, and the package ` +
               'shares no maintainer with code-gauge. Refusing to reference a tarball this release did ' +
