@@ -8,6 +8,13 @@
       }
     ],
     "@semantic-release/release-notes-generator",
+    [
+      "@semantic-release/exec",
+      {
+        "prepareCmd": "node scripts/prepareNativePackages.mjs prepare ${nextRelease.version}",
+        "publishCmd": "node scripts/prepareNativePackages.mjs publish"
+      }
+    ],
     "@semantic-release/npm",
     [
       "@semantic-release/github",

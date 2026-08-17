@@ -59,6 +59,7 @@
     "commander": "15.0.0"
   },
   "devDependencies": {
+    "@semantic-release/exec": "7.1.0",
     "@tsconfig/bun": "1.0.10",
     "@tsconfig/node-lts": "24.0.0",
     "@tsconfig/node-ts": "23.6.4",
