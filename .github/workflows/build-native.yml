@@ -6,10 +6,12 @@ name: Build Native
       - main
   workflow_dispatch: null
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  # Only pull-request runs may be cancelled by a newer push: the release pipeline
-  # (scripts/prepareNativePackages.mjs) waits for THIS commit's main-push run, and a later merge
-  # cancelling it would fail that release.
+  # Pull-request runs share the ref's group and are cancelled by newer pushes; other runs (main
+  # pushes, dispatches) get a per-commit group so every released commit keeps its own build: the
+  # release pipeline (scripts/prepareNativePackages.mjs) waits for exactly its commit's run, and
+  # a shared group would lose intermediate commits — a newer push cancels a RUNNING build with
+  # cancel-in-progress, and GitHub's single-slot pending queue cancels a QUEUED one either way.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   build:
