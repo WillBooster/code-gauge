@@ -21,22 +21,24 @@ const vendorDirPath = path.join(packageRoot, '.tmp', 'vendor');
 // substitute). Taken from each repository's LICENSE at the pinned version's tag. Generation
 // fails fast on any crate that bundles no license file and has no entry here, so a future
 // dependency (or license change) forces an explicit decision instead of a wrong notice.
+// Keyed by name@version so a dependency bump forces re-verification of the notice against the
+// new version's tag instead of silently reusing a stale one.
 const upstreamCopyrights = {
-  napi: 'Copyright (c) 2020-present LongYinan',
-  'napi-build': 'Copyright (c) 2020-present LongYinan',
-  'napi-derive': 'Copyright (c) 2020-present LongYinan',
-  'napi-derive-backend': 'Copyright (c) 2020-present LongYinan',
-  'napi-sys': 'Copyright (c) 2020-present LongYinan',
-  'tree-sitter': 'Copyright (c) 2018-2024 Max Brunsfeld',
-  'tree-sitter-c': 'Copyright (c) 2014 Max Brunsfeld',
-  'tree-sitter-cpp': 'Copyright (c) 2014 Max Brunsfeld',
-  'tree-sitter-go': 'Copyright (c) 2014 Max Brunsfeld',
-  'tree-sitter-java': 'Copyright (c) 2017 Ayman Nadeem',
-  'tree-sitter-javascript': 'Copyright (c) 2014 Max Brunsfeld',
-  'tree-sitter-python': 'Copyright (c) 2016 Max Brunsfeld',
-  'tree-sitter-ruby': 'Copyright (c) 2016 Rob Rix',
-  'tree-sitter-rust': 'Copyright (c) 2017 Maxim Sokolov',
-  'tree-sitter-typescript': 'Copyright (c) 2017 Max Brunsfeld',
+  'napi@3.10.5': 'Copyright (c) 2020-present LongYinan',
+  'napi-build@2.3.2': 'Copyright (c) 2020-present LongYinan',
+  'napi-derive@3.5.10': 'Copyright (c) 2020-present LongYinan',
+  'napi-derive-backend@5.1.2': 'Copyright (c) 2020-present LongYinan',
+  'napi-sys@3.2.3': 'Copyright (c) 2020-present LongYinan',
+  'tree-sitter@0.22.6': 'Copyright (c) 2018-2024 Max Brunsfeld',
+  'tree-sitter-c@0.21.4': 'Copyright (c) 2014 Max Brunsfeld',
+  'tree-sitter-cpp@0.22.3': 'Copyright (c) 2014 Max Brunsfeld',
+  'tree-sitter-go@0.21.2': 'Copyright (c) 2014 Max Brunsfeld',
+  'tree-sitter-java@0.21.0': 'Copyright (c) 2017 Ayman Nadeem',
+  'tree-sitter-javascript@0.21.4': 'Copyright (c) 2014 Max Brunsfeld',
+  'tree-sitter-python@0.21.0': 'Copyright (c) 2016 Max Brunsfeld',
+  'tree-sitter-ruby@0.21.0': 'Copyright (c) 2016 Rob Rix',
+  'tree-sitter-rust@0.21.2': 'Copyright (c) 2017 Maxim Sokolov',
+  'tree-sitter-typescript@0.21.2': 'Copyright (c) 2017 Max Brunsfeld',
 };
 
 const metadata = JSON.parse(
@@ -68,33 +70,39 @@ const sections = crates.map((crate) => {
     `${separator}\n${crate.name} ${crate.version} — ${crate.license ?? 'see the license files below'}` +
     `${crate.repository ? ` — ${crate.repository}` : ''}\n${separator}`;
   const crateDirPath = path.join(vendorDirPath, `${crate.name}-${crate.version}`);
-  let licenseFileNames = [];
+  // Recursive: nested notices are load-bearing (e.g. tree-sitter's src/unicode/LICENSE carries
+  // the ICU permission notice for the compiled-in utf8/utf16 headers, and regex-syntax vendors
+  // the Unicode data-files license under src/unicode_tables).
+  let licenseFilePaths = [];
   try {
-    licenseFileNames = readdirSync(crateDirPath)
-      .filter((fileName) => /^(licen[cs]e|copying|notice)/i.test(fileName))
+    licenseFilePaths = readdirSync(crateDirPath, { recursive: true, withFileTypes: true })
+      .filter((entry) => entry.isFile() && /^(licen[cs]e|copying|notice)/i.test(entry.name))
+      .map((entry) => path.relative(crateDirPath, path.join(entry.parentPath, entry.name)))
       .toSorted();
   } catch {
     // A crate absent from the vendor tree falls through to the no-file fallback below.
   }
-  if (licenseFileNames.length === 0) {
-    const copyright = upstreamCopyrights[crate.name];
+  // The crate's OWN license is judged by root-level files: a crate can carry only nested
+  // third-party notices (tree-sitter does) and still need its own MIT attribution.
+  let fallbackBlock = '';
+  if (!licenseFilePaths.some((filePath) => !filePath.includes(path.sep))) {
+    const copyright = upstreamCopyrights[`${crate.name}@${crate.version}`];
     if (!copyright || crate.license !== 'MIT') {
       throw new Error(
-        `${crate.name}@${crate.version} (license: ${crate.license}) bundles no license file and has no ` +
-          'checked-in upstream copyright notice; add its notice to upstreamCopyrights (and its license ' +
-          'text to the appendix if it is not MIT).'
+        `${crate.name}@${crate.version} (license: ${crate.license}) bundles no root license file and has ` +
+          'no checked-in upstream copyright notice for this exact version; add its notice to ' +
+          'upstreamCopyrights (and its license text to the appendix if it is not MIT).'
       );
     }
-    return (
-      `${header}\nThis crate's published sources bundle no license file; the upstream notice is:\n` +
+    fallbackBlock =
+      "This crate's published sources bundle no root license file; the upstream notice is:\n" +
       `${copyright}\nThe canonical text of the MIT license is reproduced in the appendix at the end of ` +
-      'this document.\n'
-    );
+      'this document.\n';
   }
-  const texts = licenseFileNames.map(
-    (fileName) => `----- ${fileName} -----\n${readFileSync(path.join(crateDirPath, fileName), 'utf8').trim()}\n`
+  const texts = licenseFilePaths.map(
+    (filePath) => `----- ${filePath} -----\n${readFileSync(path.join(crateDirPath, filePath), 'utf8').trim()}\n`
   );
-  return `${header}\n${texts.join('\n')}`;
+  return `${header}\n${[fallbackBlock, ...texts].filter(Boolean).join('\n')}`;
 });
 
 const output =
