@@ -10,6 +10,9 @@ concurrency:
 permissions:
   id-token: write
   contents: write
+  # for scripts/prepareNativePackages.mjs, which locates and downloads the released commit's
+  # Build Native artifacts via `gh run list` / `gh run download`
+  actions: read
 jobs:
   release:
     uses: WillBooster/reusable-workflows/.github/workflows/release.yml@main
@@ -17,4 +20,7 @@ jobs:
       github_hosted_runner: true
     secrets:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      # for the platform-package publishes (#52); empty until the npm-side bootstrap is done,
+      # which makes scripts/prepareNativePackages.mjs skip them with a warning
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
       TAKUMI_GUARD_TOKEN: ${{ secrets.TAKUMI_GUARD_TOKEN }}
