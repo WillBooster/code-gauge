@@ -89,6 +89,18 @@ jobs:
           name: code-gauge-${{ matrix.target }}
           path: native/target/release/${{ matrix.library }}
           if-no-files-found: error
+  # The release pipeline bundles these attributions into every platform package (the addon
+  # statically links its Rust dependencies, so the binary distribution must carry them).
+  third-party-notices:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: node scripts/generateThirdPartyNotices.mjs
+      - uses: actions/upload-artifact@v6
+        with:
+          name: third-party-notices
+          path: .tmp/THIRD-PARTY-NOTICES.txt
+          if-no-files-found: error
   # Musl legs build natively inside Alpine via `docker run` (GitHub cannot run its JS actions in
   # Alpine containers on arm64 runners, so `container:` is not an option) so the artifacts
   # actually link musl — a -crt-static cross-build on a glibc runner links glibc — and smoke-load
