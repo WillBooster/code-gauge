@@ -1,0 +1,6 @@
+# Pin the toolchain so local builds and every CI leg (test-rust, build-native's containers and
+# runners) compile with one rustc instead of drifting on "latest stable"; the reusable test-rust
+# workflow warns when this file is absent.
+[toolchain]
+channel = "1.97.1"
+profile = "minimal"
