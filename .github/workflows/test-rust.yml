@@ -7,10 +7,11 @@ name: Test Rust
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-permissions:
-  contents: read
 jobs:
   test-rust:
+    permissions:
+      actions: read
+      contents: read
     uses: WillBooster/reusable-workflows/.github/workflows/test-rust.yml@main
     with:
       github_hosted_runner: true
