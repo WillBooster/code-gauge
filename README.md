@@ -198,14 +198,15 @@ arbitrary grammars would mean shipping incomplete metrics for them.
 ## Native (Rust) engine
 
 Parsing and every metric pass run in a Rust addon (tree-sitter); the thin TypeScript layer handles
-the CLI, cross-file matching, and the Halstead float derivations. At install time, `postinstall`
-keeps a prebuilt platform package or an already-built `native/code-gauge.node`, and otherwise
-builds the addon from the bundled sources — which requires a [Rust toolchain](https://rustup.rs).
+the CLI, cross-file matching, and the Halstead float derivations. Releases include prebuilt addons
+for Linux x64/arm64 (glibc and musl), macOS x64/arm64, and Windows x64. On other platforms,
+`postinstall` builds the addon from the bundled sources, which requires a
+[Rust toolchain](https://rustup.rs).
 
-Package managers that block dependency install scripts by default (recent npm versions, and Bun
-unless `code-gauge` is listed in `trustedDependencies`) skip that build; either approve
-`code-gauge`'s install script, or build the addon manually inside the installed package (the
-runtime error message points here too):
+If a prebuilt addon is unavailable, package managers that block dependency install scripts by
+default (recent npm versions, and Bun unless `code-gauge` is listed in `trustedDependencies`) skip
+the fallback build. Either approve `code-gauge`'s install script, or build the addon manually
+inside the installed package (the runtime error message points here too):
 
 ```sh
 node node_modules/code-gauge/scripts/buildNative.mjs
