@@ -13,6 +13,8 @@ concurrency:
   # cancel-in-progress, and GitHub's single-slot pending queue cancels a QUEUED one either way.
   group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+permissions:
+  contents: read
 jobs:
   build:
     strategy:
@@ -27,14 +29,14 @@ jobs:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
             library: libcode_gauge_native.so
-            container: quay.io/pypa/manylinux_2_28_x86_64
+            container: quay.io/pypa/manylinux_2_28_x86_64@sha256:0bf9db09181f36be8cf0628332abb5d31855b7d0f372faa776f492ccd9d3100d
             setup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none && echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
             glibcMax: '2.28'
             nodeArch: x64
           - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             library: libcode_gauge_native.so
-            container: quay.io/pypa/manylinux_2_28_aarch64
+            container: quay.io/pypa/manylinux_2_28_aarch64@sha256:d3524021bb8b15d2258481be1ea46f1dfa8a9c7fc09bec43a6c5407945f9dc11
             setup: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none && echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
             glibcMax: '2.28'
             nodeArch: arm64
@@ -53,12 +55,14 @@ jobs:
     runs-on: ${{ matrix.os }}
     container: ${{ matrix.container }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - if: matrix.setup
         run: ${{ matrix.setup }}
       # Each leg builds for its environment's host target, so the container's toolchain (glibc
       # 2.28) — not a cross-linker — produces the artifact.
-      - run: cargo build --release
+      - run: cargo build --release --locked
         working-directory: native
       - if: matrix.glibcMax
         run: |
@@ -84,7 +88,7 @@ jobs:
           curl -fsSL "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-${{ matrix.nodeArch }}.tar.gz" | tar -xz
           cp "native/target/release/${{ matrix.library }}" native/code-gauge.node
           "./node-v${NODE_VERSION}-linux-${{ matrix.nodeArch }}/bin/node" scripts/smokeNative.mjs
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: code-gauge-${{ matrix.target }}
           path: native/target/release/${{ matrix.library }}
@@ -94,9 +98,11 @@ jobs:
   third-party-notices:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - run: node scripts/generateThirdPartyNotices.mjs
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: third-party-notices
           path: .tmp/THIRD-PARTY-NOTICES.txt
@@ -116,17 +122,19 @@ jobs:
             target: aarch64-unknown-linux-musl
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
       - run: |
-          docker run --rm -v "$PWD:/work" -w /work rust:alpine sh -ec '
+          docker run --rm -v "$PWD:/work" -w /work rust:alpine@sha256:a10e64dd139b7387337c7fbe8aca31b959b57b2fd4c8ae20a02cf1d6ea424dce sh -ec '
             apk add --no-cache build-base nodejs
             cd native
-            RUSTFLAGS="-C target-feature=-crt-static" cargo build --release
+            RUSTFLAGS="-C target-feature=-crt-static" cargo build --release --locked
             cd ..
             cp native/target/release/libcode_gauge_native.so native/code-gauge.node
             node scripts/smokeNative.mjs
           '
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7.0.1
         with:
           name: code-gauge-${{ matrix.target }}
           path: native/target/release/libcode_gauge_native.so

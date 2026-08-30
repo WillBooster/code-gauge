@@ -1,9 +1,10 @@
 # code-gauge
 
-[![Test rust](https://github.com/WillBooster/code-gauge/actions/workflows/test-rust.yml/badge.svg)](https://github.com/WillBooster/code-gauge/actions/workflows/test-rust.yml)
+[![npm version](https://img.shields.io/npm/v/code-gauge.svg)](https://www.npmjs.com/package/code-gauge)
 [![Test](https://github.com/WillBooster/code-gauge/actions/workflows/test.yml/badge.svg)](https://github.com/WillBooster/code-gauge/actions/workflows/test.yml)
+[![Test rust](https://github.com/WillBooster/code-gauge/actions/workflows/test-rust.yml/badge.svg)](https://github.com/WillBooster/code-gauge/actions/workflows/test-rust.yml)
 [![semantic-release](https://img.shields.io/badge/%20%20%F0%9F%93%A6%F0%9F%9A%80-semantic--release-e10079.svg)](https://github.com/semantic-release/semantic-release)
-[![wbfy](https://img.shields.io/badge/wbfy-19.2.0-1e90ff.svg)](https://github.com/WillBooster/shared/tree/main/packages/wbfy)
+[![wbfy](https://img.shields.io/badge/wbfy-20.3.0-1e90ff.svg)](https://github.com/WillBooster/shared/tree/main/packages/wbfy)
 
 A command-line tool that ranks the files of a project by refactoring priority and gates changes
 against metric regressions, built for AI-agent workflows: an agent asked to "refactor this
