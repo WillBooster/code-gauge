@@ -25,7 +25,7 @@
 - In any explanatory text (commit messages, PR descriptions, documentation, code comments, etc.), describe only what exists in the final snapshot: never mention symbols or concepts that were added and later removed or renamed along the way, even if they mattered during the work. If you cannot confirm that an identifier or feature name you are about to write exists in the final diff or the current codebase, drop that statement.
 - Use heredoc for multi-line command input (e.g., `git commit -F -`, `gh pr create --body-file -`).
 - Put temporary files in `.tmp`; use `/tmp` only for files that must live outside the repo.
-- Tool versions (node, bun, and others) are pinned in `mise.toml`; run `mise install` after changing it, and never install those tools globally instead.
+- Tool versions (e.g., node) are pinned in `mise.toml`; run `mise install` after changing it, and never install those tools globally instead.
 - `bunfig.toml` uses Bun's isolated linker, so only declared dependencies resolve. If an import fails to resolve, declare that package in the `package.json` that imports it; never switch `linker` to `hoisted` or add to `publicHoistPattern` to work around it.
 
 ## Coding Style
