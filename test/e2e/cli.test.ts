@@ -235,7 +235,9 @@ describe('cli: test-file naming conventions', () => {
       const tests = {
         'OrderTests.cs': 'class OrderTests { void Run() { } }\n',
         'OrderTest.cs': 'class OrderTest { void Run() { } }\n',
+        'OrderTests.kt': 'class OrderTests { fun run() { } }\n',
         'OrderTest.kt': 'class OrderTest { fun run() { } }\n',
+        'OrderTests.java': 'class OrderTests { void run() { } }\n',
         'OrderTest.java': 'class OrderTest { void run() { } }\n',
       };
       for (const [file, code] of Object.entries({ ...production, ...tests })) {

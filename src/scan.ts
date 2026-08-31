@@ -93,7 +93,7 @@ const testDirectoryNames = new Set(['__tests__', 'test', 'tests', 'spec']);
 const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-](?:test|spec))\.[^.]+$/iu;
 // JUnit (Java/Kotlin) and xUnit/NUnit (C#) tests use case-sensitive `Test`/`Tests` class-name
 // suffixes; case-insensitive matching would catch production files like `contest.java`.
-const suffixTestFilePattern = /(?:Test\.(?:java|kt)|Tests?\.cs)$/u;
+const suffixTestFilePattern = /Tests?\.(?:java|kt|cs)$/u;
 
 export function resolveTarget(target: string): string {
   if (target === '~') {
