@@ -65,10 +65,16 @@ pub fn is_kotlin_callable_receiver(node: Node<'_>) -> bool {
 }
 
 /// Whether the node is a leaf for token-level walks. Kotlin soft keywords used as names (`value`,
-/// `data`, `get`, ...) parse as a `simple_identifier` wrapping an anonymous keyword token, so a
-/// plain leaf check would see the keyword instead of the identifier.
+/// `data`, `get`, ...) parse as a `simple_identifier` — or its aliases `interpolated_identifier`
+/// (`"$value"`) and `type_identifier` (`value::size`) — wrapping an anonymous keyword token, so a
+/// plain leaf check would see the keyword instead of the identifier. Every other grammar's
+/// identifier kinds are already leaves.
 pub fn is_identifier_leaf(node: Node<'_>) -> bool {
-    node.child_count() == 0 || node.kind() == "simple_identifier"
+    node.child_count() == 0
+        || matches!(
+            node.kind(),
+            "simple_identifier" | "interpolated_identifier" | "type_identifier"
+        )
 }
 
 pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {

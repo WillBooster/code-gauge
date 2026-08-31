@@ -671,14 +671,19 @@ describe('measureCode: grammar-specific token handling', () => {
   });
 
   it('reads Kotlin shorthand interpolations and C# implicit accessor bindings as variables', () => {
-    // `$x` is a read of the parameter, like `${x}`.
+    // `$x` is a read of the parameter, like `${x}`, also when the name is a soft keyword.
     expect(measureCode('fun f(x: String) = "$x"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
     expect(measureCode('fun f(x: String) = "${x}"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
+    expect(measureCode('fun f(value: String) = "$value"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
     // A bound callable reference (`xs::isEmpty`) reads its receiver; an unbound one (`List::size`)
     // names a type with no definition to pair with.
     expect(
       measureCode('fun f(xs: List<String>) { consume(xs::isEmpty); consume(List::size) }\n', { language: 'kotlin' })
         .functions[0]?.depDegree
+    ).toBe(1);
+    expect(
+      measureCode('fun f(value: List<String>) { consume(value::isEmpty) }\n', { language: 'kotlin' }).functions[0]
+        ?.depDegree
     ).toBe(1);
 
     const csharp = [
