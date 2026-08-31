@@ -81,6 +81,8 @@ const ignoredDirectoryNames = new Set([
   'fixtures',
   'generated',
   'node_modules',
+  // .NET SDK intermediate output (generated sources such as `*.GlobalUsings.g.cs`).
+  'obj',
   'target',
   'test-fixtures',
   'vendor',

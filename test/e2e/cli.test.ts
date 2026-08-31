@@ -219,6 +219,12 @@ describe('cli: test-file naming conventions', () => {
     try {
       writeFileSync(path.join(conventionsDir, 'code-gauge.config.json'), '{}\n');
       mkdirSync(path.join(conventionsDir, 'src'), { recursive: true });
+      // .NET SDK intermediate output is generated code, skipped like other build directories.
+      mkdirSync(path.join(conventionsDir, 'obj', 'Debug', 'net8.0'), { recursive: true });
+      writeFileSync(
+        path.join(conventionsDir, 'obj', 'Debug', 'net8.0', 'App.GlobalUsings.g.cs'),
+        'global using System;\n'
+      );
       const production = {
         'Order.cs': 'class Order { int Total() { return 1; } }\n',
         // Lowercase `test` suffixes are production names (`contest`), not test classes.

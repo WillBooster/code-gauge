@@ -489,6 +489,12 @@ const kotlinReceiverClone = (receiver: string): string =>
 const kotlinInfixClone = (name: string, operator: string): string =>
   `fun ${name}(a: Int, b: Int, c: Int, d: Int): Int { val first = a ${operator} b; val second = c ${operator} d; val third = first ${operator} second; val fourth = a ${operator} d; val fifth = b ${operator} c; val sixth = fourth ${operator} fifth; return third ${operator} sixth ${operator} fifth }\n`;
 
+// A C# data table of 24 equal string values, spelled with the caller's quoting (`"v"` or `@"v"`).
+const csharpStringTable = (name: string, quote: (value: string) => string): string =>
+  `class ${name} { static string[] Values() { return new[] { ${Array.from({ length: 24 }, (_, index) => quote(`v${index}`)).join(', ')} }; } }\n`;
+const ordinaryString = (value: string): string => `"${value}"`;
+const verbatimString = (value: string): string => `@"${value}"`;
+
 // A Kotlin function whose accumulator is named by the caller, so a copy renamed to a soft keyword
 // (`value`) can be compared against the `count` original.
 const kotlinSumClone = (name: string): string =>
@@ -645,6 +651,37 @@ describe('measureCode: grammar-specific token handling', () => {
     expect(measureCode('fun f() = 1 + 1L + 1u\n', { language: 'kotlin' }).functions[0]?.halstead.distinctOperands).toBe(
       4
     );
+  });
+
+  it('reads Kotlin shorthand interpolations and C# implicit accessor bindings as variables', () => {
+    // `$x` is a read of the parameter, like `${x}`.
+    expect(measureCode('fun f(x: String) = "$x"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
+    expect(measureCode('fun f(x: String) = "${x}"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
+
+    const csharp = [
+      'class A',
+      '{',
+      '    event System.Action E { add { Use(value); } remove { Drop(value); } }',
+      '    int this[params int[] xs] { get { return xs.Length; } }',
+      '    int F() { return base.X + this.X; }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(csharp, { language: 'csharp' });
+    expect(metrics.functions.map((fn) => [fn.name, fn.depDegree])).toEqual([
+      ['E.add', 1],
+      ['E.remove', 1],
+      ['this.get', 1],
+      ['F', 0],
+    ]);
+    // `base` is an operand like `this`: `int`, `F`, `base`, `X`, `this`, `X`.
+    expect(metrics.functions[3]?.halstead.totalOperands).toBe(6);
+  });
+
+  it('matches C# verbatim and ordinary string tables with equal values as clones', () => {
+    const ordinaryPair = csharpStringTable('A', ordinaryString) + csharpStringTable('B', ordinaryString);
+    const mixedPair = csharpStringTable('A', ordinaryString) + csharpStringTable('B', verbatimString);
+    expect(measureCode(ordinaryPair, { language: 'csharp' }).duplication.duplicateBlockGroupCount).toBe(1);
+    expect(measureCode(mixedPair, { language: 'csharp' }).duplication.duplicateBlockGroupCount).toBe(1);
   });
 
   it('charges C# pattern combinators like boolean operator sequences', () => {

@@ -51,6 +51,17 @@ pub fn node_text<'a>(node: Node<'_>, code: &Source<'a>) -> &'a str {
     &code.code[code.utf8_offset(node.start_byte())..code.utf8_offset(node.end_byte())]
 }
 
+/// The name a variable-like leaf refers to: Kotlin's shorthand interpolation `$x` is an
+/// `interpolated_identifier` whose text carries the `$`.
+pub fn variable_name<'a>(node: Node<'_>, code: &Source<'a>) -> &'a str {
+    let text = node_text(node, code);
+    if node.kind() == "interpolated_identifier" {
+        text.strip_prefix('$').unwrap_or(text)
+    } else {
+        text
+    }
+}
+
 /// Whether the node is a leaf for token-level walks. Kotlin soft keywords used as names (`value`,
 /// `data`, `get`, ...) parse as a `simple_identifier` wrapping an anonymous keyword token, so a
 /// plain leaf check would see the keyword instead of the identifier.

@@ -249,7 +249,6 @@ const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("invocation_expression", "function"),
     ("member_access_expression", "name"),
     ("member_binding_expression", "name"),
-    ("object_creation_expression", "type"),
     ("argument", "name"),
 ];
 
@@ -735,7 +734,14 @@ fn literal_value_text<'a>(node: Node<'_>, kind: &str, code: &Source<'a>) -> Cow<
     if !fragments.is_empty() {
         return Cow::Owned(fragments.concat());
     }
-    Cow::Borrowed(strip_matching_quotes(node_text(node, code)))
+    // A C# verbatim string (`@"..."`) carries the same value as its ordinary spelling.
+    let text = node_text(node, code);
+    let text = if node.kind() == "verbatim_string_literal" {
+        text.strip_prefix('@').unwrap_or(text)
+    } else {
+        text
+    };
+    Cow::Borrowed(strip_matching_quotes(text))
 }
 
 /// Strips one matching pair of surrounding ASCII quotes, matching stripMatchingQuotes in
@@ -771,18 +777,21 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         return true;
     }
 
-    // C# type positions (see CSHARP_TYPE_PARENT_TYPES) and attribute names (`[Obsolete]`; Python's
-    // `attribute` node shares the name but has no `name` field).
-    if node.kind() == "identifier"
-        && (CSHARP_TYPE_PARENT_TYPES.contains(&parent.kind())
-            || ["type", "name"].iter().any(|field| {
-                (parent.kind() == "attribute" || *field == "type")
-                    && parent
-                        .child_by_field_name(field)
-                        .is_some_and(|field_node| field_node.id() == node.id())
-            }))
-    {
-        return true;
+    // C# type positions (see CSHARP_TYPE_PARENT_TYPES, plus any parent's `type` field, e.g.
+    // `new Foo()`) and attribute names (`[Obsolete]`; Python's `attribute` node shares the name
+    // but has no `name` field).
+    if node.kind() == "identifier" {
+        let occupies = |field: &str| {
+            parent
+                .child_by_field_name(field)
+                .is_some_and(|field_node| field_node.id() == node.id())
+        };
+        if CSHARP_TYPE_PARENT_TYPES.contains(&parent.kind())
+            || occupies("type")
+            || (parent.kind() == "attribute" && occupies("name"))
+        {
+            return true;
+        }
     }
 
     // Kotlin (no grammar fields): a callee (`foo(...)`), a member name (`a.foo`), an infix function

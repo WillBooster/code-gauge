@@ -8,6 +8,7 @@ use crate::util::{is_identifier_leaf, node_text, Source};
 const VARIABLE_NODE_TYPES: &[&str] = &[
     "identifier",
     "simple_identifier",
+    "interpolated_identifier",
     "implicit_parameter",
     "instance_variable",
     "class_variable",
@@ -121,7 +122,7 @@ pub fn measure_dep_degree(
         if !VARIABLE_NODE_TYPES.contains(&leaf.node.kind()) {
             continue;
         }
-        let name = node_text(leaf.node, code);
+        let name = crate::util::variable_name(leaf.node, code);
         let next_text = leaves.get(index + 1).map(|next| node_text(next.node, code));
         if next_text.is_some_and(|next| COMPOUND_ASSIGNMENT_OPERATORS.contains(&next)) {
             if is_definition_visible(definition_scopes_by_name.get(name), &leaf.scope) {
@@ -145,7 +146,8 @@ pub fn measure_dep_degree(
 }
 
 /// Names a C# accessor body can read without declaring them in its own subtree: the owning
-/// indexer's parameters and, in a setter/initializer, the implicit `value`.
+/// indexer's parameters (including a `params` array, which the grammar names directly on the
+/// parameter list) and, in a setter, initializer, or event accessor, the implicit `value`.
 fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>) -> Vec<&'a str> {
     if function_node.kind() != "accessor_declaration" {
         return Vec::new();
@@ -153,7 +155,9 @@ fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>)
     let mut names = Vec::new();
     if function_node
         .child_by_field_name("name")
-        .is_some_and(|keyword| matches!(node_text(keyword, code), "set" | "init"))
+        .is_some_and(|keyword| {
+            matches!(node_text(keyword, code), "set" | "init" | "add" | "remove")
+        })
     {
         names.push("value");
     }
@@ -162,11 +166,11 @@ fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>)
         .filter(|owner| owner.kind() == "indexer_declaration")
         .and_then(|owner| owner.child_by_field_name("parameters"))
     {
-        for parameter in crate::util::named_children(parameters) {
-            if let Some(name) = parameter.child_by_field_name("name") {
-                names.push(node_text(name, code));
-            }
-        }
+        let declared = crate::util::named_children(parameters)
+            .into_iter()
+            .filter_map(|parameter| parameter.child_by_field_name("name"))
+            .chain(parameters.child_by_field_name("name"));
+        names.extend(declared.map(|name| node_text(name, code)));
     }
     names
 }

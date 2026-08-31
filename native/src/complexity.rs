@@ -559,7 +559,9 @@ fn find_boolean_operator_text<'a>(binary_node: Node<'_>, code: &Source<'a>) -> O
 }
 
 /// Java `guard`, C# `when_clause`, Ruby `if_guard`, Python `if_clause`, and Rust guards inside
-/// `match_pattern`.
+/// `match_pattern`. A C# exception filter (`catch (E e) when (...)`, a `catch_filter_clause`) is
+/// deliberately not charged: the catch itself already counts, and the filter is part of the same
+/// handler condition rather than an extra path (SonarC# does not charge it either).
 fn is_pattern_guard(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;

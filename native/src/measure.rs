@@ -119,6 +119,7 @@ pub fn collect_cross_file_data(
 const IDENTIFIER_LEAF_NODE_TYPES: &[&str] = &[
     "identifier",
     "simple_identifier",
+    "interpolated_identifier",
     "implicit_parameter",
     "property_identifier",
     "field_identifier",
@@ -176,7 +177,7 @@ fn collect_token_symbols(
     if IDENTIFIER_LEAF_NODE_TYPES.contains(&node.kind()) {
         let next_index = id_index_by_name.len();
         let index = *id_index_by_name
-            .entry(node_text(node, code).to_string())
+            .entry(crate::util::variable_name(node, code).to_string())
             .or_insert(next_index);
         symbols.push(hash_text(&format!("id{index}")));
         return;
@@ -474,6 +475,7 @@ const OPERAND_NODE_TYPES: &[&str] = &[
     "this_expression",
     "super",
     "super_expression",
+    "base",
     // C/C++/Rust/C# built-in types are leaves of their own node type, unlike Go's `type_identifier`.
     "primitive_type",
     "predefined_type",
