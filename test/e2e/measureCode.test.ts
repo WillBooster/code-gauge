@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { measureCode, supportedLanguages } from '../../src/index.js';
+import { collectCrossFileDuplicationFileData, measureCode, supportedLanguages } from '../../src/index.js';
 
 // Cognitive complexity follows the SonarSource specification (cross-validated against PMD's Java
 // rules during authoring); Halstead metrics are checked for internal consistency because every
@@ -711,6 +711,13 @@ describe('measureCode: grammar-specific token handling', () => {
     // like any identifier (the pre-existing Rust behavior).
     const pair = rustVariantClone('Alpha') + rustVariantClone('Beta');
     expect(measureCode(pair, { language: 'rust' }).duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('keeps C# attribute names verbatim at member and assembly scope', () => {
+    const code = '[assembly: Alpha("v")]\n[Beta]\nclass A { [Gamma] void F() { var delta = 1; } }\n';
+    const { tokens } = collectCrossFileDuplicationFileData(code, { language: 'csharp' });
+    const isName = (text: string): boolean | undefined => tokens.find((token) => token.text === text)?.isName;
+    expect([isName('Alpha'), isName('Beta'), isName('Gamma'), isName('delta')]).toEqual([true, true, true, undefined]);
   });
 
   it('matches C# verbatim and ordinary string tables with equal values as clones', () => {

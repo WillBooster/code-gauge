@@ -793,8 +793,9 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     }
 
     // C# type positions (see CSHARP_TYPE_PARENT_TYPES, plus any parent's `type` field, e.g.
-    // `new Foo()`) and attribute names (`[Obsolete]`, an `attribute` inside an `attribute_list`;
-    // C/C++ attributes hang off other parents and Python's `attribute` has no `name` field).
+    // `new Foo()`) and attribute names (`[Obsolete]`, an `attribute` inside an `attribute_list`, or
+    // `[assembly: Foo]` inside a `global_attribute`; C/C++ attributes hang off other parents and
+    // Python's `attribute` has no `name` field).
     if node.kind() == "identifier" {
         let occupies = |field: &str| {
             parent
@@ -804,7 +805,7 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         let is_csharp_attribute = parent.kind() == "attribute"
             && parent
                 .parent()
-                .is_some_and(|list| list.kind() == "attribute_list");
+                .is_some_and(|list| matches!(list.kind(), "attribute_list" | "global_attribute"));
         if CSHARP_TYPE_PARENT_TYPES.contains(&parent.kind())
             || (occupies("type") && !NON_CSHARP_TYPE_FIELD_PARENT_TYPES.contains(&parent.kind()))
             || (is_csharp_attribute && occupies("name"))
