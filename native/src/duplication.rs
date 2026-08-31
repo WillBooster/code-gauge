@@ -252,8 +252,10 @@ const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("argument", "name"),
 ];
 
-/// Rust's `Some(x)`/`Vec<T>` and Java's `uses Foo;` also put a plain identifier in a `type` field;
-/// they stay anonymized as before C# support.
+/// Rust's `Some(x)` variant patterns and Java's `uses Foo;` also put a plain identifier in a `type`
+/// field; they stay anonymized as before C# support. Rust's `generic_type` head is normally a
+/// `type_identifier` (kept verbatim like every type name); the entry covers the reserved-word
+/// heads the grammar spells as a plain identifier.
 const NON_CSHARP_TYPE_FIELD_PARENT_TYPES: &[&str] = &[
     "tuple_struct_pattern",
     "generic_type",
