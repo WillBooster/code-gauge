@@ -708,9 +708,16 @@ describe('measureCode: grammar-specific token handling', () => {
   it('keeps anonymizing Rust enum variants despite the C# type-field rule', () => {
     // Bare `Alpha(a)` and `Beta(a)` are `tuple_struct_pattern`s with a plain identifier in their
     // `type` field (a qualified `Shape::Alpha` would hold a `scoped_identifier` instead), renamed
-    // like any identifier (the pre-existing Rust behavior).
+    // like any identifier (the pre-existing Rust behavior): the variant token is not a kept name,
+    // and the pair is an exact clone even with near-miss matching disabled.
+    const { tokens } = collectCrossFileDuplicationFileData(rustVariantClone('Alpha'), { language: 'rust' });
+    expect(tokens.filter((token) => token.text === 'Alpha').map((token) => token.isName)).toEqual([
+      undefined,
+      undefined,
+    ]);
     const pair = rustVariantClone('Alpha') + rustVariantClone('Beta');
-    expect(measureCode(pair, { language: 'rust' }).duplication.duplicateBlockGroupCount).toBe(1);
+    const exact = { minSimilarityPercent: 100, maxGapTokens: 0 };
+    expect(measureCode(pair, { language: 'rust', duplication: exact }).duplication.duplicateBlockGroupCount).toBe(1);
   });
 
   it('keeps C# attribute names verbatim at member and assembly scope', () => {
