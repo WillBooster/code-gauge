@@ -499,7 +499,7 @@ const kotlinInfixClone = (name: string, operator: string): string =>
 // A Rust function matching on the caller's enum variant, so a copy differing only in the variant
 // name can be compared.
 const rustVariantClone = (variant: string): string =>
-  `fn ${variant}Sum(items: &[Shape]) -> i32 {\n    let mut total = 0;\n    for item in items {\n        match item {\n            Shape::${variant}(a) => total += a,\n            Shape::${variant}(a) if *a > 1 => total -= a,\n            _ => total += 1,\n        }\n    }\n    total\n}\n`;
+  `fn ${variant}Sum(items: &[Shape]) -> i32 {\n    let mut total = 0;\n    for item in items {\n        match item {\n            ${variant}(a) => total += a,\n            ${variant}(a) if *a > 1 => total -= a,\n            _ => total += 1,\n        }\n    }\n    total\n}\n`;
 
 // A C# data table of 24 equal string values, spelled with the caller's quoting (`"v"` or `@"v"`).
 const csharpStringTable = (name: string, quote: (value: string) => string): string =>
@@ -700,9 +700,10 @@ describe('measureCode: grammar-specific token handling', () => {
     expect(metrics.functions[3]?.halstead.totalOperands).toBe(6);
   });
 
-  it('keeps anonymizing Rust enum variants and Java module types despite the C# type-field rule', () => {
-    // `Alpha(a)` and `Beta(a)` are `tuple_struct_pattern`s with an identifier in a `type` field,
-    // renamed like any identifier (the pre-existing Rust behavior).
+  it('keeps anonymizing Rust enum variants despite the C# type-field rule', () => {
+    // Bare `Alpha(a)` and `Beta(a)` are `tuple_struct_pattern`s with a plain identifier in their
+    // `type` field (a qualified `Shape::Alpha` would hold a `scoped_identifier` instead), renamed
+    // like any identifier (the pre-existing Rust behavior).
     const pair = rustVariantClone('Alpha') + rustVariantClone('Beta');
     expect(measureCode(pair, { language: 'rust' }).duplication.duplicateBlockGroupCount).toBe(1);
   });
@@ -719,6 +720,9 @@ describe('measureCode: grammar-specific token handling', () => {
     const code =
       'class A { bool F(object o) { if (o is > 0 and <= 10) return true; return o is < 500 and > 300 or 1; } }';
     expect(measureCode(code, { language: 'csharp' }).functions[0]?.cognitiveComplexity).toBe(4);
+    // Parentheses keep one `and` sequence continuous, like `(a && b) && c`.
+    const parenthesized = 'class A { bool F(object o) { return o is (> 0 and < 10) and < 100; } }';
+    expect(measureCode(parenthesized, { language: 'csharp' }).functions[0]?.cognitiveComplexity).toBe(1);
   });
 
   it('follows the SonarSource model for Kotlin when, else-if chains, and labeled jumps', () => {

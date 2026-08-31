@@ -512,7 +512,11 @@ fn is_flow_breaking_jump(node: Node<'_>) -> bool {
 
 /// Wrappers that are transparent when locating the enclosing boolean operation: PMD/Sonar keep a
 /// sequence continuous across parentheses (`a && (b && c)` costs one point).
-const PARENTHESIZED_NODE_TYPES: &[&str] = &["parenthesized_expression", "parenthesized_statements"];
+const PARENTHESIZED_NODE_TYPES: &[&str] = &[
+    "parenthesized_expression",
+    "parenthesized_statements",
+    "parenthesized_pattern",
+];
 
 /// Whether this boolean operator token starts a new sequence, i.e. its binary node is the root of a
 /// run of same-operator binaries (possibly through parentheses). Only the root operator counts one

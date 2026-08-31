@@ -252,15 +252,16 @@ const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("argument", "name"),
 ];
 
-/// C# spells type names as plain `identifier`s (Java has `type_identifier`); an identifier under
-/// one of these parents, or in any parent's `type` field, names a type and stays verbatim.
-/// Rust's `Some(x)`/`Vec<T>` and Java's `uses Foo;` also put a plain identifier in a `type` field
-/// and keep their pre-C# anonymization.
+/// Rust's `Some(x)`/`Vec<T>` and Java's `uses Foo;` also put a plain identifier in a `type` field;
+/// they stay anonymized as before C# support.
 const NON_CSHARP_TYPE_FIELD_PARENT_TYPES: &[&str] = &[
     "tuple_struct_pattern",
     "generic_type",
     "uses_module_directive",
 ];
+
+/// C# spells type names as plain `identifier`s (Java has `type_identifier`); an identifier under
+/// one of these parents, or in any other parent's `type` field, names a type and stays verbatim.
 const CSHARP_TYPE_PARENT_TYPES: &[&str] = &[
     "generic_name",
     "qualified_name",
