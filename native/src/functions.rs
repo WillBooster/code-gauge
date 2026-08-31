@@ -6,12 +6,17 @@ use crate::util::{all_children, find_children_by_field_name, named_children, nod
 /// C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members; those have no
 /// `body` and are signatures, not implementations, matching how TypeScript method signatures are
 /// excluded. Java `method_declaration` is NOT here: PMD reports abstract/interface methods as
-/// methods (NCSS 1), so bodyless Java methods stay in the function list.
+/// methods (NCSS 1), so bodyless Java methods stay in the function list (as do C#'s and Kotlin's).
+/// C# auto-property accessors (`{ get; set; }`) and Kotlin visibility-only accessors (`private
+/// set`) hold no code, so they need a body too.
 const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
     "function_definition",
     "constructor_declaration",
     "compact_constructor_declaration",
     "function_signature_item",
+    "accessor_declaration",
+    "getter",
+    "setter",
 ];
 
 pub fn is_implemented_function(node: Node<'_>) -> bool {
@@ -19,6 +24,13 @@ pub fn is_implemented_function(node: Node<'_>) -> bool {
         || node.child_by_field_name("body").is_some()
     {
         return true;
+    }
+
+    // The Kotlin grammar has no fields; an implemented accessor holds a `function_body` child.
+    if node.kind() == "getter" || node.kind() == "setter" {
+        return named_children(node)
+            .iter()
+            .any(|child| child.kind() == "function_body");
     }
 
     // C++ constructor/destructor function-try-blocks carry their `try_statement` outside the
@@ -39,10 +51,28 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
         return 0;
     };
 
-    // A Java bare lambda parameter (`x -> x + 1`) puts a lone identifier in the `parameters` field.
-    if parameters_node.kind() == "identifier" {
+    // A Java bare lambda parameter (`x -> x + 1`) puts a lone identifier in the `parameters` field;
+    // a C# one (`x => x + 1`) is an `implicit_parameter` leaf.
+    if parameters_node.kind() == "identifier" || parameters_node.kind() == "implicit_parameter" {
         return 1;
     }
+    // Kotlin default values (`x: Int = 0`) are siblings of their `parameter`, not children.
+    if parameters_node.kind() == "function_value_parameters" {
+        return named_children(parameters_node)
+            .iter()
+            .filter(|child| child.kind() == "parameter")
+            .count();
+    }
+    // A Kotlin setter declares its single parameter directly (`set(value) { ... }`).
+    if parameters_node.kind() == "setter" {
+        return 1;
+    }
+    // A C# `params` array is spelled out as `type`/`name` fields of the parameter list itself.
+    let csharp_params_array_ids: HashSet<usize> = ["type", "name"]
+        .iter()
+        .flat_map(|field| find_children_by_field_name(parameters_node, field))
+        .map(|child| child.id())
+        .collect();
 
     // Ruby block-locals after `;` (`{ |x; memo| ... }`) occupy `locals` fields and receive no arguments.
     let block_local_ids: HashSet<usize> = find_children_by_field_name(parameters_node, "locals")
@@ -55,6 +85,8 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
     // call sites pass outside the argument list.
     for child in named_children(parameters_node) {
         if child.kind() == "comment"
+            || child.kind() == "attribute_list"
+            || csharp_params_array_ids.contains(&child.id())
             || child.kind() == "self_parameter"
             || child.kind() == "receiver_parameter"
             || child.kind() == "block_parameter"
@@ -78,7 +110,7 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
         .iter()
         .filter(|child| !child.is_named() && node_text(**child, code) == "...")
         .count();
-    count + anonymous_variadic_count
+    count + anonymous_variadic_count + usize::from(!csharp_params_array_ids.is_empty())
 }
 
 /// C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator.
@@ -113,9 +145,24 @@ fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
         declarator = next_declarator(current);
     }
 
-    named_children(node)
-        .into_iter()
-        .find(|child| child.kind() == "formal_parameters" || child.kind() == "parameter_list")
+    // A Kotlin setter's parameter (`set(value)`) sits directly under the setter node.
+    if node.kind() == "setter"
+        && named_children(node)
+            .iter()
+            .any(|child| child.kind() == "parameter_with_optional_type")
+    {
+        return Some(node);
+    }
+
+    named_children(node).into_iter().find(|child| {
+        matches!(
+            child.kind(),
+            "formal_parameters"
+                | "parameter_list"
+                | "function_value_parameters"
+                | "lambda_parameters"
+        )
+    })
 }
 
 pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> Vec<Node<'t>> {
@@ -141,6 +188,10 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         find_wrapped_component_name(node, code).filter(|name| !name.is_empty())
     {
         return Some(wrapped_name);
+    }
+
+    if let Some(member_name) = find_member_function_name(node, code) {
+        return Some(member_name);
     }
 
     if let Some(name_node) = node.child_by_field_name("name") {
@@ -183,6 +234,14 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     if node.kind() == "lambda" && parent.kind() == "assignment" {
         return find_ruby_assignment_name(parent, code);
     }
+
+    // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`) takes the
+    // property name.
+    if (node.kind() == "lambda_literal" || node.kind() == "anonymous_function")
+        && parent.kind() == "property_declaration"
+    {
+        return find_kotlin_property_name(parent, code);
+    }
     if (node.kind() == "block" || node.kind() == "do_block") && is_ruby_lambda_call(parent, code) {
         return match parent.parent() {
             Some(grandparent) if grandparent.kind() == "assignment" => {
@@ -195,6 +254,101 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     parent
         .child_by_field_name("name")
         .map(|name| node_text(name, code).to_string())
+}
+
+/// Names of C# and Kotlin members whose grammars carry no usable `name` field: accessors are
+/// named after their property (`Count.get`), Kotlin functions by their identifier child, Kotlin
+/// secondary constructors and C# destructors after their class, and C# operators like C++ ones.
+fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    match node.kind() {
+        "accessor_declaration" => {
+            let keyword = node_text(node.child_by_field_name("name")?, code);
+            let owner = node.parent()?.parent()?;
+            let property_name = match owner.kind() {
+                "indexer_declaration" => "this".to_string(),
+                _ => node_text(owner.child_by_field_name("name")?, code).to_string(),
+            };
+            Some(format!("{property_name}.{keyword}"))
+        }
+        "getter" | "setter" => {
+            let keyword = if node.kind() == "getter" {
+                "get"
+            } else {
+                "set"
+            };
+            Some(format!(
+                "{}.{keyword}",
+                find_kotlin_accessor_owner_name(node, code)?
+            ))
+        }
+        "function_declaration" if node.child_by_field_name("name").is_none() => {
+            first_named_child_of_kind(node, "simple_identifier")
+                .map(|name| node_text(name, code).to_string())
+        }
+        "secondary_constructor" => {
+            let mut ancestor = node.parent();
+            while let Some(current) = ancestor {
+                if current.kind() == "class_declaration" || current.kind() == "object_declaration" {
+                    return first_named_child_of_kind(current, "type_identifier")
+                        .map(|name| node_text(name, code).to_string());
+                }
+                ancestor = current.parent();
+            }
+            None
+        }
+        "destructor_declaration" => Some(format!(
+            "~{}",
+            node_text(node.child_by_field_name("name")?, code)
+        )),
+        "operator_declaration" => Some(format!(
+            "operator {}",
+            node_text(node.child_by_field_name("operator")?, code)
+        )),
+        "conversion_operator_declaration" => Some(format!(
+            "operator {}",
+            node_text(node.child_by_field_name("type")?, code)
+        )),
+        _ => None,
+    }
+}
+
+/// The property a Kotlin accessor belongs to: its parent when the accessor follows the initializer
+/// on the same line, otherwise (accessor on its own line) the grammar emits it as a class-body
+/// sibling after the property and any preceding accessor.
+fn find_kotlin_accessor_owner_name(accessor: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if let Some(name) = accessor
+        .parent()
+        .and_then(|parent| find_kotlin_property_name(parent, code))
+    {
+        return Some(name);
+    }
+    let mut sibling = accessor.prev_named_sibling();
+    while let Some(current) = sibling {
+        if current.kind() == "property_declaration" {
+            return find_kotlin_property_name(current, code);
+        }
+        if current.kind() != "getter" && current.kind() != "setter" {
+            return None;
+        }
+        sibling = current.prev_named_sibling();
+    }
+    None
+}
+
+/// The declared name of a Kotlin `property_declaration` (`val name: T`), if it declares one.
+fn find_kotlin_property_name(property: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if property.kind() != "property_declaration" {
+        return None;
+    }
+    let declaration = first_named_child_of_kind(property, "variable_declaration")?;
+    first_named_child_of_kind(declaration, "simple_identifier")
+        .map(|name| node_text(name, code).to_string())
+}
+
+fn first_named_child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>> {
+    named_children(node)
+        .into_iter()
+        .find(|child| child.kind() == kind)
 }
 
 fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {

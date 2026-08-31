@@ -17,6 +17,8 @@ export const defaultLanguages: readonly LanguageDefinition[] = [
   { name: 'ruby', aliases: ['rb'] },
   { name: 'c' },
   { name: 'cpp', aliases: ['c++', 'cxx'] },
+  { name: 'csharp', aliases: ['cs', 'c#'] },
+  { name: 'kotlin', aliases: ['kt', 'kts'] },
 ];
 
 export function createLanguageRegistry(

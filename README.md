@@ -25,9 +25,9 @@ npm install -g code-gauge
 code-gauge path/to/project
 ```
 
-The CLI scans JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++ files. By
-default it skips generated, vendor, test, and tool directories and prints the top 10 refactoring
-candidates:
+The CLI scans JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, C#, Ruby, C, and
+C++ files. By default it skips generated, vendor, test, and tool directories and prints the top 10
+refactoring candidates:
 
 ```
 Measured 123 files under /path/to/project (code LOC 45678, NCSS 23456, functions 1789)
@@ -192,9 +192,9 @@ maintainability index, and similar) are intentionally not measured; see
 
 ## Supported languages
 
-Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Ruby, C, and C++.
-The language set is fixed by design: every metric is calibrated per grammar, and supporting
-arbitrary grammars would mean shipping incomplete metrics for them.
+Built-in parsers cover JavaScript, JSX, TypeScript, TSX, Python, Go, Rust, Java, Kotlin, C#, Ruby,
+C, and C++. The language set is fixed by design: every metric is calibrated per grammar, and
+supporting arbitrary grammars would mean shipping incomplete metrics for them.
 
 ## Native (Rust) engine
 

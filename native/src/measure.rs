@@ -16,7 +16,10 @@ use crate::languages::LanguageDefinition;
 use crate::types::{
     CrossFileFileData, FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics,
 };
-use crate::util::{all_children, is_js_whitespace, named_children, node_text, split_lines, Source};
+use crate::util::{
+    all_children, is_identifier_leaf, is_js_whitespace, named_children, node_text, split_lines,
+    Source,
+};
 
 pub fn measure(
     code: &str,
@@ -115,6 +118,7 @@ pub fn collect_cross_file_data(
 /// Name-carrying leaf types anonymized by tokenize_function so consistent renames still match.
 const IDENTIFIER_LEAF_NODE_TYPES: &[&str] = &[
     "identifier",
+    "simple_identifier",
     "property_identifier",
     "field_identifier",
     "type_identifier",
@@ -152,14 +156,17 @@ fn collect_token_symbols(
     symbols: &mut Vec<i32>,
     id_index_by_name: &mut HashMap<String, usize>,
 ) {
-    if matches!(node.kind(), "comment" | "line_comment" | "block_comment") {
+    if matches!(
+        node.kind(),
+        "comment" | "line_comment" | "block_comment" | "multiline_comment"
+    ) {
         return;
     }
     if atomic_operand_node_types().contains(node.kind()) {
         symbols.push(hash_text(node.kind()));
         return;
     }
-    if node.child_count() > 0 {
+    if !is_identifier_leaf(node) {
         for child in all_children(node) {
             collect_token_symbols(child, code, symbols, id_index_by_name);
         }
@@ -279,7 +286,10 @@ fn collect_comment_spans(root: Node<'_>) -> Vec<CommentSpan> {
     let mut spans = Vec::new();
 
     fn visit(node: Node<'_>, spans: &mut Vec<CommentSpan>) {
-        if matches!(node.kind(), "comment" | "line_comment" | "block_comment") {
+        if matches!(
+            node.kind(),
+            "comment" | "line_comment" | "block_comment" | "multiline_comment"
+        ) {
             for row in node.start_position().row..=node.end_position().row {
                 // Node columns are UTF-16 code units x 2 (the tree is parsed from UTF-16);
                 // halving matches the code-unit columns the line scan below counts.
@@ -392,6 +402,17 @@ const OPERATOR_TEXTS: &[&str] = &[
     "&^",
     "&^=",
     "&.",
+    // Kotlin elvis, not-null assertion, negated containment/type checks, safe cast, and labeled
+    // jumps (single tokens in the grammar: `break@`, `continue@`, `return@`).
+    "?:",
+    "!!",
+    "!in",
+    "!is",
+    "as?",
+    "break@",
+    "continue@",
+    "return@",
+    "nameof",
     // Member access/qualification are classical Halstead operators; `->` also captures
     // Python/Rust return-type arrows, consistent with the counted `=>`.
     ".",
@@ -435,6 +456,8 @@ const OPERATOR_TEXTS: &[&str] = &[
 
 const OPERAND_NODE_TYPES: &[&str] = &[
     "identifier",
+    "simple_identifier",
+    "interpolated_identifier",
     "property_identifier",
     "field_identifier",
     "type_identifier",
@@ -445,9 +468,12 @@ const OPERAND_NODE_TYPES: &[&str] = &[
     "simple_symbol",
     "self",
     "this",
+    "this_expression",
     "super",
-    // C/C++/Rust built-in types are leaves of their own node type, unlike Go's `type_identifier`.
+    "super_expression",
+    // C/C++/Rust/C# built-in types are leaves of their own node type, unlike Go's `type_identifier`.
     "primitive_type",
+    "predefined_type",
     "boolean_type",
     "void_type",
     "auto",
@@ -456,6 +482,9 @@ const OPERAND_NODE_TYPES: &[&str] = &[
     "float",
     "integer_literal",
     "float_literal",
+    "real_literal",
+    "hex_literal",
+    "bin_literal",
     "int_literal",
     "rune_literal",
     "imaginary_literal",
@@ -470,16 +499,18 @@ const OPERAND_NODE_TYPES: &[&str] = &[
     "string_literal",
     // Go raw strings are leaves with no content child, unlike Rust/C++ `raw_string_literal`s.
     "raw_string_literal",
+    "verbatim_string_literal",
     "string_fragment",
     "multiline_string_fragment",
     "string_content",
+    "string_literal_content",
     "raw_string_content",
     "template_string",
-    "character_literal",
     "char_literal",
     "character",
     "true",
     "false",
+    "boolean_literal",
     "null",
     "null_literal",
     "undefined",
@@ -488,8 +519,10 @@ const OPERAND_NODE_TYPES: &[&str] = &[
 ];
 
 /// Non-leaf literals counted as one Halstead operand without descending; see metrics.ts.
+/// `character_literal` is a leaf in Java and Kotlin but wraps a content node in C#.
 const ATOMIC_OPERAND_NODE_TYPES: &[&str] = &[
     "interpreted_string_literal",
+    "character_literal",
     "regex",
     "user_defined_literal",
     "integral_type",
@@ -523,7 +556,10 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
         operators: &mut HashMap<String, u64>,
         operands: &mut HashMap<String, u64>,
     ) {
-        if matches!(node.kind(), "comment" | "line_comment" | "block_comment") {
+        if matches!(
+            node.kind(),
+            "comment" | "line_comment" | "block_comment" | "multiline_comment"
+        ) {
             return;
         }
 
@@ -536,7 +572,7 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
 
         // Operators are counted from leaf tokens only: keyword-named nodes always contain a
         // same-text anonymous keyword leaf, so counting the named node as well would double-count.
-        if node.child_count() == 0 {
+        if is_identifier_leaf(node) {
             let text = node_text(node, code);
             // Operands win over text matches so identifiers spelled like word operators stay operands.
             if operand_node_types().contains(node.kind()) {
@@ -573,6 +609,8 @@ const QUESTION_OPERATOR_PARENT_TYPES: &[&str] = &[
     "try_expression",
     // TypeScript conditional types (`T extends U ? X : Y`) select like a ternary.
     "conditional_type",
+    // C# null-conditional access (`a?.b`).
+    "conditional_access_expression",
 ];
 
 fn is_countable_contextual_token(node: Node<'_>, text: &str) -> bool {

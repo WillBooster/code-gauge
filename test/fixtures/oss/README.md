@@ -18,6 +18,8 @@ origin.
 | `rails-7.1.2-methods.rb` | [rails/rails](https://github.com/rails/rails) | `v7.1.2` | `activesupport/lib/active_support/inflector/methods.rb` | MIT |
 | `redis-7.2.3-intset.c` | [redis/redis](https://github.com/redis/redis) | `7.2.3` | `src/intset.c` | BSD-3-Clause |
 | `bitcoin-25.0-bech32.cpp` | [bitcoin/bitcoin](https://github.com/bitcoin/bitcoin) | `v25.0` | `src/bech32.cpp` | MIT |
+| `dotnet-runtime-8.0.0-Version.cs` | [dotnet/runtime](https://github.com/dotnet/runtime) | `v8.0.0` | `src/libraries/System.Private.CoreLib/src/System/Version.cs` | MIT |
+| `okhttp-4.12.0-Cookie.kt` | [square/okhttp](https://github.com/square/okhttp) | `parent-4.12.0` | `okhttp/src/main/kotlin/okhttp3/Cookie.kt` | Apache-2.0 |
 
 The files are test fixtures only; they are not compiled into or distributed with the published
 package (`files` in `package.json` covers `dist/` only).

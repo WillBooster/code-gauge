@@ -2,11 +2,12 @@ use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
 
 use crate::complexity::is_lambda_body_block;
-use crate::util::{node_text, Source};
+use crate::util::{is_identifier_leaf, node_text, Source};
 
 /// Leaf node types treated as variable references by the def-use approximation.
 const VARIABLE_NODE_TYPES: &[&str] = &[
     "identifier",
+    "simple_identifier",
     "instance_variable",
     "class_variable",
     "global_variable",
@@ -36,7 +37,20 @@ const DEFINITION_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("for_in_clause", "left"),
     ("for_range_loop", "declarator"),
     ("for_expression", "pattern"),
+    ("for", "pattern"),
+    ("foreach_statement", "left"),
+    ("catch_declaration", "name"),
+    ("declaration_pattern", "name"),
+    ("declaration_expression", "name"),
+    ("var_pattern", "name"),
+    ("tuple_pattern", "name"),
+    ("parenthesized_variable_designation", "name"),
+    ("from_clause", "name"),
 ];
+
+/// Kotlin has no grammar fields: an identifier directly under one of these declares a binding
+/// (`val x`, `for (x in xs)`, lambda parameters, and the `catch (e: T)` exception name).
+const KOTLIN_DEFINITION_PARENT_TYPES: &[&str] = &["variable_declaration", "catch_block"];
 
 /// Multi-target lists (`a, b = ...`, `a, b := ...`) whose holder's `left` field marks definitions.
 const DEFINITION_LIST_NODE_TYPES: &[&str] = &["expression_list", "pattern_list", "tuple_pattern"];
@@ -120,10 +134,13 @@ fn collect_dep_degree_leaves<'t>(
     leaves: &mut Vec<DepDegreeLeaf<'t>>,
     is_measured_root: bool,
 ) {
-    if matches!(node.kind(), "comment" | "line_comment" | "block_comment") {
+    if matches!(
+        node.kind(),
+        "comment" | "line_comment" | "block_comment" | "multiline_comment"
+    ) {
         return;
     }
-    if node.child_count() == 0 {
+    if is_identifier_leaf(node) {
         leaves.push(DepDegreeLeaf {
             node,
             field_name,
@@ -188,6 +205,11 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     let Some(parent) = leaf.node.parent() else {
         return false;
     };
+    if leaf.node.kind() == "simple_identifier"
+        && KOTLIN_DEFINITION_PARENT_TYPES.contains(&parent.kind())
+    {
+        return true;
+    }
     if DEFINITION_FIELD_BY_PARENT_TYPE
         .iter()
         .any(|(parent_type, definition_field)| {

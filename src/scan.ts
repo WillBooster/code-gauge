@@ -37,6 +37,7 @@ const languageByExtension = new Map<string, LanguageName>([
   ['.cjs', 'javascript'],
   ['.cp', 'cpp'],
   ['.cpp', 'cpp'],
+  ['.cs', 'csharp'],
   ['.tcc', 'cpp'],
   ['.cts', 'typescript'],
   ['.cxx', 'cpp'],
@@ -49,6 +50,8 @@ const languageByExtension = new Map<string, LanguageName>([
   ['.java', 'java'],
   ['.js', 'javascript'],
   ['.jsx', 'jsx'],
+  ['.kt', 'kotlin'],
+  ['.kts', 'kotlin'],
   ['.mjs', 'javascript'],
   ['.mts', 'typescript'],
   ['.py', 'python'],
@@ -86,9 +89,9 @@ const ignoredDirectoryNames = new Set([
 
 const testDirectoryNames = new Set(['__tests__', 'test', 'tests', 'spec']);
 const testFilePattern = /(?:^test(?:[_-].*)?|\.(?:spec|test)|[_-](?:test|spec))\.[^.]+$/iu;
-// JUnit tests use a case-sensitive `Test.java` suffix; case-insensitive matching would catch
-// production files like `contest.java`.
-const javaTestFilePattern = /Test\.java$/u;
+// JUnit (Java/Kotlin) and xUnit/NUnit (C#) tests use case-sensitive `Test`/`Tests` class-name
+// suffixes; case-insensitive matching would catch production files like `contest.java`.
+const suffixTestFilePattern = /(?:Test\.(?:java|kt)|Tests?\.cs)$/u;
 
 export function resolveTarget(target: string): string {
   if (target === '~') {
@@ -452,7 +455,7 @@ export function getLanguage(file: string, options: ScanOptions, explicitTarget =
   if (
     !explicitTarget &&
     !options.includeTests &&
-    (testFilePattern.test(path.basename(file)) || javaTestFilePattern.test(path.basename(file)))
+    (testFilePattern.test(path.basename(file)) || suffixTestFilePattern.test(path.basename(file)))
   ) {
     return undefined;
   }

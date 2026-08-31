@@ -1,10 +1,12 @@
 export type SupportedLanguage =
   | 'c'
   | 'cpp'
+  | 'csharp'
   | 'go'
   | 'java'
   | 'javascript'
   | 'jsx'
+  | 'kotlin'
   | 'python'
   | 'ruby'
   | 'rust'

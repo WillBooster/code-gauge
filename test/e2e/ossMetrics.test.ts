@@ -122,7 +122,7 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
 
       // skipIf makes the absence of per-function oracle coverage visible in the report instead of
       // green-lighting a zero-assertion loop (C/C++/Ruby/Rust lost their only per-function oracle
-      // with cyclomatic complexity; see the ossExpectations.ts header).
+      // with cyclomatic complexity, and C#/Kotlin have none yet; see the ossExpectations.ts header).
       it.skipIf(expectation.oracleFunctions.length === 0)('matches every tool-verified per-function value', () => {
         const bySpan = keyFunctionsBySpan(metrics);
         for (const [name, startLine, endLine, metric, tool, value] of expectation.oracleFunctions) {

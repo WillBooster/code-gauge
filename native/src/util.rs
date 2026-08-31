@@ -51,6 +51,13 @@ pub fn node_text<'a>(node: Node<'_>, code: &Source<'a>) -> &'a str {
     &code.code[code.utf8_offset(node.start_byte())..code.utf8_offset(node.end_byte())]
 }
 
+/// Whether the node is a leaf for token-level walks. Kotlin soft keywords used as names (`value`,
+/// `data`, `get`, ...) parse as a `simple_identifier` wrapping an anonymous keyword token, so a
+/// plain leaf check would see the keyword instead of the identifier.
+pub fn is_identifier_leaf(node: Node<'_>) -> bool {
+    node.child_count() == 0 || node.kind() == "simple_identifier"
+}
+
 pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor).collect()
@@ -136,4 +143,28 @@ pub fn is_js_whitespace(character: char) -> bool {
 /// JavaScript ToInt32 for integer-valued numbers (all hash arithmetic stays below 2^53).
 pub fn to_int32(value: i64) -> i32 {
     value as i32
+}
+
+/// The body following a Kotlin `if_expression`'s bare `else` keyword (the grammar has no else
+/// clause node and no fields), or None for other languages' if nodes and else-less ifs.
+pub fn kotlin_else_body(if_node: Node<'_>) -> Option<Node<'_>> {
+    if if_node.kind() != "if_expression" {
+        return None;
+    }
+    let children = all_children(if_node);
+    let else_index = children
+        .iter()
+        .position(|child| !child.is_named() && child.kind() == "else")?;
+    children[else_index + 1..]
+        .iter()
+        .copied()
+        .find(|child| child.kind() == "control_structure_body")
+}
+
+/// Whether a Kotlin else body is a braceless `else if`: the nested if sits directly in the
+/// control_structure_body, whereas a braced `else { if ... }` wraps it in `statements`.
+pub fn is_kotlin_else_if_body(else_body: Node<'_>) -> bool {
+    named_children(else_body)
+        .iter()
+        .any(|child| child.kind() == "if_expression")
 }

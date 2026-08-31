@@ -16,9 +16,11 @@ pub struct LanguageDefinition {
 enum GrammarId {
     C,
     Cpp,
+    CSharp,
     Go,
     Java,
     JavaScript,
+    Kotlin,
     Python,
     Ruby,
     Rust,
@@ -31,9 +33,11 @@ impl LanguageDefinition {
         match self.grammar_id {
             GrammarId::C => tree_sitter_c::language(),
             GrammarId::Cpp => tree_sitter_cpp::language(),
+            GrammarId::CSharp => tree_sitter_c_sharp::language(),
             GrammarId::Go => tree_sitter_go::language(),
             GrammarId::Java => tree_sitter_java::language(),
             GrammarId::JavaScript => tree_sitter_javascript::language(),
+            GrammarId::Kotlin => tree_sitter_kotlin::language(),
             GrammarId::Python => tree_sitter_python::language(),
             GrammarId::Ruby => tree_sitter_ruby::language(),
             GrammarId::Rust => tree_sitter_rust::language(),
@@ -527,6 +531,121 @@ const CPP_NCSS_NODES: &[&str] = &[
     "co_yield_statement",
 ];
 
+// C# members mirror Java's: every member kind with a body is a function, and accessors
+// (`get { ... }`) are functions of their own so property logic is measured per accessor.
+const CSHARP_FUNCTION_NODES: &[&str] = &[
+    "method_declaration",
+    "constructor_declaration",
+    "destructor_declaration",
+    "operator_declaration",
+    "conversion_operator_declaration",
+    "accessor_declaration",
+    "local_function_statement",
+    "lambda_expression",
+    "anonymous_method_expression",
+];
+const CSHARP_DECISION_NODES: &[&str] = &[
+    "if_statement",
+    "for_statement",
+    "foreach_statement",
+    "while_statement",
+    "do_statement",
+    "catch_clause",
+    "switch_section",
+    "switch_expression_arm",
+    "conditional_expression",
+];
+const CSHARP_NCSS_NODES: &[&str] = &[
+    "extern_alias_directive",
+    "using_directive",
+    "namespace_declaration",
+    "file_scoped_namespace_declaration",
+    "class_declaration",
+    "struct_declaration",
+    "interface_declaration",
+    "enum_declaration",
+    "record_declaration",
+    "delegate_declaration",
+    "field_declaration",
+    "event_field_declaration",
+    "event_declaration",
+    "property_declaration",
+    "indexer_declaration",
+    "method_declaration",
+    "constructor_declaration",
+    "destructor_declaration",
+    "operator_declaration",
+    "conversion_operator_declaration",
+    "accessor_declaration",
+    // An expression body (`=> expr`) stands for the single statement a block body would hold.
+    "arrow_expression_clause",
+    "local_function_statement",
+    "local_declaration_statement",
+    "expression_statement",
+    "if_statement",
+    "while_statement",
+    "do_statement",
+    "for_statement",
+    "foreach_statement",
+    "switch_statement",
+    "switch_expression",
+    "switch_section",
+    "switch_expression_arm",
+    "break_statement",
+    "continue_statement",
+    "return_statement",
+    "throw_statement",
+    "yield_statement",
+    "goto_statement",
+    "labeled_statement",
+    "lock_statement",
+    "using_statement",
+    "fixed_statement",
+    "checked_statement",
+    "unsafe_statement",
+    "catch_clause",
+    "finally_clause",
+];
+
+// Kotlin's grammar wraps neither statements nor members, so bodies are counted positionally like
+// Ruby's (see KOTLIN_NCSS_CONTAINERS); only clauses hanging off non-container parents are listed.
+const KOTLIN_FUNCTION_NODES: &[&str] = &[
+    "function_declaration",
+    "secondary_constructor",
+    "getter",
+    "setter",
+    "anonymous_function",
+    "lambda_literal",
+];
+const KOTLIN_DECISION_NODES: &[&str] = &[
+    "if_expression",
+    "for_statement",
+    "while_statement",
+    "do_while_statement",
+    "catch_block",
+    "when_entry",
+];
+// Accessors count like C# accessor declarations; a visibility-only `private set` is skipped in
+// ncss.rs because it declares nothing.
+const KOTLIN_NCSS_NODES: &[&str] = &[
+    "when_entry",
+    "catch_block",
+    "finally_block",
+    "getter",
+    "setter",
+];
+// `control_structure_body` holds a braceless branch/loop body (`if (x) foo()`), which counts like
+// the single statement of a braced one; `function_body` holds an expression body (`fun f() = x`).
+const KOTLIN_NCSS_CONTAINERS: &[&str] = &[
+    "source_file",
+    "import_list",
+    "statements",
+    "class_body",
+    "enum_class_body",
+    "control_structure_body",
+    "function_body",
+];
+
 pub const LANGUAGES: &[LanguageDefinition] = &[
     LanguageDefinition {
         name: "javascript",
@@ -637,6 +756,26 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: CPP_DECISION_NODES,
         ncss_node_types: CPP_NCSS_NODES,
         ncss_container_node_types: &[],
+    },
+    LanguageDefinition {
+        name: "csharp",
+        aliases: &["cs", "c#"],
+        grammar_id: GrammarId::CSharp,
+        function_node_types: CSHARP_FUNCTION_NODES,
+        decision_node_types: CSHARP_DECISION_NODES,
+        nesting_node_types: CSHARP_DECISION_NODES,
+        ncss_node_types: CSHARP_NCSS_NODES,
+        ncss_container_node_types: &[],
+    },
+    LanguageDefinition {
+        name: "kotlin",
+        aliases: &["kt", "kts"],
+        grammar_id: GrammarId::Kotlin,
+        function_node_types: KOTLIN_FUNCTION_NODES,
+        decision_node_types: KOTLIN_DECISION_NODES,
+        nesting_node_types: KOTLIN_DECISION_NODES,
+        ncss_node_types: KOTLIN_NCSS_NODES,
+        ncss_container_node_types: KOTLIN_NCSS_CONTAINERS,
     },
 ];
 

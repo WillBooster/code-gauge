@@ -203,12 +203,47 @@ describe('cli: polyglot project scan', () => {
       const report = JSON.parse(stdout);
 
       expect(status).toBe(0);
-      expect(report.summary.fileCount).toBe(11);
+      expect(report.summary.fileCount).toBe(13);
       expect(report.summary.functionCount).toBeGreaterThan(50);
       expect(report.summary.linesOfCode).toBeGreaterThan(500);
       expect(report.errors).toEqual([]);
     } finally {
       rmSync(polyglotDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('cli: test-file naming conventions', () => {
+  it('skips JUnit- and xUnit-style suffixed test files case-sensitively unless --include-tests', () => {
+    const conventionsDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-conventions-'));
+    try {
+      writeFileSync(path.join(conventionsDir, 'code-gauge.config.json'), '{}\n');
+      mkdirSync(path.join(conventionsDir, 'src'), { recursive: true });
+      const production = {
+        'Order.cs': 'class Order { int Total() { return 1; } }\n',
+        // Lowercase `test` suffixes are production names (`contest`), not test classes.
+        'contest.cs': 'class Contest { int Rank() { return 1; } }\n',
+        'Order.kt': 'class Order { fun total() = 1 }\n',
+        'Order.java': 'class Order { int total() { return 1; } }\n',
+      };
+      const tests = {
+        'OrderTests.cs': 'class OrderTests { void Run() { } }\n',
+        'OrderTest.cs': 'class OrderTest { void Run() { } }\n',
+        'OrderTest.kt': 'class OrderTest { fun run() { } }\n',
+        'OrderTest.java': 'class OrderTest { void run() { } }\n',
+      };
+      for (const [file, code] of Object.entries({ ...production, ...tests })) {
+        writeFileSync(path.join(conventionsDir, 'src', file), code);
+      }
+
+      const defaultRun = JSON.parse(runCli([conventionsDir, '--json']).stdout);
+      expect(defaultRun.files.map((file: { file: string }) => path.basename(file.file)).toSorted()).toEqual(
+        Object.keys(production).toSorted()
+      );
+      const withTests = JSON.parse(runCli([conventionsDir, '--json', '--include-tests']).stdout);
+      expect(withTests.summary.fileCount).toBe(Object.keys(production).length + Object.keys(tests).length);
+    } finally {
+      rmSync(conventionsDir, { recursive: true, force: true });
     }
   });
 });

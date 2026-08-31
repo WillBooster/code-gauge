@@ -3,17 +3,31 @@ use tree_sitter::Node;
 
 use crate::util::{all_children, find_children_by_field_name};
 
-pub const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
+pub const COMMENT_NODE_TYPES: &[&str] = &[
+    "comment",
+    "line_comment",
+    "block_comment",
+    "multiline_comment",
+];
 
 /// Nodes never counted positionally inside NCSS containers: metadata, empty statements, Ruby
 /// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc),
-/// and Ruby statement parentheses (transparent wrappers whose children count instead).
+/// Ruby statement parentheses (transparent wrappers whose children count instead), Kotlin labels
+/// and annotations (siblings of the statement they decorate), Kotlin `try` (like every other
+/// language's try, only its clauses and body statements count), and Kotlin enum entries (Java enum
+/// constants are not counted either).
 const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "attribute_item",
     "inner_attribute_item",
     "empty_statement",
     "heredoc_body",
     "parenthesized_statements",
+    "label",
+    "annotation",
+    "file_annotation",
+    "shebang_line",
+    "try_expression",
+    "enum_entry",
 ];
 
 /// TypeScript interface members count like Java interface members, but the same node types appear
@@ -75,6 +89,15 @@ pub fn ncss_contribution(
     if !node.is_named() || COMMENT_NODE_TYPES.contains(&node.kind()) || is_for_header_node(node) {
         return 0;
     }
+    // A Kotlin accessor without a body (`private set`) only changes visibility and declares
+    // nothing of its own; it parses as a sibling of its property and must not count positionally.
+    if (node.kind() == "getter" || node.kind() == "setter")
+        && !crate::util::named_children(node)
+            .iter()
+            .any(|child| child.kind() == "function_body")
+    {
+        return 0;
+    }
 
     let mut contribution = 0;
     let positional = is_in_container_position(node, containers)
@@ -86,10 +109,12 @@ pub fn ncss_contribution(
         contribution += 1;
     }
 
-    // A bare else branch (Java/Go `alternative:` without an else-clause wrapper) counts 1 like the
-    // `else` keyword does in PMD; an `else if` chain charges the nested if separately on top.
+    // A bare else branch (Java/Go `alternative:` without an else-clause wrapper, or Kotlin's bare
+    // `else` keyword) counts 1 like the `else` keyword does in PMD; an `else if` chain charges the
+    // nested if separately on top.
     if IF_NODE_TYPES.contains(&node.kind()) {
-        contribution += count_bare_alternatives(node);
+        contribution += count_bare_alternatives(node)
+            + u64::from(crate::util::kotlin_else_body(node).is_some());
     }
 
     contribution

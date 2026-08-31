@@ -12,10 +12,12 @@ export interface CorpusEntry {
 const languageByExtension = new Map<string, LanguageName>([
   ['.c', 'c'],
   ['.cpp', 'cpp'],
+  ['.cs', 'csharp'],
   ['.go', 'go'],
   ['.java', 'java'],
   ['.js', 'javascript'],
   ['.jsx', 'jsx'],
+  ['.kt', 'kotlin'],
   ['.py', 'python'],
   ['.rb', 'ruby'],
   ['.rs', 'rust'],
