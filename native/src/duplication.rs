@@ -254,6 +254,13 @@ const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
 
 /// C# spells type names as plain `identifier`s (Java has `type_identifier`); an identifier under
 /// one of these parents, or in any parent's `type` field, names a type and stays verbatim.
+/// Rust's `Some(x)`/`Vec<T>` and Java's `uses Foo;` also put a plain identifier in a `type` field
+/// and keep their pre-C# anonymization.
+const NON_CSHARP_TYPE_FIELD_PARENT_TYPES: &[&str] = &[
+    "tuple_struct_pattern",
+    "generic_type",
+    "uses_module_directive",
+];
 const CSHARP_TYPE_PARENT_TYPES: &[&str] = &[
     "generic_name",
     "qualified_name",
@@ -783,17 +790,21 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     }
 
     // C# type positions (see CSHARP_TYPE_PARENT_TYPES, plus any parent's `type` field, e.g.
-    // `new Foo()`) and attribute names (`[Obsolete]`; Python's `attribute` node shares the name
-    // but has no `name` field).
+    // `new Foo()`) and attribute names (`[Obsolete]`, an `attribute` inside an `attribute_list`;
+    // C/C++ attributes hang off other parents and Python's `attribute` has no `name` field).
     if node.kind() == "identifier" {
         let occupies = |field: &str| {
             parent
                 .child_by_field_name(field)
                 .is_some_and(|field_node| field_node.id() == node.id())
         };
+        let is_csharp_attribute = parent.kind() == "attribute"
+            && parent
+                .parent()
+                .is_some_and(|list| list.kind() == "attribute_list");
         if CSHARP_TYPE_PARENT_TYPES.contains(&parent.kind())
-            || occupies("type")
-            || (parent.kind() == "attribute" && occupies("name"))
+            || (occupies("type") && !NON_CSHARP_TYPE_FIELD_PARENT_TYPES.contains(&parent.kind()))
+            || (is_csharp_attribute && occupies("name"))
         {
             return true;
         }

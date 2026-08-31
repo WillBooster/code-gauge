@@ -124,7 +124,7 @@ pub fn measure_dep_degree(
         {
             continue;
         }
-        let name = crate::util::variable_name(leaf.node, code);
+        let name = node_text(leaf.node, code);
         let next_text = leaves.get(index + 1).map(|next| node_text(next.node, code));
         if next_text.is_some_and(|next| COMPOUND_ASSIGNMENT_OPERATORS.contains(&next)) {
             if is_definition_visible(definition_scopes_by_name.get(name), &leaf.scope) {
@@ -292,13 +292,17 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
 /// (C/C++ function-pointer or array parameters) is a parameter-ish node, or the identifier
 /// directly occupies a parameter field; type annotations and default values bind nothing.
 fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
-    // Kotlin has no `type`/`value` fields to veto default values (`b: Int = a`), which sit directly
-    // in the parameter list, so only an identifier directly under a parameter node binds.
+    // Kotlin has no `type`/`value` fields to veto default values: a function parameter's default
+    // sits in the parameter list (`fun f(b: Int = a)`), a class parameter's inside the parameter
+    // node (`class A(val y: Int = a)`), so only a parameter node's first identifier child binds.
     if leaf.node.kind() == "simple_identifier" {
-        return leaf
-            .node
-            .parent()
-            .is_some_and(|parent| KOTLIN_PARAMETER_TYPES.contains(&parent.kind()));
+        return leaf.node.parent().is_some_and(|parent| {
+            KOTLIN_PARAMETER_TYPES.contains(&parent.kind())
+                && crate::util::named_children(parent)
+                    .into_iter()
+                    .find(|child| child.kind() == "simple_identifier")
+                    .is_some_and(|first| first.id() == leaf.node.id())
+        });
     }
     let mut current = leaf.node;
     let mut depth = 0usize;

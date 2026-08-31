@@ -177,7 +177,7 @@ fn collect_token_symbols(
     if IDENTIFIER_LEAF_NODE_TYPES.contains(&node.kind()) {
         let next_index = id_index_by_name.len();
         let index = *id_index_by_name
-            .entry(crate::util::variable_name(node, code).to_string())
+            .entry(node_text(node, code).to_string())
             .or_insert(next_index);
         symbols.push(hash_text(&format!("id{index}")));
         return;

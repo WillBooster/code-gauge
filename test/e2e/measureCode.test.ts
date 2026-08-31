@@ -331,6 +331,11 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
     // A `?` tail (Rust's `try_expression`, a node kind Kotlin's try shares) counts the same way.
     const fallible = 'fn load(path: &str) -> Result<i32, Error> {\n    let text = read(path)?;\n    parse(&text)?\n}\n';
     expect(measureCode(fallible, { language: 'rust' }).ncssCount).toBe(3);
+    // A labeled block (`label`, a node kind Kotlin's `outer@` shares) counts like a labeled
+    // statement: fn 1 + label 1 + let 1 + if 1 + break 1 + trailing 0 1 + trailing block 1.
+    const labeled =
+      "fn f() -> i32 {\n    'outer: {\n        let x = 1;\n        if x > 0 {\n            break 'outer x;\n        }\n        0\n    }\n}\n";
+    expect(measureCode(labeled, { language: 'rust' }).ncssCount).toBe(7);
   });
 
   it('excludes for-header declarations, matching PMD', () => {
@@ -491,6 +496,11 @@ const kotlinReferenceClone = (receiver: string): string =>
 const kotlinInfixClone = (name: string, operator: string): string =>
   `fun ${name}(a: Int, b: Int, c: Int, d: Int): Int { val first = a ${operator} b; val second = c ${operator} d; val third = first ${operator} second; val fourth = a ${operator} d; val fifth = b ${operator} c; val sixth = fourth ${operator} fifth; return third ${operator} sixth ${operator} fifth }\n`;
 
+// A Rust function matching on the caller's enum variant, so a copy differing only in the variant
+// name can be compared.
+const rustVariantClone = (variant: string): string =>
+  `fn ${variant}Sum(items: &[Shape]) -> i32 {\n    let mut total = 0;\n    for item in items {\n        match item {\n            Shape::${variant}(a) => total += a,\n            Shape::${variant}(a) if *a > 1 => total -= a,\n            _ => total += 1,\n        }\n    }\n    total\n}\n`;
+
 // A C# data table of 24 equal string values, spelled with the caller's quoting (`"v"` or `@"v"`).
 const csharpStringTable = (name: string, quote: (value: string) => string): string =>
   `class ${name} { static string[] Values() { return new[] { ${Array.from({ length: 24 }, (_, index) => quote(`v${index}`)).join(', ')} }; } }\n`;
@@ -520,6 +530,9 @@ describe('measureCode: grammar-specific token handling', () => {
       'fun g(b: Int = limit): Int { return b + limit }\n' +
       'fun h(b: Int): Int { return b + limit }\n';
     expect(measureCode(kotlin, { language: 'kotlin' }).functions.map((fn) => fn.depDegree)).toEqual([3, 1, 1]);
+    // A class parameter nests its default inside the parameter node; that default is a read too.
+    const classDefault = 'fun f(): Int {\n  class A(val y: Int = unknown)\n  return unknown\n}\n';
+    expect(measureCode(classDefault, { language: 'kotlin' }).functions[0]?.depDegree).toBe(0);
 
     // A C# bare lambda parameter (`implicit_parameter`) is an identifier like a parenthesized one;
     // LINQ range variables (`join y`, `into ys`, `let z`) and pattern designations (`is { } r`)
@@ -685,6 +698,13 @@ describe('measureCode: grammar-specific token handling', () => {
     ]);
     // `base` is an operand like `this`: `int`, `F`, `base`, `X`, `this`, `X`.
     expect(metrics.functions[3]?.halstead.totalOperands).toBe(6);
+  });
+
+  it('keeps anonymizing Rust enum variants and Java module types despite the C# type-field rule', () => {
+    // `Alpha(a)` and `Beta(a)` are `tuple_struct_pattern`s with an identifier in a `type` field,
+    // renamed like any identifier (the pre-existing Rust behavior).
+    const pair = rustVariantClone('Alpha') + rustVariantClone('Beta');
+    expect(measureCode(pair, { language: 'rust' }).duplication.duplicateBlockGroupCount).toBe(1);
   });
 
   it('matches C# verbatim and ordinary string tables with equal values as clones', () => {

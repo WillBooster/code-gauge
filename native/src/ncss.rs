@@ -12,18 +12,18 @@ pub const COMMENT_NODE_TYPES: &[&str] = &[
 
 /// Nodes never counted positionally inside NCSS containers: metadata, empty statements, Ruby
 /// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc),
-/// Ruby statement parentheses (transparent wrappers whose children count instead), Kotlin labels
-/// and annotations (siblings of the statement they decorate), and Kotlin enum entries (Java enum
-/// constants are not counted either). Kotlin `try` is excluded contextually below: like every other
-/// language's try only its clauses and body statements count, but Rust's `?` operator shares the
-/// node kind and must keep counting as a tail expression.
+/// Ruby statement parentheses (transparent wrappers whose children count instead), Kotlin
+/// annotations (siblings of the statement they decorate), and Kotlin enum entries (Java enum
+/// constants are not counted either). Two Kotlin kinds are excluded contextually below because
+/// Rust shares their names: `try_expression` (Rust's `?` operator must keep counting as a tail
+/// expression) and `label` (a Rust block label `'outer:` stands for the labeled statement the
+/// other languages count, while a Kotlin `outer@` is a childless token beside its statement).
 const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "attribute_item",
     "inner_attribute_item",
     "empty_statement",
     "heredoc_body",
     "parenthesized_statements",
-    "label",
     "annotation",
     "file_annotation",
     "shebang_line",
@@ -101,7 +101,8 @@ pub fn ncss_contribution(
     let positional = is_in_container_position(node, containers)
         && !containers.contains(node.kind())
         && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind())
-        && !crate::util::is_kotlin_try_expression(node);
+        && !crate::util::is_kotlin_try_expression(node)
+        && !(node.kind() == "label" && node.child_count() == 0);
     if (counts_through_node_type(node, countable) || positional || counts_contextually(node))
         && !is_declaration_wrapper(node, countable)
     {
