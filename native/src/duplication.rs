@@ -646,9 +646,14 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         return;
     }
 
+    // A Kotlin bound callable-reference receiver (`xs::size`) renames like a variable unless it is
+    // PascalCase, the discriminator used for static receivers everywhere else.
+    let is_variable_receiver = crate::util::is_kotlin_callable_receiver(node)
+        && !pascal_case_regex().is_match(node_text(node, code));
     if node.is_named()
-        && ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind())
-        && !is_semantic_name_leaf(node, code)
+        && (is_variable_receiver
+            || (ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind())
+                && !is_semantic_name_leaf(node, code)))
     {
         tokens.push(Token {
             is_id: true,

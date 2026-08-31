@@ -51,6 +51,19 @@ pub fn node_text<'a>(node: Node<'_>, code: &Source<'a>) -> &'a str {
     &code.code[code.utf8_offset(node.start_byte())..code.utf8_offset(node.end_byte())]
 }
 
+/// Kotlin spells the bound receiver of a callable reference (`xs::size`) as a `type_identifier`,
+/// the same kind as an unbound type (`List::size`); the receiver position is what distinguishes
+/// it, and only a visible definition then tells a variable from a type.
+pub fn is_kotlin_callable_receiver(node: Node<'_>) -> bool {
+    node.kind() == "type_identifier"
+        && node.parent().is_some_and(|parent| {
+            parent.kind() == "callable_reference"
+                && parent
+                    .named_child(0)
+                    .is_some_and(|first| first.id() == node.id())
+        })
+}
+
 /// The name a variable-like leaf refers to: Kotlin's shorthand interpolation `$x` is an
 /// `interpolated_identifier` whose text carries the `$`.
 pub fn variable_name<'a>(node: Node<'_>, code: &Source<'a>) -> &'a str {

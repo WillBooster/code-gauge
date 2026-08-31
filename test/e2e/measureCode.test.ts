@@ -486,6 +486,8 @@ const csharpReceiverClone = (receiver: string): string =>
   `class ${receiver}Sink { void Run(int a) { ${receiver}.WriteLine(a); ${receiver}.WriteLine(a + 1); ${receiver}.WriteLine(a + 2); ${receiver}.WriteLine(a + 3); ${receiver}.WriteLine(a + 4); ${receiver}.WriteLine(a + 5); } }\n`;
 const kotlinReceiverClone = (receiver: string): string =>
   `fun ${receiver}Run(a: Int) { ${receiver}.log(a); ${receiver}.log(a + 1); ${receiver}.log(a + 2); ${receiver}.log(a + 3); ${receiver}.log(a + 4); ${receiver}.log(a + 5) }\n`;
+const kotlinReferenceClone = (receiver: string): string =>
+  `fun ${receiver}Run(a: Int) { use(${receiver}::size, a); use(${receiver}::first, a + 1); use(${receiver}::last, a + 2); use(${receiver}::count, a + 3); use(${receiver}::sum, a + 4); use(${receiver}::max, a + 5) }\n`;
 const kotlinInfixClone = (name: string, operator: string): string =>
   `fun ${name}(a: Int, b: Int, c: Int, d: Int): Int { val first = a ${operator} b; val second = c ${operator} d; val third = first ${operator} second; val fourth = a ${operator} d; val fifth = b ${operator} c; val sixth = fourth ${operator} fifth; return third ${operator} sixth ${operator} fifth }\n`;
 
@@ -619,8 +621,10 @@ describe('measureCode: grammar-specific token handling', () => {
     // Java's PascalCase static-receiver rule: `Console.WriteLine` and `Logger.WriteLine` differ.
     expect(groups(csharpReceiverClone('Console') + csharpReceiverClone('Logger'), 'csharp')).toBe(0);
     expect(groups(kotlinReceiverClone('Console') + kotlinReceiverClone('Logger'), 'kotlin')).toBe(0);
-    // Renamed instance receivers still match.
+    // Renamed instance receivers still match, including bound callable-reference receivers.
     expect(groups(kotlinReceiverClone('console') + kotlinReceiverClone('logger'), 'kotlin')).toBe(1);
+    expect(groups(kotlinReferenceClone('xs') + kotlinReferenceClone('ys'), 'kotlin')).toBe(1);
+    expect(groups(kotlinReferenceClone('xs') + kotlinReferenceClone('Registry'), 'kotlin')).toBe(0);
     // An infix function name (`a and b` vs `a or b`) is an API name, like `a.and(b)`.
     expect(groups(kotlinInfixClone('maskAnd', 'and') + kotlinInfixClone('maskOr', 'or'), 'kotlin')).toBe(0);
     expect(groups(kotlinInfixClone('maskAnd', 'and') + kotlinInfixClone('maskBoth', 'and'), 'kotlin')).toBe(1);
@@ -657,6 +661,12 @@ describe('measureCode: grammar-specific token handling', () => {
     // `$x` is a read of the parameter, like `${x}`.
     expect(measureCode('fun f(x: String) = "$x"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
     expect(measureCode('fun f(x: String) = "${x}"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
+    // A bound callable reference (`xs::isEmpty`) reads its receiver; an unbound one (`List::size`)
+    // names a type with no definition to pair with.
+    expect(
+      measureCode('fun f(xs: List<String>) { consume(xs::isEmpty); consume(List::size) }\n', { language: 'kotlin' })
+        .functions[0]?.depDegree
+    ).toBe(1);
 
     const csharp = [
       'class A',

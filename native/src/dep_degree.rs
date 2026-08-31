@@ -119,7 +119,9 @@ pub fn measure_dep_degree(
     let mut pairs = 0u64;
     for index in 0..leaves.len() {
         let leaf = &leaves[index];
-        if !VARIABLE_NODE_TYPES.contains(&leaf.node.kind()) {
+        if !VARIABLE_NODE_TYPES.contains(&leaf.node.kind())
+            && !crate::util::is_kotlin_callable_receiver(leaf.node)
+        {
             continue;
         }
         let name = crate::util::variable_name(leaf.node, code);
