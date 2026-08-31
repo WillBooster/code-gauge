@@ -6463,7 +6463,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "cognitiveComplexity": 0,
-      "depDegree": 0,
+      "depDegree": 1,
       "endLine": 38,
       "halstead": {
         "distinctOperands": 2,

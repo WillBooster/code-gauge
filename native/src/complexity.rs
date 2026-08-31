@@ -37,6 +37,9 @@ const BOOLEAN_OPERATOR_PARENT_TYPES: &[&str] = &[
     "boolean_operator",
     "conjunction_expression",
     "disjunction_expression",
+    // C# pattern combinators (`is > 0 and <= 10`) sequence like `&&`/`||` (SonarC#).
+    "and_pattern",
+    "or_pattern",
 ];
 
 /// A Ruby stabby lambda's body block is part of the lambda, not a separate function.

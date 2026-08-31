@@ -112,6 +112,9 @@ pub fn measure_dep_degree(
         true,
     );
     let mut definition_scopes_by_name: HashMap<&str, Vec<String>> = HashMap::new();
+    for name in implicit_accessor_definitions(function_node, code) {
+        add_definition(&mut definition_scopes_by_name, name, "");
+    }
     let mut pairs = 0u64;
     for index in 0..leaves.len() {
         let leaf = &leaves[index];
@@ -139,6 +142,33 @@ pub fn measure_dep_degree(
         }
     }
     pairs
+}
+
+/// Names a C# accessor body can read without declaring them in its own subtree: the owning
+/// indexer's parameters and, in a setter/initializer, the implicit `value`.
+fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>) -> Vec<&'a str> {
+    if function_node.kind() != "accessor_declaration" {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    if function_node
+        .child_by_field_name("name")
+        .is_some_and(|keyword| matches!(node_text(keyword, code), "set" | "init"))
+    {
+        names.push("value");
+    }
+    let owner = function_node.parent().and_then(|list| list.parent());
+    if let Some(parameters) = owner
+        .filter(|owner| owner.kind() == "indexer_declaration")
+        .and_then(|owner| owner.child_by_field_name("parameters"))
+    {
+        for parameter in crate::util::named_children(parameters) {
+            if let Some(name) = parameter.child_by_field_name("name") {
+                names.push(node_text(name, code));
+            }
+        }
+    }
+    names
 }
 
 /// Collects non-comment leaves with their parent field (one cursor pass, so children of

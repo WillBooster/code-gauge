@@ -413,6 +413,8 @@ const OPERATOR_TEXTS: &[&str] = &[
     "break@",
     "continue@",
     "return@",
+    // C# `default(T)`/`default`; the same token labels switch sections, which do not count.
+    "default",
     // Member access/qualification are classical Halstead operators; `->` also captures
     // Python/Rust return-type arrows, consistent with the counted `=>`.
     ".",
@@ -520,10 +522,13 @@ const OPERAND_NODE_TYPES: &[&str] = &[
 ];
 
 /// Non-leaf literals counted as one Halstead operand without descending; see metrics.ts.
-/// `character_literal` is a leaf in Java and Kotlin but wraps a content node in C#.
+/// `character_literal` is a leaf in Java and Kotlin but wraps a content node in C#; Kotlin's
+/// suffixed numbers (`1L`, `1u`) wrap the bare literal, so `1` and `1L` stay distinct.
 const ATOMIC_OPERAND_NODE_TYPES: &[&str] = &[
     "interpreted_string_literal",
     "character_literal",
+    "long_literal",
+    "unsigned_literal",
     "regex",
     "user_defined_literal",
     "integral_type",
@@ -635,6 +640,11 @@ fn is_countable_contextual_token(node: Node<'_>, text: &str) -> bool {
         let parent_type = node.parent().map(|parent| parent.kind());
         return parent_type == Some("binary_operator")
             || parent_type == Some("augmented_assignment");
+    }
+    if text == "default" {
+        return node
+            .parent()
+            .is_some_and(|parent| parent.kind() == "default_expression");
     }
     if text != "?" {
         return true;

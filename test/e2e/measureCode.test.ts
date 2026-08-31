@@ -408,18 +408,20 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
       'class B',
       '{',
       '    int n;',
-      '    public int this[int i] { get { return n + i; } set { n = i; } }',
+      '    public int this[int i] { get { return n + i; } set { n = i + value; } }',
       '}',
     ].join('\n');
     const metrics = measureCode(code, { language: 'csharp' });
     // Sum: ternary (+1) with a nested ternary (+2); the accessor-list property `Ok` is not a
-    // function boundary, so its getter's `if` is charged +1, not as a nested function.
+    // function boundary, so its getter's `if` is charged +1, not as a nested function. Block-bodied
+    // indexer accessors read the indexer's parameter (and a setter the implicit `value`) without
+    // declaring them in their own subtree.
     expect(metrics.functions.map((fn) => [fn.name, fn.cognitiveComplexity, fn.parameterCount, fn.depDegree])).toEqual([
       ['Sum.get', 3, 0, 0],
       ['this.get', 1, 1, 1],
       ['Ok.get', 1, 0, 0],
-      ['this.get', 0, 1, 0],
-      ['this.set', 0, 1, 0],
+      ['this.get', 0, 1, 1],
+      ['this.set', 0, 1, 2],
     ]);
   });
 });
@@ -618,11 +620,38 @@ describe('measureCode: grammar-specific token handling', () => {
     expect(groups(kotlinInfixClone('maskAnd', 'and') + kotlinInfixClone('maskBoth', 'and'), 'kotlin')).toBe(1);
   });
 
-  it('counts the C# nameof callee as a Halstead operator like typeof and sizeof', () => {
-    const code = 'class A { string F(int o) { return nameof(o); } int G() { return sizeof(int); } }';
-    const [nameofFn, sizeofFn] = measureCode(code, { language: 'csharp' }).functions;
-    expect(nameofFn?.halstead.totalOperators).toBe(2);
-    expect(sizeofFn?.halstead.totalOperators).toBe(2);
+  it('counts C# keyword operators (nameof, default) and Kotlin suffixed literals as Halstead tokens', () => {
+    const code = [
+      'class A',
+      '{',
+      '    string F(int o) { return nameof(o); }',
+      '    int G() { return sizeof(int); }',
+      '    string H() { return default(string); }',
+      '    string I() { return default; }',
+      '    int J(int a) { switch (a) { default: return 0; } }',
+      '}',
+    ].join('\n');
+    // `default:` labels a switch section and is not an operator.
+    expect(
+      measureCode(code, { language: 'csharp' }).functions.map((fn) => [fn.name, fn.halstead.totalOperators])
+    ).toEqual([
+      ['F', 2],
+      ['G', 2],
+      ['H', 2],
+      ['I', 2],
+      ['J', 1],
+    ]);
+    // `1`, `1L`, and `1u` are three distinct operands (plus the function name).
+    expect(measureCode('fun f() = 1 + 1L + 1u\n', { language: 'kotlin' }).functions[0]?.halstead.distinctOperands).toBe(
+      4
+    );
+  });
+
+  it('charges C# pattern combinators like boolean operator sequences', () => {
+    // if (+1) + `and` sequence (+1); `and ... or` is two sequences (+2).
+    const code =
+      'class A { bool F(object o) { if (o is > 0 and <= 10) return true; return o is < 500 and > 300 or 1; } }';
+    expect(measureCode(code, { language: 'csharp' }).functions[0]?.cognitiveComplexity).toBe(4);
   });
 
   it('follows the SonarSource model for Kotlin when, else-if chains, and labeled jumps', () => {
