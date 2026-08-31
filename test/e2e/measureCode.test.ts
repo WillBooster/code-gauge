@@ -328,6 +328,9 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
     const metrics = measureCode(code, { language: 'rust' });
     // fn 1 + let 1 + trailing expression 1.
     expect(metrics.ncssCount).toBe(3);
+    // A `?` tail (Rust's `try_expression`, a node kind Kotlin's try shares) counts the same way.
+    const fallible = 'fn load(path: &str) -> Result<i32, Error> {\n    let text = read(path)?;\n    parse(&text)?\n}\n';
+    expect(measureCode(fallible, { language: 'rust' }).ncssCount).toBe(3);
   });
 
   it('excludes for-header declarations, matching PMD', () => {
@@ -383,10 +386,41 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
     ].join('\n');
     const metrics = measureCode(code, { language: 'csharp' });
     // class 1 + X 1 + get 1 + set 1 + Y 1 + arrow body 1 + F 1 + switch 1 + case 1 + return 1 +
-    // default 1 + return 1 = 12; auto-property accessors are not functions. F: switch (+1) and a
-    // ternary nested in its section (+2).
+    // default 1 + return 1 = 12; auto-property accessors are not functions, while the
+    // expression-bodied property is its own getter. F: switch (+1) and a ternary nested in its
+    // section (+2).
     expect(metrics.ncssCount).toBe(12);
-    expect(metrics.functions.map((fn) => [fn.name, fn.ncss, fn.cognitiveComplexity])).toEqual([['F', 6, 3]]);
+    expect(metrics.functions.map((fn) => [fn.name, fn.ncss, fn.cognitiveComplexity])).toEqual([
+      ['Y.get', 2, 0],
+      ['F', 6, 3],
+    ]);
+  });
+
+  it('measures C# expression-bodied members and indexer accessors as functions', () => {
+    const code = [
+      'class A',
+      '{',
+      '    private int x;',
+      '    public int Sum => x > 0 ? (x > 5 ? 1 : 2) : 3;',
+      '    public int this[int i] => i > 0 ? 1 : 2;',
+      '    public int Ok { get { if (x > 0) return 1; return 0; } }',
+      '}',
+      'class B',
+      '{',
+      '    int n;',
+      '    public int this[int i] { get { return n + i; } set { n = i; } }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(code, { language: 'csharp' });
+    // Sum: ternary (+1) with a nested ternary (+2); the accessor-list property `Ok` is not a
+    // function boundary, so its getter's `if` is charged +1, not as a nested function.
+    expect(metrics.functions.map((fn) => [fn.name, fn.cognitiveComplexity, fn.parameterCount, fn.depDegree])).toEqual([
+      ['Sum.get', 3, 0, 0],
+      ['this.get', 1, 1, 1],
+      ['Ok.get', 1, 0, 0],
+      ['this.get', 0, 1, 0],
+      ['this.set', 0, 1, 0],
+    ]);
   });
 });
 
@@ -444,6 +478,15 @@ describe('measureCode: cross-language parity on the shared classify() fixture', 
   }
 });
 
+// Clone-pair builders for the fingerprinting tests: a C#/Kotlin function whose receiver is named by
+// the caller, and a Kotlin function whose infix operator is named by the caller.
+const csharpReceiverClone = (receiver: string): string =>
+  `class ${receiver}Sink { void Run(int a) { ${receiver}.WriteLine(a); ${receiver}.WriteLine(a + 1); ${receiver}.WriteLine(a + 2); ${receiver}.WriteLine(a + 3); ${receiver}.WriteLine(a + 4); ${receiver}.WriteLine(a + 5); } }\n`;
+const kotlinReceiverClone = (receiver: string): string =>
+  `fun ${receiver}Run(a: Int) { ${receiver}.log(a); ${receiver}.log(a + 1); ${receiver}.log(a + 2); ${receiver}.log(a + 3); ${receiver}.log(a + 4); ${receiver}.log(a + 5) }\n`;
+const kotlinInfixClone = (name: string, operator: string): string =>
+  `fun ${name}(a: Int, b: Int, c: Int, d: Int): Int { val first = a ${operator} b; val second = c ${operator} d; val third = first ${operator} second; val fourth = a ${operator} d; val fifth = b ${operator} c; val sixth = fourth ${operator} fifth; return third ${operator} sixth ${operator} fifth }\n`;
+
 // A Kotlin function whose accumulator is named by the caller, so a copy renamed to a soft keyword
 // (`value`) can be compared against the `count` original.
 const kotlinSumClone = (name: string): string =>
@@ -456,6 +499,42 @@ describe('measureCode: grammar-specific token handling', () => {
 
     const csharp = '/// <summary>Doc</summary>\nclass A\n{\n    /* block */\n    int x; // trailing\n}\n';
     expect(measureCode(csharp, { language: 'csharp' }).lines).toEqual({ total: 7, code: 4, comment: 2, blank: 1 });
+  });
+
+  it('binds parameters and pattern variables per grammar without misreading default values', () => {
+    // Kotlin default values are siblings of their parameter: `a` in `b: Int = a` is a read (f: a
+    // defined, a read, b defined, a and b read = 3), and a file-level name used as a default
+    // (`limit`) must not become a function-scope definition (g equals h).
+    const kotlin =
+      'fun f(a: Int, b: Int = a): Int { return a + b }\n' +
+      'fun g(b: Int = limit): Int { return b + limit }\n' +
+      'fun h(b: Int): Int { return b + limit }\n';
+    expect(measureCode(kotlin, { language: 'kotlin' }).functions.map((fn) => fn.depDegree)).toEqual([3, 1, 1]);
+
+    // A C# bare lambda parameter (`implicit_parameter`) is an identifier like a parenthesized one;
+    // LINQ range variables (`join y`, `into ys`, `let z`) and pattern designations (`is { } r`)
+    // define like declarations.
+    const csharp = [
+      'class A',
+      '{',
+      '    void F(int[] xs, object o)',
+      '    {',
+      '        System.Func<int, int> g = x => x + x;',
+      '        System.Func<int, int> h = (y) => y + y;',
+      '        var q = from x in xs join y in xs on x equals y into ys let z = x select z;',
+      '        if (o is { } r) return r.GetHashCode();',
+      '    }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(csharp, { language: 'csharp' });
+    expect(metrics.functions.map((fn) => [fn.name, fn.depDegree])).toEqual([
+      // xs (twice), x (`on x`, `let z = x`), y (`equals y`), z (`select z`), o (`o is`), r
+      // (`r.GetHashCode`) = 8 reads with a preceding definition, plus the 4 pairs of the two
+      // nested lambdas, whose content is attributed to the enclosing function as well.
+      ['F', 12],
+      ['g', 2],
+      ['h', 2],
+    ]);
   });
 
   it('treats Kotlin soft keywords used as names (value, data) as identifiers', () => {
@@ -478,6 +557,7 @@ describe('measureCode: grammar-specific token handling', () => {
       '    int n;',
       '    public int N { get { return n; } set { n = value; } }',
       '    public int this[int i] => i;',
+      '    public int Twice => n * 2;',
       '    ~A() { }',
       '    public static A operator +(A a, A b) => a;',
       '    public static implicit operator int(A a) => 1;',
@@ -487,6 +567,8 @@ describe('measureCode: grammar-specific token handling', () => {
     expect(measureCode(csharp, { language: 'csharp' }).functions.map((fn) => fn.name)).toEqual([
       'N.get',
       'N.set',
+      'this.get',
+      'Twice.get',
       '~A',
       'operator +',
       'operator int',
@@ -499,21 +581,48 @@ describe('measureCode: grammar-specific token handling', () => {
       'class A(seed: Int) {',
       '  constructor() : this(0)',
       '  val size: Int',
+      '    // computed',
       '    get() = 1',
       '  var name = "a"',
       '    set(value) { field = value }',
       '  val f = { x: Int -> x }',
+      '  val labeled = tag@ { x: Int, /* second */ y: Int -> x + y }',
       '  fun g() = listOf(1).map { it * 2 }',
       '}',
     ].join('\n');
-    expect(measureCode(kotlin, { language: 'kotlin' }).functions.map((fn) => fn.name)).toEqual([
+    const metrics = measureCode(kotlin, { language: 'kotlin' });
+    expect(metrics.functions.map((fn) => fn.name)).toEqual([
       'A',
       'size.get',
       'name.set',
       'f',
+      'labeled',
       'g',
       undefined,
     ]);
+    // The comment inside the lambda's parameter list is not a parameter.
+    expect(metrics.functions.find((fn) => fn.name === 'labeled')?.parameterCount).toBe(2);
+  });
+
+  it('keeps static receivers and Kotlin infix functions verbatim when fingerprinting clones', () => {
+    const exact = { minSimilarityPercent: 100, maxGapTokens: 0 };
+    const groups = (code: string, language: string): number =>
+      measureCode(code, { language, duplication: exact }).duplication.duplicateBlockGroupCount;
+    // Java's PascalCase static-receiver rule: `Console.WriteLine` and `Logger.WriteLine` differ.
+    expect(groups(csharpReceiverClone('Console') + csharpReceiverClone('Logger'), 'csharp')).toBe(0);
+    expect(groups(kotlinReceiverClone('Console') + kotlinReceiverClone('Logger'), 'kotlin')).toBe(0);
+    // Renamed instance receivers still match.
+    expect(groups(kotlinReceiverClone('console') + kotlinReceiverClone('logger'), 'kotlin')).toBe(1);
+    // An infix function name (`a and b` vs `a or b`) is an API name, like `a.and(b)`.
+    expect(groups(kotlinInfixClone('maskAnd', 'and') + kotlinInfixClone('maskOr', 'or'), 'kotlin')).toBe(0);
+    expect(groups(kotlinInfixClone('maskAnd', 'and') + kotlinInfixClone('maskBoth', 'and'), 'kotlin')).toBe(1);
+  });
+
+  it('counts the C# nameof callee as a Halstead operator like typeof and sizeof', () => {
+    const code = 'class A { string F(int o) { return nameof(o); } int G() { return sizeof(int); } }';
+    const [nameofFn, sizeofFn] = measureCode(code, { language: 'csharp' }).functions;
+    expect(nameofFn?.halstead.totalOperators).toBe(2);
+    expect(sizeofFn?.halstead.totalOperators).toBe(2);
   });
 
   it('follows the SonarSource model for Kotlin when, else-if chains, and labeled jumps', () => {

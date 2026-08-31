@@ -161,6 +161,15 @@ pub fn kotlin_else_body(if_node: Node<'_>) -> Option<Node<'_>> {
         .find(|child| child.kind() == "control_structure_body")
 }
 
+/// Kotlin's `try { } catch { }` shares its node kind with Rust's `?` operator; only the Kotlin form
+/// holds a body or clause child.
+pub fn is_kotlin_try_expression(node: Node<'_>) -> bool {
+    node.kind() == "try_expression"
+        && named_children(node)
+            .iter()
+            .any(|child| matches!(child.kind(), "statements" | "catch_block" | "finally_block"))
+}
+
 /// Whether a Kotlin else body is a braceless `else if`: the nested if sits directly in the
 /// control_structure_body, whereas a braced `else { if ... }` wraps it in `statements`.
 pub fn is_kotlin_else_if_body(else_body: Node<'_>) -> bool {

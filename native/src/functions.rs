@@ -8,7 +8,8 @@ use crate::util::{all_children, find_children_by_field_name, named_children, nod
 /// excluded. Java `method_declaration` is NOT here: PMD reports abstract/interface methods as
 /// methods (NCSS 1), so bodyless Java methods stay in the function list (as do C#'s and Kotlin's).
 /// C# auto-property accessors (`{ get; set; }`) and Kotlin visibility-only accessors (`private
-/// set`) hold no code, so they need a body too.
+/// set`) hold no code, so they need a body too; a C# property or indexer is a function only in its
+/// expression-bodied form (`int X => ...`), otherwise its accessors are the functions.
 const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
     "function_definition",
     "constructor_declaration",
@@ -17,6 +18,8 @@ const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
     "accessor_declaration",
     "getter",
     "setter",
+    "property_declaration",
+    "indexer_declaration",
 ];
 
 pub fn is_implemented_function(node: Node<'_>) -> bool {
@@ -24,6 +27,12 @@ pub fn is_implemented_function(node: Node<'_>) -> bool {
         || node.child_by_field_name("body").is_some()
     {
         return true;
+    }
+
+    if node.kind() == "property_declaration" || node.kind() == "indexer_declaration" {
+        return node
+            .child_by_field_name("value")
+            .is_some_and(|value| value.kind() == "arrow_expression_clause");
     }
 
     // The Kotlin grammar has no fields; an implemented accessor holds a `function_body` child.
@@ -84,7 +93,7 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
     // C/C++ `f(void)` declares none, and a Ruby block parameter (`&blk`) binds the block, which
     // call sites pass outside the argument list.
     for child in named_children(parameters_node) {
-        if child.kind() == "comment"
+        if crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
             || child.kind() == "attribute_list"
             || csharp_params_array_ids.contains(&child.id())
             || child.kind() == "self_parameter"
@@ -125,6 +134,15 @@ fn is_void_parameter(node: Node<'_>, code: &Source<'_>) -> bool {
 fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
     if let Some(direct) = node.child_by_field_name("parameters") {
         return Some(direct);
+    }
+
+    // A C# indexer accessor (`this[int i] { get { ... } }`) takes the indexer's parameters.
+    if node.kind() == "accessor_declaration" {
+        return node
+            .parent()
+            .and_then(|list| list.parent())
+            .filter(|owner| owner.kind() == "indexer_declaration")
+            .and_then(|owner| owner.child_by_field_name("parameters"));
     }
 
     // A Java compact constructor implicitly takes the record's components, declared on the
@@ -235,12 +253,16 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         return find_ruby_assignment_name(parent, code);
     }
 
-    // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`) takes the
-    // property name.
-    if (node.kind() == "lambda_literal" || node.kind() == "anonymous_function")
-        && parent.kind() == "property_declaration"
-    {
-        return find_kotlin_property_name(parent, code);
+    // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`, also through
+    // a label or annotation prefix) takes the property name.
+    if node.kind() == "lambda_literal" || node.kind() == "anonymous_function" {
+        let mut holder = parent;
+        while holder.kind() == "prefix_expression" {
+            holder = holder.parent()?;
+        }
+        if holder.kind() == "property_declaration" {
+            return find_kotlin_property_name(holder, code);
+        }
     }
     if (node.kind() == "block" || node.kind() == "do_block") && is_ruby_lambda_call(parent, code) {
         return match parent.parent() {
@@ -257,18 +279,18 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
 }
 
 /// Names of C# and Kotlin members whose grammars carry no usable `name` field: accessors are
-/// named after their property (`Count.get`), Kotlin functions by their identifier child, Kotlin
-/// secondary constructors and C# destructors after their class, and C# operators like C++ ones.
+/// named after their property (`Count.get`; an expression-bodied property is its own getter),
+/// Kotlin functions by their identifier child, Kotlin secondary constructors and C# destructors
+/// after their class, and C# operators like C++ ones.
 fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     match node.kind() {
         "accessor_declaration" => {
             let keyword = node_text(node.child_by_field_name("name")?, code);
             let owner = node.parent()?.parent()?;
-            let property_name = match owner.kind() {
-                "indexer_declaration" => "this".to_string(),
-                _ => node_text(owner.child_by_field_name("name")?, code).to_string(),
-            };
-            Some(format!("{property_name}.{keyword}"))
+            Some(format!("{}.{keyword}", csharp_property_name(owner, code)?))
+        }
+        "property_declaration" | "indexer_declaration" => {
+            Some(format!("{}.get", csharp_property_name(node, code)?))
         }
         "getter" | "setter" => {
             let keyword = if node.kind() == "getter" {
@@ -312,9 +334,17 @@ fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String
     }
 }
 
+/// A C# property or indexer (`this`) name.
+fn csharp_property_name(owner: Node<'_>, code: &Source<'_>) -> Option<String> {
+    match owner.kind() {
+        "indexer_declaration" => Some("this".to_string()),
+        _ => Some(node_text(owner.child_by_field_name("name")?, code).to_string()),
+    }
+}
+
 /// The property a Kotlin accessor belongs to: its parent when the accessor follows the initializer
 /// on the same line, otherwise (accessor on its own line) the grammar emits it as a class-body
-/// sibling after the property and any preceding accessor.
+/// sibling after the property, any preceding accessor, and any comments between them.
 fn find_kotlin_accessor_owner_name(accessor: Node<'_>, code: &Source<'_>) -> Option<String> {
     if let Some(name) = accessor
         .parent()
@@ -327,7 +357,9 @@ fn find_kotlin_accessor_owner_name(accessor: Node<'_>, code: &Source<'_>) -> Opt
         if current.kind() == "property_declaration" {
             return find_kotlin_property_name(current, code);
         }
-        if current.kind() != "getter" && current.kind() != "setter" {
+        if !matches!(current.kind(), "getter" | "setter")
+            && !crate::ncss::COMMENT_NODE_TYPES.contains(&current.kind())
+        {
             return None;
         }
         sibling = current.prev_named_sibling();

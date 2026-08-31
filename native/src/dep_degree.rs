@@ -1,13 +1,14 @@
 use std::collections::{HashMap, HashSet};
 use tree_sitter::Node;
 
-use crate::complexity::is_lambda_body_block;
+use crate::complexity::is_function_boundary;
 use crate::util::{is_identifier_leaf, node_text, Source};
 
 /// Leaf node types treated as variable references by the def-use approximation.
 const VARIABLE_NODE_TYPES: &[&str] = &[
     "identifier",
     "simple_identifier",
+    "implicit_parameter",
     "instance_variable",
     "class_variable",
     "global_variable",
@@ -42,6 +43,7 @@ const DEFINITION_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("catch_declaration", "name"),
     ("declaration_pattern", "name"),
     ("declaration_expression", "name"),
+    ("recursive_pattern", "name"),
     ("var_pattern", "name"),
     ("tuple_pattern", "name"),
     ("parenthesized_variable_designation", "name"),
@@ -51,6 +53,23 @@ const DEFINITION_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
 /// Kotlin has no grammar fields: an identifier directly under one of these declares a binding
 /// (`val x`, `for (x in xs)`, lambda parameters, and the `catch (e: T)` exception name).
 const KOTLIN_DEFINITION_PARENT_TYPES: &[&str] = &["variable_declaration", "catch_block"];
+
+/// Kotlin parameter nodes whose identifier child is the declared name; the parameter LIST nodes
+/// (`function_value_parameters`) also hold default-value expressions, which are reads.
+const KOTLIN_PARAMETER_TYPES: &[&str] = &[
+    "parameter",
+    "parameter_with_optional_type",
+    "class_parameter",
+];
+
+/// C# LINQ clauses that bind a range variable as their first identifier child (no grammar field):
+/// `join y in ...`, `into ys`, `let z = ...`, and a query continuation `into g`.
+const CSHARP_QUERY_BINDING_PARENT_TYPES: &[&str] = &[
+    "join_clause",
+    "join_into_clause",
+    "let_clause",
+    "query_expression",
+];
 
 /// Multi-target lists (`a, b = ...`, `a, b := ...`) whose holder's `left` field marks definitions.
 const DEFINITION_LIST_NODE_TYPES: &[&str] = &["expression_list", "pattern_list", "tuple_pattern"];
@@ -174,10 +193,6 @@ fn collect_dep_degree_leaves<'t>(
     }
 }
 
-fn is_function_boundary(node: Node<'_>, function_nodes: &HashSet<&'static str>) -> bool {
-    function_nodes.contains(node.kind()) && !is_lambda_body_block(node)
-}
-
 fn add_definition<'a>(
     definition_scopes_by_name: &mut HashMap<&'a str, Vec<String>>,
     name: &'a str,
@@ -210,6 +225,15 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     {
         return true;
     }
+    if leaf.node.kind() == "identifier"
+        && CSHARP_QUERY_BINDING_PARENT_TYPES.contains(&parent.kind())
+        && crate::util::named_children(parent)
+            .into_iter()
+            .find(|child| child.kind() == "identifier")
+            .is_some_and(|first| first.id() == leaf.node.id())
+    {
+        return true;
+    }
     if DEFINITION_FIELD_BY_PARENT_TYPE
         .iter()
         .any(|(parent_type, definition_field)| {
@@ -232,6 +256,14 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
 /// (C/C++ function-pointer or array parameters) is a parameter-ish node, or the identifier
 /// directly occupies a parameter field; type annotations and default values bind nothing.
 fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
+    // Kotlin has no `type`/`value` fields to veto default values (`b: Int = a`), which sit directly
+    // in the parameter list, so only an identifier directly under a parameter node binds.
+    if leaf.node.kind() == "simple_identifier" {
+        return leaf
+            .node
+            .parent()
+            .is_some_and(|parent| KOTLIN_PARAMETER_TYPES.contains(&parent.kind()));
+    }
     let mut current = leaf.node;
     let mut depth = 0usize;
     loop {

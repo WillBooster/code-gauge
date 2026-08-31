@@ -119,6 +119,7 @@ pub fn collect_cross_file_data(
 const IDENTIFIER_LEAF_NODE_TYPES: &[&str] = &[
     "identifier",
     "simple_identifier",
+    "implicit_parameter",
     "property_identifier",
     "field_identifier",
     "type_identifier",
@@ -412,7 +413,6 @@ const OPERATOR_TEXTS: &[&str] = &[
     "break@",
     "continue@",
     "return@",
-    "nameof",
     // Member access/qualification are classical Halstead operators; `->` also captures
     // Python/Rust return-type arrows, consistent with the counted `=>`.
     ".",
@@ -458,6 +458,7 @@ const OPERAND_NODE_TYPES: &[&str] = &[
     "identifier",
     "simple_identifier",
     "interpolated_identifier",
+    "implicit_parameter",
     "property_identifier",
     "field_identifier",
     "type_identifier",
@@ -574,8 +575,11 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
         // same-text anonymous keyword leaf, so counting the named node as well would double-count.
         if is_identifier_leaf(node) {
             let text = node_text(node, code);
-            // Operands win over text matches so identifiers spelled like word operators stay operands.
-            if operand_node_types().contains(node.kind()) {
+            // Operands win over text matches so identifiers spelled like word operators stay operands;
+            // C# `nameof(x)` is the one keyword operator the grammar parses as a plain callee.
+            if is_csharp_nameof_callee(node, text) {
+                *operators.entry(text.to_string()).or_insert(0) += 1;
+            } else if operand_node_types().contains(node.kind()) {
                 *operands.entry(text.to_string()).or_insert(0) += 1;
             } else if (operator_texts().contains(text) || operator_texts().contains(node.kind()))
                 && is_countable_contextual_token(node, text)
@@ -599,6 +603,18 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
         total_operators: operators.values().sum(),
         total_operands: operands.values().sum(),
     }
+}
+
+/// tree-sitter-c-sharp parses `nameof(x)` as an invocation of an identifier named `nameof`.
+fn is_csharp_nameof_callee(node: Node<'_>, text: &str) -> bool {
+    text == "nameof"
+        && node.kind() == "identifier"
+        && node.parent().is_some_and(|parent| {
+            parent.kind() == "invocation_expression"
+                && parent
+                    .child_by_field_name("function")
+                    .is_some_and(|callee| callee.id() == node.id())
+        })
 }
 
 /// Ternary/conditional and Rust try parents make `?` an operator; TS optional markers do not.

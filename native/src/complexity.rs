@@ -47,8 +47,13 @@ pub fn is_lambda_body_block(node: Node<'_>) -> bool {
             .is_some_and(|parent| parent.kind() == "lambda")
 }
 
+/// A function node with a body of its own: bodyless declarations (abstract methods, auto-property
+/// accessors, accessor-list properties) open no nesting frame, so members inside them are not
+/// charged as nested functions.
 pub fn is_function_boundary(node: Node<'_>, function_nodes: &HashSet<&'static str>) -> bool {
-    function_nodes.contains(node.kind()) && !is_lambda_body_block(node)
+    function_nodes.contains(node.kind())
+        && !is_lambda_body_block(node)
+        && crate::functions::is_implemented_function(node)
 }
 
 // Sonar cognitive complexity charges a switch/match once as a whole, not per case label. Only
@@ -609,18 +614,6 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
             .into_iter()
             .find(|child| child.kind() == "switch_label");
         return label.is_some_and(|label| label.named_child_count() == 0);
-    }
-
-    // A C# `default:` section has no pattern; a Kotlin `else ->` entry has no condition.
-    if kind == "switch_section" {
-        return all_children(node)
-            .iter()
-            .any(|child| !child.is_named() && child.kind() == "default");
-    }
-    if kind == "when_entry" {
-        return !crate::util::named_children(node)
-            .iter()
-            .any(|child| child.kind() == "when_condition");
     }
 
     // Python `case _:` / `case y:` and Rust `_ =>` fallback arms are unconditional like `default`.

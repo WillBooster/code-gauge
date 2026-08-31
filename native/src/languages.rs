@@ -532,7 +532,8 @@ const CPP_NCSS_NODES: &[&str] = &[
 ];
 
 // C# members mirror Java's: every member kind with a body is a function, and accessors
-// (`get { ... }`) are functions of their own so property logic is measured per accessor.
+// (`get { ... }`) are functions of their own so property logic is measured per accessor; an
+// expression-bodied property or indexer (`int X => ...`) is its own getter (see functions.rs).
 const CSHARP_FUNCTION_NODES: &[&str] = &[
     "method_declaration",
     "constructor_declaration",
@@ -540,6 +541,8 @@ const CSHARP_FUNCTION_NODES: &[&str] = &[
     "operator_declaration",
     "conversion_operator_declaration",
     "accessor_declaration",
+    "property_declaration",
+    "indexer_declaration",
     "local_function_statement",
     "lambda_expression",
     "anonymous_method_expression",

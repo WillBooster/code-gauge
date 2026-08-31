@@ -127,9 +127,7 @@ fn is_duplicate_block(node: Node<'_>) -> bool {
         return false;
     }
     if node.kind() == "try_expression" {
-        return named_children(node)
-            .iter()
-            .any(|child| matches!(child.kind(), "statements" | "catch_block" | "finally_block"));
+        return crate::util::is_kotlin_try_expression(node);
     }
     DUPLICATE_BLOCK_TYPES.contains(&node.kind())
 }
@@ -151,6 +149,7 @@ const ANONYMIZED_IDENTIFIER_TYPES: &[&str] = &[
     "identifier",
     "simple_identifier",
     "interpolated_identifier",
+    "implicit_parameter",
     "constant",
     "instance_variable",
     "class_variable",
@@ -786,8 +785,8 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         return true;
     }
 
-    // Kotlin (no grammar fields): a callee (`foo(...)`), a member name (`a.foo`), and a named
-    // argument (`foo(name = x)`) are API names.
+    // Kotlin (no grammar fields): a callee (`foo(...)`), a member name (`a.foo`), an infix function
+    // (`a shl b`), and a named argument (`foo(name = x)`) are API names.
     if node.kind() == "simple_identifier" {
         if parent.kind() == "navigation_suffix" {
             return true;
@@ -796,6 +795,13 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
             .named_child(0)
             .is_some_and(|first| first.id() == node.id());
         if parent.kind() == "call_expression" && is_first_named {
+            return true;
+        }
+        if parent.kind() == "infix_expression"
+            && parent
+                .named_child(1)
+                .is_some_and(|operator| operator.id() == node.id())
+        {
             return true;
         }
         if parent.kind() == "value_argument"
@@ -827,14 +833,22 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         return true;
     }
 
-    // Java static receivers (`Alpha.run(...)`) name the invoked type; PascalCase is the
-    // discriminator because the tokenizer has no symbol table.
-    if parent.kind() == "method_invocation"
-        && parent
+    // Java/C# static receivers (`Alpha.run(...)`, `Console.WriteLine(...)`) name the invoked type;
+    // PascalCase is the discriminator because the tokenizer has no symbol table.
+    let is_static_receiver = match parent.kind() {
+        "method_invocation" => parent
             .child_by_field_name("object")
-            .is_some_and(|object| object.id() == node.id())
-        && pascal_case_regex().is_match(node_text(node, code))
-    {
+            .is_some_and(|object| object.id() == node.id()),
+        "member_access_expression" => parent
+            .child_by_field_name("expression")
+            .is_some_and(|receiver| receiver.id() == node.id()),
+        // Kotlin has no fields: the receiver is the first child of `navigation_expression`.
+        "navigation_expression" => parent
+            .named_child(0)
+            .is_some_and(|first| first.id() == node.id()),
+        _ => false,
+    };
+    if is_static_receiver && pascal_case_regex().is_match(node_text(node, code)) {
         return true;
     }
 
