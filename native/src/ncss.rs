@@ -3,17 +3,31 @@ use tree_sitter::Node;
 
 use crate::util::{all_children, find_children_by_field_name};
 
-pub const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
+pub const COMMENT_NODE_TYPES: &[&str] = &[
+    "comment",
+    "line_comment",
+    "block_comment",
+    "multiline_comment",
+];
 
 /// Nodes never counted positionally inside NCSS containers: metadata, empty statements, Ruby
 /// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc),
-/// and Ruby statement parentheses (transparent wrappers whose children count instead).
+/// Ruby statement parentheses (transparent wrappers whose children count instead), Kotlin
+/// annotations (siblings of the statement they decorate), and Kotlin enum entries (Java enum
+/// constants are not counted either). Two Kotlin kinds are excluded contextually below because
+/// Rust shares their names: `try_expression` (Rust's `?` operator must keep counting as a tail
+/// expression) and `label` (a Rust block label `'outer:` stands for the labeled statement the
+/// other languages count, while a Kotlin `outer@` is a childless token beside its statement).
 const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "attribute_item",
     "inner_attribute_item",
     "empty_statement",
     "heredoc_body",
     "parenthesized_statements",
+    "annotation",
+    "file_annotation",
+    "shebang_line",
+    "enum_entry",
 ];
 
 /// TypeScript interface members count like Java interface members, but the same node types appear
@@ -75,21 +89,32 @@ pub fn ncss_contribution(
     if !node.is_named() || COMMENT_NODE_TYPES.contains(&node.kind()) || is_for_header_node(node) {
         return 0;
     }
+    // A Kotlin accessor without a body (`private set`) only changes visibility and declares
+    // nothing of its own; it parses as a sibling of its property and must not count positionally.
+    if (node.kind() == "getter" || node.kind() == "setter")
+        && !crate::functions::is_implemented_function(node)
+    {
+        return 0;
+    }
 
     let mut contribution = 0;
     let positional = is_in_container_position(node, containers)
         && !containers.contains(node.kind())
-        && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind());
+        && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind())
+        && !crate::util::is_kotlin_try_expression(node)
+        && !(node.kind() == "label" && node.child_count() == 0);
     if (counts_through_node_type(node, countable) || positional || counts_contextually(node))
         && !is_declaration_wrapper(node, countable)
     {
         contribution += 1;
     }
 
-    // A bare else branch (Java/Go `alternative:` without an else-clause wrapper) counts 1 like the
-    // `else` keyword does in PMD; an `else if` chain charges the nested if separately on top.
+    // A bare else branch (Java/Go `alternative:` without an else-clause wrapper, or Kotlin's bare
+    // `else` keyword) counts 1 like the `else` keyword does in PMD; an `else if` chain charges the
+    // nested if separately on top.
     if IF_NODE_TYPES.contains(&node.kind()) {
-        contribution += count_bare_alternatives(node);
+        contribution += count_bare_alternatives(node)
+            + u64::from(crate::util::kotlin_else_body(node).is_some());
     }
 
     contribution

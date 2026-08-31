@@ -14,10 +14,12 @@ const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const languageByExtension = new Map([
   ['.c', 'c'],
   ['.cpp', 'cpp'],
+  ['.cs', 'csharp'],
   ['.go', 'go'],
   ['.java', 'java'],
   ['.js', 'javascript'],
   ['.jsx', 'jsx'],
+  ['.kt', 'kotlin'],
   ['.py', 'python'],
   ['.rb', 'ruby'],
   ['.rs', 'rust'],

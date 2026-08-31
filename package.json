@@ -10,6 +10,8 @@
     "cognitive-complexity",
     "ncss",
     "duplication",
+    "csharp",
+    "kotlin",
     "refactoring"
   ],
   "repository": {

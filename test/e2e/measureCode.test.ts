@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { measureCode, supportedLanguages } from '../../src/index.js';
+import { collectCrossFileDuplicationFileData, measureCode, supportedLanguages } from '../../src/index.js';
 
 // Cognitive complexity follows the SonarSource specification (cross-validated against PMD's Java
 // rules during authoring); Halstead metrics are checked for internal consistency because every
@@ -90,6 +90,18 @@ const languageCases: LanguageCase[] = [
     language: 'cpp',
     fixture: 'sample.cpp',
     expected: { language: 'cpp', functionNames: ['choose'], maxCognitiveComplexity: 1 },
+  },
+  {
+    name: 'C#',
+    language: 'csharp',
+    fixture: 'sample.cs',
+    expected: { language: 'csharp', functionNames: ['choose'], maxCognitiveComplexity: 1 },
+  },
+  {
+    name: 'Kotlin',
+    language: 'kotlin',
+    fixture: 'sample.kt',
+    expected: { language: 'kotlin', functionNames: ['choose'], maxCognitiveComplexity: 1 },
   },
 ];
 
@@ -221,8 +233,10 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
   const sampleFixtures: Record<string, string> = {
     c: 'sample.c',
     cpp: 'sample.cpp',
+    csharp: 'sample.cs',
     go: 'sample.go',
     java: 'sample.java',
+    kotlin: 'sample.kt',
     python: 'sample.py',
     ruby: 'sample.rb',
     rust: 'sample.rs',
@@ -314,6 +328,14 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
     const metrics = measureCode(code, { language: 'rust' });
     // fn 1 + let 1 + trailing expression 1.
     expect(metrics.ncssCount).toBe(3);
+    // A `?` tail (Rust's `try_expression`, a node kind Kotlin's try shares) counts the same way.
+    const fallible = 'fn load(path: &str) -> Result<i32, Error> {\n    let text = read(path)?;\n    parse(&text)?\n}\n';
+    expect(measureCode(fallible, { language: 'rust' }).ncssCount).toBe(3);
+    // A labeled block (`label`, a node kind Kotlin's `outer@` shares) counts like a labeled
+    // statement: fn 1 + label 1 + let 1 + if 1 + break 1 + trailing 0 1 + trailing block 1.
+    const labeled =
+      "fn f() -> i32 {\n    'outer: {\n        let x = 1;\n        if x > 0 {\n            break 'outer x;\n        }\n        0\n    }\n}\n";
+    expect(measureCode(labeled, { language: 'rust' }).ncssCount).toBe(7);
   });
 
   it('excludes for-header declarations, matching PMD', () => {
@@ -321,6 +343,420 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
     const metrics = measureCode(code, { language: 'java' });
     // class 1 + method 1 + for 1 + call statement 1; `int i = 0` belongs to the for header.
     expect(metrics.ncssCount).toBe(4);
+  });
+
+  it('counts Kotlin bodies positionally, including bare else, when entries, and accessors', () => {
+    const code = [
+      'class K(val x: Int) {',
+      '  val y: Int',
+      '    get() = x + 1',
+      '  var z = 0',
+      '    private set',
+      '  fun f(a: Int): String {',
+      '    if (a > 1) return "big" else if (a > 0) return "small" else return "none"',
+      '  }',
+      '  fun g(a: Int) = when (a) {',
+      '    0 -> "zero"',
+      '    else -> "other"',
+      '  }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(code, { language: 'kotlin' });
+    // class 1 + val y 1 + getter 1 + its expression 1 + var z 1 (visibility-only setter 0) +
+    // fun f 1 + if 1 + return 1 + else 1 + nested if 1 + return 1 + else 1 + return 1 +
+    // fun g 1 + when 1 + two entries 2 + two entry bodies 2 = 19.
+    expect(metrics.ncssCount).toBe(19);
+    expect(metrics.functions.map((fn) => [fn.name, fn.ncss])).toEqual([
+      ['y.get', 2],
+      ['f', 8],
+      ['g', 6],
+    ]);
+  });
+
+  it('counts C# members, expression bodies, and switch sections like their Java counterparts', () => {
+    const code = [
+      'class C',
+      '{',
+      '    public int X { get; set; }',
+      '    public int Y => X * 2;',
+      '    int F(int a)',
+      '    {',
+      '        switch (a)',
+      '        {',
+      '            case 0: return 0;',
+      '            default: return a > 1 ? 1 : -1;',
+      '        }',
+      '    }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(code, { language: 'csharp' });
+    // class 1 + X 1 + get 1 + set 1 + Y 1 + arrow body 1 + F 1 + switch 1 + case 1 + return 1 +
+    // default 1 + return 1 = 12; auto-property accessors are not functions, while the
+    // expression-bodied property is its own getter. F: switch (+1) and a ternary nested in its
+    // section (+2).
+    expect(metrics.ncssCount).toBe(12);
+    expect(metrics.functions.map((fn) => [fn.name, fn.ncss, fn.cognitiveComplexity])).toEqual([
+      ['Y.get', 2, 0],
+      ['F', 6, 3],
+    ]);
+  });
+
+  it('measures C# expression-bodied members and indexer accessors as functions', () => {
+    const code = [
+      'class A',
+      '{',
+      '    private int x;',
+      '    public int Sum => x > 0 ? (x > 5 ? 1 : 2) : 3;',
+      '    public int this[int i] => i > 0 ? 1 : 2;',
+      '    public int Ok { get { if (x > 0) return 1; return 0; } }',
+      '}',
+      'class B',
+      '{',
+      '    int n;',
+      '    public int this[int i] { get { return n + i; } set { n = i + value; } }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(code, { language: 'csharp' });
+    // Sum: ternary (+1) with a nested ternary (+2); the accessor-list property `Ok` is not a
+    // function boundary, so its getter's `if` is charged +1, not as a nested function. Block-bodied
+    // indexer accessors read the indexer's parameter (and a setter the implicit `value`) without
+    // declaring them in their own subtree.
+    expect(metrics.functions.map((fn) => [fn.name, fn.cognitiveComplexity, fn.parameterCount, fn.depDegree])).toEqual([
+      ['Sum.get', 3, 0, 0],
+      ['this.get', 1, 1, 1],
+      ['Ok.get', 1, 0, 0],
+      ['this.get', 0, 1, 1],
+      ['this.set', 0, 1, 2],
+    ]);
+  });
+});
+
+// The same classify() function — a loop holding an if/else-if/else chain with a boolean sequence,
+// followed by a three-way switch — is fixtured in every supported language, so the cross-language
+// metrics that follow one specification (cognitive complexity, nesting, parameters) must agree
+// exactly, and the language-specific ones are pinned per grammar so a catalog omission surfaces.
+describe('measureCode: cross-language parity on the shared classify() fixture', () => {
+  const parityDir = path.join(fixturesDir, 'parity');
+  // for (+1) + if nested once (+2) + `&&` (+1) + `else if` (+1) + else (+1) + switch (+1) = 7.
+  const expectedCognitiveComplexity = 7;
+  const expectedNestingDepth = 2;
+  // NCSS is 17 where `else if` is an else clause plus a nested if (two statements) and 16 where the
+  // grammar has a single elif/elsif clause. DepDegree counts 10 def-use pairs (items, limit, and
+  // total/item reads) except in C, which reads `items[i]` through an index variable.
+  const expectations: Record<string, { extension: string; ncss: number; depDegree: number }> = {
+    c: { extension: 'c', ncss: 17, depDegree: 15 },
+    cpp: { extension: 'cpp', ncss: 17, depDegree: 10 },
+    csharp: { extension: 'cs', ncss: 17, depDegree: 10 },
+    go: { extension: 'go', ncss: 17, depDegree: 10 },
+    java: { extension: 'java', ncss: 17, depDegree: 10 },
+    javascript: { extension: 'js', ncss: 17, depDegree: 10 },
+    jsx: { extension: 'jsx', ncss: 17, depDegree: 10 },
+    kotlin: { extension: 'kt', ncss: 17, depDegree: 10 },
+    python: { extension: 'py', ncss: 16, depDegree: 10 },
+    ruby: { extension: 'rb', ncss: 16, depDegree: 10 },
+    rust: { extension: 'rs', ncss: 17, depDegree: 10 },
+    typescript: { extension: 'ts', ncss: 17, depDegree: 10 },
+    tsx: { extension: 'tsx', ncss: 17, depDegree: 10 },
+  };
+
+  it('covers every supported language', () => {
+    expect(Object.keys(expectations).toSorted()).toEqual([...supportedLanguages].toSorted());
+  });
+
+  for (const [language, { extension, ncss, depDegree }] of Object.entries(expectations)) {
+    it(`measures classify() identically in ${language}`, () => {
+      const code = readFileSync(path.join(parityDir, `parity.${extension}`), 'utf8');
+      const metrics = measureCode(code, { language, includeSyntaxTree: true });
+
+      expect(metrics.syntaxTree).not.toMatch(/\((?:ERROR|MISSING)/u);
+      expect(metrics.functions).toHaveLength(1);
+      expect(metrics.functions[0]).toMatchObject({
+        name: 'classify',
+        cognitiveComplexity: expectedCognitiveComplexity,
+        nestingDepth: expectedNestingDepth,
+        parameterCount: 2,
+        ncss,
+        depDegree,
+      });
+      expect(metrics.maxCognitiveComplexity).toBe(expectedCognitiveComplexity);
+      expect(metrics.cognitiveComplexity).toBe(expectedCognitiveComplexity);
+      expect(metrics.nestingDepth).toBe(expectedNestingDepth);
+    });
+  }
+});
+
+// Clone-pair builders for the fingerprinting tests: a C#/Kotlin function whose receiver is named by
+// the caller, and a Kotlin function whose infix operator is named by the caller.
+const csharpReceiverClone = (receiver: string): string =>
+  `class ${receiver}Sink { void Run(int a) { ${receiver}.WriteLine(a); ${receiver}.WriteLine(a + 1); ${receiver}.WriteLine(a + 2); ${receiver}.WriteLine(a + 3); ${receiver}.WriteLine(a + 4); ${receiver}.WriteLine(a + 5); } }\n`;
+const kotlinReceiverClone = (receiver: string): string =>
+  `fun ${receiver}Run(a: Int) { ${receiver}.log(a); ${receiver}.log(a + 1); ${receiver}.log(a + 2); ${receiver}.log(a + 3); ${receiver}.log(a + 4); ${receiver}.log(a + 5) }\n`;
+const kotlinReferenceClone = (receiver: string): string =>
+  `fun ${receiver}Run(a: Int) { use(${receiver}::size, a); use(${receiver}::first, a + 1); use(${receiver}::last, a + 2); use(${receiver}::count, a + 3); use(${receiver}::sum, a + 4); use(${receiver}::max, a + 5) }\n`;
+const kotlinInfixClone = (name: string, operator: string): string =>
+  `fun ${name}(a: Int, b: Int, c: Int, d: Int): Int { val first = a ${operator} b; val second = c ${operator} d; val third = first ${operator} second; val fourth = a ${operator} d; val fifth = b ${operator} c; val sixth = fourth ${operator} fifth; return third ${operator} sixth ${operator} fifth }\n`;
+
+// A Rust function matching on the caller's enum variant, so a copy differing only in the variant
+// name can be compared.
+const rustVariantClone = (variant: string): string =>
+  `fn ${variant}Sum(items: &[Shape]) -> i32 {\n    let mut total = 0;\n    for item in items {\n        match item {\n            ${variant}(a) => total += a,\n            ${variant}(a) if *a > 1 => total -= a,\n            _ => total += 1,\n        }\n    }\n    total\n}\n`;
+
+// A C# data table of 24 equal string values, spelled with the caller's quoting (`"v"` or `@"v"`).
+const csharpStringTable = (name: string, quote: (value: string) => string): string =>
+  `class ${name} { static string[] Values() { return new[] { ${Array.from({ length: 24 }, (_, index) => quote(`v${index}`)).join(', ')} }; } }\n`;
+const ordinaryString = (value: string): string => `"${value}"`;
+const verbatimString = (value: string): string => `@"${value}"`;
+
+// A Kotlin function whose accumulator is named by the caller, so a copy renamed to a soft keyword
+// (`value`) can be compared against the `count` original.
+const kotlinSumClone = (name: string): string =>
+  `fun ${name}Sum(items: List<Int>, limit: Int): Int {\n  var ${name} = 0\n  for (item in items) {\n    if (item > limit) {\n      ${name} = ${name} + item\n    } else {\n      ${name} = ${name} - 1\n    }\n  }\n  return ${name} * 2 + limit\n}\n`;
+
+describe('measureCode: grammar-specific token handling', () => {
+  it('classifies Kotlin block comments and C# doc comments as comment lines', () => {
+    const kotlin = 'package p\n\n/* one\n   two */\nval x = 1 // trailing\n/** doc */\nfun f() = x\n';
+    expect(measureCode(kotlin, { language: 'kotlin' }).lines).toEqual({ total: 8, code: 3, comment: 3, blank: 2 });
+
+    const csharp = '/// <summary>Doc</summary>\nclass A\n{\n    /* block */\n    int x; // trailing\n}\n';
+    expect(measureCode(csharp, { language: 'csharp' }).lines).toEqual({ total: 7, code: 4, comment: 2, blank: 1 });
+  });
+
+  it('binds parameters and pattern variables per grammar without misreading default values', () => {
+    // Kotlin default values are siblings of their parameter: `a` in `b: Int = a` is a read (f: a
+    // defined, a read, b defined, a and b read = 3), and a file-level name used as a default
+    // (`limit`) must not become a function-scope definition (g equals h).
+    const kotlin =
+      'fun f(a: Int, b: Int = a): Int { return a + b }\n' +
+      'fun g(b: Int = limit): Int { return b + limit }\n' +
+      'fun h(b: Int): Int { return b + limit }\n';
+    expect(measureCode(kotlin, { language: 'kotlin' }).functions.map((fn) => fn.depDegree)).toEqual([3, 1, 1]);
+    // A class parameter nests its default inside the parameter node; that default is a read too.
+    const classDefault = 'fun f(): Int {\n  class A(val y: Int = unknown)\n  return unknown\n}\n';
+    expect(measureCode(classDefault, { language: 'kotlin' }).functions[0]?.depDegree).toBe(0);
+
+    // A C# bare lambda parameter (`implicit_parameter`) is an identifier like a parenthesized one;
+    // LINQ range variables (`join y`, `into ys`, `let z`) and pattern designations (`is { } r`)
+    // define like declarations.
+    const csharp = [
+      'class A',
+      '{',
+      '    void F(int[] xs, object o)',
+      '    {',
+      '        System.Func<int, int> g = x => x + x;',
+      '        System.Func<int, int> h = (y) => y + y;',
+      '        var q = from x in xs join y in xs on x equals y into ys let z = x select z;',
+      '        if (o is { } r) return r.GetHashCode();',
+      '    }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(csharp, { language: 'csharp' });
+    expect(metrics.functions.map((fn) => [fn.name, fn.depDegree])).toEqual([
+      // xs (twice), x (`on x`, `let z = x`), y (`equals y`), z (`select z`), o (`o is`), r
+      // (`r.GetHashCode`) = 8 reads with a preceding definition, plus the 4 pairs of the two
+      // nested lambdas, whose content is attributed to the enclosing function as well.
+      ['F', 12],
+      ['g', 2],
+      ['h', 2],
+    ]);
+  });
+
+  it('treats Kotlin soft keywords used as names (value, data) as identifiers', () => {
+    // Both parameters are read twice; a keyword token in identifier position must still pair up.
+    const code = 'fun f(value: Int, data: Int): Int {\n  return value + value + data + data\n}\n';
+    expect(measureCode(code, { language: 'kotlin' }).functions[0]?.depDegree).toBe(4);
+
+    // Renaming `count` to `value` must keep the copies clones: identifiers are anonymized alike.
+    const metrics = measureCode(kotlinSumClone('count') + kotlinSumClone('value'), {
+      language: 'kotlin',
+      duplication: { minTokens: 30 },
+    });
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('names C# and Kotlin members that carry no usable name field', () => {
+    const csharp = [
+      'class A',
+      '{',
+      '    int n;',
+      '    public int N { get { return n; } set { n = value; } }',
+      '    public int this[int i] => i;',
+      '    public int Twice => n * 2;',
+      '    ~A() { }',
+      '    public static A operator +(A a, A b) => a;',
+      '    public static implicit operator int(A a) => 1;',
+      '    void F() { System.Func<int, int> g = x => x; int Local() => 1; }',
+      '}',
+    ].join('\n');
+    expect(measureCode(csharp, { language: 'csharp' }).functions.map((fn) => fn.name)).toEqual([
+      'N.get',
+      'N.set',
+      'this.get',
+      'Twice.get',
+      '~A',
+      'operator +',
+      'operator int',
+      'F',
+      'g',
+      'Local',
+    ]);
+
+    const kotlin = [
+      'class A(seed: Int) {',
+      '  constructor() : this(0)',
+      '  val size: Int',
+      '    // computed',
+      '    get() = 1',
+      '  var name = "a"',
+      '    set(value) { field = value }',
+      '  val f = { x: Int -> x }',
+      '  val labeled = tag@ { x: Int, /* second */ y: Int -> x + y }',
+      '  fun g() = listOf(1).map { it * 2 }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(kotlin, { language: 'kotlin' });
+    expect(metrics.functions.map((fn) => fn.name)).toEqual([
+      'A',
+      'size.get',
+      'name.set',
+      'f',
+      'labeled',
+      'g',
+      undefined,
+    ]);
+    // The comment inside the lambda's parameter list is not a parameter.
+    expect(metrics.functions.find((fn) => fn.name === 'labeled')?.parameterCount).toBe(2);
+  });
+
+  it('keeps static receivers and Kotlin infix functions verbatim when fingerprinting clones', () => {
+    const exact = { minSimilarityPercent: 100, maxGapTokens: 0 };
+    const groups = (code: string, language: string): number =>
+      measureCode(code, { language, duplication: exact }).duplication.duplicateBlockGroupCount;
+    // Java's PascalCase static-receiver rule: `Console.WriteLine` and `Logger.WriteLine` differ.
+    expect(groups(csharpReceiverClone('Console') + csharpReceiverClone('Logger'), 'csharp')).toBe(0);
+    expect(groups(kotlinReceiverClone('Console') + kotlinReceiverClone('Logger'), 'kotlin')).toBe(0);
+    // Renamed instance receivers still match, including bound callable-reference receivers.
+    expect(groups(kotlinReceiverClone('console') + kotlinReceiverClone('logger'), 'kotlin')).toBe(1);
+    expect(groups(kotlinReferenceClone('xs') + kotlinReferenceClone('ys'), 'kotlin')).toBe(1);
+    expect(groups(kotlinReferenceClone('xs') + kotlinReferenceClone('Registry'), 'kotlin')).toBe(0);
+    // An infix function name (`a and b` vs `a or b`) is an API name, like `a.and(b)`.
+    expect(groups(kotlinInfixClone('maskAnd', 'and') + kotlinInfixClone('maskOr', 'or'), 'kotlin')).toBe(0);
+    expect(groups(kotlinInfixClone('maskAnd', 'and') + kotlinInfixClone('maskBoth', 'and'), 'kotlin')).toBe(1);
+  });
+
+  it('counts C# keyword operators (nameof, default) and Kotlin suffixed literals as Halstead tokens', () => {
+    const code = [
+      'class A',
+      '{',
+      '    string F(int o) { return nameof(o); }',
+      '    int G() { return sizeof(int); }',
+      '    string H() { return default(string); }',
+      '    string I() { return default; }',
+      '    int J(int a) { switch (a) { default: return 0; } }',
+      '}',
+    ].join('\n');
+    // `default:` labels a switch section and is not an operator.
+    expect(
+      measureCode(code, { language: 'csharp' }).functions.map((fn) => [fn.name, fn.halstead.totalOperators])
+    ).toEqual([
+      ['F', 2],
+      ['G', 2],
+      ['H', 2],
+      ['I', 2],
+      ['J', 1],
+    ]);
+    // `1`, `1L`, and `1u` are three distinct operands (plus the function name).
+    expect(measureCode('fun f() = 1 + 1L + 1u\n', { language: 'kotlin' }).functions[0]?.halstead.distinctOperands).toBe(
+      4
+    );
+  });
+
+  it('reads Kotlin shorthand interpolations and C# implicit accessor bindings as variables', () => {
+    // `$x` is a read of the parameter, like `${x}`, also when the name is a soft keyword.
+    expect(measureCode('fun f(x: String) = "$x"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
+    expect(measureCode('fun f(x: String) = "${x}"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
+    expect(measureCode('fun f(value: String) = "$value"\n', { language: 'kotlin' }).functions[0]?.depDegree).toBe(1);
+    // A bound callable reference (`xs::isEmpty`) reads its receiver; an unbound one (`List::size`)
+    // names a type with no definition to pair with.
+    expect(
+      measureCode('fun f(xs: List<String>) { consume(xs::isEmpty); consume(List::size) }\n', { language: 'kotlin' })
+        .functions[0]?.depDegree
+    ).toBe(1);
+    expect(
+      measureCode('fun f(value: List<String>) { consume(value::isEmpty) }\n', { language: 'kotlin' }).functions[0]
+        ?.depDegree
+    ).toBe(1);
+
+    const csharp = [
+      'class A',
+      '{',
+      '    event System.Action E { add { Use(value); } remove { Drop(value); } }',
+      '    int this[params int[] xs] { get { return xs.Length; } }',
+      '    int F() { return base.X + this.X; }',
+      '}',
+    ].join('\n');
+    const metrics = measureCode(csharp, { language: 'csharp' });
+    expect(metrics.functions.map((fn) => [fn.name, fn.depDegree])).toEqual([
+      ['E.add', 1],
+      ['E.remove', 1],
+      ['this.get', 1],
+      ['F', 0],
+    ]);
+    // `base` is an operand like `this`: `int`, `F`, `base`, `X`, `this`, `X`.
+    expect(metrics.functions[3]?.halstead.totalOperands).toBe(6);
+  });
+
+  it('keeps anonymizing Rust enum variants despite the C# type-field rule', () => {
+    // Bare `Alpha(a)` and `Beta(a)` are `tuple_struct_pattern`s with a plain identifier in their
+    // `type` field (a qualified `Shape::Alpha` would hold a `scoped_identifier` instead), renamed
+    // like any identifier (the pre-existing Rust behavior): the variant token is not a kept name,
+    // and the pair is an exact clone even with near-miss matching disabled.
+    const { tokens } = collectCrossFileDuplicationFileData(rustVariantClone('Alpha'), { language: 'rust' });
+    expect(tokens.filter((token) => token.text === 'Alpha').map((token) => token.isName)).toEqual([
+      undefined,
+      undefined,
+    ]);
+    const pair = rustVariantClone('Alpha') + rustVariantClone('Beta');
+    const exact = { minSimilarityPercent: 100, maxGapTokens: 0 };
+    expect(measureCode(pair, { language: 'rust', duplication: exact }).duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('keeps C# attribute names verbatim at member and assembly scope', () => {
+    const code = '[assembly: Alpha("v")]\n[Beta]\nclass A { [Gamma] void F() { var delta = 1; } }\n';
+    const { tokens } = collectCrossFileDuplicationFileData(code, { language: 'csharp' });
+    const isName = (text: string): boolean | undefined => tokens.find((token) => token.text === text)?.isName;
+    expect([isName('Alpha'), isName('Beta'), isName('Gamma'), isName('delta')]).toEqual([true, true, true, undefined]);
+  });
+
+  it('matches C# verbatim and ordinary string tables with equal values as clones', () => {
+    const ordinaryPair = csharpStringTable('A', ordinaryString) + csharpStringTable('B', ordinaryString);
+    const mixedPair = csharpStringTable('A', ordinaryString) + csharpStringTable('B', verbatimString);
+    expect(measureCode(ordinaryPair, { language: 'csharp' }).duplication.duplicateBlockGroupCount).toBe(1);
+    expect(measureCode(mixedPair, { language: 'csharp' }).duplication.duplicateBlockGroupCount).toBe(1);
+  });
+
+  it('charges C# pattern combinators like boolean operator sequences', () => {
+    // if (+1) + `and` sequence (+1); `and ... or` is two sequences (+2).
+    const code =
+      'class A { bool F(object o) { if (o is > 0 and <= 10) return true; return o is < 500 and > 300 or 1; } }';
+    expect(measureCode(code, { language: 'csharp' }).functions[0]?.cognitiveComplexity).toBe(4);
+    // Parentheses keep one `and` sequence continuous, like `(a && b) && c`.
+    const parenthesized = 'class A { bool F(object o) { return o is (> 0 and < 10) and < 100; } }';
+    expect(measureCode(parenthesized, { language: 'csharp' }).functions[0]?.cognitiveComplexity).toBe(1);
+  });
+
+  it('follows the SonarSource model for Kotlin when, else-if chains, and labeled jumps', () => {
+    // when (+1) + nested if (+2) + else (+1) per entry twice, else-if chain flat (+1 each).
+    const when =
+      'fun d(v: Any?): String = when (v) {\n  is Int -> {\n    if (v > 1) "big" else "small"\n  }\n  is String -> {\n    if (v.isBlank()) "blank" else "str"\n  }\n  else -> "other"\n}\n';
+    expect(measureCode(when, { language: 'kotlin' }).functions[0]?.cognitiveComplexity).toBe(7);
+
+    const chain = 'fun f(a: Int): Int {\n  if (a > 2) return 2 else if (a > 1) return 1 else return 0\n}\n';
+    expect(measureCode(chain, { language: 'kotlin' }).functions[0]?.cognitiveComplexity).toBe(3);
+
+    // for (+1) + nested for (+2) + nested if (+3) + break@outer (+1) = 7.
+    const labeled =
+      'fun f(xs: List<Int>) {\n  outer@ for (x in xs) {\n    for (y in xs) {\n      if (x == y) break@outer\n    }\n  }\n}\n';
+    expect(measureCode(labeled, { language: 'kotlin' }).functions[0]?.cognitiveComplexity).toBe(7);
   });
 });
 
@@ -370,6 +806,8 @@ describe('measureCode: options and edge cases', () => {
       { alias: 'py', code: 'def run():\n    return 1', expectedLanguage: 'python' },
       { alias: 'rs', code: 'fn run() -> i32 { 1 }', expectedLanguage: 'rust' },
       { alias: 'rb', code: 'def run\n  1\nend', expectedLanguage: 'ruby' },
+      { alias: 'cs', code: 'class A { int Run() { return 1; } }', expectedLanguage: 'csharp' },
+      { alias: 'kt', code: 'fun run() = 1', expectedLanguage: 'kotlin' },
     ];
 
     for (const { alias, code, expectedLanguage } of cases) {
@@ -419,6 +857,8 @@ describe('measureCode: options and edge cases', () => {
       'ruby',
       'c',
       'cpp',
+      'csharp',
+      'kotlin',
     ]);
   });
 });

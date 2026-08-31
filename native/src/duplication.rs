@@ -8,7 +8,7 @@ use crate::types::{
     CrossFileCandidate, CrossFileToken, CrossFileTokenRange, DuplicateBlockOccurrence,
     DuplicationMetrics,
 };
-use crate::util::{all_children, named_children, node_text, to_int32, Source};
+use crate::util::{all_children, is_identifier_leaf, named_children, node_text, to_int32, Source};
 
 /// Block-like nodes considered as whole-subtree duplicate candidates; see duplication.ts.
 const DUPLICATE_BLOCK_TYPES: &[&str] = &[
@@ -50,6 +50,20 @@ const DUPLICATE_BLOCK_TYPES: &[&str] = &[
     "while_expression",
     "loop_expression",
     "match_expression",
+    "foreach_statement",
+    "switch_section",
+    "switch_expression_arm",
+    "using_statement",
+    "lock_statement",
+    "when_expression",
+    "when_entry",
+    "do_while_statement",
+    "catch_block",
+    "finally_block",
+    "statements",
+    "control_structure_body",
+    "function_body",
+    "jump_expression",
     "jsx_element",
     "jsx_self_closing_element",
     "if",
@@ -88,11 +102,54 @@ const STATEMENT_CONTAINER_TYPES: &[&str] = &[
     "type_case",
     "communication_case",
     "default_case",
+    "compilation_unit",
+    "switch_section",
+    "statements",
+    "enum_class_body",
+    "control_structure_body",
+    "function_body",
 ];
+
+/// C# type bodies are `declaration_list`s, a name Rust also uses for `mod`/`impl`/`trait` bodies;
+/// only the C# ones (under these parents) hold member runs scanned like Java's `class_body`.
+const CSHARP_DECLARATION_LIST_PARENT_TYPES: &[&str] = &[
+    "class_declaration",
+    "struct_declaration",
+    "interface_declaration",
+    "record_declaration",
+    "namespace_declaration",
+];
+
+/// Whole-subtree duplicate candidates: DUPLICATE_BLOCK_TYPES plus Kotlin's `try_expression`,
+/// distinguished by its clause children from Rust's `try_expression` (the `?` operator).
+fn is_duplicate_block(node: Node<'_>) -> bool {
+    if !node.is_named() {
+        return false;
+    }
+    if node.kind() == "try_expression" {
+        return crate::util::is_kotlin_try_expression(node);
+    }
+    DUPLICATE_BLOCK_TYPES.contains(&node.kind())
+}
+
+fn is_statement_container(node: Node<'_>) -> bool {
+    if !node.is_named() {
+        return false;
+    }
+    if node.kind() == "declaration_list" {
+        return node
+            .parent()
+            .is_some_and(|parent| CSHARP_DECLARATION_LIST_PARENT_TYPES.contains(&parent.kind()));
+    }
+    STATEMENT_CONTAINER_TYPES.contains(&node.kind())
+}
 
 /// Identifier leaves anonymized by occurrence order so consistently renamed copies still match.
 const ANONYMIZED_IDENTIFIER_TYPES: &[&str] = &[
     "identifier",
+    "simple_identifier",
+    "interpolated_identifier",
+    "implicit_parameter",
     "constant",
     "instance_variable",
     "class_variable",
@@ -112,6 +169,9 @@ const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
     ("float", "#num"),
     ("integer_literal", "#num"),
     ("float_literal", "#num"),
+    ("real_literal", "#num"),
+    ("hex_literal", "#num"),
+    ("bin_literal", "#num"),
     ("int_literal", "#num"),
     ("rune_literal", "#char"),
     ("imaginary_literal", "#num"),
@@ -124,6 +184,11 @@ const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
     ("string_fragment", "#str"),
     ("multiline_string_fragment", "#str"),
     ("string_content", "#str"),
+    ("string_literal_content", "#str"),
+    ("character_literal_content", "#char"),
+    ("character_escape_seq", "#char"),
+    ("verbatim_string_literal", "#str"),
+    ("interpolated_string_expression", "#str"),
     ("raw_string_content", "#str"),
     ("heredoc_content", "#str"),
     ("heredoc_beginning", "#heredoc"),
@@ -141,18 +206,31 @@ const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
     ("regex_pattern", "#regex"),
 ];
 
-const COMMENT_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
+const COMMENT_TYPES: &[&str] = &[
+    "comment",
+    "line_comment",
+    "block_comment",
+    "multiline_comment",
+];
 
 /// Children of a string node that carry only literal content; anything else is interpolation.
 const STRING_FRAGMENT_TYPES: &[&str] = &[
     "string_fragment",
     "multiline_string_fragment",
     "string_content",
+    "string_literal_content",
+    "character_literal_content",
+    "character_escape_seq",
     "raw_string_content",
+    "raw_string_start",
+    "raw_string_end",
     "escape_sequence",
     "heredoc_content",
     "string_start",
     "string_end",
+    "string_literal_encoding",
+    "interpolation_start",
+    "interpolation_quote",
 ];
 
 /// Grammar fields whose plain-`identifier` leaves are semantic API names, kept verbatim.
@@ -168,6 +246,32 @@ const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("element_value_pair", "key"),
     ("generic_function", "function"),
     ("template_function", "name"),
+    ("invocation_expression", "function"),
+    ("member_access_expression", "name"),
+    ("member_binding_expression", "name"),
+    ("argument", "name"),
+];
+
+/// Rust's `Some(x)` variant patterns and Java's `uses Foo;` also put a plain identifier in a `type`
+/// field; they stay anonymized as before C# support. Rust's `generic_type` head is normally a
+/// `type_identifier` (kept verbatim like every type name); the entry covers the reserved-word
+/// heads the grammar spells as a plain identifier.
+const NON_CSHARP_TYPE_FIELD_PARENT_TYPES: &[&str] = &[
+    "tuple_struct_pattern",
+    "generic_type",
+    "uses_module_directive",
+];
+
+/// C# spells type names as plain `identifier`s (Java has `type_identifier`); an identifier under
+/// one of these parents, or in any other parent's `type` field, names a type and stays verbatim.
+const CSHARP_TYPE_PARENT_TYPES: &[&str] = &[
+    "generic_name",
+    "qualified_name",
+    "alias_qualified_name",
+    "type_argument_list",
+    "base_list",
+    "explicit_interface_specifier",
+    "using_directive",
 ];
 
 /// Kind tags whose raw source text re-enters the fingerprint in literal-dense (data-like) regions.
@@ -178,6 +282,9 @@ const STRING_CONTENT_FRAGMENT_TYPES: &[&str] = &[
     "string_fragment",
     "multiline_string_fragment",
     "string_content",
+    "string_literal_content",
+    "character_literal_content",
+    "character_escape_seq",
     "raw_string_content",
     "escape_sequence",
     "heredoc_content",
@@ -438,12 +545,12 @@ fn collect_tokens<'a>(
         container_statement_ranges: &mut Vec<Vec<TokenRange>>,
     ) -> TokenRange {
         let start_token_index = tokens.len();
-        let atomic_kind = if node.child_count() == 0 {
+        let atomic_kind = if is_identifier_leaf(node) {
             None
         } else {
             atomic_literal_kind(node)
         };
-        if node.child_count() == 0 {
+        if is_identifier_leaf(node) {
             append_leaf_token(node, code, tokens);
         } else if let Some(atomic_kind) = atomic_kind {
             // Interpolation-free strings collapse to their kind tag so copies differing only in
@@ -457,7 +564,7 @@ fn collect_tokens<'a>(
             ));
         } else if !COMMENT_TYPES.contains(&node.kind()) {
             let mut statement_ranges: Vec<TokenRange> = Vec::new();
-            let is_container = node.is_named() && STATEMENT_CONTAINER_TYPES.contains(&node.kind());
+            let is_container = is_statement_container(node);
             for child in all_children(node) {
                 let child_range = visit(
                     child,
@@ -485,7 +592,7 @@ fn collect_tokens<'a>(
             start_line: node.start_position().row + 1,
             end_line: node.end_position().row + 1,
         };
-        if node.is_named() && DUPLICATE_BLOCK_TYPES.contains(&node.kind()) {
+        if is_duplicate_block(node) {
             block_ranges.push(TokenRange { ..range });
         }
         range
@@ -549,9 +656,14 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         return;
     }
 
+    // A Kotlin bound callable-reference receiver (`xs::size`) renames like a variable unless it is
+    // PascalCase, the discriminator used for static receivers everywhere else.
+    let is_variable_receiver = crate::util::is_kotlin_callable_receiver(node)
+        && !pascal_case_regex().is_match(node_text(node, code));
     if node.is_named()
-        && ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind())
-        && !is_semantic_name_leaf(node, code)
+        && (is_variable_receiver
+            || (ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind())
+                && !is_semantic_name_leaf(node, code)))
     {
         tokens.push(Token {
             is_id: true,
@@ -637,7 +749,14 @@ fn literal_value_text<'a>(node: Node<'_>, kind: &str, code: &Source<'a>) -> Cow<
     if !fragments.is_empty() {
         return Cow::Owned(fragments.concat());
     }
-    Cow::Borrowed(strip_matching_quotes(node_text(node, code)))
+    // A C# verbatim string (`@"..."`) carries the same value as its ordinary spelling.
+    let text = node_text(node, code);
+    let text = if node.kind() == "verbatim_string_literal" {
+        text.strip_prefix('@').unwrap_or(text)
+    } else {
+        text
+    };
+    Cow::Borrowed(strip_matching_quotes(text))
 }
 
 /// Strips one matching pair of surrounding ASCII quotes, matching stripMatchingQuotes in
@@ -667,9 +786,61 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         return false;
     };
 
-    // Java method references (`Foo::bar`) name their identifiers without grammar fields.
-    if parent.kind() == "method_reference" {
+    // Java method references (`Foo::bar`) and Kotlin callable references (`::bar`) name their
+    // identifiers without grammar fields.
+    if parent.kind() == "method_reference" || parent.kind() == "callable_reference" {
         return true;
+    }
+
+    // C# type positions (see CSHARP_TYPE_PARENT_TYPES, plus any parent's `type` field, e.g.
+    // `new Foo()`) and attribute names (`[Obsolete]`, an `attribute` inside an `attribute_list`, or
+    // `[assembly: Foo]` inside a `global_attribute`; C/C++ attributes hang off other parents and
+    // Python's `attribute` has no `name` field).
+    if node.kind() == "identifier" {
+        let occupies = |field: &str| {
+            parent
+                .child_by_field_name(field)
+                .is_some_and(|field_node| field_node.id() == node.id())
+        };
+        let is_csharp_attribute = parent.kind() == "attribute"
+            && parent
+                .parent()
+                .is_some_and(|list| matches!(list.kind(), "attribute_list" | "global_attribute"));
+        if CSHARP_TYPE_PARENT_TYPES.contains(&parent.kind())
+            || (occupies("type") && !NON_CSHARP_TYPE_FIELD_PARENT_TYPES.contains(&parent.kind()))
+            || (is_csharp_attribute && occupies("name"))
+        {
+            return true;
+        }
+    }
+
+    // Kotlin (no grammar fields): a callee (`foo(...)`), a member name (`a.foo`), an infix function
+    // (`a shl b`), and a named argument (`foo(name = x)`) are API names.
+    if node.kind() == "simple_identifier" {
+        if parent.kind() == "navigation_suffix" {
+            return true;
+        }
+        let is_first_named = parent
+            .named_child(0)
+            .is_some_and(|first| first.id() == node.id());
+        if parent.kind() == "call_expression" && is_first_named {
+            return true;
+        }
+        if parent.kind() == "infix_expression"
+            && parent
+                .named_child(1)
+                .is_some_and(|operator| operator.id() == node.id())
+        {
+            return true;
+        }
+        if parent.kind() == "value_argument"
+            && is_first_named
+            && node
+                .next_sibling()
+                .is_some_and(|next| !next.is_named() && next.kind() == "=")
+        {
+            return true;
+        }
     }
 
     // `call` names its callee `method` in Ruby but `function` in Python; accept both fields.
@@ -691,14 +862,22 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         return true;
     }
 
-    // Java static receivers (`Alpha.run(...)`) name the invoked type; PascalCase is the
-    // discriminator because the tokenizer has no symbol table.
-    if parent.kind() == "method_invocation"
-        && parent
+    // Java/C# static receivers (`Alpha.run(...)`, `Console.WriteLine(...)`) name the invoked type;
+    // PascalCase is the discriminator because the tokenizer has no symbol table.
+    let is_static_receiver = match parent.kind() {
+        "method_invocation" => parent
             .child_by_field_name("object")
-            .is_some_and(|object| object.id() == node.id())
-        && pascal_case_regex().is_match(node_text(node, code))
-    {
+            .is_some_and(|object| object.id() == node.id()),
+        "member_access_expression" => parent
+            .child_by_field_name("expression")
+            .is_some_and(|receiver| receiver.id() == node.id()),
+        // Kotlin has no fields: the receiver is the first child of `navigation_expression`.
+        "navigation_expression" => parent
+            .named_child(0)
+            .is_some_and(|first| first.id() == node.id()),
+        _ => false,
+    };
+    if is_static_receiver && pascal_case_regex().is_match(node_text(node, code)) {
         return true;
     }
 

@@ -28,10 +28,12 @@ interface FixtureExpectation {
 const fixtureExpectations: FixtureExpectation[] = [
   { file: 'clones.c', language: 'c', groupCount: 1 },
   { file: 'clones.cpp', language: 'cpp', groupCount: 1 },
+  { file: 'clones.cs', language: 'csharp', groupCount: 1 },
   { file: 'clones.go', language: 'go', groupCount: 1 },
   { file: 'clones.java', language: 'java', groupCount: 1 },
   { file: 'clones.js', language: 'javascript', groupCount: 1 },
   { file: 'clones.jsx', language: 'jsx', groupCount: 2 },
+  { file: 'clones.kt', language: 'kotlin', groupCount: 1 },
   { file: 'clones.py', language: 'python', groupCount: 1 },
   { file: 'clones.rb', language: 'ruby', groupCount: 1 },
   { file: 'clones.rs', language: 'rust', groupCount: 1 },

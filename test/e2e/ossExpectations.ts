@@ -18,19 +18,21 @@ import type { LanguageName } from '../../src/index.js';
  *   complexity) on ESLint 8.57.0 / @typescript-eslint/parser 7.18.0. 57 functions match across
  *   JavaScript, TypeScript, JSX, and TSX.
  *
- * C, C++, Ruby, and Rust have NO per-function oracle: their only per-function reference tool
- * (lizard) measured cyclomatic complexity, which code-gauge no longer reports. Ruby has no
- * readily runnable open-source implementation of SonarSource cognitive complexity; for C, C++,
- * and Rust the one candidate — Mozilla's rust-code-analysis — implements its own
- * cognitive-complexity variant that has not been reconciled with the SonarSource model here, so
- * its values are not adopted as oracles (yet). Their `oracleFunctions` lists are empty, the
- * per-function tests are skipped visibly for them, and only the aggregate expectations
- * (regenerated from code-gauge itself) plus the cloc/tokei line oracle guard those files.
+ * C, C++, C#, Kotlin, Ruby, and Rust have NO per-function oracle: for C, C++, Ruby, and Rust
+ * the only per-function reference tool (lizard) measured cyclomatic complexity, which code-gauge
+ * no longer reports. Ruby has no readily runnable open-source implementation of SonarSource
+ * cognitive complexity; for C, C++, and Rust the one candidate — Mozilla's rust-code-analysis —
+ * implements its own cognitive-complexity variant that has not been reconciled with the
+ * SonarSource model here, so its values are not adopted as oracles (yet). The C# (SonarAnalyzer)
+ * and Kotlin (detekt) implementations need a .NET SDK or JVM toolchain that the corpus tooling
+ * does not include. Their `oracleFunctions` lists are empty, the per-function tests are skipped
+ * visibly for them, and only the aggregate expectations (regenerated from code-gauge itself) plus
+ * the cloc/tokei line oracle guard those files.
  *
- * Line metrics in `aggregates` were verified against cloc 2.06 for all files (code/comment/blank
- * identical; code-gauge additionally counts the empty line after a trailing final newline as one
- * blank line, so `lines.total` and `lines.blank` are one higher than cloc's). Two files need a
- * different oracle:
+ * Line metrics in `aggregates` were verified against cloc 2.06 for all files, the C# and Kotlin
+ * files included (code/comment/blank identical; code-gauge additionally counts the empty line
+ * after a trailing final newline as one blank line, so `lines.total` and `lines.blank` are one
+ * higher than cloc's). Two files need a different oracle:
  *
  * - Python: cloc classifies docstrings as comments while code-gauge (like tree-sitter) treats
  *   them as expression statements, i.e. code. For requests' sessions.py cloc reports
@@ -153,6 +155,53 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         length: 1660,
         volume: 12_839.618,
         effort: 1_058_123.3274,
+      },
+    },
+    oracleFunctions: [],
+    knownDivergences: [],
+  },
+  {
+    file: 'dotnet-runtime-8.0.0-Version.cs',
+    language: 'csharp',
+    aggregates: {
+      lines: {
+        total: 431,
+        code: 318,
+        comment: 36,
+        blank: 77,
+      },
+      cognitiveComplexity: 103,
+      maxCognitiveComplexity: 43,
+      nestingDepth: 7,
+      ncssCount: 211,
+      duplication: {
+        duplicateBlockCount: 1,
+        duplicateBlockGroupCount: 1,
+        duplicateBlockGroups: [
+          [
+            {
+              endLine: 41,
+              startLine: 31,
+            },
+            {
+              endLine: 53,
+              startLine: 44,
+            },
+          ],
+        ],
+        duplicateLineCount: 19,
+        duplicationRatio: 0.0597,
+        maxDuplicateBlockSize: 46,
+      },
+      halstead: {
+        distinctOperators: 31,
+        distinctOperands: 141,
+        totalOperators: 397,
+        totalOperands: 842,
+        vocabulary: 172,
+        length: 1239,
+        volume: 9201.142,
+        effort: 851_660.3166,
       },
     },
     oracleFunctions: [],
@@ -617,6 +666,53 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ['handleLoading', 60, 161, 'cognitive', 'sonarjs', 3, 48],
       ['Image', 356, 415, 'cognitive', 'sonarjs', 1, 2],
     ],
+  },
+  {
+    file: 'okhttp-4.12.0-Cookie.kt',
+    language: 'kotlin',
+    aggregates: {
+      lines: {
+        total: 614,
+        code: 422,
+        comment: 112,
+        blank: 80,
+      },
+      cognitiveComplexity: 97,
+      maxCognitiveComplexity: 36,
+      nestingDepth: 3,
+      ncssCount: 312,
+      duplication: {
+        duplicateBlockCount: 1,
+        duplicateBlockGroupCount: 1,
+        duplicateBlockGroups: [
+          [
+            {
+              endLine: 165,
+              startLine: 146,
+            },
+            {
+              endLine: 200,
+              startLine: 181,
+            },
+          ],
+        ],
+        duplicateLineCount: 36,
+        duplicationRatio: 0.0853,
+        maxDuplicateBlockSize: 105,
+      },
+      halstead: {
+        distinctOperators: 24,
+        distinctOperands: 247,
+        totalOperators: 561,
+        totalOperands: 1139,
+        vocabulary: 271,
+        length: 1700,
+        volume: 13_739.6534,
+        effort: 760_297.9039,
+      },
+    },
+    oracleFunctions: [],
+    knownDivergences: [],
   },
   {
     file: 'rails-7.1.2-methods.rb',

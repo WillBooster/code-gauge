@@ -31,7 +31,16 @@ impl LanguageSets {
 
 const BOOLEAN_OPERATORS: &[&str] = &["&&", "||", "and", "or"];
 /// Parents under which `&&`/`||`/`and`/`or` tokens are actual boolean operators.
-const BOOLEAN_OPERATOR_PARENT_TYPES: &[&str] = &["binary_expression", "binary", "boolean_operator"];
+const BOOLEAN_OPERATOR_PARENT_TYPES: &[&str] = &[
+    "binary_expression",
+    "binary",
+    "boolean_operator",
+    "conjunction_expression",
+    "disjunction_expression",
+    // C# pattern combinators (`is > 0 and <= 10`) sequence like `&&`/`||` (SonarC#).
+    "and_pattern",
+    "or_pattern",
+];
 
 /// A Ruby stabby lambda's body block is part of the lambda, not a separate function.
 pub fn is_lambda_body_block(node: Node<'_>) -> bool {
@@ -41,8 +50,13 @@ pub fn is_lambda_body_block(node: Node<'_>) -> bool {
             .is_some_and(|parent| parent.kind() == "lambda")
 }
 
+/// A function node with a body of its own: bodyless declarations (abstract methods, auto-property
+/// accessors, accessor-list properties) open no nesting frame, so members inside them are not
+/// charged as nested functions.
 pub fn is_function_boundary(node: Node<'_>, function_nodes: &HashSet<&'static str>) -> bool {
-    function_nodes.contains(node.kind()) && !is_lambda_body_block(node)
+    function_nodes.contains(node.kind())
+        && !is_lambda_body_block(node)
+        && crate::functions::is_implemented_function(node)
 }
 
 // Sonar cognitive complexity charges a switch/match once as a whole, not per case label. Only
@@ -55,6 +69,7 @@ const SWITCH_LIKE_NODE_TYPES: &[&str] = &[
     "select_statement",
     "match_expression",
     "match_statement",
+    "when_expression",
     "case",
     "case_match",
 ];
@@ -70,6 +85,9 @@ const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
     "type_case",
     "communication_case",
     "match_arm",
+    "switch_section",
+    "switch_expression_arm",
+    "when_entry",
     "when",
     "in_clause",
 ];
@@ -444,6 +462,11 @@ fn count_plain_else_branches(current: Node<'_>) -> u64 {
     if kind != "if_statement" && kind != "if_expression" {
         return 0;
     }
+    // Kotlin's `else` is a bare keyword token followed by the branch body (no clause wrapper and
+    // no grammar field); an `else if` continuation is charged on the nested if instead.
+    if let Some(else_body) = crate::util::kotlin_else_body(current) {
+        return u64::from(!crate::util::is_kotlin_else_if_body(else_body));
+    }
     // Extras (comments) inherit the preceding sibling's field in find_children_by_field_name, so a
     // comment between an `elif_clause` and `else_clause` must not be miscounted as a bare branch.
     crate::util::find_children_by_field_name(current, "alternative")
@@ -472,6 +495,13 @@ fn is_flow_breaking_jump(node: Node<'_>) -> bool {
             .iter()
             .any(|child| child.kind() == "label" || child.kind() == "loop_label");
     }
+    // Kotlin folds every jump into `jump_expression`; the grammar tokenizes a labeled break or
+    // continue as `break@`/`continue@` followed by the label (`return@label` is a plain return).
+    if node.kind() == "jump_expression" {
+        return node
+            .child(0)
+            .is_some_and(|keyword| keyword.kind() == "break@" || keyword.kind() == "continue@");
+    }
     // Comments are named children too (`break /* done */;`), so only non-comment children mark a
     // label.
     (node.kind() == "break_statement" || node.kind() == "continue_statement")
@@ -482,7 +512,11 @@ fn is_flow_breaking_jump(node: Node<'_>) -> bool {
 
 /// Wrappers that are transparent when locating the enclosing boolean operation: PMD/Sonar keep a
 /// sequence continuous across parentheses (`a && (b && c)` costs one point).
-const PARENTHESIZED_NODE_TYPES: &[&str] = &["parenthesized_expression", "parenthesized_statements"];
+const PARENTHESIZED_NODE_TYPES: &[&str] = &[
+    "parenthesized_expression",
+    "parenthesized_statements",
+    "parenthesized_pattern",
+];
 
 /// Whether this boolean operator token starts a new sequence, i.e. its binary node is the root of a
 /// run of same-operator binaries (possibly through parentheses). Only the root operator counts one
@@ -528,13 +562,21 @@ fn find_boolean_operator_text<'a>(binary_node: Node<'_>, code: &Source<'a>) -> O
         .map(|child| node_text(child, code))
 }
 
-/// Java `guard`, Ruby `if_guard`, Python `if_clause`, and Rust guards inside `match_pattern`.
+/// Java `guard`, C# `when_clause`, Ruby `if_guard`, Python `if_clause`, and Rust guards inside
+/// `match_pattern`. A C# exception filter (`catch (E e) when (...)`, a `catch_filter_clause`) is
+/// deliberately not charged: the catch itself already counts, and the filter is part of the same
+/// handler condition rather than an extra path (SonarC# does not charge it either).
 fn is_pattern_guard(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;
     }
     let kind = node.kind();
-    if kind == "guard" || kind == "if_guard" || kind == "unless_guard" || kind == "if_clause" {
+    if kind == "guard"
+        || kind == "when_clause"
+        || kind == "if_guard"
+        || kind == "unless_guard"
+        || kind == "if_clause"
+    {
         return true;
     }
     kind == "match_pattern"
@@ -555,7 +597,14 @@ fn is_flat_chain_continuation(node: Node<'_>) -> bool {
     let Some(parent) = node.parent() else {
         return false;
     };
-    // JS/C/C++/Rust wrap `else if` in an else clause; Java/Go put it directly in `alternative`.
+    // Kotlin puts a braceless `else if` directly in the else branch's control_structure_body.
+    if parent.kind() == "control_structure_body" {
+        return parent
+            .parent()
+            .and_then(crate::util::kotlin_else_body)
+            .is_some_and(|else_body| else_body.id() == parent.id());
+    }
+    // JS/C/C++/Rust/C# wrap `else if` in an else clause or put it directly in `alternative`.
     parent.kind() == "else_clause"
         || parent
             .child_by_field_name("alternative")
