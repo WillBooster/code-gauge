@@ -274,7 +274,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 
     // An object-literal property (`{ run: () => {} }`) names its value after the key; an assignment
-    // (`obj.run = () => {}`, `run = () => {}`, also Rust/C++ `self.cb = |x| x`) after its target.
+    // (`obj.run = () => {}`, `run = () => {}`, Rust/C++ `self.cb = |x| x`, C# `this.Run = () => 1`)
+    // after its target.
     if parent.kind() == "pair" {
         return find_pair_key_name(parent, code);
     }
@@ -308,14 +309,15 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 }
 
-/// The assigned identifier, or the member name of a member/field access (`a.b.run` names `run`);
-/// subscripts (`o["run"]`) name nothing.
+/// The assigned identifier, or the member name of a JS member, Rust/C++ field, or C# member access
+/// (`a.b.run` names `run`); subscripts (`o["run"]`) name nothing.
 fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     let target = assignment.child_by_field_name("left")?;
     let name = match target.kind() {
         "identifier" => target,
         "member_expression" => target.child_by_field_name("property")?,
         "field_expression" => target.child_by_field_name("field")?,
+        "member_access_expression" => target.child_by_field_name("name")?,
         _ => return None,
     };
     Some(node_text(name, code).to_string())

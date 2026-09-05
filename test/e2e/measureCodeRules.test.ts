@@ -458,6 +458,9 @@ describe('function names from binding sites', () => {
         'const o = { run: () => 1, "quoted": function () {}, [k]: () => 2 };\nobj.run = () => 3;\nplain = () => 4;\na.b.c = function () {};\no["s"] = () => 5;'
       ).map((fn) => fn.name)
     ).toEqual(['run', 'quoted', undefined, 'run', 'plain', 'c', undefined]);
+    expect(
+      functionsOf('csharp', 'class A { void F() { this.Run = () => 1; run = x => x; } }').map((fn) => fn.name)
+    ).toEqual(['F', 'Run', 'run']);
   });
 });
 
