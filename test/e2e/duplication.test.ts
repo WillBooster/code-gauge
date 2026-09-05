@@ -875,26 +875,38 @@ describe('duplication: invariants over the per-language fixtures', () => {
   });
 });
 
+/** The fixture with every top-level function except `keep` blanked out (scaffolding retained). */
+function isolateFunction(code: string, language: LanguageName, keep: RegExp): string {
+  const functions = measureCode(code, { language }).functions;
+  const kept = functions.find((fn) => keep.test(fn.name ?? ''));
+  expect(kept, `no function matching ${keep} in the ${language} fixture`).toBeDefined();
+  const lines = code.split('\n');
+  for (const fn of functions) {
+    const nestedInKept = kept !== undefined && fn.startLine >= kept.startLine && fn.endLine <= kept.endLine;
+    if (fn === kept || nestedInKept) {
+      continue;
+    }
+    for (let line = fn.startLine; line <= fn.endLine; line += 1) {
+      lines[line - 1] = '';
+    }
+  }
+  return lines.join('\n');
+}
+
 describe('duplication: cross-file clones in every language', () => {
-  // The two renamed copies of each per-language fixture are separated into two files, so the
-  // cross-file matcher must find exactly the one clone pair the within-file detector finds; the
-  // literal-dense tables (where present) stay excluded.
+  // The two renamed copies of each per-language fixture are isolated into two files (each keeps
+  // the fixture's imports/class scaffolding but only one of the functions), so the cross-file
+  // matcher must find exactly the one clone pair the within-file detector finds.
   for (const { file, language } of fixtureExpectations) {
     it(`matches the renamed copy across files in ${language}`, () => {
       const code = readDuplicationFixture(file);
-      const blocks = code.split(/\n(?=\S)/u).filter((block) => block.trim().length > 0);
-      const firstClone = blocks.find((block) => /summarize_?orders|OrderCard/iu.test(block));
-      const secondClone = blocks.find((block) => /summarize_?refunds|RefundCard/iu.test(block));
-      expect(firstClone, `fixture ${file} has no orders clone`).toBeDefined();
-      expect(secondClone, `fixture ${file} has no refunds clone`).toBeDefined();
-      const wrap = (block: string): string =>
-        language === 'python' || language === 'ruby'
-          ? `${block}\n`
-          : `${code.slice(0, code.indexOf(blocks[0] ?? ''))}${block}\n`;
+      const first = isolateFunction(code, language, /summarize_?orders|OrderCard/iu);
+      const second = isolateFunction(code, language, /summarize_?refunds|RefundCard/iu);
+      expect(first).not.toBe(second);
 
       const metrics = measureCrossFileDuplication([
-        { file: 'a', ...collectCrossFileDuplicationFileData(wrap(firstClone ?? ''), { language }) },
-        { file: 'b', ...collectCrossFileDuplicationFileData(wrap(secondClone ?? ''), { language }) },
+        { file: 'a', ...collectCrossFileDuplicationFileData(first, { language }) },
+        { file: 'b', ...collectCrossFileDuplicationFileData(second, { language }) },
       ]);
 
       expect(metrics.groups.map((group) => group.files)).toEqual([['a', 'b']]);
