@@ -480,3 +480,151 @@ describe('file-level backstops (synthetic aggregates)', () => {
     ]);
   });
 });
+
+// A function of 63 statements: over the default new-function NCSS limit (60) with no branching.
+const longNewFunction = `export function fill(): number[] {\n  const values: number[] = [];\n${Array.from(
+  { length: 60 },
+  (_, index) => `  values.push(${index});`
+).join('\n')}\n  return values;\n}\n`;
+
+describe('evaluateRegressionGate: thresholds, options, and reporting', () => {
+  it('applies the NCSS limit to new functions', () => {
+    const result = evaluateRegressionGate([makeInput(baseCode, baseCode + longNewFunction)], defaultGateOptions);
+    expect(result.violations.map((violation) => [violation.gate, violation.metric])).toStrictEqual([
+      ['new-function', 'NCSS'],
+    ]);
+    expect(result.violations[0]).toMatchObject({ functionName: 'fill', headValue: 63, allowedValue: 60 });
+    expect(result.violations[0]?.message).toContain('new function fill: NCSS 63 exceeds the new-code limit 60');
+  });
+
+  it('gates a renamed-and-edited function as new code only when the match similarity threshold is 100', () => {
+    // Renaming alone leaves the normalized tokens identical (100% similar); one edited operator
+    // keeps the pair above the default 70% but below an exact match.
+    const edited = baseCode.replaceAll('total', 'sumAll').replace('sum += item', 'sum -= item');
+    expect(evaluateRegressionGate([makeInput(baseCode, edited)], defaultGateOptions).newFunctionCount).toBe(0);
+    const strict = { ...defaultGateOptions, matchSimilarityPercent: 100 };
+    const result = evaluateRegressionGate([makeInput(baseCode, edited)], strict);
+    expect(result.violations).toStrictEqual([]);
+    expect(result.newFunctionCount).toBe(1);
+    expect(result.checkedFunctions.map((fn) => [fn.name, fn.base === undefined])).toStrictEqual([['sumAll', true]]);
+  });
+
+  it('honors a duplicated-lines tolerance', () => {
+    const tolerant = { ...defaultGateOptions, tolerance: { ...defaultGateOptions.tolerance, duplicateLines: 6 } };
+    const input = makeInput(baseCode, baseCode, { baseDuplicatedLineCount: 3, headDuplicatedLineCount: 9 });
+    expect(evaluateRegressionGate([input], tolerant).violations).toStrictEqual([]);
+    expect(evaluateRegressionGate([input], defaultGateOptions).violations).toHaveLength(1);
+  });
+
+  it('evaluates nothing for an ungated file while still using it for matching', () => {
+    // The worsened function lives in an ungated file: no violation, not counted as checked, but
+    // the moved function in the gated file still finds its base counterpart there.
+    const ungated = makeInput(worsenedCode + complexNewFunction, worsenedCode, {
+      file: 'src/outside.ts',
+      gated: false,
+    });
+    const moved = makeInput(undefined, complexNewFunction, { file: 'src/inside.ts' });
+    const result = evaluateRegressionGate([ungated, moved], defaultGateOptions);
+    expect(result.violations).toStrictEqual([]);
+    expect(result.checkedFileCount).toBe(1);
+    expect(result.newFunctionCount).toBe(0);
+    expect(result.checkedFunctions.map((fn) => [fn.file, fn.name])).toStrictEqual([['src/inside.ts', 'decide']]);
+  });
+
+  it('counts a deleted file as checked with nothing to gate', () => {
+    const result = evaluateRegressionGate([makeInput(worsenedCode, undefined)], defaultGateOptions);
+    expect(result.checkedFileCount).toBe(1);
+    expect(result.checkedFunctionCount).toBe(0);
+    expect(result.checkedFunctions).toStrictEqual([]);
+  });
+
+  it('orders violations and checked functions by file then line, across files', () => {
+    const result = evaluateRegressionGate(
+      [
+        makeInput(baseCode, baseCode + complexNewFunction, { file: 'src/b.ts' }),
+        makeInput(baseCode, worsenedCode, { file: 'src/a.ts' }),
+      ],
+      defaultGateOptions
+    );
+    expect(result.violations.map((violation) => `${violation.file}:${violation.startLine}`)).toStrictEqual([
+      'src/a.ts:1',
+      'src/a.ts:1',
+      'src/a.ts:1',
+      'src/b.ts:8',
+      'src/b.ts:8',
+    ]);
+    expect(result.checkedFunctions.map((fn) => `${fn.file}:${fn.name}`)).toStrictEqual([
+      'src/a.ts:total',
+      'src/b.ts:total',
+      'src/b.ts:decide',
+    ]);
+  });
+
+  it('reports the gated values of every checked function', () => {
+    const result = evaluateRegressionGate([makeInput(baseCode, guardedCode)], defaultGateOptions);
+    const [report] = result.checkedFunctions;
+    expect(report).toMatchObject({
+      file: 'src/sample.ts',
+      name: 'total',
+      startLine: 1,
+      endLine: 10,
+      base: { cognitiveComplexity: 1, ncss: 5, nestingDepth: 1, depDegree: 4 },
+      head: { cognitiveComplexity: 2, ncss: 7, nestingDepth: 1, depDegree: 5 },
+    });
+    expect(report?.head.halsteadVolume ?? 0).toBeGreaterThan(report?.base?.halsteadVolume ?? 0);
+  });
+
+  it('names anonymous functions <anonymous> in violations', () => {
+    const anonymousComplex = `export default ${complexNewFunction.replace('export function decide', 'function')}`;
+    const result = evaluateRegressionGate([makeInput(undefined, anonymousComplex)], defaultGateOptions);
+    expect(result.violations[0]?.functionName).toBe('<anonymous>');
+    expect(result.violations[0]?.message).toContain('new function <anonymous>: cognitive complexity 24');
+  });
+
+  it('does not arm the file backstops when only an anonymous function was removed', () => {
+    // Split evidence requires a NAMED removed function: an anonymous one leaves the backstops off.
+    const input = makeSyntheticInput(
+      makeMetrics([makeFunction('ignored', { name: undefined, cognitiveComplexity: 10 })]),
+      makeMetrics([makeFunction('g', { cognitiveComplexity: 14 })]),
+      { base: [originalTokens], head: [splitFragmentTokens] }
+    );
+    expect(evaluateRegressionGate([input], defaultGateOptions).violations).toStrictEqual([]);
+  });
+
+  it('does not restate a new-function cognitive violation as the file maximum', () => {
+    // f is split into g (14, below the new-code limit) and h (20, above it): h's new-function
+    // violation already reports the file maximum, so no file-regression violation is added.
+    const input = makeSyntheticInput(
+      makeMetrics([makeFunction('f', { cognitiveComplexity: 10 })]),
+      makeMetrics([makeFunction('g', { cognitiveComplexity: 14 }), makeFunction('h', { cognitiveComplexity: 20 })]),
+      { base: [originalTokens], head: [splitFragmentTokens, Int32Array.from(tokenRange(201, 20))] }
+    );
+    const result = evaluateRegressionGate([input], defaultGateOptions);
+    expect(result.violations.map((violation) => [violation.gate, violation.metric])).toStrictEqual([
+      ['new-function', 'cognitive complexity'],
+    ]);
+  });
+
+  it('skips similarity matching past the comparison budget, gating leftovers as new code', () => {
+    // 101 x 100 candidate pairs exceed the 10,000-comparison budget, so the identical anonymous
+    // functions are not re-matched; at 100 x 100 they all are.
+    const tokens = Int32Array.from(tokenRange(1, 8));
+    const anonymous = (): FunctionMetrics => makeFunction('ignored', { name: undefined });
+    const gate = (baseCount: number, headCount: number): number =>
+      evaluateRegressionGate(
+        [
+          makeSyntheticInput(
+            makeMetrics(Array.from({ length: baseCount }, anonymous)),
+            makeMetrics(Array.from({ length: headCount }, anonymous)),
+            {
+              base: Array.from({ length: baseCount }, () => tokens),
+              head: Array.from({ length: headCount }, () => tokens),
+            }
+          ),
+        ],
+        defaultGateOptions
+      ).newFunctionCount;
+    expect(gate(100, 100)).toBe(0);
+    expect(gate(101, 100)).toBe(100);
+  });
+});
