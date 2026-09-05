@@ -329,7 +329,8 @@ describe('code-gauge diff --base', () => {
 });
 
 // Same statement count, cognitive complexity, and nesting as baseCalc, but the return expression
-// reads the definitions eleven more times (DepDegree 4 -> 15) and quadruples the Halstead volume.
+// reads the definitions eleven more times (DepDegree 4 -> 15) and raises the Halstead volume past
+// the 150 allowance (44.4 -> ~325).
 const denseReturnCalc = baseCalc.replace(
   '  return sum;',
   '  return sum + items.length * 3 - Math.max(sum, 0) + Math.min(sum, items.length) + Math.abs(sum - items.length) + Math.sign(sum) * items.length + Math.round(sum / 7) - Math.floor(items.length / 2) + sum;'
