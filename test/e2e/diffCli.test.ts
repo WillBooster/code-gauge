@@ -99,6 +99,9 @@ const complexNewFile = `export function decide(a: number, b: number, c: number, 
 
 let repoDir: string;
 
+// chmod 000 does not stop root from reading, so the unreadable-file cases are skipped there.
+const runAsRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
 beforeAll(() => {
   repoDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-diff-'));
   runGit(['init', '-q', '-b', 'main'], repoDir);
@@ -209,7 +212,7 @@ describe('code-gauge diff --base', () => {
     expect(result.stdout).toMatch(/^Regression gate passed: 1 changed files, 1 functions checked/u);
   });
 
-  it('fails with exit 2 (and no pass claim) when a changed file cannot be measured', () => {
+  it.skipIf(runAsRoot)('fails with exit 2 (and no pass claim) when a changed file cannot be measured', () => {
     // An unreadable file is reported as modified by git, so its measurement failure must fail the
     // gate closed instead of printing a vacuous pass.
     const lockedPath = path.join(repoDir, 'src', 'report.ts');
@@ -438,7 +441,7 @@ describe('code-gauge diff --base: gates and options', () => {
     expect(result.stdout).not.toContain('cognitive complexity worsened');
   });
 
-  it('numbers several violations and reports the file NCSS of --full JSON', () => {
+  it('numbers several violations', () => {
     writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
     writeFileSync(path.join(repoDir, 'src', 'deep.ts'), complexNewFile);
     const result = runCli(['diff', '--base', 'main'], repoDir);
@@ -561,7 +564,7 @@ describe('code-gauge diff --base: output contract', () => {
     ]);
   });
 
-  it('reports errors in the JSON report and never claims a pass alongside them', () => {
+  it.skipIf(runAsRoot)('reports errors in the JSON report and never claims a pass alongside them', () => {
     const lockedPath = path.join(repoDir, 'src', 'report.ts');
     writeFileSync(lockedPath, reportSource + '\n');
     chmodSync(lockedPath, 0o000);
