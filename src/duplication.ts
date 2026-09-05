@@ -114,6 +114,12 @@ export interface CountedOccurrence {
    * nested inside a larger group's region. Block counting must not count them again.
    */
   spanCountedElsewhere?: boolean;
+  /**
+   * Set on cross-file copies nested inside a larger group's region (they also set
+   * `spanCountedElsewhere`). They never pair in gapped merging and do not keep their group from
+   * being consumed by a merge of its standalone copies, which they are not copies of.
+   */
+  nestedInLargerGroup?: boolean;
   /** Sum of segment token counts (the gap tokens are not matched content). */
   tokenCount: number;
   startTokenIndex: number;
@@ -682,9 +688,11 @@ function mergeGroups<T extends CountedOccurrence>(
   // their spans already live inside that merged group, so re-pairing them would assemble a second,
   // competing merged group instead of letting the existing merged group extend (and would count
   // the same span twice). Consumption is still judged against the FULL group, so a group holding
-  // shared occurrences is never subsumed away.
-  const leadings = first.filter((occurrence) => !occurrence.spanCountedElsewhere);
-  const trailings = second.filter((occurrence) => !occurrence.spanCountedElsewhere);
+  // shared occurrences is never subsumed away; nested copies, which the merged span would not
+  // cover anyway, are left out of that judgment so they cannot veto a merge of the standalone
+  // copies.
+  const [leadings, firstLength] = pairableOccurrences(first);
+  const [trailings, secondLength] = pairableOccurrences(second);
   const pairs: [T, T][] = [];
   let leadingIndex = 0;
   let previousTrailingEnd = -1;
@@ -709,8 +717,8 @@ function mergeGroups<T extends CountedOccurrence>(
       leadingIndex += 1;
     }
   }
-  const firstConsumed = pairs.length === first.length;
-  const secondConsumed = pairs.length === second.length;
+  const firstConsumed = pairs.length === firstLength;
+  const secondConsumed = pairs.length === secondLength;
   if (pairs.length < 2 || (!firstConsumed && !secondConsumed)) {
     return undefined;
   }
@@ -718,6 +726,7 @@ function mergeGroups<T extends CountedOccurrence>(
     ...leading,
     // A merged occurrence is a fresh span combination; it never inherits shared-span marks.
     spanCountedElsewhere: undefined,
+    nestedInLargerGroup: undefined,
     segments: [...leading.segments, ...trailing.segments],
     tokenCount: leading.tokenCount + trailing.tokenCount,
     endTokenIndex: trailing.endTokenIndex,
@@ -727,6 +736,21 @@ function mergeGroups<T extends CountedOccurrence>(
   const pairedRetained =
     firstConsumed === secondConsumed ? [] : pairs.map(([leading, trailing]) => (firstConsumed ? trailing : leading));
   return { merged, firstConsumed, secondConsumed, pairedRetained };
+}
+
+/** One pass over a group: its pairable occurrences and its non-nested occurrence count. */
+function pairableOccurrences<T extends CountedOccurrence>(group: T[]): [T[], number] {
+  const pairable: T[] = [];
+  let length = 0;
+  for (const occurrence of group) {
+    if (!occurrence.nestedInLargerGroup) {
+      length += 1;
+    }
+    if (!occurrence.spanCountedElsewhere) {
+      pairable.push(occurrence);
+    }
+  }
+  return [pairable, length];
 }
 
 /**

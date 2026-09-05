@@ -148,6 +148,13 @@ const suffixHalf = `
 `;
 
 /** A single-segment occurrence spanning [start, end) for direct mergeAdjacentGroups tests. */
+/** A cross-file copy nested inside a larger group's region. */
+const nested = (start: number, end: number): CountedOccurrence => ({
+  ...occurrence(start, end),
+  spanCountedElsewhere: true,
+  nestedInLargerGroup: true,
+});
+
 const occurrence = (start: number, end: number): CountedOccurrence => ({
   segments: [{ startTokenIndex: start, endTokenIndex: end }],
   tokenCount: end - start,
@@ -219,6 +226,23 @@ describe('duplication: partial gapped-clone merging', () => {
     expect(metrics.duplication.duplicateBlockCount).toBe(4);
     // The largest occurrence is delta's whole near-miss block, not a double-counted alpha span.
     expect(metrics.duplication.maxDuplicateBlockSize).toBe(139);
+  });
+
+  // Cross-file nested copies (inside a larger group's region) are not copies of a merged span: they
+  // neither pair nor keep their group's standalone copies from being consumed by the merge.
+  it('lets standalone copies merge with an adjacent group despite nested copies in the same group', () => {
+    const groupA = [nested(1000, 1010), nested(2000, 2010), occurrence(0, 10), occurrence(50, 60)];
+    const groupB = [occurrence(12, 22), occurrence(62, 72), occurrence(112, 122)];
+
+    const merged = mergeAdjacentGroups([groupA, groupB], 20);
+
+    const shapes = merged.map((group) =>
+      group.map((entry) => `${entry.startTokenIndex}..${entry.endTokenIndex}/${entry.segments.length}`)
+    );
+    expect(shapes).toEqual([
+      ['0..22/2', '50..72/2'],
+      ['12..22/1', '62..72/1', '112..122/1'],
+    ]);
   });
 
   // Three adjacent fragment groups where the first also occurs standalone: after A partially

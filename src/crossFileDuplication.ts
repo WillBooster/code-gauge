@@ -157,6 +157,7 @@ function mergeGapAdjacentGroups(
         return {
           file: candidate.file,
           spanCountedElsewhere: candidate.nestedInLargerGroup,
+          nestedInLargerGroup: candidate.nestedInLargerGroup,
           segments: [{ startTokenIndex: start, endTokenIndex: end }],
           tokenCount: candidate.tokenCount,
           startTokenIndex: start,

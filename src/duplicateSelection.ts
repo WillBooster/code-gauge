@@ -65,15 +65,21 @@ export function selectMaximalGroups<T extends SelectableRegion>(
     const nestedByFingerprint = new Map<string, T[]>();
     for (const candidate of duplicates) {
       const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
-      const overlapping = keptRegions.filter(
-        (region) => region.startIndex < candidate.endIndex && candidate.startIndex < region.endIndex
-      );
-      if (overlapping.length > 0) {
-        if (
-          overlapping.some(
-            (region) => region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex
-          )
-        ) {
+      // A plain loop: this runs once per candidate over every kept region of the bucket, so
+      // allocating a filtered array per candidate would dominate project-scale runs.
+      let overlaps = false;
+      let contained = false;
+      for (const region of keptRegions) {
+        if (region.startIndex < candidate.endIndex && candidate.startIndex < region.endIndex) {
+          overlaps = true;
+          if (region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex) {
+            contained = true;
+            break;
+          }
+        }
+      }
+      if (overlaps) {
+        if (contained) {
           const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
           nested.push({ ...candidate, nestedInLargerGroup: true });
           nestedByFingerprint.set(candidate.fingerprint, nested);
