@@ -336,9 +336,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         .map(|name| node_text(name, code).to_string())
 }
 
-/// The key of a `pair` when it is a plain, Ruby symbol, or string-literal property name (the
-/// literal's text without its quotes, escapes kept as written); a computed key (`[k]: ...`), an
-/// interpolated string, or an empty string names nothing.
+/// The key of a `pair` when it is a plain, Ruby symbol, or string-literal property name; a
+/// computed key (`[k]: ...`), an interpolated string or symbol, or an empty string names nothing.
 fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     let key = pair.child_by_field_name("key")?;
     match key.kind() {
@@ -346,30 +345,31 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
         "simple_symbol" => node_text(key, code)
             .strip_prefix(':')
             .map(|name| name.to_string()),
-        "string" => {
-            if named_children(key)
-                .iter()
-                .any(|child| child.kind() == "interpolation")
-            {
-                return None;
-            }
-            // The whole delimiter run is stripped (Python `"""k"""` names `k`); a prefixed
-            // literal (`r"k"`) starts with no quote and names nothing.
-            let text = node_text(key, code);
-            let quote = text
-                .chars()
-                .next()
-                .filter(|first| matches!(first, '"' | '\'' | '`'))?;
-            let delimiter_length = text.chars().take_while(|char| *char == quote).count();
-            if text.len() < 2 * delimiter_length {
-                return None;
-            }
-            let (delimiter, rest) = text.split_at(delimiter_length);
-            let inner = rest.strip_suffix(delimiter)?;
-            (!inner.is_empty()).then(|| inner.to_string())
-        }
+        "string" | "delimited_symbol" => find_string_literal_content(key, code),
         _ => None,
     }
+}
+
+/// The literal's content as written (escapes kept), read from the grammar's content children so
+/// delimiters and prefixes (`"""k"""`, `r"k"`, `%q(k)`, `:"k"`) never leak into it. JavaScript
+/// splits the content into `string_fragment` and `escape_sequence` siblings; Ruby and Python emit
+/// `string_content` (Python nests escapes inside it). Interpolation makes the key unstable.
+fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let children = named_children(literal);
+    if children.iter().any(|child| child.kind() == "interpolation") {
+        return None;
+    }
+    let content: String = children
+        .iter()
+        .filter(|child| {
+            matches!(
+                child.kind(),
+                "string_content" | "string_fragment" | "escape_sequence"
+            )
+        })
+        .map(|child| node_text(*child, code))
+        .collect();
+    (!content.is_empty()).then_some(content)
 }
 
 /// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, or Java

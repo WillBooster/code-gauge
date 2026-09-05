@@ -491,6 +491,12 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['run', 'sym', 'str', undefined]);
+    expect(
+      functionsOf(
+        'ruby',
+        'h = { :"quoted" => -> { 1 }, :"q#{x}" => -> { 2 }, %q(pct) => -> { 3 }, "" => -> { 4 } }\n'
+      ).map((fn) => fn.name)
+    ).toEqual(['quoted', undefined, 'pct', undefined]);
     // Grouping parentheses are transparent, but `(a; b)` binds its last statement to nothing.
     expect(
       functionsOf('ruby', 'h = { run: (lambda { 1 }) }\nrun = (lambda { 2 })\nx = (-> { 3 })\ny = (a; -> { 4 })\n').map(
@@ -508,10 +514,13 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['f', 'run', 'b', 'run']);
-    // A triple-quoted key drops its whole delimiter; a prefixed literal names nothing.
+    // Delimiters and prefixes never leak into the name; an f-string key is not stable.
     expect(
-      functionsOf('python', 'd = { """t""": lambda: 1, r"raw": lambda: 2, "plain": lambda: 3 }\n').map((fn) => fn.name)
-    ).toEqual(['t', undefined, 'plain']);
+      functionsOf(
+        'python',
+        'd = { """t""": lambda: 1, r"raw": lambda: 2, f"x{y}": lambda: 3, "a\\nb": lambda: 4 }\n'
+      ).map((fn) => fn.name)
+    ).toEqual(['t', 'raw', undefined, String.raw`a\nb`]);
   });
 
   it('looks through grouping parentheses and TypeScript type wrappers to the binding site', () => {
