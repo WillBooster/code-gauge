@@ -472,7 +472,7 @@ describe('function names from binding sites', () => {
     ).toEqual(['f', 'run', 'run']);
   });
 
-  it('names Go, Kotlin, Ruby, and C++ functions assigned to variables, members, and qualified names', () => {
+  it('names Go, Kotlin, Ruby, Python, and C++ functions assigned to variables, members, and qualified names', () => {
     expect(
       functionsOf('go', 'package p\nfunc f() { run = func() {}; a, _ = func() {}, func() {}; m.run = func() {} }').map(
         (fn) => fn.name
@@ -487,6 +487,11 @@ describe('function names from binding sites', () => {
       functionsOf('ruby', 'self.run = -> { 1 }\nobj.run = lambda { 1 }\n@handler = -> { 2 }\n').map((fn) => fn.name)
     ).toEqual(['run', 'run', '@handler']);
     expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
+    expect(
+      functionsOf('python', 'def f():\n    obj.run = lambda: 1\n    self.a.b = lambda: 2\n    run = lambda: 3\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', 'run', 'b', 'run']);
   });
 
   it('looks through grouping parentheses and TypeScript type wrappers to the binding site', () => {

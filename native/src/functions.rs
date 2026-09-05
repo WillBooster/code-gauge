@@ -267,7 +267,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         return find_go_func_literal_name(node, parent, code);
     }
 
-    // Ruby lambdas assigned to a name take that name.
+    // Ruby and Python lambdas assigned to a name take that name.
     if node.kind() == "lambda" && parent.kind() == "assignment" {
         return find_ruby_assignment_name(parent, code);
     }
@@ -474,8 +474,9 @@ fn first_named_child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>>
         .find(|child| child.kind() == kind)
 }
 
-/// A Ruby assignment target: a local, constant, or instance/class/global variable, or the method of
-/// an attribute writer call (`self.run = ...`, `obj.run = ...` names `run`).
+/// A Ruby or Python `assignment` target: a local, constant, or Ruby instance/class/global variable,
+/// the method of a Ruby attribute writer call (`self.run = ...`), or a Python attribute
+/// (`obj.run = ...`); both member forms name `run`.
 fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     let left_node = assignment.child_by_field_name("left")?;
     match left_node.kind() {
@@ -485,6 +486,9 @@ fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<
         "call" if left_node.child_by_field_name("receiver").is_some() => left_node
             .child_by_field_name("method")
             .map(|method| node_text(method, code).to_string()),
+        "attribute" => left_node
+            .child_by_field_name("attribute")
+            .map(|attribute| node_text(attribute, code).to_string()),
         _ => None,
     }
 }
