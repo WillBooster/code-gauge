@@ -669,8 +669,12 @@ describe('cli: configuration discovery and validation', () => {
       // A nearer config wins over the ancestor's.
       writeFileSync(path.join(dir, 'pkg', 'code-gauge.config.json'), JSON.stringify({ rank: { top: 2 } }));
       expect(runCli([path.join(dir, 'pkg', 'src')]).stdout).toContain('Refactoring candidates (top 2):');
-      // A single-file target searches from its directory.
-      expect(JSON.parse(runCli([path.join(dir, 'pkg', 'src', 'a.ts'), '--json']).stdout).files).toHaveLength(1);
+      // A single-file target searches from its directory: the nearer config's rejected setting
+      // fails the run, so discovery demonstrably reached it.
+      writeFileSync(path.join(dir, 'pkg', 'code-gauge.config.json'), JSON.stringify({ rank: { top: 0 } }));
+      const singleFile = runCli([path.join(dir, 'pkg', 'src', 'a.ts')]);
+      expect(singleFile.status).toBe(1);
+      expect(singleFile.stderr).toContain('"rank.top" must be a positive integer');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
