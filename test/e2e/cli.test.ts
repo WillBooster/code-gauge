@@ -482,22 +482,31 @@ describe('cli: ranking details', () => {
 
 describe('cli: file discovery', () => {
   it('maps every supported extension, including alternate and uppercase spellings, and skips generated names', () => {
+    // Content only the C++ grammar accepts: parsed as C it yields two functions (`n`, `A`), as
+    // C++ the single function `f`, so the reported worst function reveals which grammar ran.
+    const cppOnly = 'namespace n { class A { public: int f() { return 1; } }; }\n';
+    const cppSpellings = [
+      'impl.cc',
+      'impl.cxx',
+      'impl.cpp',
+      'impl.c++',
+      'impl.cp',
+      'impl.tcc',
+      'Upper.C',
+      'header.h',
+      'header.hh',
+      'header.hpp',
+      'header.hxx',
+    ];
     const files: Record<string, string> = {
       ...Object.fromEntries(Object.entries(trivialSource).map(([extension, code]) => [`base.${extension}`, code])),
+      ...Object.fromEntries(cppSpellings.map((file) => [file, cppOnly])),
       'react.jsx': 'export const C = () => <p />;\n',
       'react.tsx': 'export const C = (): JSX.Element => <p />;\n',
       'module.mjs': trivialSource.js as string,
       'common.cjs': 'module.exports = 1;\n',
       'module.mts': trivialSource.ts as string,
       'common.cts': trivialSource.ts as string,
-      'header.h': 'int f(void);\n',
-      'header.hh': 'int f();\n',
-      'header.hpp': 'int f();\n',
-      'header.hxx': 'int f();\n',
-      'impl.cc': trivialSource.cpp as string,
-      'impl.cxx': trivialSource.cpp as string,
-      'impl.c++': trivialSource.cpp as string,
-      'Upper.C': trivialSource.cpp as string,
       'script.kts': trivialSource.kt as string,
       // Generated or bundled artifacts are skipped by name.
       'types.d.ts': 'export declare function f(): void;\n',
@@ -509,7 +518,10 @@ describe('cli: file discovery', () => {
     };
     const dir = makeProject('extensions', files);
     try {
-      expect(reportedFiles(dir)).toEqual(
+      const report = JSON.parse(runCli([dir, '--json', '--top', '100']).stdout) as {
+        files: { file: string; worstFunction?: { name: string } }[];
+      };
+      expect(report.files.map((file) => file.file).toSorted()).toEqual(
         Object.keys(files)
           .filter(
             (file) =>
@@ -517,6 +529,10 @@ describe('cli: file discovery', () => {
           )
           .toSorted()
       );
+      for (const file of cppSpellings) {
+        expect(report.files.find((entry) => entry.file === file)?.worstFunction?.name, file).toBe('f');
+      }
+      expect(report.files.find((entry) => entry.file === 'base.c')?.worstFunction?.name).toBe('f');
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
