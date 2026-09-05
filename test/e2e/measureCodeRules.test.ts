@@ -461,6 +461,18 @@ describe('function names from binding sites', () => {
     expect(
       functionsOf('csharp', 'class A { void F() { this.Run = () => 1; run = x => x; } }').map((fn) => fn.name)
     ).toEqual(['F', 'Run', 'run']);
+    expect(
+      functionsOf('java', 'class A { void f() { this.run = () -> 1; run = () -> 2; } }').map((fn) => fn.name)
+    ).toEqual(['f', 'run', 'run']);
+  });
+
+  it('looks through grouping parentheses and TypeScript type wrappers to the binding site', () => {
+    expect(
+      functionsOf(
+        'typescript',
+        'const o = { run: (() => 1), typed: (() => 2) as () => number, sat: (() => 3) satisfies Fn };\nobj.run = (() => 4)!;\nconst v = (() => 5) as Fn;'
+      ).map((fn) => fn.name)
+    ).toEqual(['run', 'typed', 'sat', 'run', 'v']);
   });
 });
 

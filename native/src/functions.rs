@@ -200,6 +200,14 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
     nodes
 }
 
+/// Expression wrappers whose first named child is the wrapped value, transparent for naming.
+const TRANSPARENT_VALUE_WRAPPER_TYPES: &[&str] = &[
+    "parenthesized_expression",
+    "as_expression",
+    "satisfies_expression",
+    "non_null_expression",
+];
+
 pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
     if let Some(wrapped_name) =
@@ -224,7 +232,18 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         return Some(declarator_name);
     }
 
-    let parent = node.parent()?;
+    // Grouping parentheses and TypeScript type wrappers (`(() => 1)`, `(() => 2) as Fn`) do not
+    // change what a function is bound to, so the binding site is looked up past them.
+    let mut bound = node;
+    while let Some(wrapper) = bound.parent().filter(|wrapper| {
+        TRANSPARENT_VALUE_WRAPPER_TYPES.contains(&wrapper.kind())
+            && wrapper
+                .named_child(0)
+                .is_some_and(|inner| inner.id() == bound.id())
+    }) {
+        bound = wrapper;
+    }
+    let parent = bound.parent()?;
 
     // A Rust closure bound to a simple `let` identifier takes that identifier as its name.
     if node.kind() == "closure_expression" && parent.kind() == "let_declaration" {
@@ -309,8 +328,8 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 }
 
-/// The assigned identifier, or the member name of a JS member, Rust/C++ field, or C# member access
-/// (`a.b.run` names `run`); subscripts (`o["run"]`) name nothing.
+/// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, or Java
+/// field access (`a.b.run` names `run`); subscripts (`o["run"]`) name nothing.
 fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     let target = assignment.child_by_field_name("left")?;
     let name = match target.kind() {
@@ -318,6 +337,7 @@ fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
         "member_expression" => target.child_by_field_name("property")?,
         "field_expression" => target.child_by_field_name("field")?,
         "member_access_expression" => target.child_by_field_name("name")?,
+        "field_access" => target.child_by_field_name("field")?,
         _ => return None,
     };
     Some(node_text(name, code).to_string())
