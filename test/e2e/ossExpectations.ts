@@ -52,9 +52,10 @@ import type { LanguageName } from '../../src/index.js';
  * - gocognit/cognitive: gocognit charges SonarSource's +1 recursion increment (gin's `iterate`);
  *   code-gauge does not charge recursion (issue #22 — intentionally omitted, like PMD and the
  *   SonarQube analyzers).
- * - complexipy/cognitive: complexipy charges comprehensions themselves; code-gauge counts only
- *   statement-level decisions, so neither a comprehension nor its `if` filter is charged (dialect
- *   difference among Sonar ports).
+ * - complexipy/cognitive: complexipy charges a comprehension and its `if` filter; code-gauge
+ *   charges neither, treating the filter as a per-element predicate of one expression rather than
+ *   an extra execution path (ternaries, `case` guards, and statement conditions are charged). A
+ *   dialect difference among Sonar ports.
  * - sonarjs/cognitive: sonarjs attributes nested-closure content to the innermost enclosing
  *   function only, while code-gauge (like PMD) also attributes it to the enclosing declared
  *   function; a few remaining cases differ on JSX expressions, which sonarjs does not analyze,

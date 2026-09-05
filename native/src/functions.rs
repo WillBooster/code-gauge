@@ -261,8 +261,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         return unwrap_declarator_name(parent.child_by_field_name("declarator"), code);
     }
 
-    // A Go func literal bound via `add := func...` or `var add = func...` takes the identifier at
-    // the same list position.
+    // A Go func literal bound via `add := func...`, `var add = func...`, or `add = func...` takes
+    // the identifier (or selector field) at the same list position.
     if node.kind() == "func_literal" && parent.kind() == "expression_list" {
         return find_go_func_literal_name(node, parent, code);
     }
@@ -273,7 +273,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 
     // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`, also through
-    // a label or annotation prefix) takes the property name.
+    // a label or annotation prefix) takes the property name; one assigned to a variable or member
+    // (`run = { ... }`, `obj.run = { ... }`) takes the assigned name.
     if node.kind() == "lambda_literal" || node.kind() == "anonymous_function" {
         let mut holder = parent;
         while holder.kind() == "prefix_expression" {
@@ -281,6 +282,9 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         }
         if holder.kind() == "property_declaration" {
             return find_kotlin_property_name(holder, code);
+        }
+        if holder.kind() == "assignment" {
+            return find_kotlin_assignment_name(holder, code);
         }
     }
     if (node.kind() == "block" || node.kind() == "do_block") && is_ruby_lambda_call(parent, code) {
@@ -293,8 +297,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 
     // An object-literal property (`{ run: () => {} }`) names its value after the key; an assignment
-    // (`obj.run = () => {}`, `run = () => {}`, Rust/C++ `self.cb = |x| x`, C# `this.Run = () => 1`)
-    // after its target.
+    // (`obj.run = () => {}`, `run = () => {}`, Rust/C++ `self.cb = |x| x`, C++ `N::run = [] {}`,
+    // C# `this.Run = () => 1`) after its target.
     if parent.kind() == "pair" {
         return find_pair_key_name(parent, code);
     }
@@ -314,22 +318,31 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         .map(|name| node_text(name, code).to_string())
 }
 
-/// The key of a `pair` when it is a plain or string-literal property name; a computed key
-/// (`[k]: ...`) names nothing.
+/// The key of a `pair` when it is a plain or string-literal property name (the literal's text
+/// without its quotes, escapes kept as written); a computed key (`[k]: ...`) or an empty string
+/// names nothing.
 fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     let key = pair.child_by_field_name("key")?;
     match key.kind() {
         "property_identifier" => Some(node_text(key, code).to_string()),
-        "string" => named_children(key)
-            .into_iter()
-            .find(|child| child.kind() == "string_fragment" || child.kind() == "string_content")
-            .map(|fragment| node_text(fragment, code).to_string()),
+        "string" => {
+            let text = node_text(key, code);
+            let quote = text
+                .chars()
+                .next()
+                .filter(|first| matches!(first, '"' | '\'' | '`'))?;
+            let inner = text
+                .strip_prefix(quote)
+                .and_then(|rest| rest.strip_suffix(quote))?;
+            (!inner.is_empty()).then(|| inner.to_string())
+        }
         _ => None,
     }
 }
 
 /// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, or Java
-/// field access (`a.b.run` names `run`); subscripts (`o["run"]`) name nothing.
+/// field access (`a.b.run` names `run`) or a C++ qualified name (`N::run`); subscripts (`o["run"]`)
+/// name nothing.
 fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     let target = assignment.child_by_field_name("left")?;
     let name = match target.kind() {
@@ -338,9 +351,22 @@ fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
         "field_expression" => target.child_by_field_name("field")?,
         "member_access_expression" => target.child_by_field_name("name")?,
         "field_access" => target.child_by_field_name("field")?,
+        "qualified_identifier" => return unwrap_declarator_name(Some(target), code),
         _ => return None,
     };
     Some(node_text(name, code).to_string())
+}
+
+/// The Kotlin assignment target: the `directly_assignable_expression`'s last identifier, i.e. the
+/// variable itself or the member of the trailing navigation suffix (`obj.run` names `run`).
+fn find_kotlin_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let target = first_named_child_of_kind(assignment, "directly_assignable_expression")?;
+    let holder = named_children(target)
+        .into_iter()
+        .rfind(|child| child.kind() == "navigation_suffix")
+        .unwrap_or(target);
+    first_named_child_of_kind(holder, "simple_identifier")
+        .map(|name| node_text(name, code).to_string())
 }
 
 /// Names of C# and Kotlin members whose grammars carry no usable `name` field: accessors are
@@ -448,12 +474,18 @@ fn first_named_child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>>
         .find(|child| child.kind() == kind)
 }
 
+/// A Ruby assignment target: a local, constant, or instance/class/global variable, or the method of
+/// an attribute writer call (`self.run = ...`, `obj.run = ...` names `run`).
 fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     let left_node = assignment.child_by_field_name("left")?;
-    if left_node.kind() == "identifier" || left_node.kind() == "constant" {
-        Some(node_text(left_node, code).to_string())
-    } else {
-        None
+    match left_node.kind() {
+        "identifier" | "constant" | "instance_variable" | "class_variable" | "global_variable" => {
+            Some(node_text(left_node, code).to_string())
+        }
+        "call" if left_node.child_by_field_name("receiver").is_some() => left_node
+            .child_by_field_name("method")
+            .map(|method| node_text(method, code).to_string()),
+        _ => None,
     }
 }
 
@@ -480,7 +512,7 @@ fn find_go_func_literal_name(
         .collect();
     let value_index = values.iter().position(|child| child.id() == node.id())?;
 
-    if holder.kind() == "short_var_declaration" {
+    if holder.kind() == "short_var_declaration" || holder.kind() == "assignment_statement" {
         let targets = holder.child_by_field_name("left").map(|left| {
             named_children(left)
                 .into_iter()
@@ -506,12 +538,16 @@ fn find_go_func_literal_name(
     None
 }
 
-/// Go's blank identifier `_` discards the value and creates no callable binding.
+/// Go's blank identifier `_` discards the value and creates no callable binding; a selector target
+/// (`m.run = func...`) names its field.
 fn as_go_binding_name(target: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
     match target {
         Some(target) if target.kind() == "identifier" && node_text(target, code) != "_" => {
             Some(node_text(target, code).to_string())
         }
+        Some(target) if target.kind() == "selector_expression" => target
+            .child_by_field_name("field")
+            .map(|field| node_text(field, code).to_string()),
         _ => None,
     }
 }

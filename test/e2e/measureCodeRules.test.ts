@@ -458,12 +458,35 @@ describe('function names from binding sites', () => {
         'const o = { run: () => 1, "quoted": function () {}, [k]: () => 2 };\nobj.run = () => 3;\nplain = () => 4;\na.b.c = function () {};\no["s"] = () => 5;'
       ).map((fn) => fn.name)
     ).toEqual(['run', 'quoted', undefined, 'run', 'plain', 'c', undefined]);
+    // A string key keeps its escapes as written; an empty key names nothing.
+    expect(
+      functionsOf('javascript', String.raw`const o = { 'user\'s': () => {}, 'a\nb': () => {}, '': () => {} };`).map(
+        (fn) => fn.name
+      )
+    ).toEqual([String.raw`user\'s`, String.raw`a\nb`, undefined]);
     expect(
       functionsOf('csharp', 'class A { void F() { this.Run = () => 1; run = x => x; } }').map((fn) => fn.name)
     ).toEqual(['F', 'Run', 'run']);
     expect(
       functionsOf('java', 'class A { void f() { this.run = () -> 1; run = () -> 2; } }').map((fn) => fn.name)
     ).toEqual(['f', 'run', 'run']);
+  });
+
+  it('names Go, Kotlin, Ruby, and C++ functions assigned to variables, members, and qualified names', () => {
+    expect(
+      functionsOf('go', 'package p\nfunc f() { run = func() {}; a, _ = func() {}, func() {}; m.run = func() {} }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', 'run', 'a', undefined, 'run']);
+    expect(functionsOf('kotlin', 'fun f() { run = { 1 }; obj.run = { 2 } }').map((fn) => fn.name)).toEqual([
+      'f',
+      'run',
+      'run',
+    ]);
+    expect(
+      functionsOf('ruby', 'self.run = -> { 1 }\nobj.run = lambda { 1 }\n@handler = -> { 2 }\n').map((fn) => fn.name)
+    ).toEqual(['run', 'run', '@handler']);
+    expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
   });
 
   it('looks through grouping parentheses and TypeScript type wrappers to the binding site', () => {
@@ -526,6 +549,8 @@ describe('DepDegree across languages', () => {
         'int f(int* q, std::vector<int> xs) { int* p = q; int& r = *q; for (const auto& x : xs) { r += x; } int a[2] = {1, 2}; int (*fp)(int) = g; return *p + r + a[0] + fp(1); }'
       )
     ).toEqual([9]);
+    // A member pointer declares its name as a type_identifier inside a pointer_type_declarator.
+    expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* p = q; return p == q; }')).toEqual([3]);
   });
 
   it('recognizes C# pattern, out-variable, and foreach bindings', () => {

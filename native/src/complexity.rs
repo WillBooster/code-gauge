@@ -563,8 +563,10 @@ fn find_boolean_operator_text<'a>(binary_node: Node<'_>, code: &Source<'a>) -> O
 }
 
 /// Java `guard`, C# `when_clause`, Ruby `if_guard`, a Python `case` guard (an `if_clause` under a
-/// `case_clause`; the same node type filters a comprehension, which is an expression rather than a
-/// statement-level decision), and Rust guards inside `match_pattern`. A C# exception filter (`catch (E e) when (...)`, a `catch_filter_clause`) is
+/// `case_clause`), and Rust guards inside `match_pattern`. A Python comprehension filter shares
+/// the `if_clause` type but is a per-element predicate of one expression, not an extra execution
+/// path: Sonar ports differ on it (complexipy charges it), and code-gauge does not, unlike
+/// ternaries and conditions, which are charged. A C# exception filter (`catch (E e) when (...)`, a `catch_filter_clause`) is
 /// deliberately not charged: the catch itself already counts, and the filter is part of the same
 /// handler condition rather than an extra path (SonarC# does not charge it either).
 fn is_pattern_guard(node: Node<'_>) -> bool {
