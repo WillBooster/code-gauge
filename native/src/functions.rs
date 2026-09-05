@@ -200,13 +200,32 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
     nodes
 }
 
-/// Expression wrappers whose first named child is the wrapped value, transparent for naming.
+/// Expression wrappers whose first named child is the wrapped value, transparent for naming. Ruby's
+/// `parenthesized_statements` counts only when it holds that single value (`(a; b)` does not).
 const TRANSPARENT_VALUE_WRAPPER_TYPES: &[&str] = &[
     "parenthesized_expression",
+    "parenthesized_statements",
     "as_expression",
     "satisfies_expression",
     "non_null_expression",
 ];
+
+/// Climbs from a value through grouping parentheses and TypeScript type wrappers
+/// (`(() => 1)`, `(() => 2) as Fn`), which do not change what it is bound to, to the outermost
+/// wrapper whose binding site is then looked up.
+fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
+    let mut bound = node;
+    while let Some(wrapper) = bound.parent().filter(|wrapper| {
+        TRANSPARENT_VALUE_WRAPPER_TYPES.contains(&wrapper.kind())
+            && (wrapper.kind() != "parenthesized_statements" || wrapper.named_child_count() == 1)
+            && wrapper
+                .named_child(0)
+                .is_some_and(|inner| inner.id() == bound.id())
+    }) {
+        bound = wrapper;
+    }
+    bound
+}
 
 pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
@@ -232,17 +251,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         return Some(declarator_name);
     }
 
-    // Grouping parentheses and TypeScript type wrappers (`(() => 1)`, `(() => 2) as Fn`) do not
-    // change what a function is bound to, so the binding site is looked up past them.
-    let mut bound = node;
-    while let Some(wrapper) = bound.parent().filter(|wrapper| {
-        TRANSPARENT_VALUE_WRAPPER_TYPES.contains(&wrapper.kind())
-            && wrapper
-                .named_child(0)
-                .is_some_and(|inner| inner.id() == bound.id())
-    }) {
-        bound = wrapper;
-    }
+    let bound = unwrap_transparent_value_wrappers(node);
     let parent = bound.parent()?;
 
     // A Rust closure bound to a simple `let` identifier takes that identifier as its name.
@@ -287,14 +296,13 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
             return find_kotlin_assignment_name(holder, code);
         }
     }
+    // A `lambda { }` / `proc { }` block is measured, but the call around it is what gets bound.
     if (node.kind() == "block" || node.kind() == "do_block") && is_ruby_lambda_call(parent, code) {
-        return match parent.parent() {
-            Some(grandparent) if grandparent.kind() == "assignment" => {
-                find_ruby_assignment_name(grandparent, code)
+        return match unwrap_transparent_value_wrappers(parent).parent() {
+            Some(holder) if holder.kind() == "assignment" => {
+                find_ruby_assignment_name(holder, code)
             }
-            Some(grandparent) if grandparent.kind() == "pair" => {
-                find_pair_key_name(grandparent, code)
-            }
+            Some(holder) if holder.kind() == "pair" => find_pair_key_name(holder, code),
             _ => None,
         };
     }

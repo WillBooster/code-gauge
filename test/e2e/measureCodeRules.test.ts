@@ -491,6 +491,12 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['run', 'sym', 'str', undefined]);
+    // Grouping parentheses are transparent, but `(a; b)` binds its last statement to nothing.
+    expect(
+      functionsOf('ruby', 'h = { run: (lambda { 1 }) }\nrun = (lambda { 2 })\nx = (-> { 3 })\ny = (a; -> { 4 })\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'run', 'x', undefined]);
     expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
     expect(functionsOf('rust', 'fn f() { let s = S { cb: |x| x }; s.cb = |y| y; }').map((fn) => fn.name)).toEqual([
       'f',
