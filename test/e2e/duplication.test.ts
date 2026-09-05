@@ -894,25 +894,32 @@ function isolateFunction(code: string, language: LanguageName, keep: RegExp): st
 }
 
 describe('duplication: cross-file clones in every language', () => {
-  // The two renamed copies of each per-language fixture are isolated into two files (each keeps
-  // the fixture's imports/class scaffolding but only one of the functions), so the cross-file
-  // matcher must find exactly the one clone pair the within-file detector finds.
+  // The two renamed copies of each clone pair are isolated into two files (each keeps the
+  // fixture's imports/class scaffolding but only one of the functions), so the cross-file matcher
+  // must find exactly that one pair. The JSX/TSX fixtures hold two pairs (the logic clone and the
+  // markup clone), each exercised on its own.
   for (const { file, language } of fixtureExpectations) {
-    it(`matches the renamed copy across files in ${language}`, () => {
-      const code = readDuplicationFixture(file);
-      const first = isolateFunction(code, language, /summarize_?orders|OrderCard/iu);
-      const second = isolateFunction(code, language, /summarize_?refunds|RefundCard/iu);
-      expect(first).not.toBe(second);
+    const pairs: [RegExp, RegExp][] = [[/summarize_?orders/iu, /summarize_?refunds/iu]];
+    if (language === 'jsx' || language === 'tsx') {
+      pairs.push([/^OrderCard$/u, /^RefundCard$/u]);
+    }
+    for (const [keepFirst, keepSecond] of pairs) {
+      it(`matches the renamed copy of ${keepFirst.source} across files in ${language}`, () => {
+        const code = readDuplicationFixture(file);
+        const first = isolateFunction(code, language, keepFirst);
+        const second = isolateFunction(code, language, keepSecond);
+        expect(first).not.toBe(second);
 
-      const metrics = measureCrossFileDuplication([
-        { file: 'a', ...collectCrossFileDuplicationFileData(first, { language }) },
-        { file: 'b', ...collectCrossFileDuplicationFileData(second, { language }) },
-      ]);
+        const metrics = measureCrossFileDuplication([
+          { file: 'a', ...collectCrossFileDuplicationFileData(first, { language }) },
+          { file: 'b', ...collectCrossFileDuplicationFileData(second, { language }) },
+        ]);
 
-      expect(metrics.groups.map((group) => group.files)).toEqual([['a', 'b']]);
-      expect(metrics.duplicateBlockCount).toBe(1);
-      expect(Object.keys(metrics.duplicateLineNumbersByFile).toSorted()).toEqual(['a', 'b']);
-    });
+        expect(metrics.groups.map((group) => group.files)).toEqual([['a', 'b']]);
+        expect(metrics.duplicateBlockCount).toBe(1);
+        expect(Object.keys(metrics.duplicateLineNumbersByFile).toSorted()).toEqual(['a', 'b']);
+      });
+    }
   }
 });
 
