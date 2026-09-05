@@ -306,6 +306,12 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     if parent.kind() == "pair" {
         return find_pair_key_name(parent, code);
     }
+    // A Rust struct-literal field (`S { cb: || 1 }`) names its closure after the field.
+    if parent.kind() == "field_initializer" {
+        return parent
+            .child_by_field_name("field")
+            .map(|field| node_text(field, code).to_string());
+    }
     if parent.kind() == "assignment_expression" {
         return find_assignment_target_name(parent, code);
     }
