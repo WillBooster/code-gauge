@@ -312,9 +312,9 @@ const expectations: Record<LanguageName, ConstructExpectation> = {
     file: 'constructs.kt',
     // receive: labeled for +1, for +2, if +3, `continue@outer` +1, if +2 with `&&` +1, else-if
     // +1 with `||` +1, else +1, when inside the else branch +3, do-while +1, two catches +2 = 19.
-    // Bodyless interface members, `init` blocks, and a visibility-only `private set` are not
-    // functions; property getters/setters, secondary constructors, anonymous functions, and
-    // lambdas are. NCSS counts the package and import lines, class/object/companion
+    // A bodyless interface method is a function as in Java (the first entry); a bodyless
+    // interface property, `init` blocks, and a visibility-only `private set` are not, while
+    // property getters/setters, secondary constructors, anonymous functions, and lambdas are. NCSS counts the package and import lines, class/object/companion
     // declarations, enum-constant bodies, `init` blocks, and every when entry and its body.
     ncss: 126,
     cognitiveComplexity: 36,
