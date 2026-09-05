@@ -612,11 +612,13 @@ describe('robustness and option normalization', () => {
     const pair = 'function a(x) { return x + 1; }\nfunction b(y) { return y + 1; }\n';
     const groups = (minTokens: number): number =>
       measureCode(pair, { language: 'javascript', duplication: { minTokens } }).duplication.duplicateBlockGroupCount;
-    // The pair is ~12 tokens: below the default 40, above 5.
+    // The matched region is 7 normalized tokens: below the default 40; 7.5 truncates to 7 (still
+    // detected) whereas rounding up to 8 would suppress it.
     expect(groups(Number.NaN)).toBe(0);
     expect(groups(2 ** 40)).toBe(0);
-    expect(groups(5)).toBe(1);
-    expect(groups(5.9)).toBe(1);
+    expect(groups(8)).toBe(0);
+    expect(groups(7)).toBe(1);
+    expect(groups(7.5)).toBe(1);
   });
 });
 
