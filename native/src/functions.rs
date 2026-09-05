@@ -273,8 +273,15 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         };
     }
 
+    // A JavaScript class field (`handle = () => {}`) names its property through the `property`
+    // field; TypeScript's `public_field_definition` exposes the same thing as `name`.
+    let field_name = if parent.kind() == "field_definition" {
+        "property"
+    } else {
+        "name"
+    };
     parent
-        .child_by_field_name("name")
+        .child_by_field_name(field_name)
         .map(|name| node_text(name, code).to_string())
 }
 

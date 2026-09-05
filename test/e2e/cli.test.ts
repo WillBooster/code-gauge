@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -363,5 +372,458 @@ describe('cli: error handling', () => {
 
     expect(status).toBe(1);
     expect(stderr).toMatch(/does-not-exist\.ts/);
+  });
+});
+
+/** Writes files into a fresh temp project (with an empty config to bound the config search). */
+function makeProject(prefix: string, files: Record<string, string>): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), `code-gauge-${prefix}-`));
+  writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}\n');
+  for (const [file, code] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(dir, file)), { recursive: true });
+    writeFileSync(path.join(dir, file), code);
+  }
+  return dir;
+}
+
+function reportedFiles(dir: string, ...args: string[]): string[] {
+  const report = JSON.parse(runCli([dir, '--json', '--top', '100', ...args]).stdout) as { files: { file: string }[] };
+  return report.files.map((file) => file.file.replaceAll(path.sep, '/')).toSorted();
+}
+
+const trivialSource: Record<string, string> = {
+  c: 'int f(void) { return 1; }\n',
+  cpp: 'int f() { return 1; }\n',
+  cs: 'class A { int F() { return 1; } }\n',
+  go: 'package p\nfunc f() int { return 1 }\n',
+  java: 'class A { int f() { return 1; } }\n',
+  js: 'export function f() { return 1; }\n',
+  kt: 'fun f() = 1\n',
+  py: 'def f():\n    return 1\n',
+  rb: 'def f\n  1\nend\n',
+  rs: 'fn f() -> i32 { 1 }\n',
+  ts: 'export function f(): number { return 1; }\n',
+};
+
+describe('cli: ranking details', () => {
+  it('scores files by summed percentile ranks and breaks ties by NCSS then name', () => {
+    const { stdout } = runCli([projectDir]);
+    // risky.ts beats a.ts and b.ts on worst-function cognitive complexity and NCSS (2/3 each),
+    // nobody has duplication: 0.67 + 0 + 0.67. The equal files tie at 0 and sort by name.
+    expect(stdout).toMatch(/^1\. src[\\/]risky\.ts \(score 1\.33\)/mu);
+    expect(stdout).toMatch(/^2\. src[\\/]a\.ts \(score 0\.00\)/mu);
+    expect(stdout).toMatch(/^3\. src[\\/]b\.ts \(score 0\.00\)/mu);
+  });
+
+  it('reports a single file relative to its directory', () => {
+    const { status, stdout } = runCli([path.join(projectDir, 'src', 'risky.ts')]);
+    expect(status).toBe(0);
+    expect(stdout).toMatch(/^Measured 1 files under .*risky\.ts \(code LOC 14, NCSS 16, functions 1\)/mu);
+    expect(stdout).toContain('1. risky.ts (score 0.00)');
+  });
+
+  it('lists every file when --top exceeds the file count', () => {
+    const { stdout } = runCli([projectDir, '--top', '50']);
+    expect(stdout).toContain('Refactoring candidates (top 3):');
+    expect(stdout).not.toContain(' of 3');
+  });
+
+  it('reports an empty project without candidates', () => {
+    const emptyDir = makeProject('empty', { 'README.md': '# nothing\n' });
+    try {
+      const { status, stdout } = runCli([emptyDir]);
+      expect(status).toBe(0);
+      expect(stdout).toMatch(/^Measured 0 files under /mu);
+      expect(stdout).toContain('No measurable files found.');
+      const report = JSON.parse(runCli([emptyDir, '--json']).stdout);
+      expect(report).toMatchObject({
+        summary: { fileCount: 0 },
+        totalRankedFiles: 0,
+        truncated: false,
+        files: [],
+        warnings: [],
+      });
+    } finally {
+      rmSync(emptyDir, { recursive: true, force: true });
+    }
+  });
+
+  it('measures explicitly targeted test and declaration files despite the default exclusions', () => {
+    const dir = makeProject('explicit', {
+      'sample.test.ts': 'export function testOnly() { return 42; }\n',
+      'types.d.ts': 'export declare function f(): void;\n',
+    });
+    try {
+      expect(reportedFiles(dir)).toEqual([]);
+      expect(JSON.parse(runCli([path.join(dir, 'sample.test.ts'), '--json']).stdout).summary.functionCount).toBe(1);
+      expect(JSON.parse(runCli([path.join(dir, 'types.d.ts'), '--json']).stdout).summary.fileCount).toBe(1);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('measures files with syntax errors instead of skipping them', () => {
+    const dir = makeProject('broken', {
+      'broken.ts':
+        'export function broken(value: number) {\n  if (value > 0 {\n    return 1;\n  }\n}\nconst dangling = {',
+    });
+    try {
+      const report = JSON.parse(runCli([dir, '--json']).stdout);
+      expect(report.errors).toEqual([]);
+      expect(report.files[0]).toMatchObject({
+        file: 'broken.ts',
+        worstFunction: expect.objectContaining({ name: 'broken' }),
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('cli: file discovery', () => {
+  it('maps every supported extension, including alternate and uppercase spellings, and skips generated names', () => {
+    // Content only the C++ grammar accepts: parsed as C it yields two functions (`n`, `A`), as
+    // C++ the single function `f`, so the reported worst function reveals which grammar ran.
+    const cppOnly = 'namespace n { class A { public: int f() { return 1; } }; }\n';
+    const cppSpellings = [
+      'impl.cc',
+      'impl.cxx',
+      'impl.cpp',
+      'impl.c++',
+      'impl.cp',
+      'impl.tcc',
+      'Upper.C',
+      'header.h',
+      'header.hh',
+      'header.hpp',
+      'header.hxx',
+    ];
+    const files: Record<string, string> = {
+      ...Object.fromEntries(Object.entries(trivialSource).map(([extension, code]) => [`base.${extension}`, code])),
+      ...Object.fromEntries(cppSpellings.map((file) => [file, cppOnly])),
+      'react.jsx': 'export const C = () => <p />;\n',
+      'react.tsx': 'export const C = (): JSX.Element => <p />;\n',
+      'module.mjs': trivialSource.js as string,
+      'common.cjs': 'module.exports = 1;\n',
+      'module.mts': trivialSource.ts as string,
+      'common.cts': trivialSource.ts as string,
+      'script.kts': trivialSource.kt as string,
+      // Generated or bundled artifacts are skipped by name.
+      'types.d.ts': 'export declare function f(): void;\n',
+      'types.d.mts': 'export declare function f(): void;\n',
+      'bundle.min.js': 'function f(){return 1}\n',
+      '.pnp.cjs': 'module.exports = 1;\n',
+      'notes.txt': 'plain\n',
+      Makefile: 'all:\n',
+    };
+    const dir = makeProject('extensions', files);
+    try {
+      const report = JSON.parse(runCli([dir, '--json', '--top', '100']).stdout) as {
+        files: { file: string; worstFunction?: { name: string } }[];
+      };
+      expect(report.files.map((file) => file.file).toSorted()).toEqual(
+        Object.keys(files)
+          .filter(
+            (file) =>
+              !['types.d.ts', 'types.d.mts', 'bundle.min.js', '.pnp.cjs', 'notes.txt', 'Makefile'].includes(file)
+          )
+          .toSorted()
+      );
+      for (const file of cppSpellings) {
+        expect(report.files.find((entry) => entry.file === file)?.worstFunction?.name, file).toBe('f');
+      }
+      expect(report.files.find((entry) => entry.file === 'base.c')?.worstFunction?.name).toBe('f');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips test files by name pattern and test directories unless --include-tests', () => {
+    const production = {
+      'src/app.js': trivialSource.js as string,
+      'src/contest.js': trivialSource.js as string,
+      'src/testing_utils.py': trivialSource.py as string,
+      'src/attestation.rb': trivialSource.rb as string,
+      'src/latest.go': trivialSource.go as string,
+    };
+    const tests = {
+      'src/app.test.js': trivialSource.js as string,
+      'src/app.spec.ts': trivialSource.ts as string,
+      'src/app_test.go': trivialSource.go as string,
+      'src/app-test.js': trivialSource.js as string,
+      'src/test_app.py': trivialSource.py as string,
+      'src/test-app.js': trivialSource.js as string,
+      'src/test.js': trivialSource.js as string,
+      'src/latest_test.rb': trivialSource.rb as string,
+      'src/__tests__/deep.js': trivialSource.js as string,
+      'tests/deep.py': trivialSource.py as string,
+      'spec/deep.rb': trivialSource.rb as string,
+      'test/deep.ts': trivialSource.ts as string,
+    };
+    const dir = makeProject('patterns', { ...production, ...tests });
+    try {
+      expect(reportedFiles(dir)).toEqual(Object.keys(production).toSorted());
+      expect(reportedFiles(dir, '--include-tests')).toEqual(
+        [...Object.keys(production), ...Object.keys(tests)].toSorted()
+      );
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), JSON.stringify({ includeTests: true }));
+      expect(reportedFiles(dir)).toHaveLength(Object.keys(production).length + Object.keys(tests).length);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('skips generated, vendored, and tool directories but scans other directories', () => {
+    const scanned = {
+      'src/a.ts': trivialSource.ts as string,
+      'build/b.ts': trivialSource.ts as string,
+      'lib/nested/c.ts': trivialSource.ts as string,
+      '.hidden/d.ts': trivialSource.ts as string,
+    };
+    const skipped = {
+      'node_modules/pkg/index.js': trivialSource.js as string,
+      'dist/e.js': trivialSource.js as string,
+      'vendor/f.go': trivialSource.go as string,
+      'target/g.rs': trivialSource.rs as string,
+      'coverage/h.js': trivialSource.js as string,
+      '__pycache__/i.py': trivialSource.py as string,
+      '.venv/j.py': trivialSource.py as string,
+      'generated/k.ts': trivialSource.ts as string,
+      '__generated__/l.ts': trivialSource.ts as string,
+      'fixtures/m.ts': trivialSource.ts as string,
+      'test-fixtures/n.ts': trivialSource.ts as string,
+      '.git/o.ts': trivialSource.ts as string,
+      'src/obj/p.cs': trivialSource.cs as string,
+      'src/deep/vendor/q.rb': trivialSource.rb as string,
+    };
+    const dir = makeProject('directories', { ...scanned, ...skipped });
+    try {
+      expect(reportedFiles(dir)).toEqual(Object.keys(scanned).toSorted());
+      // Ignored directories stay ignored even with --include-tests.
+      expect(reportedFiles(dir, '--include-tests')).toEqual(Object.keys(scanned).toSorted());
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('follows symbolic links inside the root once, ignores links escaping it, and reports broken ones', () => {
+    const outsideDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-outside-'));
+    const dir = makeProject('symlinks', {
+      'src/real.ts': trivialSource.ts as string,
+      'src/sub/inner.ts': trivialSource.ts as string,
+    });
+    try {
+      writeFileSync(path.join(outsideDir, 'secret.ts'), trivialSource.ts as string);
+      symlinkSync(path.join(dir, 'src', 'real.ts'), path.join(dir, 'src', 'alias.ts'));
+      symlinkSync(path.join(dir, 'src', 'sub'), path.join(dir, 'src', 'subLink'));
+      // A link back to an ancestor must not recurse forever.
+      symlinkSync(dir, path.join(dir, 'src', 'sub', 'loop'));
+      symlinkSync(path.join(outsideDir, 'secret.ts'), path.join(dir, 'src', 'escape.ts'));
+      symlinkSync(path.join(dir, 'src', 'missing.ts'), path.join(dir, 'src', 'broken.ts'));
+
+      const { status, stdout, stderr } = runCli([dir, '--json']);
+      const report = JSON.parse(stdout) as { files: { file: string }[]; errors: string[] };
+      expect(status).toBe(0);
+      // real.ts is measured once (under whichever of its names is visited first), sub/ once.
+      expect(report.files).toHaveLength(2);
+      const names = report.files.map((file) => path.basename(file.file));
+      expect(names).toContain('inner.ts');
+      expect(names.filter((name) => name === 'alias.ts' || name === 'real.ts')).toHaveLength(1);
+      expect(report.errors).toHaveLength(1);
+      expect(report.errors[0]).toContain('broken.ts');
+      expect(stderr).toBe('');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(outsideDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('cli: scan errors and --fail-on-error', () => {
+  const runAsRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
+  it.skipIf(runAsRoot)('reports unreadable files as skipped and exits 1 only with --fail-on-error', () => {
+    const dir = makeProject('unreadable', {
+      'src/ok.ts': trivialSource.ts as string,
+      'src/locked.ts': trivialSource.ts as string,
+    });
+    const locked = path.join(dir, 'src', 'locked.ts');
+    chmodSync(locked, 0o000);
+    try {
+      const lenient = runCli([dir]);
+      expect(lenient.status).toBe(0);
+      expect(lenient.stdout).toMatch(/^Measured 1 files under /mu);
+      expect(lenient.stderr).toContain('Skipped 1 files or directories:');
+      expect(lenient.stderr).toMatch(/locked\.ts: .*(EACCES|permission denied)/iu);
+
+      expect(runCli([dir, '--fail-on-error']).status).toBe(1);
+      const json = JSON.parse(runCli([dir, '--json', '--fail-on-error']).stdout);
+      expect(json.errors).toHaveLength(1);
+      expect(json.summary.fileCount).toBe(1);
+
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), JSON.stringify({ failOnError: true }));
+      expect(runCli([dir]).status).toBe(1);
+    } finally {
+      chmodSync(locked, 0o644);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('rejects a missing --config file', () => {
+    const { status, stderr } = runCli([projectDir, '--config', path.join(projectDir, 'missing.config.json')]);
+    expect(status).toBe(1);
+    expect(stderr).toContain('Cannot read config file');
+  });
+});
+
+describe('cli: configuration discovery and validation', () => {
+  it('finds the nearest config above the target, for directories and single files alike', () => {
+    const dir = makeProject('walkup', { 'pkg/src/a.ts': riskyFile, 'pkg/src/b.ts': trivialSource.ts as string });
+    try {
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), JSON.stringify({ rank: { top: 1 } }));
+      expect(runCli([path.join(dir, 'pkg', 'src')]).stdout).toContain('Refactoring candidates (top 1 of 2):');
+      // A nearer config wins over the ancestor's.
+      writeFileSync(path.join(dir, 'pkg', 'code-gauge.config.json'), JSON.stringify({ rank: { top: 2 } }));
+      expect(runCli([path.join(dir, 'pkg', 'src')]).stdout).toContain('Refactoring candidates (top 2):');
+      // A single-file target searches from its directory: the nearer config's rejected setting
+      // fails the run, so discovery demonstrably reached it.
+      writeFileSync(path.join(dir, 'pkg', 'code-gauge.config.json'), JSON.stringify({ rank: { top: 0 } }));
+      const singleFile = runCli([path.join(dir, 'pkg', 'src', 'a.ts')]);
+      expect(singleFile.status).toBe(1);
+      expect(singleFile.stderr).toContain('"rank.top" must be a positive integer');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  const invalidConfigs: [string, string, string][] = [
+    ['invalid JSON', '{ rank: ', 'Invalid JSON in config file'],
+    ['a non-object root', '[]', 'must contain a JSON object'],
+    ['a non-object section', '{ "rank": 3 }', '"rank" must be an object'],
+    ['rank.top of 0', '{ "rank": { "top": 0 } }', '"rank.top" must be a positive integer'],
+    ['a string rank.top', '{ "rank": { "top": "3" } }', '"rank.top" must be a positive integer'],
+    ['an unknown rank key', '{ "rank": { "limit": 3 } }', 'unknown setting "limit" in "rank"'],
+    ['a non-boolean includeTests', '{ "includeTests": "yes" }', '"includeTests" must be a boolean'],
+    [
+      'duplication.minTokens of 0',
+      '{ "duplication": { "minTokens": 0 } }',
+      '"duplication.minTokens" must be a positive integer',
+    ],
+    [
+      'a negative duplication.maxGapTokens',
+      '{ "duplication": { "maxGapTokens": -1 } }',
+      '"duplication.maxGapTokens" must be a non-negative integer',
+    ],
+    [
+      'a fractional duplication.maxGapTokens',
+      '{ "duplication": { "maxGapTokens": 1.5 } }',
+      '"duplication.maxGapTokens" must be a non-negative integer',
+    ],
+    [
+      'duplication.minSimilarityPercent above 100',
+      '{ "duplication": { "minSimilarityPercent": 101 } }',
+      '"duplication.minSimilarityPercent" must be between 1 and 100',
+    ],
+    [
+      'an unknown duplication key',
+      '{ "duplication": { "threshold": 1 } }',
+      'unknown setting "threshold" in "duplication"',
+    ],
+    [
+      'a negative new-function limit',
+      '{ "gate": { "newFunction": { "maxNcss": -1 } } }',
+      '"gate.newFunction.maxNcss" must be a non-negative integer',
+    ],
+    [
+      'an unknown new-function key',
+      '{ "gate": { "newFunction": { "maxDepth": 1 } } }',
+      'unknown setting "maxDepth" in "gate.newFunction"',
+    ],
+    [
+      'a string tolerance',
+      '{ "gate": { "tolerance": { "ncss": "5" } } }',
+      '"gate.tolerance.ncss" must be a non-negative number',
+    ],
+    [
+      'a negative tolerance',
+      '{ "gate": { "tolerance": { "halsteadVolume": -1 } } }',
+      '"gate.tolerance.halsteadVolume" must be a non-negative number',
+    ],
+    [
+      'gate.matchSimilarityPercent of 0',
+      '{ "gate": { "matchSimilarityPercent": 0 } }',
+      '"gate.matchSimilarityPercent" must be a positive integer',
+    ],
+    [
+      'gate.matchSimilarityPercent above 100',
+      '{ "gate": { "matchSimilarityPercent": 101 } }',
+      '"gate.matchSimilarityPercent" must be between 1 and 100',
+    ],
+  ];
+  for (const [label, content, message] of invalidConfigs) {
+    it(`rejects ${label}`, () => {
+      const configFile = path.join(
+        projectDir,
+        `invalid-${invalidConfigs.findIndex(([name]) => name === label)}.config.json`
+      );
+      writeFileSync(configFile, content);
+      const { status, stderr } = runCli([projectDir, '--config', configFile]);
+      expect(status).toBe(1);
+      expect(stderr).toContain(message);
+    });
+  }
+
+  it('accepts fractional tolerances, zero new-function limits, and every documented default', () => {
+    const configFile = path.join(projectDir, 'full.config.json');
+    writeFileSync(
+      configFile,
+      JSON.stringify({
+        duplication: { minTokens: 40, maxGapTokens: 30, minSimilarityPercent: 70 },
+        rank: { top: 10 },
+        gate: {
+          newFunction: { maxCognitiveComplexity: 0, maxNcss: 60, maxNestingDepth: 4 },
+          tolerance: {
+            cognitiveComplexity: 2,
+            ncss: 5,
+            nestingDepth: 1,
+            depDegree: 10,
+            halsteadVolume: 12.5,
+            fileNcss: 20,
+            duplicateLines: 0,
+          },
+          matchSimilarityPercent: 70,
+        },
+        includeTests: false,
+        failOnError: false,
+      })
+    );
+    expect(runCli([projectDir, '--config', configFile]).status).toBe(0);
+  });
+});
+
+describe('cli: cross-file partner reporting', () => {
+  it('lists at most three partners in the text report and all of them in JSON', () => {
+    const dir = makeProject(
+      'partners',
+      Object.fromEntries(
+        ['a', 'b', 'c', 'd', 'e'].map((name) => [`src/${name}.ts`, cloneFile(`summarize${name.toUpperCase()}`, name)])
+      )
+    );
+    try {
+      const { stdout } = runCli([dir]);
+      expect(stdout).toMatch(
+        /src[\\/]a\.ts \(score [\d.]+\):.*shared with src[\\/]b\.ts, src[\\/]c\.ts, src[\\/]d\.ts, \.\.\.\)/u
+      );
+      const report = JSON.parse(runCli([dir, '--json', '--top', '2']).stdout) as {
+        files: { file: string; crossFilePartners: string[] }[];
+      };
+      expect(report.files).toHaveLength(2);
+      for (const file of report.files) {
+        expect(file.crossFilePartners).toHaveLength(4);
+        expect(file.crossFilePartners).not.toContain(file.file);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

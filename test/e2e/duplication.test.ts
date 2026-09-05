@@ -837,3 +837,206 @@ describe('duplication: cross-file clones', () => {
     expect(metrics.groups.length).toBeGreaterThan(0);
   });
 });
+
+describe('duplication: invariants over the per-language fixtures', () => {
+  for (const { file, language } of fixtureExpectations) {
+    it(`derives the ratio from code lines and keeps line numbers inside reported blocks in ${language}`, () => {
+      const metrics = measureCode(readDuplicationFixture(file), { language });
+      const { duplication, lines } = metrics;
+
+      expect(duplication.duplicationRatio).toBe(duplication.duplicateLineCount / lines.code);
+      expect(duplication.duplicateLineNumbers).toHaveLength(duplication.duplicateLineCount);
+      expect(duplication.duplicateLineNumbers).toEqual([...duplication.duplicateLineNumbers].toSorted((a, b) => a - b));
+      // Every duplicated line lies inside some reported occurrence, and each occurrence covers
+      // at least one duplicated line.
+      const occurrences = duplication.duplicateBlockGroups.flat();
+      for (const line of duplication.duplicateLineNumbers) {
+        expect(occurrences.some(({ startLine, endLine }) => startLine <= line && line <= endLine)).toBe(true);
+      }
+      for (const { startLine, endLine } of occurrences) {
+        expect(duplication.duplicateLineNumbers.some((line) => startLine <= line && line <= endLine)).toBe(true);
+      }
+    });
+  }
+
+  it('reports the exact duplicated lines of the renamed pair, excluding the comment and blank lines', () => {
+    const metrics = measureCode(readDuplicationFixture('clones.js'), { language: 'javascript' });
+    // Lines 2-13 and 15-26 hold the two copies; the leading comment and the tables are not counted.
+    expect(metrics.duplication.duplicateLineNumbers).toEqual([
+      ...Array.from({ length: 12 }, (_, index) => 2 + index),
+      ...Array.from({ length: 12 }, (_, index) => 15 + index),
+    ]);
+    expect(metrics.duplication.duplicateBlockGroups).toEqual([
+      [
+        { startLine: 2, endLine: 13 },
+        { startLine: 15, endLine: 26 },
+      ],
+    ]);
+  });
+});
+
+/** The fixture with every top-level function except `keep` blanked out (scaffolding retained). */
+function isolateFunction(code: string, language: LanguageName, keep: RegExp): string {
+  const functions = measureCode(code, { language }).functions;
+  const kept = functions.find((fn) => keep.test(fn.name ?? ''));
+  expect(kept, `no function matching ${keep} in the ${language} fixture`).toBeDefined();
+  const lines = code.split('\n');
+  for (const fn of functions) {
+    const nestedInKept = kept !== undefined && fn.startLine >= kept.startLine && fn.endLine <= kept.endLine;
+    if (fn === kept || nestedInKept) {
+      continue;
+    }
+    for (let line = fn.startLine; line <= fn.endLine; line += 1) {
+      lines[line - 1] = '';
+    }
+  }
+  return lines.join('\n');
+}
+
+describe('duplication: cross-file clones in every language', () => {
+  // The two renamed copies of each clone pair are isolated into two files (each keeps the
+  // fixture's imports/class scaffolding but only one of the functions), so the cross-file matcher
+  // must find exactly that one pair. The JSX/TSX fixtures hold two pairs (the logic clone and the
+  // markup clone), each exercised on its own.
+  for (const { file, language } of fixtureExpectations) {
+    const pairs: [RegExp, RegExp][] = [[/summarize_?orders/iu, /summarize_?refunds/iu]];
+    if (language === 'jsx' || language === 'tsx') {
+      pairs.push([/^OrderCard$/u, /^RefundCard$/u]);
+    }
+    for (const [keepFirst, keepSecond] of pairs) {
+      it(`matches the renamed copy of ${keepFirst.source} across files in ${language}`, () => {
+        const code = readDuplicationFixture(file);
+        const first = isolateFunction(code, language, keepFirst);
+        const second = isolateFunction(code, language, keepSecond);
+        expect(first).not.toBe(second);
+
+        const metrics = measureCrossFileDuplication([
+          { file: 'a', ...collectCrossFileDuplicationFileData(first, { language }) },
+          { file: 'b', ...collectCrossFileDuplicationFileData(second, { language }) },
+        ]);
+
+        expect(metrics.groups.map((group) => group.files)).toEqual([['a', 'b']]);
+        expect(metrics.duplicateBlockCount).toBe(1);
+        expect(Object.keys(metrics.duplicateLineNumbersByFile).toSorted()).toEqual(['a', 'b']);
+      });
+    }
+  }
+});
+
+describe('duplication: cross-file grouping and reporting', () => {
+  const copy = (name: string): string => logicClone(name, 'console.log("midpoint", total);');
+
+  it('groups three files sharing one clone and orders groups by size', () => {
+    // a.js and c.js additionally share a small statement run, separated from the big clone by a
+    // statement unique to each file so the two files do not match as a whole; gap merging is off
+    // so the separator does not fuse the two groups into one gapped a/c group.
+    const smallRun = embeddedRun('items', 'items');
+    const metrics = measureCrossFileDuplication(
+      [
+        {
+          file: 'a.js',
+          ...collectCrossFileDuplicationFileData(`${copy('alpha')}alpha(1);\n${smallRun}`, { language: 'javascript' }),
+        },
+        { file: 'b.js', ...collectCrossFileDuplicationFileData(copy('beta'), { language: 'javascript' }) },
+        {
+          file: 'c.js',
+          ...collectCrossFileDuplicationFileData(`${copy('gamma')}gamma(1, 2);\n${smallRun}`, {
+            language: 'javascript',
+          }),
+        },
+      ],
+      { maxGapTokens: 0 }
+    );
+
+    expect(metrics.groups).toHaveLength(2);
+    // The larger (three-file) group comes first; the small run pairs only a.js and c.js.
+    expect(metrics.groups.map((group) => group.files)).toEqual([
+      ['a.js', 'b.js', 'c.js'],
+      ['a.js', 'c.js'],
+    ]);
+    expect(metrics.groups[0]?.tokenCount ?? 0).toBeGreaterThan(metrics.groups[1]?.tokenCount ?? 0);
+    expect(metrics.groups[0]?.occurrences.map(({ file }) => file)).toEqual(['a.js', 'b.js', 'c.js']);
+    // Two redundant copies of the big clone plus one of the small run.
+    expect(metrics.duplicateBlockCount).toBe(3);
+    expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 1, 'c.js': 2 });
+  });
+
+  it('applies near-miss matching within files only, so a scattered-edit copy across files is not a clone', () => {
+    const first = scatteredEditClone('totalPrice', 'item', 'price', '+=');
+    const second = scatteredEditClone('totalWeight', 'row', 'weight', '-=');
+    expect(measureCode(first + second, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(1);
+
+    const metrics = measureCrossFileDuplication([
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(first, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(second, { language: 'javascript' }) },
+    ]);
+    expect(metrics.groups).toEqual([]);
+  });
+
+  it('handles empty files and files without candidates', () => {
+    const metrics = measureCrossFileDuplication([
+      { file: 'empty.js', ...collectCrossFileDuplicationFileData('', { language: 'javascript' }) },
+      { file: 'tiny.js', ...collectCrossFileDuplicationFileData('export const x = 1;\n', { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(copy('alpha'), { language: 'javascript' }) },
+    ]);
+    expect(metrics).toEqual({
+      duplicateBlockCount: 0,
+      duplicateBlockGroupCountByFile: {},
+      duplicateLineNumbersByFile: {},
+      groups: [],
+    });
+  });
+
+  it('excludes comment and blank lines inside a cross-file occurrence from its line numbers', () => {
+    const commented = copy('alpha').replace('  let count = 0;', '  // note\n\n  let count = 0;');
+    const metrics = measureCrossFileDuplication([
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(commented, { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(copy('beta'), { language: 'javascript' }) },
+    ]);
+    const occurrence = metrics.groups[0]?.occurrences.find(({ file }) => file === 'a.js');
+    const lines = metrics.duplicateLineNumbersByFile['a.js'] ?? [];
+    const commentLine = commented.split('\n').findIndex((line) => line.includes('// note')) + 1;
+    expect(occurrence?.startLine ?? 0).toBeLessThan(commentLine);
+    expect(occurrence?.endLine ?? 0).toBeGreaterThan(commentLine + 1);
+    expect(lines).not.toContain(commentLine);
+    expect(lines).not.toContain(commentLine + 1);
+    // The counted lines are exactly the occurrence span minus the two non-code lines.
+    expect(lines).toHaveLength((occurrence?.endLine ?? 0) - (occurrence?.startLine ?? 0) + 1 - 2);
+  });
+});
+
+const javaMethod = (name: string): string =>
+  `  int ${name}(int[] xs) {\n    int total = 0;\n    int count = 0;\n    for (int x : xs) {\n      if (x > 0) {\n        total += x;\n        count += 1;\n      }\n    }\n    return count == 0 ? 0 : total / count;\n  }\n`;
+
+describe('duplication: within-file statement runs and containers', () => {
+  it('detects a repeated statement run embedded in two functions with different surroundings', () => {
+    const code =
+      `function alpha(items) {\n  initialize(items);${embeddedRun('items', 'items')}}\n` +
+      `function beta(rows) {\n  const prepared = prepare(rows);\n  const extra = rows.length;${embeddedRun('rows', 'rows')}}\n`;
+    const metrics = measureCode(code, { language: 'javascript' });
+
+    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
+    // The matched region is the embedded run (lines 3-10 and 15-22), not either whole function.
+    expect(metrics.duplication.duplicateBlockGroups).toEqual([
+      [
+        { startLine: 3, endLine: 10 },
+        { startLine: 15, endLine: 22 },
+      ],
+    ]);
+    expect(metrics.duplication.duplicateLineNumbers).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 17, 18, 19, 20, 21, 22]);
+  });
+
+  it('does not report a homogeneous run of identically shaped statements as a clone', () => {
+    // Thirty identical statements could be split into two "copies" of fifteen; a window whose
+    // statements all share one shape is a preamble, not copy-paste.
+    const homogeneous = Array.from({ length: 30 }, () => 'counter += 1;').join('\n');
+    expect(measureCode(homogeneous, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(0);
+  });
+
+  it('detects clones between methods of one class in class-based languages', () => {
+    const java = `class A {\n${javaMethod('alpha')}${javaMethod('beta')}}\n`;
+    const csharp = java.replaceAll('for (int x : xs)', 'foreach (int x in xs)');
+    expect(measureCode(java, { language: 'java' }).duplication.duplicateBlockGroupCount).toBe(1);
+    expect(measureCode(csharp, { language: 'csharp' }).duplication.duplicateBlockGroupCount).toBe(1);
+  });
+});

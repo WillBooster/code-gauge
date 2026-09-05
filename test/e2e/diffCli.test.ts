@@ -99,6 +99,9 @@ const complexNewFile = `export function decide(a: number, b: number, c: number, 
 
 let repoDir: string;
 
+// chmod 000 does not stop root from reading, so the unreadable-file cases are skipped there.
+const runAsRoot = typeof process.getuid === 'function' && process.getuid() === 0;
+
 beforeAll(() => {
   repoDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-diff-'));
   runGit(['init', '-q', '-b', 'main'], repoDir);
@@ -114,7 +117,8 @@ beforeAll(() => {
 });
 
 afterEach(() => {
-  runGit(['checkout', '-q', '--', '.'], repoDir);
+  // reset --hard also undoes staged changes (git mv, git add) the tests leave behind.
+  runGit(['reset', '-q', '--hard', 'HEAD'], repoDir);
   runGit(['clean', '-fdxq'], repoDir);
   writeFileSync(path.join(repoDir, 'code-gauge.config.json'), '{}\n');
 });
@@ -208,7 +212,7 @@ describe('code-gauge diff --base', () => {
     expect(result.stdout).toMatch(/^Regression gate passed: 1 changed files, 1 functions checked/u);
   });
 
-  it('fails with exit 2 (and no pass claim) when a changed file cannot be measured', () => {
+  it.skipIf(runAsRoot)('fails with exit 2 (and no pass claim) when a changed file cannot be measured', () => {
     // An unreadable file is reported as modified by git, so its measurement failure must fail the
     // gate closed instead of printing a vacuous pass.
     const lockedPath = path.join(repoDir, 'src', 'report.ts');
@@ -321,5 +325,260 @@ describe('code-gauge diff --base', () => {
     const result = runCli(['diff', '--base', 'no-such-ref'], repoDir);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('Not a valid object name');
+  });
+});
+
+// Same statement count, cognitive complexity, and nesting as baseCalc, but the return expression
+// reads the definitions eleven more times (DepDegree 4 -> 15) and raises the Halstead volume past
+// the 150 allowance (44.4 -> ~325).
+const denseReturnCalc = baseCalc.replace(
+  '  return sum;',
+  '  return sum + items.length * 3 - Math.max(sum, 0) + Math.min(sum, items.length) + Math.abs(sum - items.length) + Math.sign(sum) * items.length + Math.round(sum / 7) - Math.floor(items.length / 2) + sum;'
+);
+
+describe('code-gauge diff --base: change detection and scoping', () => {
+  it('gates against the merge-base, ignoring commits the base branch gained after the fork', () => {
+    runGit(['branch', '-q', 'feature'], repoDir);
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
+    runGit(['commit', '-q', '-am', 'worsen on main'], repoDir);
+    runGit(['checkout', '-q', 'feature'], repoDir);
+    let result: CliResult;
+    try {
+      result = runCli(['diff', '--base', 'main'], repoDir);
+    } finally {
+      runGit(['checkout', '-q', 'main'], repoDir);
+      runGit(['reset', '-q', '--hard', 'HEAD~1'], repoDir);
+      runGit(['branch', '-q', '-D', 'feature'], repoDir);
+    }
+    // The feature branch equals the fork point, so nothing changed relative to the merge-base.
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed: 0 changed files, 0 functions checked/u);
+  });
+
+  it('gates staged changes like unstaged ones', () => {
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
+    runGit(['add', '-A'], repoDir);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('cognitive complexity worsened 1 -> 12');
+  });
+
+  it('matches functions across a staged rename of the file', () => {
+    runGit(['mv', 'src/calc.ts', 'src/calculator.ts'], repoDir);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed: 1 changed files, 1 functions checked/u);
+  });
+
+  it('counts a deleted file as changed with nothing to gate', () => {
+    rmSync(path.join(repoDir, 'src', 'report.ts'));
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed: 1 changed files, 0 functions checked/u);
+  });
+
+  it('ignores changed files of unsupported types', () => {
+    writeFileSync(path.join(repoDir, 'README.md'), '# changed\n');
+    writeFileSync(path.join(repoDir, 'src', 'data.json'), '{"a": 1}\n');
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed: 0 changed files/u);
+  });
+
+  it('reports only violations under the target directory', () => {
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
+    mkdirSync(path.join(repoDir, 'lib'), { recursive: true });
+    writeFileSync(path.join(repoDir, 'lib', 'deep.ts'), complexNewFile);
+    const result = runCli(['diff', '--base', 'main', 'lib'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('lib/deep.ts');
+    expect(result.stdout).not.toContain('src/calc.ts');
+    const report = JSON.parse(runCli(['diff', '--base', 'main', 'lib', '--json'], repoDir).stdout) as {
+      checkedFileCount: number;
+      violations: { file: string }[];
+    };
+    expect(report.checkedFileCount).toBe(1);
+    expect(report.violations.map((violation) => violation.file)).toEqual(['lib/deep.ts', 'lib/deep.ts']);
+  });
+
+  it('gates test files only with --include-tests', () => {
+    mkdirSync(path.join(repoDir, 'test'), { recursive: true });
+    writeFileSync(path.join(repoDir, 'test', 'decide.test.ts'), complexNewFile);
+    expect(runCli(['diff', '--base', 'main'], repoDir).stdout).toMatch(/^Regression gate passed: 0 changed files/u);
+    const included = runCli(['diff', '--base', 'main', '--include-tests'], repoDir);
+    expect(included.status).toBe(1);
+    expect(included.stdout).toContain('test/decide.test.ts');
+  });
+
+  it('resolves paths relative to the repository when run from a subdirectory', () => {
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
+    const result = runCli(['diff', '--base', 'main', '.'], path.join(repoDir, 'src'));
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('src/calc.ts:1-');
+  });
+
+  it('fails with exit 2 outside a git repository', () => {
+    const plainDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-nogit-'));
+    try {
+      writeFileSync(path.join(plainDir, 'code-gauge.config.json'), '{}\n');
+      const result = runCli(['diff', '--base', 'main'], plainDir);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('not a git repository');
+      expect(result.stdout).toBe('');
+    } finally {
+      rmSync(plainDir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('code-gauge diff --base: gates and options', () => {
+  it('ratchets DepDegree and Halstead volume with their formatted allowances', () => {
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), denseReturnCalc);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('DepDegree worsened 4 -> 15 (allowed <= 14)');
+    expect(result.stdout).toMatch(/Halstead volume worsened 44\.4 -> \d+\.\d \(allowed <= 194\.4\)/u);
+    expect(result.stdout).not.toContain('NCSS worsened');
+    expect(result.stdout).not.toContain('cognitive complexity worsened');
+  });
+
+  it('numbers several violations', () => {
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), worsenedCalc);
+    writeFileSync(path.join(repoDir, 'src', 'deep.ts'), complexNewFile);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.stdout).toMatch(/^Regression gate vs main \(merge-base [0-9a-f]{12}\): 5 violations$/mu);
+    expect(result.stdout.match(/^\d+\. /gmu)).toEqual(['1. ', '2. ', '3. ', '4. ', '5. ']);
+  });
+
+  it('reports within-file duplication growth with a generic remediation', () => {
+    writeFileSync(
+      path.join(repoDir, 'src', 'report.ts'),
+      reportSource + reportSource.replaceAll('reportTotal', 'copiedTotal')
+    );
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(
+      /src\/report\.ts:1-\d+: duplicated lines increased 0 -> 18 \(allowed <= 0\)\. Deduplicate the repeated code by extracting a shared helper\./u
+    );
+  });
+
+  it('passes when duplication shrinks', () => {
+    writeFileSync(path.join(repoDir, 'src', 'copy.ts'), reportSource.replaceAll('reportTotal', 'copiedTotal'));
+    runGit(['add', '-A'], repoDir);
+    runGit(['commit', '-q', '-m', 'add duplicate'], repoDir);
+    rmSync(path.join(repoDir, 'src', 'copy.ts'));
+    writeFileSync(path.join(repoDir, 'src', 'report.ts'), reportSource + 'export const extra = 1;\n');
+    let result: CliResult;
+    try {
+      result = runCli(['diff', '--base', 'HEAD'], repoDir);
+    } finally {
+      runGit(['reset', '-q', '--hard', 'HEAD~1'], repoDir);
+    }
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed: 2 changed files, 1 functions checked/u);
+  });
+
+  it('honors a duplicated-lines tolerance and the duplication flags', () => {
+    writeFileSync(path.join(repoDir, 'src', 'copy.ts'), reportSource.replaceAll('reportTotal', 'copiedTotal'));
+    expect(runCli(['diff', '--base', 'main'], repoDir).status).toBe(1);
+    expect(runCli(['diff', '--base', 'main', '--duplication-min-tokens', '500'], repoDir).status).toBe(0);
+    writeFileSync(
+      path.join(repoDir, 'code-gauge.config.json'),
+      JSON.stringify({ gate: { tolerance: { duplicateLines: 100 } } })
+    );
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed/u);
+  });
+
+  it('honors gate.matchSimilarityPercent from the config file', () => {
+    // An edited rename stays matched at the default 70% but gates as new code at 100%.
+    const edited = baseCalc.replaceAll('total', 'sumAll').replace('sum += item', 'sum -= item');
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), edited);
+    const lenient = JSON.parse(runCli(['diff', '--base', 'main', '--json'], repoDir).stdout) as {
+      newFunctionCount: number;
+    };
+    expect(lenient.newFunctionCount).toBe(0);
+    writeFileSync(
+      path.join(repoDir, 'code-gauge.config.json'),
+      JSON.stringify({ gate: { matchSimilarityPercent: 100 } })
+    );
+    const strict = JSON.parse(runCli(['diff', '--base', 'main', '--json'], repoDir).stdout) as {
+      newFunctionCount: number;
+    };
+    expect(strict.newFunctionCount).toBe(1);
+  });
+
+  it('applies the new-function NCSS limit', () => {
+    const longFunction = `export function fill(): number[] {\n  const values: number[] = [];\n${Array.from(
+      { length: 60 },
+      (_, index) => `  values.push(${index});`
+    ).join('\n')}\n  return values;\n}\n`;
+    writeFileSync(path.join(repoDir, 'src', 'fill.ts'), longFunction);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('new function fill: NCSS 63 exceeds the new-code limit 60');
+  });
+});
+
+describe('code-gauge diff --base: output contract', () => {
+  it('prints a complete JSON report for a clean tree without the --full file details', () => {
+    const report = JSON.parse(runCli(['diff', '--base', 'main', '--json'], repoDir).stdout);
+    expect(report).toEqual({
+      base: 'main',
+      mergeBase: expect.stringMatching(/^[0-9a-f]{40}$/u),
+      passed: true,
+      violations: [],
+      checkedFileCount: 0,
+      checkedFunctionCount: 0,
+      newFunctionCount: 0,
+      errors: [],
+      warnings: [],
+    });
+  });
+
+  it('marks new functions in --full output and lists every checked function per file in JSON', () => {
+    writeFileSync(
+      path.join(repoDir, 'src', 'calc.ts'),
+      baseCalc + 'export const extra = (x: number): number => x + 1;\n'
+    );
+    const text = runCli(['diff', '--base', 'main', '--full'], repoDir);
+    expect(text.status).toBe(0);
+    expect(text.stdout).toMatch(/^- src\/calc\.ts:1-7 total: cognitive 1 -> 1, NCSS 5 -> 5/mu);
+    expect(text.stdout).toMatch(
+      /^- src\/calc\.ts:8-8 extra \(new\): cognitive 0, NCSS 1, nesting 0, DepDegree 1, volume [\d.]+$/mu
+    );
+
+    const report = JSON.parse(runCli(['diff', '--base', 'main', '--full', '--json'], repoDir).stdout) as {
+      files: {
+        file: string;
+        baseFunctionCount: number;
+        headFunctionCount: number;
+        functions: { name: string; base?: unknown }[];
+      }[];
+    };
+    expect(report.files).toHaveLength(1);
+    expect(report.files[0]).toMatchObject({ file: 'src/calc.ts', baseFunctionCount: 1, headFunctionCount: 2 });
+    expect(report.files[0]?.functions.map((fn) => [fn.name, fn.base !== undefined])).toEqual([
+      ['total', true],
+      ['extra', false],
+    ]);
+  });
+
+  it.skipIf(runAsRoot)('reports errors in the JSON report and never claims a pass alongside them', () => {
+    const lockedPath = path.join(repoDir, 'src', 'report.ts');
+    writeFileSync(lockedPath, reportSource + '\n');
+    chmodSync(lockedPath, 0o000);
+    let result: CliResult;
+    try {
+      result = runCli(['diff', '--base', 'main', '--json'], repoDir);
+    } finally {
+      chmodSync(lockedPath, 0o644);
+    }
+    expect(result.status).toBe(2);
+    const report = JSON.parse(result.stdout) as { passed: boolean; errors: string[] };
+    expect(report.passed).toBe(false);
+    expect(report.errors).toHaveLength(1);
+    expect(report.errors[0]).toContain('src/report.ts');
   });
 });
