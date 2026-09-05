@@ -292,11 +292,15 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
             Some(grandparent) if grandparent.kind() == "assignment" => {
                 find_ruby_assignment_name(grandparent, code)
             }
+            Some(grandparent) if grandparent.kind() == "pair" => {
+                find_pair_key_name(grandparent, code)
+            }
             _ => None,
         };
     }
 
-    // An object-literal property (`{ run: () => {} }`) names its value after the key; an assignment
+    // An object-literal or Ruby hash property (`{ run: () => {} }`, `{ run: -> {} }`) names its value
+    // after the key; an assignment
     // (`obj.run = () => {}`, `run = () => {}`, Rust/C++ `self.cb = |x| x`, C++ `N::run = [] {}`,
     // C# `this.Run = () => 1`) after its target.
     if parent.kind() == "pair" {
@@ -318,14 +322,23 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         .map(|name| node_text(name, code).to_string())
 }
 
-/// The key of a `pair` when it is a plain or string-literal property name (the literal's text
-/// without its quotes, escapes kept as written); a computed key (`[k]: ...`) or an empty string
-/// names nothing.
+/// The key of a `pair` when it is a plain, Ruby symbol, or string-literal property name (the
+/// literal's text without its quotes, escapes kept as written); a computed key (`[k]: ...`), an
+/// interpolated string, or an empty string names nothing.
 fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     let key = pair.child_by_field_name("key")?;
     match key.kind() {
-        "property_identifier" => Some(node_text(key, code).to_string()),
+        "property_identifier" | "hash_key_symbol" => Some(node_text(key, code).to_string()),
+        "simple_symbol" => node_text(key, code)
+            .strip_prefix(':')
+            .map(|name| name.to_string()),
         "string" => {
+            if named_children(key)
+                .iter()
+                .any(|child| child.kind() == "interpolation")
+            {
+                return None;
+            }
             let text = node_text(key, code);
             let quote = text
                 .chars()

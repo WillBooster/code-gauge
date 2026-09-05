@@ -486,6 +486,11 @@ describe('function names from binding sites', () => {
     expect(
       functionsOf('ruby', 'self.run = -> { 1 }\nobj.run = lambda { 1 }\n@handler = -> { 2 }\n').map((fn) => fn.name)
     ).toEqual(['run', 'run', '@handler']);
+    expect(
+      functionsOf('ruby', 'h = { run: -> { 1 }, :sym => -> { 2 }, "str" => lambda { 3 }, "k#{x}" => -> { 4 } }\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'sym', 'str', undefined]);
     expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
     expect(
       functionsOf('python', 'def f():\n    obj.run = lambda: 1\n    self.a.b = lambda: 2\n    run = lambda: 3\n').map(
