@@ -4062,7 +4062,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
         "vocabulary": 5,
         "volume": 11.60964047,
       },
-      "name": undefined,
+      "name": "run",
       "ncss": 1,
       "nestingDepth": 0,
       "nodeType": "arrow_function",
@@ -4696,7 +4696,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "cognitiveComplexity": 0,
-      "depDegree": 1,
+      "depDegree": 2,
       "endLine": 34,
       "halstead": {
         "distinctOperands": 24,
@@ -4718,7 +4718,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "cognitiveComplexity": 0,
-      "depDegree": 1,
+      "depDegree": 2,
       "endLine": 39,
       "halstead": {
         "distinctOperands": 24,
@@ -4859,7 +4859,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "cognitiveComplexity": 0,
-      "depDegree": 1,
+      "depDegree": 2,
       "endLine": 35,
       "halstead": {
         "distinctOperands": 24,
@@ -4881,7 +4881,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
     {
       "cognitiveComplexity": 0,
-      "depDegree": 1,
+      "depDegree": 2,
       "endLine": 40,
       "halstead": {
         "distinctOperands": 24,

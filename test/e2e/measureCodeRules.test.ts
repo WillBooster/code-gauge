@@ -199,6 +199,11 @@ describe('cognitive complexity: language-specific decision constructs', () => {
       )
     ).toEqual([4]);
     expect(cognitiveOf('python', 'def f(a):\n    return 1 if a else 2\n')).toEqual([1]);
+    // A comprehension filter is an expression, not a statement-level decision; a `case` guard is.
+    expect(cognitiveOf('python', 'def f(xs):\n    return [x for x in xs if x]\n')).toEqual([0]);
+    expect(cognitiveOf('python', 'def f(xs):\n    match xs:\n        case [x] if x:\n            return x\n')).toEqual([
+      2,
+    ]);
     expect(cognitiveOf('python', 'def f(a, b, c):\n    return a and b or c\n')).toEqual([2]);
     expect(cognitiveOf('python', 'def f(a, b, c):\n    return not a and not b and not c\n')).toEqual([1]);
   });
@@ -445,6 +450,17 @@ describe('parameter counts', () => {
   });
 });
 
+describe('function names from binding sites', () => {
+  it('names object-literal properties and assignment targets, leaving computed keys and subscripts anonymous', () => {
+    expect(
+      functionsOf(
+        'javascript',
+        'const o = { run: () => 1, "quoted": function () {}, [k]: () => 2 };\nobj.run = () => 3;\nplain = () => 4;\na.b.c = function () {};\no["s"] = () => 5;'
+      ).map((fn) => fn.name)
+    ).toEqual(['run', 'quoted', undefined, 'run', 'plain', 'c', undefined]);
+  });
+});
+
 describe('DepDegree across languages', () => {
   const depDegreeOf = (language: string, code: string): number[] =>
     functionsOf(language, code).map((fn) => fn.depDegree);
@@ -485,6 +501,16 @@ describe('DepDegree across languages', () => {
         'int f(int n, int *p) { int total = 0; for (int i = 0; i < n; i++) { total += p[i]; } return total; }'
       )
     ).toEqual([7]);
+  });
+
+  it('recognizes C++ pointer, reference, array, and function-pointer declarators as definitions', () => {
+    // q (init), *q, xs, r (compound), x, *p, r, a, fp.
+    expect(
+      depDegreeOf(
+        'cpp',
+        'int f(int* q, std::vector<int> xs) { int* p = q; int& r = *q; for (const auto& x : xs) { r += x; } int a[2] = {1, 2}; int (*fp)(int) = g; return *p + r + a[0] + fp(1); }'
+      )
+    ).toEqual([9]);
   });
 
   it('recognizes C# pattern, out-variable, and foreach bindings', () => {

@@ -273,6 +273,15 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         };
     }
 
+    // An object-literal property (`{ run: () => {} }`) names its value after the key; an assignment
+    // (`obj.run = () => {}`, `run = () => {}`, also Rust/C++ `self.cb = |x| x`) after its target.
+    if parent.kind() == "pair" {
+        return find_pair_key_name(parent, code);
+    }
+    if parent.kind() == "assignment_expression" {
+        return find_assignment_target_name(parent, code);
+    }
+
     // A JavaScript class field (`handle = () => {}`) names its property through the `property`
     // field; TypeScript's `public_field_definition` exposes the same thing as `name`.
     let field_name = if parent.kind() == "field_definition" {
@@ -283,6 +292,33 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     parent
         .child_by_field_name(field_name)
         .map(|name| node_text(name, code).to_string())
+}
+
+/// The key of a `pair` when it is a plain or string-literal property name; a computed key
+/// (`[k]: ...`) names nothing.
+fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let key = pair.child_by_field_name("key")?;
+    match key.kind() {
+        "property_identifier" => Some(node_text(key, code).to_string()),
+        "string" => named_children(key)
+            .into_iter()
+            .find(|child| child.kind() == "string_fragment" || child.kind() == "string_content")
+            .map(|fragment| node_text(fragment, code).to_string()),
+        _ => None,
+    }
+}
+
+/// The assigned identifier, or the member name of a member/field access (`a.b.run` names `run`);
+/// subscripts (`o["run"]`) name nothing.
+fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let target = assignment.child_by_field_name("left")?;
+    let name = match target.kind() {
+        "identifier" => target,
+        "member_expression" => target.child_by_field_name("property")?,
+        "field_expression" => target.child_by_field_name("field")?,
+        _ => return None,
+    };
+    Some(node_text(name, code).to_string())
 }
 
 /// Names of C# and Kotlin members whose grammars carry no usable `name` field: accessors are

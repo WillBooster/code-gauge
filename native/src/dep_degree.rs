@@ -72,6 +72,17 @@ const CSHARP_QUERY_BINDING_PARENT_TYPES: &[&str] = &[
     "query_expression",
 ];
 
+/// C/C++ declarators wrapping the declared name (`int* p = q;`, `int& r = *q;`, `int a[n] = {};`,
+/// `int (*fp)(int) = g;`): the definition field is checked on the outermost wrapper.
+const DECLARATOR_WRAPPER_TYPES: &[&str] = &[
+    "pointer_declarator",
+    "reference_declarator",
+    "array_declarator",
+    "parenthesized_declarator",
+    "function_declarator",
+    "attributed_declarator",
+];
+
 /// Multi-target lists (`a, b = ...`, `a, b := ...`) whose holder's `left` field marks definitions.
 const DEFINITION_LIST_NODE_TYPES: &[&str] = &["expression_list", "pattern_list", "tuple_pattern"];
 const DEFINITION_LIST_HOLDER_TYPES: &[&str] = &[
@@ -270,11 +281,10 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     {
         return true;
     }
-    if DEFINITION_FIELD_BY_PARENT_TYPE
-        .iter()
-        .any(|(parent_type, definition_field)| {
-            *parent_type == parent.kind() && leaf.field_name == Some(definition_field)
-        })
+    let (declared, declared_field) = unwrap_declarator_wrappers(leaf);
+    if declared
+        .parent()
+        .is_some_and(|holder| is_definition_field(holder, declared_field))
     {
         return true;
     }
@@ -286,6 +296,36 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     };
     DEFINITION_LIST_HOLDER_TYPES.contains(&holder.kind())
         && field_name_in_parent(parent, holder) == Some("left")
+}
+
+fn is_definition_field(holder: Node<'_>, field_name: Option<&str>) -> bool {
+    DEFINITION_FIELD_BY_PARENT_TYPE
+        .iter()
+        .any(|(parent_type, definition_field)| {
+            *parent_type == holder.kind() && field_name == Some(definition_field)
+        })
+}
+
+/// Climbs from the identifier through the C/C++ declarator wrappers it is the declared name of
+/// (`reference_declarator` and `parenthesized_declarator` expose no field, so their name is the
+/// fieldless child; an `array_declarator` size or a nested parameter has another field and stops
+/// the climb) to the outermost wrapper and its field in the declaration.
+fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option<&'static str>) {
+    let mut current = leaf.node;
+    let mut field_name = leaf.field_name;
+    while let Some(parent) = current
+        .parent()
+        .filter(|parent| DECLARATOR_WRAPPER_TYPES.contains(&parent.kind()))
+    {
+        if field_name.is_some_and(|name| name != "declarator") {
+            break;
+        }
+        field_name = parent
+            .parent()
+            .and_then(|grandparent| field_name_in_parent(parent, grandparent));
+        current = parent;
+    }
+    (current, field_name)
 }
 
 /// Mirrors isParameterDefinition in metrics.ts: an ancestor reached through declarator wrappers

@@ -1,8 +1,10 @@
 /**
- * Maximal, non-overlapping duplicate-group selection shared by the within-file and cross-file
- * detectors. Candidates are grouped by fingerprint, ranked by total coverage, kept greedily
- * without overlapping a kept region, and groups that fall below the survivor requirement are shed
- * one at a time (largest first) so their regions stop blocking smaller groups.
+ * Maximal, non-overlapping duplicate-group selection for the cross-file detector (the native
+ * within-file detector mirrors it). Candidates are grouped by fingerprint, ranked by total
+ * coverage, kept greedily without overlapping a kept region, and groups that fall below the
+ * survivor requirement are shed one at a time (largest first) so their regions stop blocking
+ * smaller groups. A copy lying entirely inside a kept region of a larger group stays with its
+ * group as a nested copy, so a standalone copy elsewhere is still reported as duplicating it.
  */
 
 export interface SelectableRegion {
@@ -15,6 +17,11 @@ export interface SelectableRegion {
    * the cross-file detector buckets by file index.
    */
   regionBucket?: number;
+  /**
+   * Set by selectMaximalGroups on a copy nested inside a kept region of a larger group: it is
+   * reported with its group, but its span is already counted by that larger group.
+   */
+  nestedInLargerGroup?: boolean;
 }
 
 /** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
@@ -55,11 +62,22 @@ export function selectMaximalGroups<T extends SelectableRegion>(
   for (let rerun = 0; ; rerun += 1) {
     const keptRegionsByBucket = new Map<number, { startIndex: number; endIndex: number }[]>();
     const counted = new Map<string, T[]>();
+    const nestedByFingerprint = new Map<string, T[]>();
     for (const candidate of duplicates) {
       const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
-      if (
-        keptRegions.some((region) => region.startIndex < candidate.endIndex && candidate.startIndex < region.endIndex)
-      ) {
+      const overlapping = keptRegions.filter(
+        (region) => region.startIndex < candidate.endIndex && candidate.startIndex < region.endIndex
+      );
+      if (overlapping.length > 0) {
+        if (
+          overlapping.some(
+            (region) => region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex
+          )
+        ) {
+          const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
+          nested.push({ ...candidate, nestedInLargerGroup: true });
+          nestedByFingerprint.set(candidate.fingerprint, nested);
+        }
         continue;
       }
       keptRegions.push(candidate);
@@ -67,6 +85,11 @@ export function selectMaximalGroups<T extends SelectableRegion>(
       const group = counted.get(candidate.fingerprint) ?? [];
       group.push(candidate);
       counted.set(candidate.fingerprint, group);
+    }
+    // Nested copies join only a group that kept a standalone copy; on their own they would merely
+    // restate the larger group.
+    for (const [fingerprint, nested] of nestedByFingerprint) {
+      counted.get(fingerprint)?.push(...nested);
     }
 
     let failedFingerprint: string | undefined;

@@ -241,7 +241,7 @@ describe('duplication: partial gapped-clone merging', () => {
       ['0..34/3', '50..84/3'],
     ]);
     // A's two paired occurrences are marked as shared with the merged group (no double counting).
-    expect(merged[0]?.map((entry) => entry.sharedWithMergedGroup === true)).toEqual([true, true, false]);
+    expect(merged[0]?.map((entry) => entry.spanCountedElsewhere === true)).toEqual([true, true, false]);
   });
 
   it('loses no duplicated-line coverage compared to unmerged reporting', () => {
@@ -923,6 +923,10 @@ describe('duplication: cross-file clones in every language', () => {
   }
 });
 
+/** A second function that makes two files whole-file clones, larger than the block a third file copies. */
+const arithmetic = (name: string): string =>
+  `function ${name}(a, b) {\n  const x = a + b;\n  const y = a * b;\n  const z = x - y;\n  const w = x * y - z;\n  const v = [x, y, z, w].map((n) => n * 2);\n  const u = v.filter((n) => n > a);\n  return [x, y, z, w, v, u, a, b];\n}\n`;
+
 describe('duplication: cross-file grouping and reporting', () => {
   const copy = (name: string): string => logicClone(name, 'console.log("midpoint", total);');
 
@@ -959,6 +963,33 @@ describe('duplication: cross-file grouping and reporting', () => {
     // Two redundant copies of the big clone plus one of the small run.
     expect(metrics.duplicateBlockCount).toBe(3);
     expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 1, 'c.js': 2 });
+  });
+
+  it('reports a third file copying a block that two other files share as part of a larger clone', () => {
+    // a.js and b.js are whole-file clones; c.js copies only their first function. The two copies
+    // nested inside the larger clone stay with c.js's group instead of being dropped as overlaps,
+    // and only c.js's copy adds to the block count (the nested ones are counted by the larger group).
+    const metrics = measureCrossFileDuplication([
+      {
+        file: 'a.js',
+        ...collectCrossFileDuplicationFileData(copy('alpha') + arithmetic('alphaExtra'), { language: 'javascript' }),
+      },
+      {
+        file: 'b.js',
+        ...collectCrossFileDuplicationFileData(copy('beta') + arithmetic('betaExtra'), { language: 'javascript' }),
+      },
+      {
+        file: 'c.js',
+        ...collectCrossFileDuplicationFileData(`export const k = 1;\n${copy('gamma')}`, { language: 'javascript' }),
+      },
+    ]);
+
+    expect(metrics.groups.map((group) => group.files)).toEqual([
+      ['a.js', 'b.js'],
+      ['a.js', 'b.js', 'c.js'],
+    ]);
+    expect(metrics.duplicateBlockCount).toBe(2);
+    expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 2, 'c.js': 1 });
   });
 
   it('applies near-miss matching within files only, so a scattered-edit copy across files is not a clone', () => {

@@ -1,4 +1,4 @@
-import { selectMaximalGroups } from './duplicateSelection.js';
+import { selectMaximalGroups, type SelectableRegion } from './duplicateSelection.js';
 import {
   buildLiteralCountPrefix,
   collectSegmentLines,
@@ -48,7 +48,7 @@ export interface CrossFileDuplicationMetrics {
   groups: CrossFileDuplicateBlockGroup[];
 }
 
-interface SelectableCandidate extends CrossFileDuplicateCandidate {
+interface SelectableCandidate extends CrossFileDuplicateCandidate, SelectableRegion {
   regionBucket: number;
   file: string;
 }
@@ -66,7 +66,9 @@ interface CrossFileOccurrence extends CountedOccurrence {
  * no single file can know it repeats elsewhere. Candidates are grouped by fingerprint, and only
  * maximal, non-overlapping regions whose group spans at least two files are counted. Groups that
  * shrink to a single file during selection are shed — a within-file repeat is already reported by
- * that file's own duplication metrics. Groups separated by a small token gap within each file then
+ * that file's own duplication metrics. A copy nested inside a larger group's region (two files share
+ * a whole function, a third file only a block of it) is reported with its group, so the third
+ * file's copy still shows what it duplicates. Groups separated by a small token gap within each file then
  * merge into gapped (Type-3) clone groups under `maxGapTokens`, exactly like within-file merging.
  */
 export function measureCrossFileDuplication(
@@ -154,6 +156,7 @@ function mergeGapAdjacentGroups(
         const end = candidate.endTokenIndex + (tokenOffsets[candidate.regionBucket] ?? 0);
         return {
           file: candidate.file,
+          spanCountedElsewhere: candidate.nestedInLargerGroup,
           segments: [{ startTokenIndex: start, endTokenIndex: end }],
           tokenCount: candidate.tokenCount,
           startTokenIndex: start,

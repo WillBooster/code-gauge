@@ -52,8 +52,9 @@ import type { LanguageName } from '../../src/index.js';
  * - gocognit/cognitive: gocognit charges SonarSource's +1 recursion increment (gin's `iterate`);
  *   code-gauge does not charge recursion (issue #22 — intentionally omitted, like PMD and the
  *   SonarQube analyzers).
- * - complexipy/cognitive: complexipy charges comprehensions and their internal `if`/`for` clauses;
- *   code-gauge counts only statement-level decisions (dialect difference among Sonar ports).
+ * - complexipy/cognitive: complexipy charges comprehensions themselves; code-gauge counts only
+ *   statement-level decisions, so neither a comprehension nor its `if` filter is charged (dialect
+ *   difference among Sonar ports).
  * - sonarjs/cognitive: sonarjs attributes nested-closure content to the innermost enclosing
  *   function only, while code-gauge (like PMD) also attributes it to the enclosing declared
  *   function; a few remaining cases differ on JSX expressions, which sonarjs does not analyze,
@@ -817,7 +818,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         comment: 116,
         blank: 154,
       },
-      cognitiveComplexity: 94,
+      cognitiveComplexity: 92,
       maxCognitiveComplexity: 26,
       nestingDepth: 3,
       ncssCount: 294,
@@ -866,10 +867,10 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ['session', 821, 833, 'cognitive', 'complexipy', 0],
     ],
     knownDivergences: [
-      ['merge_setting', 61, 88, 'cognitive', 'complexipy', 7, 6],
+      ['merge_setting', 61, 88, 'cognitive', 'complexipy', 7, 5],
       ['request', 502, 591, 'cognitive', 'complexipy', 1, 3],
       ['send', 673, 749, 'cognitive', 'complexipy', 14, 12],
-      ['mount', 801, 810, 'cognitive', 'complexipy', 3, 2],
+      ['mount', 801, 810, 'cognitive', 'complexipy', 3, 1],
       ['__getstate__', 812, 814, 'cognitive', 'complexipy', 1, 0],
     ],
   },

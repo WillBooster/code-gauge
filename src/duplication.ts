@@ -109,10 +109,11 @@ export interface CountedOccurrence {
   /** Matched token runs; more than one once gapped groups are merged. */
   segments: TokenSegment[];
   /**
-   * Set on a retained group's occurrences that a partial gapped merge also paired into a merged
-   * group: their spans are counted there, so block counting must not count them again.
+   * Set on occurrences whose span another reported group already counts: a retained group's
+   * occurrences that a partial gapped merge also paired into a merged group, and cross-file copies
+   * nested inside a larger group's region. Block counting must not count them again.
    */
-  sharedWithMergedGroup?: boolean;
+  spanCountedElsewhere?: boolean;
   /** Sum of segment token counts (the gap tokens are not matched content). */
   tokenCount: number;
   startTokenIndex: number;
@@ -635,7 +636,7 @@ export function mergeAdjacentGroups<T extends CountedOccurrence>(groups: T[][], 
         // paired occurrences now also live inside the merged group's occurrences: mark them so
         // duplicateBlockCount counts each token span once.
         for (const occurrence of result.pairedRetained) {
-          occurrence.sharedWithMergedGroup = true;
+          occurrence.spanCountedElsewhere = true;
         }
         groups.sort(compareGroups);
         restart = true;
@@ -682,8 +683,8 @@ function mergeGroups<T extends CountedOccurrence>(
   // competing merged group instead of letting the existing merged group extend (and would count
   // the same span twice). Consumption is still judged against the FULL group, so a group holding
   // shared occurrences is never subsumed away.
-  const leadings = first.filter((occurrence) => !occurrence.sharedWithMergedGroup);
-  const trailings = second.filter((occurrence) => !occurrence.sharedWithMergedGroup);
+  const leadings = first.filter((occurrence) => !occurrence.spanCountedElsewhere);
+  const trailings = second.filter((occurrence) => !occurrence.spanCountedElsewhere);
   const pairs: [T, T][] = [];
   let leadingIndex = 0;
   let previousTrailingEnd = -1;
@@ -716,7 +717,7 @@ function mergeGroups<T extends CountedOccurrence>(
   const merged = pairs.map(([leading, trailing]) => ({
     ...leading,
     // A merged occurrence is a fresh span combination; it never inherits shared-span marks.
-    sharedWithMergedGroup: undefined,
+    spanCountedElsewhere: undefined,
     segments: [...leading.segments, ...trailing.segments],
     tokenCount: leading.tokenCount + trailing.tokenCount,
     endTokenIndex: trailing.endTokenIndex,
@@ -745,7 +746,7 @@ export function countRedundantFragments(group: CountedOccurrence[]): number {
   let maxFragmentCount = 0;
   let hasSharedOccurrence = false;
   for (const occurrence of group) {
-    if (occurrence.sharedWithMergedGroup) {
+    if (occurrence.spanCountedElsewhere) {
       hasSharedOccurrence = true;
       continue;
     }

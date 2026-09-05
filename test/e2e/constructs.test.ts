@@ -86,7 +86,7 @@ const expectations: Record<LanguageName, ConstructExpectation> = {
       ['constructor', 0, 0, 1, 2],
       ['describe', 0, 0, 2, 1],
       ['build', 2, 1, 5, 1],
-      [undefined, 0, 0, 1, 0],
+      ['run', 0, 0, 1, 0],
       ['run', 0, 0, 1, 0],
       ['pick', 0, 0, 3, 2],
       ['conditional', 1, 1, 1, 1],
