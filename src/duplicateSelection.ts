@@ -137,15 +137,49 @@ export function selectMaximalGroups<T extends SelectableRegion>(
       return counted;
     }
     if (rerun >= maxSelectionRerunCount) {
-      for (const [fingerprint, group] of counted) {
-        if (!isSurvivingGroup(group)) {
-          counted.delete(fingerprint);
-        }
-      }
+      dropFailedGroups(counted, isSurvivingGroup);
       return counted;
     }
 
     duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
+  }
+}
+
+/**
+ * Past the rerun cap, still-failing groups are dropped without another selection pass. A dropped
+ * group's regions may have been what nested copies of surviving groups lay inside, and such a copy
+ * would then be counted by no group at all, so those copies are dropped too and the shrunk groups
+ * are re-checked until nothing changes.
+ */
+function dropFailedGroups<T extends SelectableRegion>(
+  counted: Map<string, T[]>,
+  isSurvivingGroup: (group: T[]) => boolean
+): void {
+  for (let changed = true; changed;) {
+    changed = false;
+    for (const [fingerprint, group] of counted) {
+      if (!isSurvivingGroup(group) || group.every((candidate) => candidate.nestedInLargerGroup)) {
+        counted.delete(fingerprint);
+        changed = true;
+      }
+    }
+    const standalone = [...counted.values()].flat().filter((candidate) => !candidate.nestedInLargerGroup);
+    for (const [fingerprint, group] of counted) {
+      const kept = group.filter(
+        (candidate) =>
+          !candidate.nestedInLargerGroup ||
+          standalone.some(
+            (region) =>
+              (region.regionBucket ?? 0) === (candidate.regionBucket ?? 0) &&
+              region.startIndex <= candidate.startIndex &&
+              candidate.endIndex <= region.endIndex
+          )
+      );
+      if (kept.length !== group.length) {
+        counted.set(fingerprint, kept);
+        changed = true;
+      }
+    }
   }
 }
 
