@@ -989,18 +989,29 @@ describe('duplication: cross-file grouping and reporting', () => {
     expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 1, 'c.js': 2 });
   });
 
-  it('reports a third file copying a block that two other files share as part of a larger clone', () => {
-    // a.js and b.js are whole-file clones; c.js copies only their first function. The two copies
-    // nested inside the larger clone stay with c.js's group instead of being dropped as overlaps,
-    // and only c.js's copy adds to the block count (the nested ones are counted by the larger group).
+  // a.js and b.js are whole-file clones; c.js copies only their first function. The two copies
+  // nested inside the larger clone stay with c.js's group instead of being dropped as overlaps, and
+  // only c.js's copy adds to the block count (the nested ones are counted by the larger group).
+  // Whichever group the coverage ranking visits first (the 2-copy whole file when the second
+  // function is large, the 3-copy block when it is small), both groups are reported.
+  for (const [size, extra] of [
+    ['large', arithmetic],
+    ['small', (name: string): string => `function ${name}(a) {\n  return a + 1;\n}\n`],
+  ] as const) {
+    it(`reports a third file copying a block nested in a larger clone (${size} enclosing clone)`, () => {
+      expectNestedThirdCopy(extra);
+    });
+  }
+
+  function expectNestedThirdCopy(extra: (name: string) => string): void {
     const metrics = measureCrossFileDuplication([
       {
         file: 'a.js',
-        ...collectCrossFileDuplicationFileData(copy('alpha') + arithmetic('alphaExtra'), { language: 'javascript' }),
+        ...collectCrossFileDuplicationFileData(copy('alpha') + extra('alphaExtra'), { language: 'javascript' }),
       },
       {
         file: 'b.js',
-        ...collectCrossFileDuplicationFileData(copy('beta') + arithmetic('betaExtra'), { language: 'javascript' }),
+        ...collectCrossFileDuplicationFileData(copy('beta') + extra('betaExtra'), { language: 'javascript' }),
       },
       {
         file: 'c.js',
@@ -1014,7 +1025,7 @@ describe('duplication: cross-file grouping and reporting', () => {
     ]);
     expect(metrics.duplicateBlockCount).toBe(2);
     expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 2, 'c.js': 1 });
-  });
+  }
 
   it('applies near-miss matching within files only, so a scattered-edit copy across files is not a clone', () => {
     const first = scatteredEditClone('totalPrice', 'item', 'price', '+=');

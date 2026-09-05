@@ -384,14 +384,17 @@ fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
     Some(node_text(name, code).to_string())
 }
 
-/// The Kotlin assignment target: the `directly_assignable_expression`'s last identifier, i.e. the
-/// variable itself or the member of the trailing navigation suffix (`obj.run` names `run`).
+/// The Kotlin assignment target: the variable itself or the member of a trailing navigation suffix
+/// (`obj.run` names `run`); a trailing indexing suffix (`arr[0] = { }`) names nothing, like
+/// subscripts in the other languages.
 fn find_kotlin_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     let target = first_named_child_of_kind(assignment, "directly_assignable_expression")?;
-    let holder = named_children(target)
-        .into_iter()
-        .rfind(|child| child.kind() == "navigation_suffix")
-        .unwrap_or(target);
+    let children = named_children(target);
+    let holder = match children.last()? {
+        last if last.kind() == "navigation_suffix" => *last,
+        last if last.kind() == "simple_identifier" && children.len() == 1 => target,
+        _ => return None,
+    };
     first_named_child_of_kind(holder, "simple_identifier")
         .map(|name| node_text(name, code).to_string())
 }

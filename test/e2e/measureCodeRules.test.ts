@@ -478,11 +478,11 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['f', 'run', 'a', undefined, 'run']);
-    expect(functionsOf('kotlin', 'fun f() { run = { 1 }; obj.run = { 2 } }').map((fn) => fn.name)).toEqual([
-      'f',
-      'run',
-      'run',
-    ]);
+    expect(
+      functionsOf('kotlin', 'fun f() { run = { 1 }; obj.run = { 2 }; arr[0] = { 3 }; obj.arr[0] = { 4 } }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', 'run', 'run', undefined, undefined]);
     expect(
       functionsOf('ruby', 'self.run = -> { 1 }\nobj.run = lambda { 1 }\n@handler = -> { 2 }\n').map((fn) => fn.name)
     ).toEqual(['run', 'run', '@handler']);

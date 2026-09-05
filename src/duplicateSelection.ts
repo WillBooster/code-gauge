@@ -3,8 +3,9 @@
  * within-file detector mirrors it). Candidates are grouped by fingerprint, ranked by total
  * coverage, kept greedily without overlapping a kept region, and groups that fall below the
  * survivor requirement are shed one at a time (largest first) so their regions stop blocking
- * smaller groups. A copy lying entirely inside a kept region of a larger group stays with its
- * group as a nested copy, so a standalone copy elsewhere is still reported as duplicating it.
+ * smaller groups. A copy lying entirely inside a larger group's region stays with its group as a
+ * nested copy (whichever group the greedy order kept first), so a standalone copy elsewhere is
+ * still reported as duplicating it.
  */
 
 export interface SelectableRegion {
@@ -18,8 +19,8 @@ export interface SelectableRegion {
    */
   regionBucket?: number;
   /**
-   * Set by selectMaximalGroups on a copy nested inside a kept region of a larger group: it is
-   * reported with its group, but its span is already counted by that larger group.
+   * Set by selectMaximalGroups on a copy nested inside a larger group's region: it is reported with
+   * its group, but its span is already counted by that larger group.
    */
   nestedInLargerGroup?: boolean;
 }
@@ -60,31 +61,50 @@ export function selectMaximalGroups<T extends SelectableRegion>(
   // rescue another. The rerun cap bounds degenerate inputs; past it the remaining failed groups
   // are dropped, trading a sliver of recall on such files for bounded runtime.
   for (let rerun = 0; ; rerun += 1) {
-    const keptRegionsByBucket = new Map<number, { startIndex: number; endIndex: number }[]>();
+    const keptRegionsByBucket = new Map<number, T[]>();
     const counted = new Map<string, T[]>();
     const nestedByFingerprint = new Map<string, T[]>();
     for (const candidate of duplicates) {
       const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
       // A plain loop: this runs once per candidate over every kept region of the bucket, so
-      // allocating a filtered array per candidate would dominate project-scale runs.
-      let overlaps = false;
-      let contained = false;
+      // allocating a filtered array per candidate would dominate project-scale runs. Kept regions
+      // never overlap each other, so a region containing the candidate rules out enclosed ones.
+      let containedInKept = false;
+      let partiallyOverlaps = false;
+      let enclosedKept: T[] | undefined;
       for (const region of keptRegions) {
-        if (region.startIndex < candidate.endIndex && candidate.startIndex < region.endIndex) {
-          overlaps = true;
-          if (region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex) {
-            contained = true;
-            break;
-          }
+        if (region.startIndex >= candidate.endIndex || candidate.startIndex >= region.endIndex) {
+          continue;
+        }
+        if (region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex) {
+          containedInKept = true;
+          break;
+        }
+        if (candidate.startIndex <= region.startIndex && region.endIndex <= candidate.endIndex) {
+          (enclosedKept ??= []).push(region);
+        } else {
+          partiallyOverlaps = true;
+          break;
         }
       }
-      if (overlaps) {
-        if (contained) {
-          const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
-          nested.push({ ...candidate, nestedInLargerGroup: true });
-          nestedByFingerprint.set(candidate.fingerprint, nested);
-        }
+      if (containedInKept) {
+        const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
+        nested.push({ ...candidate, nestedInLargerGroup: true });
+        nestedByFingerprint.set(candidate.fingerprint, nested);
         continue;
+      }
+      if (partiallyOverlaps) {
+        continue;
+      }
+      // Containment must not depend on greedy order: a candidate enclosing kept copies of smaller
+      // groups occupies its region, and those copies become nested copies of their groups (their
+      // regions stay recorded, as they lie inside the new one).
+      for (const inner of enclosedKept ?? []) {
+        const group = counted.get(inner.fingerprint) ?? [];
+        const index = group.indexOf(inner);
+        if (index !== -1) {
+          group[index] = { ...inner, nestedInLargerGroup: true };
+        }
       }
       keptRegions.push(candidate);
       keptRegionsByBucket.set(candidate.regionBucket ?? 0, keptRegions);
@@ -96,6 +116,11 @@ export function selectMaximalGroups<T extends SelectableRegion>(
     // restate the larger group.
     for (const [fingerprint, nested] of nestedByFingerprint) {
       counted.get(fingerprint)?.push(...nested);
+    }
+    for (const [fingerprint, group] of counted) {
+      if (group.every((candidate) => candidate.nestedInLargerGroup)) {
+        counted.delete(fingerprint);
+      }
     }
 
     let failedFingerprint: string | undefined;
