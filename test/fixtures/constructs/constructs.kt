@@ -125,7 +125,9 @@ class Warehouse(seed: List<String>, private val label: String = "main") : Store 
         fun local(amount: Int) = amount + counter
         val total = items.map { it.length }.sumOf { it }
         val first = items.firstOrNull()?.length ?: 0
-        return doubler(total) + local(first) + maximum(first, if (guard(first)) 1 else 0)
+        var bonus = 0
+        if (guard(first)) bonus = 1 else bonus = 2
+        return doubler(total) + local(first) + maximum(first, bonus)
     }
 }
 

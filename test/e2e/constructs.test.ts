@@ -316,7 +316,7 @@ const expectations: Record<LanguageName, ConstructExpectation> = {
     // functions; property getters/setters, secondary constructors, anonymous functions, and
     // lambdas are. NCSS counts the package and import lines, class/object/companion
     // declarations, enum-constant bodies, `init` blocks, and every when entry and its body.
-    ncss: 124,
+    ncss: 126,
     cognitiveComplexity: 36,
     nestingDepth: 3,
     functions: [
@@ -332,8 +332,10 @@ const expectations: Record<LanguageName, ConstructExpectation> = {
       // when +1, if-else inside an entry +2 and +1, nested subject-less when +2.
       ['describe', 6, 2, 17, 1],
       // The object expression's class body raises nesting once (run's if costs 2), the lambda's
-      // if-else costs 3, the anonymous function's `&&` 1, and the final if-else 2.
-      ['drain', 8, 1, 24, 0],
+      // if-else costs 3, the anonymous function's `&&` 1, and the final if-else statement 2 (an
+      // if-else in expression position would count its else and branches but not the if itself,
+      // so the catalog keeps it a statement).
+      ['drain', 8, 1, 26, 0],
       ['run', 1, 1, 4, 0],
       ['doubler', 2, 1, 5, 1],
       ['guard', 1, 0, 2, 1],
