@@ -264,7 +264,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // A Go func literal bound via `add := func...`, `var add = func...`, or `add = func...` takes
     // the identifier (or selector field) at the same list position.
     if node.kind() == "func_literal" && parent.kind() == "expression_list" {
-        return find_go_func_literal_name(node, parent, code);
+        return find_go_func_literal_name(bound, parent, code);
     }
 
     // Ruby and Python lambdas assigned to a name take that name.

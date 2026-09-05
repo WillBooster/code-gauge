@@ -511,6 +511,9 @@ describe('function names from binding sites', () => {
         'const o = { run: (() => 1), typed: (() => 2) as () => number, sat: (() => 3) satisfies Fn };\nobj.run = (() => 4)!;\nconst v = (() => 5) as Fn;'
       ).map((fn) => fn.name)
     ).toEqual(['run', 'typed', 'sat', 'run', 'v']);
+    expect(
+      functionsOf('go', 'package p\nfunc f() { run = (func() {}); x := (func() {}) }').map((fn) => fn.name)
+    ).toEqual(['f', 'run', 'x']);
   });
 });
 
