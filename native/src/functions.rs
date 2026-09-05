@@ -353,14 +353,19 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
             {
                 return None;
             }
+            // The whole delimiter run is stripped (Python `"""k"""` names `k`); a prefixed
+            // literal (`r"k"`) starts with no quote and names nothing.
             let text = node_text(key, code);
             let quote = text
                 .chars()
                 .next()
                 .filter(|first| matches!(first, '"' | '\'' | '`'))?;
-            let inner = text
-                .strip_prefix(quote)
-                .and_then(|rest| rest.strip_suffix(quote))?;
+            let delimiter_length = text.chars().take_while(|char| *char == quote).count();
+            if text.len() < 2 * delimiter_length {
+                return None;
+            }
+            let (delimiter, rest) = text.split_at(delimiter_length);
+            let inner = rest.strip_suffix(delimiter)?;
             (!inner.is_empty()).then(|| inner.to_string())
         }
         _ => None,

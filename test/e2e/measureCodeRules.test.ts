@@ -508,6 +508,10 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['f', 'run', 'b', 'run']);
+    // A triple-quoted key drops its whole delimiter; a prefixed literal names nothing.
+    expect(
+      functionsOf('python', 'd = { """t""": lambda: 1, r"raw": lambda: 2, "plain": lambda: 3 }\n').map((fn) => fn.name)
+    ).toEqual(['t', undefined, 'plain']);
   });
 
   it('looks through grouping parentheses and TypeScript type wrappers to the binding site', () => {

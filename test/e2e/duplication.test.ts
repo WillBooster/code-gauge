@@ -147,7 +147,6 @@ const suffixHalf = `
   return total + count + big - small;
 `;
 
-/** A single-segment occurrence spanning [start, end) for direct mergeAdjacentGroups tests. */
 /** A cross-file copy nested inside a larger group's region. */
 const nested = (start: number, end: number): CountedOccurrence => ({
   ...occurrence(start, end),
@@ -155,6 +154,7 @@ const nested = (start: number, end: number): CountedOccurrence => ({
   nestedInLargerGroup: true,
 });
 
+/** A single-segment occurrence spanning [start, end) for direct mergeAdjacentGroups tests. */
 const occurrence = (start: number, end: number): CountedOccurrence => ({
   segments: [{ startTokenIndex: start, endTokenIndex: end }],
   tokenCount: end - start,
