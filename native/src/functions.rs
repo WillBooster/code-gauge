@@ -443,9 +443,18 @@ fn is_signed_number(key: Node<'_>, code: &Source<'_>) -> bool {
         .find(|child| !child.is_named())
         .is_some_and(|sign| matches!(node_text(sign, code), "-" | "+"));
     signed
-        && named_children(key)
-            .first()
-            .is_some_and(|operand| matches!(operand.kind(), "number" | "integer" | "float"))
+        && named_children(key).first().is_some_and(|operand| {
+            matches!(
+                operand.kind(),
+                "number"
+                    | "integer"
+                    | "float"
+                    | "int_literal"
+                    | "float_literal"
+                    | "rune_literal"
+                    | "imaginary_literal"
+            )
+        })
 }
 
 /// A Go keyed composite-literal element: the key is the first `literal_element` of the pair, the
@@ -466,10 +475,11 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
         "interpreted_string_literal" | "raw_string_literal" => {
             find_string_literal_content(key, code)
         }
-        // A literal key is as stable a name here as in any other language's mapping.
+        // A literal key is as stable a name here as in any other language's mapping, signed or not.
         "int_literal" | "float_literal" | "rune_literal" | "imaginary_literal" => {
             Some(node_text(key, code).to_string())
         }
+        "unary_expression" if is_signed_number(key, code) => Some(node_text(key, code).to_string()),
         _ => None,
     }
 }
