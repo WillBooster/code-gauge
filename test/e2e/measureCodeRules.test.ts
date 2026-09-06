@@ -652,6 +652,13 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['f', undefined]);
+    // One declaration can name several parameters that share its constraint.
+    expect(
+      functionsOf(
+        'go',
+        'package p\nfunc f[A, B ~map[string]func()]() { _ = B{key: func(){}} }\ntype R[A, B ~map[string]func()] struct{}\nfunc (r R[X, Y]) g() { _ = Y{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'g', undefined]);
     // A method's receiver carries the parameters of the type it is declared on.
     expect(
       functionsOf(

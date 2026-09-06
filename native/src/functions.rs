@@ -568,14 +568,9 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
         if let Some(constraint) = named_children(current)
             .into_iter()
             .filter(|child| child.kind() == "type_parameter_list")
-            .flat_map(named_children)
-            .filter(|parameter| parameter.kind() == "type_parameter_declaration")
-            .find(|parameter| {
-                parameter
-                    .child_by_field_name("name")
-                    .is_some_and(|parameter_name| node_text(parameter_name, code) == name)
-            })
-            .and_then(|parameter| parameter.child_by_field_name("type"))
+            .flat_map(|list| declared_type_parameters(list))
+            .find(|(parameter_name, _)| node_text(*parameter_name, code) == name)
+            .and_then(|(_, constraint)| constraint)
         {
             return Some(core_constraint_type(constraint));
         }
@@ -640,9 +635,25 @@ fn receiver_parameter_constraint<'t>(
         node_text(instantiation.child_by_field_name("type")?, code),
         code,
     )?;
-    binding_children(declaration.child_by_field_name("type_parameters")?)
+    declared_type_parameters(declaration.child_by_field_name("type_parameters")?)
         .get(position)?
-        .child_by_field_name("type")
+        .1
+}
+
+/// The parameters a type-parameter list declares, in order; one declaration can name several that
+/// share its constraint (`[A, B ~map[string]F]`), so each name is its own parameter.
+fn declared_type_parameters<'t>(list: Node<'t>) -> Vec<(Node<'t>, Option<Node<'t>>)> {
+    binding_children(list)
+        .into_iter()
+        .filter(|declaration| declaration.kind() == "type_parameter_declaration")
+        .flat_map(|declaration| {
+            let constraint = declaration.child_by_field_name("type");
+            find_children_by_field_name(declaration, "name")
+                .into_iter()
+                .map(|name| (name, constraint))
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
 /// The type governing a literal body's keys: the type its own literal declares, or, when a nested
