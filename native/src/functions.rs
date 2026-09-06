@@ -419,9 +419,7 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
         // (`{ -1: ... }`) or not; any other expression is computed and names nothing.
         "property_identifier" | "hash_key_symbol" => Some(node_text(key, code).to_string()),
         "number" | "integer" | "float" => Some(node_text(key, code).to_string()),
-        "unary_operator" | "unary" if is_signed_number(key, code) => {
-            Some(node_text(key, code).to_string())
-        }
+        "unary_operator" | "unary" => signed_number_name(key, code),
         "simple_symbol" => node_text(key, code)
             .strip_prefix(':')
             .map(|name| name.to_string()),
@@ -459,6 +457,26 @@ fn core_constraint_type(constraint: Node<'_>) -> Node<'_> {
         }
     }
     current
+}
+
+/// The name a signed number spells: the sign and the number it applies to, written without any
+/// space between them and, for a rune, without its quotes. Any other unary expression is computed
+/// and names nothing.
+fn signed_number_name(key: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if !is_signed_number(key, code) {
+        return None;
+    }
+    let operand = named_children(key).into_iter().next()?;
+    let sign = all_children(key)
+        .into_iter()
+        .find(|child| !child.is_named())
+        .map(|child| node_text(child, code))
+        .unwrap_or_default();
+    let text = match operand.kind() {
+        "rune_literal" => find_string_literal_content(operand, code)?,
+        _ => node_text(operand, code).to_string(),
+    };
+    Some(format!("{sign}{text}"))
 }
 
 /// A number with a leading sign (`-1`), whose text is as stable a key as the number itself.
@@ -506,20 +524,7 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
         "int_literal" | "float_literal" | "imaginary_literal" => {
             Some(node_text(key, code).to_string())
         }
-        // A signed rune keeps the sign but reads its operand without the quotes.
-        "unary_expression" if is_signed_number(key, code) => {
-            let operand = named_children(key).into_iter().next()?;
-            let sign = all_children(key)
-                .into_iter()
-                .find(|child| !child.is_named())
-                .map(|child| node_text(child, code))
-                .unwrap_or_default();
-            let text = match operand.kind() {
-                "rune_literal" => find_string_literal_content(operand, code)?,
-                _ => node_text(operand, code).to_string(),
-            };
-            Some(format!("{sign}{text}"))
-        }
+        "unary_expression" => signed_number_name(key, code),
         _ => None,
     }
 }

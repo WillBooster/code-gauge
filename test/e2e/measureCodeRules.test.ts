@@ -470,6 +470,8 @@ describe('function names from binding sites', () => {
       undefined,
     ]);
     expect(functionsOf('ruby', 'h = { -1 => -> { 1 } }\n').map((fn) => fn.name)).toEqual(['-1']);
+    // A space between the sign and the number does not reach the name.
+    expect(functionsOf('python', 'd = {- 2: lambda: 1}\n').map((fn) => fn.name)).toEqual(['-2']);
     // A class field is named like an object-literal key: computed stays anonymous, quoted is read
     // without its quotes, and a private name is kept as written.
     expect(
