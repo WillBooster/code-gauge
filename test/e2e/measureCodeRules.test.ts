@@ -509,6 +509,13 @@ describe('function names from binding sites', () => {
       functionsOf('csharp', 'class A { void F() { Changed += () => 1; Handler = () => 2; } }').map((fn) => fn.name)
     ).toEqual(['F', undefined, 'Handler']);
     expect(functionsOf('kotlin', 'fun f() { run += { 1 } }').map((fn) => fn.name)).toEqual(['f', undefined]);
+    // A Go keyed composite-literal element names its value; an unkeyed one has no key to use.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype S struct { run func() }\nfunc f() { _ = S{run: func() {}}; _ = map[string]func(){"go": func() {}}; _ = []func(){func() {}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', 'run', 'go', undefined]);
     expect(functionsOf('go', 'package p\nfunc f() { run += func() {}; ok = func() {} }').map((fn) => fn.name)).toEqual([
       'f',
       undefined,
@@ -625,6 +632,9 @@ describe('DepDegree across languages', () => {
     // A member pointer declares its name as a type_identifier inside a pointer_type_declarator;
     // a qualified constant in a parameter default is a read, so the body's read pairs with nothing.
     expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* p = q; return p == q; }')).toEqual([3]);
+    expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* arr[1] = {q}; return arr[0] == q; }')).toEqual(
+      [3]
+    );
     expect(
       depDegreeOf(
         'cpp',

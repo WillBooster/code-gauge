@@ -328,10 +328,23 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     if parent.kind() == "pair" {
         return find_pair_key_name(parent, code);
     }
+    // A Go keyed composite-literal element (`S{run: func() {}}`) names its value after the key.
+    if parent.kind() == "literal_element" {
+        return find_go_keyed_element_name(parent, code);
+    }
     // A Rust struct-literal field (`S { cb: || 1 }`) names its closure after the field.
     if parent.kind() == "field_initializer" {
         return parent
             .child_by_field_name("field")
+            .map(|field| node_text(field, code).to_string());
+    }
+    // A C++20 designated initializer (`S s{.run = []{}}`) likewise names its value after the field;
+    // an array designator (`{[0] = ...}`) names nothing, like a subscript assignment target.
+    if parent.kind() == "initializer_pair" {
+        return find_children_by_field_name(parent, "designator")
+            .last()
+            .filter(|designator| designator.kind() == "field_designator")
+            .and_then(|designator| designator.named_child(0))
             .map(|field| node_text(field, code).to_string());
     }
     if parent.kind() == "assignment_expression" {
@@ -364,6 +377,26 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 }
 
+/// A Go keyed composite-literal element: the key is the first `literal_element` of the pair, the
+/// value the last. An unkeyed element sits under a `literal_value` instead and names nothing.
+fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let keyed = value_element
+        .parent()
+        .filter(|parent| parent.kind() == "keyed_element")?;
+    let elements = named_children(keyed);
+    if elements.len() < 2 || elements.last()?.id() != value_element.id() {
+        return None;
+    }
+    let key = named_children(*elements.first()?).into_iter().next()?;
+    match key.kind() {
+        "identifier" | "field_identifier" => Some(node_text(key, code).to_string()),
+        "interpreted_string_literal" | "raw_string_literal" => {
+            find_string_literal_content(key, code)
+        }
+        _ => None,
+    }
+}
+
 /// The literal's content as written (escapes kept), read from the grammar's content children so
 /// delimiters and prefixes (`"""k"""`, `r"k"`, `%q(k)`, `:"k"`) never leak into it. JavaScript
 /// splits the content into `string_fragment` and `escape_sequence` siblings; Ruby and Python emit
@@ -383,7 +416,23 @@ fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<S
         })
         .map(|child| node_text(*child, code))
         .collect();
-    (!content.is_empty()).then_some(content)
+    if !content.is_empty() {
+        return Some(content);
+    }
+    // A grammar that exposes no content child (Go's string literals) keeps its delimiters in the
+    // text; an empty literal is left without a name.
+    let text = node_text(literal, code);
+    let quote = text
+        .chars()
+        .next()
+        .filter(|first| matches!(first, '"' | '\'' | '`'))?;
+    let delimiter_length = text.chars().take_while(|char| *char == quote).count();
+    if text.len() < 2 * delimiter_length {
+        return None;
+    }
+    let (delimiter, rest) = text.split_at(delimiter_length);
+    let inner = rest.strip_suffix(delimiter)?;
+    (!inner.is_empty()).then(|| inner.to_string())
 }
 
 /// A compound assignment (`x += f`) does not bind the function to its target, so only a plain `=`
