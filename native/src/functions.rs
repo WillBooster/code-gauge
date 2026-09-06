@@ -202,18 +202,25 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
 
 /// The value a transparent wrapper wraps, if this node is one. Grouping parentheses and type-only
 /// wrappers do not change what a value is bound to, so naming looks through them. TypeScript's
-/// angle-bracket assertion puts the type first (`<Fn>(f)`), so its value is its last named child;
-/// Ruby's `parenthesized_statements` wraps a lone value only when it holds exactly one statement.
+/// angle-bracket assertion puts the type first (`<Fn>(f)`), so its value is its last child; Ruby's
+/// `parenthesized_statements` wraps a lone value only when it holds exactly one statement.
 fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
+    // Comments are named children too (`(/* why */ () => 1)`), so they are skipped throughout.
+    let children = named_children(wrapper);
+    let mut values = children
+        .into_iter()
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()));
     match wrapper.kind() {
-        "type_assertion" => wrapper.named_child(wrapper.named_child_count().checked_sub(1)?),
-        "parenthesized_statements" if wrapper.named_child_count() != 1 => None,
+        "type_assertion" => values.next_back(),
+        "parenthesized_statements" => {
+            let value = values.next()?;
+            values.next().is_none().then_some(value)
+        }
         "parenthesized_expression"
-        | "parenthesized_statements"
         | "as_expression"
         | "satisfies_expression"
         | "non_null_expression"
-        | "type_cast_expression" => wrapper.named_child(0),
+        | "type_cast_expression" => values.next(),
         _ => None,
     }
 }

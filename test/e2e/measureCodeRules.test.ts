@@ -551,6 +551,14 @@ describe('function names from binding sites', () => {
       'f',
       'cb',
     ]);
+    // A comment inside the wrapper is a named child, but not the wrapped value.
+    expect(
+      functionsOf(
+        'javascript',
+        'const run = (/* why */ () => 1);\nconst o = { go: (/* why */ function () {}) };\nobj.cb = (/* why */ () => 2);'
+      ).map((fn) => fn.name)
+    ).toEqual(['run', 'go', 'cb']);
+    expect(functionsOf('ruby', 'run = (# why\nlambda { 1 })\n').map((fn) => fn.name)).toEqual(['run']);
     expect(
       functionsOf('go', 'package p\nfunc f() { run = (func() {}); x := (func() {}) }').map((fn) => fn.name)
     ).toEqual(['f', 'run', 'x']);
