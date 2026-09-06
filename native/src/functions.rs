@@ -206,25 +206,36 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
 /// a C-style cast (`(Runnable) () -> 1`), which names it through a field; Ruby's
 /// `parenthesized_statements` wraps a lone value only when it holds exactly one statement.
 fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
+    // A C-style cast (Java, C#, C/C++) names its type first, so its value comes from the field.
+    if wrapper.kind() == "cast_expression" {
+        return wrapper.child_by_field_name("value");
+    }
+    if !matches!(
+        wrapper.kind(),
+        "type_assertion"
+            | "parenthesized_statements"
+            | "parenthesized_expression"
+            | "as_expression"
+            | "satisfies_expression"
+            | "non_null_expression"
+            | "type_cast_expression"
+    ) {
+        // Checked before the children are read: this runs for the parent of every function node,
+        // and a high-arity parent (a list of callbacks) would otherwise cost O(children) each time.
+        return None;
+    }
     // Comments are named children too (`(/* why */ () => 1)`), so they are skipped throughout.
     let children = named_children(wrapper);
     let mut values = children
         .into_iter()
         .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()));
     match wrapper.kind() {
-        // A C-style cast (Java, C#, C/C++) names its type first, so its value comes from the field.
-        "cast_expression" => wrapper.child_by_field_name("value"),
         "type_assertion" => values.next_back(),
         "parenthesized_statements" => {
             let value = values.next()?;
             values.next().is_none().then_some(value)
         }
-        "parenthesized_expression"
-        | "as_expression"
-        | "satisfies_expression"
-        | "non_null_expression"
-        | "type_cast_expression" => values.next(),
-        _ => None,
+        _ => values.next(),
     }
 }
 
@@ -359,15 +370,19 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 
     // A JavaScript class field (`handle = () => {}`) names its property through the `property`
-    // field; TypeScript's `public_field_definition` exposes the same thing as `name`.
+    // field; TypeScript's `public_field_definition` exposes the same thing as `name`. A computed
+    // key is as unstable here as in an object literal, and a string key is read the same way.
     let field_name = if parent.kind() == "field_definition" {
         "property"
     } else {
         "name"
     };
-    parent
-        .child_by_field_name(field_name)
-        .map(|name| node_text(name, code).to_string())
+    let name = parent.child_by_field_name(field_name)?;
+    match name.kind() {
+        "computed_property_name" => None,
+        "string" => find_string_literal_content(name, code),
+        _ => Some(node_text(name, code).to_string()),
+    }
 }
 
 /// The key of a `pair` when it is a plain, Ruby symbol, or string-literal property name; a
