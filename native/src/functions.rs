@@ -509,14 +509,23 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
 fn has_value_keys(keyed: Node<'_>, code: &Source<'_>) -> bool {
     keyed
         .parent()
-        .and_then(key_type_of_literal_body)
-        .map(|declared| resolve_named_type(declared, code))
-        .is_some_and(|declared| {
-            matches!(
-                declared.kind(),
-                "map_type" | "slice_type" | "array_type" | "implicit_length_array_type"
-            )
-        })
+        .and_then(|body| key_type_of_literal_body(body, code))
+        .is_some_and(|declared| is_value_keyed_type(declared, code))
+}
+
+/// Whether values written under this type are keyed by evaluated values rather than field names: a
+/// map, slice or array, a name standing for one, or a constraint that admits only such types (a
+/// union counts when every one of its terms does).
+fn is_value_keyed_type(declared: Node<'_>, code: &Source<'_>) -> bool {
+    let resolved = resolve_named_type(declared, code);
+    match resolved.kind() {
+        "map_type" | "slice_type" | "array_type" | "implicit_length_array_type" => true,
+        "type_constraint" | "interface_type" | "type_elem" | "negated_type" => {
+            let terms = binding_children(resolved);
+            !terms.is_empty() && terms.iter().all(|term| is_value_keyed_type(*term, code))
+        }
+        _ => false,
+    }
 }
 
 /// A literal's type may be a name declared in the same file (`type M map[string]F`), so the name is
@@ -632,7 +641,7 @@ fn receiver_parameter_constraint<'t>(
 /// literal elides it, the element type of the literal holding it (`map[string]map[string]F{"a":
 /// {k: f}}` nests a map, `[]S{{run: f}}` a struct). A literal nested in a struct field keeps the
 /// struct reading, since the field's type is not written at the literal.
-fn key_type_of_literal_body(body: Node<'_>) -> Option<Node<'_>> {
+fn key_type_of_literal_body<'t>(body: Node<'t>, code: &Source<'t>) -> Option<Node<'t>> {
     let parent = body.parent()?;
     if parent.kind() == "composite_literal" {
         return parent.child_by_field_name("type");
@@ -647,7 +656,8 @@ fn key_type_of_literal_body(body: Node<'_>) -> Option<Node<'_>> {
     if container.kind() != "literal_value" {
         return None;
     }
-    let holder = key_type_of_literal_body(container)?;
+    // The container's own type may be a name, which the element type is read through.
+    let holder = resolve_named_type(key_type_of_literal_body(container, code)?, code);
     match holder.kind() {
         "map_type" => holder.child_by_field_name("value"),
         "slice_type" | "array_type" | "implicit_length_array_type" => {
