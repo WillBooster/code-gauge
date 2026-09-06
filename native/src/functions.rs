@@ -290,11 +290,22 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         };
     }
 
-    // A C++ lambda assigned to a variable (`auto f = [](int x) { ... };`) takes the variable name.
-    // Direct initialization (`std::thread worker([] {});`) passes it to a constructor instead, which
-    // stores whatever it likes, so it names nothing, like any other call argument.
-    if node.kind() == "lambda_expression" && parent.kind() == "init_declarator" {
-        return unwrap_declarator_name(parent.child_by_field_name("declarator"), code);
+    // A C++ lambda assigned to a variable (`auto f = [](int x) { ... };`) takes the variable name,
+    // as does one that direct-initializes a deduced variable (`auto f{[] {}}`), whose type is the
+    // closure itself. With a written type (`std::thread worker([] {})`) the lambda is a constructor
+    // argument, and the constructor stores whatever it likes, so it names nothing.
+    if node.kind() == "lambda_expression" {
+        let declaration = match parent.kind() {
+            "init_declarator" => Some(parent),
+            "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
+                .parent()
+                .filter(|holder| holder.kind() == "init_declarator")
+                .filter(|holder| declares_deduced_type(*holder)),
+            _ => None,
+        };
+        if let Some(declaration) = declaration {
+            return unwrap_declarator_name(declaration.child_by_field_name("declarator"), code);
+        }
     }
 
     // A Go func literal bound via `add := func...`, `var add = func...`, or `add = func...` takes
@@ -1040,6 +1051,15 @@ fn is_react_component_wrapper_call(node: Node<'_>, code: &Source<'_>) -> bool {
         let text = node_text(callee, code);
         text == "memo" || text == "React.memo" || text == "forwardRef" || text == "React.forwardRef"
     })
+}
+
+/// Whether the declaration around this declarator deduces its type (`auto`), which makes the
+/// variable the closure itself rather than something constructed from it.
+fn declares_deduced_type(declarator: Node<'_>) -> bool {
+    declarator
+        .parent()
+        .and_then(|declaration| declaration.child_by_field_name("type"))
+        .is_some_and(|declared| declared.kind() == "placeholder_type_specifier")
 }
 
 /// Unwraps a C/C++ declarator chain to the declared name; see unwrapDeclaratorName in metrics.ts.

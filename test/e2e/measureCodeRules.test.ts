@@ -598,13 +598,14 @@ describe('function names from binding sites', () => {
       )
     ).toEqual(['run', 'run', 'x', undefined]);
     expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
-    // Direct initialization passes the lambda to a constructor, so it names nothing; an assignment
-    // and a designated initializer do bind it.
+    // A written type means the lambda is a constructor argument, so it names nothing; a deduced one
+    // makes the variable the closure itself, like an assignment does.
     expect(
-      functionsOf('cpp', 'void f() { std::thread worker([]{}); std::function<void()> go{[]{}}; auto cb = []{}; }').map(
-        (fn) => fn.name
-      )
-    ).toEqual(['f', undefined, undefined, 'cb']);
+      functionsOf(
+        'cpp',
+        'void f() { std::thread worker([]{}); std::function<void()> go{[]{}}; auto cb = []{}; auto braced{[]{}}; auto parens([]{}); }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, undefined, 'cb', 'braced', 'parens']);
     // A compound assignment does not bind its target to the function (C# event subscription).
     expect(
       functionsOf('csharp', 'class A { void F() { Changed += () => 1; Handler = () => 2; } }').map((fn) => fn.name)
