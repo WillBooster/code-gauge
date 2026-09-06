@@ -618,6 +618,14 @@ fn receiver_parameter_constraint<'t>(
     let instantiation = named_children(receiver)
         .into_iter()
         .filter_map(|parameter| parameter.child_by_field_name("type"))
+        // A pointer receiver (`func (r *R[T])`) wraps the instantiation, which is otherwise direct.
+        .map(|declared| match declared.kind() {
+            "pointer_type" => named_children(declared)
+                .into_iter()
+                .next()
+                .unwrap_or(declared),
+            _ => declared,
+        })
         .find(|declared| declared.kind() == "generic_type")?;
     let arguments = binding_children(instantiation.child_by_field_name("type_arguments")?);
     let position = arguments.iter().position(|argument| {
