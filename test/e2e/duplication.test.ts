@@ -991,6 +991,15 @@ describe('duplication: cross-file clones in every language', () => {
   }
 });
 
+/** Three statement runs, so files can share overlapping halves of one function body. */
+const straddleRuns = {
+  first: '  const alpha = compute(seed, base);\n  const beta = combine(alpha, seed);\n  report(alpha, beta);\n',
+  middle: '  const gamma = alpha * beta + 3;\n  const delta = gamma - beta;\n  log("mid", gamma, delta);\n',
+  last: '  const epsilon = delta / 2;\n  const zeta = epsilon + gamma;\n  log("end", epsilon, zeta);\n',
+};
+
+const straddleFile = (name: string, body: string): string => `function ${name}(seed, base) {\n${body}}\n`;
+
 /** A second function that makes two files whole-file clones, larger than the block a third file copies. */
 const arithmetic = (name: string): string =>
   `function ${name}(a, b) {\n  const x = a + b;\n  const y = a * b;\n  const z = x - y;\n  const w = x * y - z;\n  const v = [x, y, z, w].map((n) => n * 2);\n  const u = v.filter((n) => n > a);\n  return [x, y, z, w, v, u, a, b];\n}\n`;
@@ -1106,6 +1115,31 @@ describe('duplication: cross-file grouping and reporting', () => {
     // One redundant whole-file copy plus the two copies of the block that no larger group covers.
     expect(metrics.duplicateBlockCount).toBe(3);
     expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 2, 'c.js': 1, 'd.js': 1 });
+  });
+
+  // a.js and b.js hold all three runs, c.js and e.js the first two, and d.js the last two. The
+  // first-two region is kept before the whole-file clone that encloses it, and the last-two region
+  // then lies inside that clone while straddling the region it swallowed: it must be reported as a
+  // nested copy, which only holds while an enclosing candidate replaces the regions it absorbs.
+  it('reports a region straddling one the enclosing clone already absorbed', () => {
+    const { first, middle, last } = straddleRuns;
+    const metrics = measureCrossFileDuplication(
+      [
+        { file: 'a.js', code: straddleFile('a', first + middle + last) },
+        { file: 'b.js', code: straddleFile('b', first + middle + last) },
+        { file: 'c.js', code: straddleFile('c', `${first}${middle}  finish(1);\n`) },
+        { file: 'd.js', code: straddleFile('d', `  begin(2);\n${middle}${last}`) },
+        { file: 'e.js', code: straddleFile('e', `${first}${middle}  finish(3);\n`) },
+      ].map(({ file, code }) => ({ file, ...collectCrossFileDuplicationFileData(code, { language: 'javascript' }) })),
+      { maxGapTokens: 0 }
+    );
+
+    expect(metrics.groups.map((group) => group.files)).toEqual([
+      ['a.js', 'b.js'],
+      ['c.js', 'e.js'],
+      ['a.js', 'b.js', 'd.js'],
+    ]);
+    expect(metrics.duplicateBlockCount).toBe(3);
   });
 
   it('applies near-miss matching within files only, so a scattered-edit copy across files is not a clone', () => {
