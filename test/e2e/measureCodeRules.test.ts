@@ -640,6 +640,13 @@ describe('function names from binding sites', () => {
         `package p\n${chain}\ntype A9 map[string]func()\ntype C C\nfunc f() { _ = A0{key: func(){}}; _ = C{run: func(){}} }`
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, 'run']);
+    // A type parameter shadows a file-level type of the same name, and its constraint decides.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M struct { key func() }\nfunc f[M ~map[string]func()]() { _ = M{key: func(){}} }\nfunc g() { _ = M{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'g', 'key']);
     // A type declared inside a function resolves like a top-level one.
     expect(
       functionsOf('go', 'package p\nfunc f() { type M map[string]func(); _ = M{key: func(){}} }').map((fn) => fn.name)

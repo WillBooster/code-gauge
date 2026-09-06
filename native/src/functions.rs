@@ -436,6 +436,22 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 }
 
+/// The type a constraint stands for: an approximation (`~map[string]F`) or a wrapper around one
+/// type names that type; a union of several names none of them in particular.
+fn core_constraint_type(constraint: Node<'_>) -> Node<'_> {
+    let mut current = constraint;
+    while matches!(
+        current.kind(),
+        "type_constraint" | "negated_type" | "type_elem"
+    ) {
+        match named_children(current).as_slice() {
+            [only] => current = *only,
+            _ => break,
+        }
+    }
+    current
+}
+
 /// A number with a leading sign (`-1`), whose text is as stable a key as the number itself.
 fn is_signed_number(key: Node<'_>, code: &Source<'_>) -> bool {
     let signed = all_children(key)
@@ -530,6 +546,22 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
     // read at each level, which keeps the lookup shallow.
     let mut scope = Some(declared);
     while let Some(current) = scope {
+        // A type parameter shadows any outer declaration of the same name, so its constraint is
+        // what the literal is written against.
+        if let Some(constraint) = named_children(current)
+            .into_iter()
+            .filter(|child| child.kind() == "type_parameter_list")
+            .flat_map(named_children)
+            .filter(|parameter| parameter.kind() == "type_parameter_declaration")
+            .find(|parameter| {
+                parameter
+                    .child_by_field_name("name")
+                    .is_some_and(|parameter_name| node_text(parameter_name, code) == name)
+            })
+            .and_then(|parameter| parameter.child_by_field_name("type"))
+        {
+            return Some(core_constraint_type(constraint));
+        }
         let found = named_children(current)
             .into_iter()
             .filter(|child| child.kind() == "type_declaration")
