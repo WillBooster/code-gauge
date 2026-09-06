@@ -674,6 +674,13 @@ describe('function names from binding sites', () => {
         'package p\ntype R[T ~map[string]func()] struct{}\nfunc (r R[T]) f() { _ = T{key: func(){}} }\nfunc (r *R[T]) g() { _ = T{key: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, 'g', undefined]);
+    // An instantiation binds the container's own parameter, which its nested literal reads.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype F func()\ntype G[T any] []T\nfunc f() { _ = G[map[string]F]{{key: func(){}}}; _ = G[F]{func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, undefined]);
     // A nested literal of a pointer element type elides the `&`, so the pointee decides.
     expect(
       functionsOf(

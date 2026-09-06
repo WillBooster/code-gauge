@@ -700,11 +700,8 @@ fn receiver_parameter_constraint<'t>(
             .unwrap_or(*argument);
         node_text(argument, code) == name
     })?;
-    let declaration = find_type_spec(
-        method.parent()?,
-        node_text(instantiation.child_by_field_name("type")?, code),
-        code,
-    )?;
+    let base = instantiation.child_by_field_name("type")?;
+    let declaration = find_declared_type_spec(method, node_text(base, code), code)?;
     declared_type_parameters(declaration.child_by_field_name("type_parameters")?)
         .get(position)?
         .1
@@ -746,14 +743,53 @@ fn key_type_of_literal_body<'t>(body: Node<'t>, code: &Source<'t>) -> Option<Nod
         return None;
     }
     // The container's own type may be a name, which the element type is read through.
-    let holder = resolve_named_type(key_type_of_literal_body(container, code)?, code);
-    match holder.kind() {
+    let declared = key_type_of_literal_body(container, code)?;
+    let holder = resolve_named_type(declared, code);
+    let element = match holder.kind() {
         "map_type" => holder.child_by_field_name("value"),
         "slice_type" | "array_type" | "implicit_length_array_type" => {
             holder.child_by_field_name("element")
         }
         _ => None,
+    }?;
+    Some(instantiated_type_argument(element, declared, code).unwrap_or(element))
+}
+
+/// A generic container's element type may be one of its own parameters, which the instantiation
+/// binds (`G[map[string]F]` makes the element of `type G[T any] []T` that map).
+fn instantiated_type_argument<'t>(
+    element: Node<'t>,
+    declared: Node<'t>,
+    code: &Source<'t>,
+) -> Option<Node<'t>> {
+    if element.kind() != "type_identifier" || declared.kind() != "generic_type" {
+        return None;
     }
+    let base = declared.child_by_field_name("type")?;
+    let declaration = find_declared_type_spec(base, node_text(base, code), code)?;
+    let position = declared_type_parameters(declaration.child_by_field_name("type_parameters")?)
+        .iter()
+        .position(|(name, _)| node_text(*name, code) == node_text(element, code))?;
+    let argument =
+        *binding_children(declared.child_by_field_name("type_arguments")?).get(position)?;
+    Some(
+        named_children(argument)
+            .into_iter()
+            .next()
+            .unwrap_or(argument),
+    )
+}
+
+/// The declaration of a type name, searched from the innermost scope outwards.
+fn find_declared_type_spec<'t>(from: Node<'t>, name: &str, code: &Source<'t>) -> Option<Node<'t>> {
+    let mut scope = Some(from);
+    while let Some(current) = scope {
+        if let Some(spec) = find_type_spec(current, name, code) {
+            return Some(spec);
+        }
+        scope = current.parent();
+    }
+    None
 }
 
 /// The literal's content as written (escapes kept), read from the grammar's content children so
