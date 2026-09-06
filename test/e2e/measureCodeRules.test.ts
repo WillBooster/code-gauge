@@ -708,6 +708,14 @@ describe('function names from binding sites', () => {
         'package p\ntype M1 map[string]func()\ntype M2 map[string]func()\nfunc f[T interface{ M1 | M2 }]() { _ = T{key: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined]);
+    // An embedded method-only interface leaves the underlying type free, and one that embeds
+    // itself terminates instead of recursing.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype HasM interface { M() }\ntype Loop interface { Loop }\nfunc f[T interface { ~map[string]func(); HasM }]() { _ = T{key: func(){}} }\nfunc g[U Loop]() { _ = U{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'g', 'key']);
     // A method requirement restricts what a type does, not what it is.
     expect(
       functionsOf('go', 'package p\nfunc f[T interface{ ~map[string]func(); M() }]() { _ = T{key: func(){}} }').map(

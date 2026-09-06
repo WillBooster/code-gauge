@@ -538,6 +538,17 @@ fn has_value_keys(keyed: Node<'_>, code: &Source<'_>) -> bool {
 /// map, slice or array, a name standing for one, or a constraint that admits only such types (a
 /// union counts when every one of its terms does).
 fn is_value_keyed_type(declared: Node<'_>, code: &Source<'_>) -> bool {
+    value_keyed_type(declared, code, 0)
+}
+
+/// Constraints nest, and one that embeds itself would nest forever, so the walk is depth-bounded;
+/// real constraints are only a few levels deep.
+const MAX_CONSTRAINT_DEPTH: usize = 16;
+
+fn value_keyed_type(declared: Node<'_>, code: &Source<'_>, depth: usize) -> bool {
+    if depth >= MAX_CONSTRAINT_DEPTH {
+        return false;
+    }
     let resolved = resolve_named_type(declared, code);
     match resolved.kind() {
         "map_type" | "slice_type" | "array_type" | "implicit_length_array_type" => true,
@@ -546,9 +557,34 @@ fn is_value_keyed_type(declared: Node<'_>, code: &Source<'_>) -> bool {
             // decide; a union counts when every one of them is value-keyed.
             let terms: Vec<Node<'_>> = binding_children(resolved)
                 .into_iter()
-                .filter(|term| !matches!(term.kind(), "method_elem" | "method_spec"))
+                .filter(|term| !requires_methods_only(*term, code, depth + 1))
                 .collect();
-            !terms.is_empty() && terms.iter().all(|term| is_value_keyed_type(*term, code))
+            !terms.is_empty()
+                && terms
+                    .iter()
+                    .all(|term| value_keyed_type(*term, code, depth + 1))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a constraint element only requires methods, directly or through an embedded interface
+/// that does; such an element leaves the underlying type free.
+fn requires_methods_only(declared: Node<'_>, code: &Source<'_>, depth: usize) -> bool {
+    if matches!(declared.kind(), "method_elem" | "method_spec") {
+        return true;
+    }
+    if depth >= MAX_CONSTRAINT_DEPTH {
+        return false;
+    }
+    let resolved = resolve_named_type(declared, code);
+    match resolved.kind() {
+        "interface_type" | "type_constraint" | "type_elem" => {
+            let terms = binding_children(resolved);
+            !terms.is_empty()
+                && terms
+                    .iter()
+                    .all(|term| requires_methods_only(*term, code, depth + 1))
         }
         _ => false,
     }
