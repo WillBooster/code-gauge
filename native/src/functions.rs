@@ -500,18 +500,19 @@ fn has_value_keys(keyed: Node<'_>, code: &Source<'_>) -> bool {
 /// struct reading, which is what a named literal type usually is.
 fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
     let mut current = declared;
-    // A name may stand for another name (`type Alias M`) or be instantiated (`M[func()]`); the step
-    // limit bounds a declaration that names itself.
-    for _ in 0..8 {
-        if current.kind() == "generic_type" {
-            match current.child_by_field_name("type") {
-                Some(base) => current = base,
-                None => break,
-            }
-            continue;
-        }
-        match lookup_declared_type(current, code) {
-            Some(declared) => current = declared,
+    // A name may stand for another name (`type Alias M`) or be instantiated (`M[func()]`); the walk
+    // follows the chain as far as it goes and stops on a node it has already seen, which is what a
+    // declaration naming itself produces.
+    let mut visited = Vec::new();
+    while !visited.contains(&current.id()) {
+        visited.push(current.id());
+        let next = if current.kind() == "generic_type" {
+            current.child_by_field_name("type")
+        } else {
+            lookup_declared_type(current, code)
+        };
+        match next {
+            Some(next) => current = next,
             None => break,
         }
     }

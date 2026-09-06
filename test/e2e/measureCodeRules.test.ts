@@ -632,6 +632,14 @@ describe('function names from binding sites', () => {
         'package p\ntype M map[string]func()\ntype Alias M\ntype G[T any] map[string]T\nfunc f() { _ = Alias{key: func(){}}; _ = G[func()]{key: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, undefined]);
+    // A chain of names resolves however long it is, and one that names itself stops the walk.
+    const chain = Array.from({ length: 9 }, (_, index) => `type A${index} A${index + 1}`).join('\n');
+    expect(
+      functionsOf(
+        'go',
+        `package p\n${chain}\ntype A9 map[string]func()\ntype C C\nfunc f() { _ = A0{key: func(){}}; _ = C{run: func(){}} }`
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
     // A type declared inside a function resolves like a top-level one.
     expect(
       functionsOf('go', 'package p\nfunc f() { type M map[string]func(); _ = M{key: func(){}} }').map((fn) => fn.name)
