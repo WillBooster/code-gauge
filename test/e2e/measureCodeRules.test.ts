@@ -531,7 +531,7 @@ describe('function names from binding sites', () => {
     expect(functionsOf('ruby', 'self.run, x = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['run', 'x']);
     // Ruby fills trailing targets from the left when the values run out, so it aligns from the
     // right only where they reach; Python fails such an assignment instead.
-    expect(functionsOf('ruby', 'a, *r, c, d = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['a', undefined]);
+    expect(functionsOf('ruby', 'a, *r, c, d = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['a', 'c']);
     expect(functionsOf('ruby', 'a, *rest, c = *xs, -> { 1 }\n').map((fn) => fn.name)).toEqual([undefined]);
     // A trailing value still aligns from the right past a splat, unless splats surround it.
     expect(

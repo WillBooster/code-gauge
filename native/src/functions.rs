@@ -761,6 +761,11 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
             };
             if reaches_trailing_targets {
                 targets.get(targets.len() - 1 - trailing).copied()
+            } else if !splat_before && targets[splat].kind() == "rest_assignment" {
+                // Ruby empties the star and fills the trailing targets from the left when the
+                // values run out, so each one binds the next target (`a, *r, c, d = x, f` binds
+                // `f` to `c`); Python fails such an assignment instead.
+                targets.get(index + 1).copied()
             } else {
                 None
             }
