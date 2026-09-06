@@ -464,7 +464,12 @@ describe('function names from binding sites', () => {
       '2.5',
     ]);
     expect(functionsOf('ruby', 'h = { 1 => -> { 1 } }\n').map((fn) => fn.name)).toEqual(['1']);
-    expect(functionsOf('python', 'd = {1: lambda: 1}\n').map((fn) => fn.name)).toEqual(['1']);
+    expect(functionsOf('python', 'd = {1: lambda: 1, -2: lambda: 2, ~3: lambda: 3}\n').map((fn) => fn.name)).toEqual([
+      '1',
+      '-2',
+      undefined,
+    ]);
+    expect(functionsOf('ruby', 'h = { -1 => -> { 1 } }\n').map((fn) => fn.name)).toEqual(['-1']);
     // A class field is named like an object-literal key: computed stays anonymous, quoted is read
     // without its quotes, and a private name is kept as written.
     expect(

@@ -396,8 +396,11 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
 fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     let key = pair.child_by_field_name("key")?;
     match key.kind() {
-        // A numeric key (`{ 1: () => {} }`) is as stable a property name as an identifier.
-        "property_identifier" | "hash_key_symbol" | "number" | "integer" | "float" => {
+        // A numeric key (`{ 1: () => {} }`) is as stable a property name as an identifier, signed
+        // (`{ -1: ... }`) or not; any other expression is computed and names nothing.
+        "property_identifier" | "hash_key_symbol" => Some(node_text(key, code).to_string()),
+        "number" | "integer" | "float" => Some(node_text(key, code).to_string()),
+        "unary_operator" | "unary" if is_signed_number(key, code) => {
             Some(node_text(key, code).to_string())
         }
         "simple_symbol" => node_text(key, code)
@@ -420,6 +423,18 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// A number with a leading sign (`-1`), whose text is as stable a key as the number itself.
+fn is_signed_number(key: Node<'_>, code: &Source<'_>) -> bool {
+    let signed = all_children(key)
+        .into_iter()
+        .find(|child| !child.is_named())
+        .is_some_and(|sign| matches!(node_text(sign, code), "-" | "+"));
+    signed
+        && named_children(key)
+            .first()
+            .is_some_and(|operand| matches!(operand.kind(), "number" | "integer" | "float"))
 }
 
 /// A Go keyed composite-literal element: the key is the first `literal_element` of the pair, the
