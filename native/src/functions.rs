@@ -688,10 +688,31 @@ fn find_parallel_assignment_name(
         .iter()
         .position(|child| child.id() == value.id())?;
     let targets = binding_children(assignment.child_by_field_name("left")?);
-    if value_list[..index].iter().any(is_splat) || targets.get(..index)?.iter().any(is_splat) {
+    // A splat before this value shifts every later position by an unknown amount.
+    if value_list[..index].iter().any(is_splat) {
         return None;
     }
-    let target = *targets.get(index)?;
+    let splats: Vec<usize> = targets
+        .iter()
+        .enumerate()
+        .filter(|(_, target)| is_splat(target))
+        .map(|(index, _)| index)
+        .collect();
+    let target = match splats.as_slice() {
+        [] => *targets.get(index)?,
+        // Targets before the starred one take the first values and those after it the last ones,
+        // so a trailing value aligns from the right; the star swallows what is left, which binds no
+        // name of its own. That alignment counts the values, so a splat among them rules it out.
+        &[splat] if index < splat => *targets.get(index)?,
+        &[splat] if !value_list.iter().any(is_splat) => {
+            let tail_start = value_list.len().checked_sub(targets.len() - splat - 1)?;
+            if index < tail_start || tail_start < splat {
+                return None;
+            }
+            *targets.get(splat + 1 + index - tail_start)?
+        }
+        _ => return None,
+    };
     is_plain_assignment_target(target).then(|| node_text(target, code).to_string())
 }
 
