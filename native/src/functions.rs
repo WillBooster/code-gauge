@@ -506,7 +506,20 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
         "int_literal" | "float_literal" | "imaginary_literal" => {
             Some(node_text(key, code).to_string())
         }
-        "unary_expression" if is_signed_number(key, code) => Some(node_text(key, code).to_string()),
+        // A signed rune keeps the sign but reads its operand without the quotes.
+        "unary_expression" if is_signed_number(key, code) => {
+            let operand = named_children(key).into_iter().next()?;
+            let sign = all_children(key)
+                .into_iter()
+                .find(|child| !child.is_named())
+                .map(|child| node_text(child, code))
+                .unwrap_or_default();
+            let text = match operand.kind() {
+                "rune_literal" => find_string_literal_content(operand, code)?,
+                _ => node_text(operand, code).to_string(),
+            };
+            Some(format!("{sign}{text}"))
+        }
         _ => None,
     }
 }

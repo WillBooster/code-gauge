@@ -733,6 +733,9 @@ describe('function names from binding sites', () => {
     expect(
       functionsOf('go', 'package p\nfunc f() { _ = map[int]func(){-1: func(){}, +2: func(){}} }').map((fn) => fn.name)
     ).toEqual(['f', '-1', '+2']);
+    expect(
+      functionsOf('go', "package p\nfunc f() { _ = map[rune]func(){-'a': func(){}} }").map((fn) => fn.name)
+    ).toEqual(['f', '-a']);
     // Go names only the escapes of a string literal, so the key is read from its text instead.
     expect(
       functionsOf('go', 'package p\nfunc f() { _ = map[string]func(){"a\\nb": func() {}} }').map((fn) => fn.name)
