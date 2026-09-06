@@ -874,14 +874,12 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
         [] if unpacks && !splat_after => targets.get(targets.len() - 1 - trailing).copied(),
         &[splat] if !splat_before && index < splat => targets.get(index).copied(),
         &[splat] if !splat_after && trailing < targets.len() - splat - 1 => {
-            // Aligning from the right needs the values to reach the trailing targets. Without a
-            // splat among them their count says so; with one, only Python guarantees it, by failing
-            // the assignment otherwise, while Ruby fills the trailing targets from the left.
-            let reaches_trailing_targets = if splat_before {
-                value_list.iter().any(|child| child.kind() == "list_splat")
-            } else {
-                value_list.len() + 1 >= targets.len()
-            };
+            // Aligning from the right needs the values to reach the trailing targets, which the
+            // values written beside any splat can already guarantee. Otherwise only Python assures
+            // it, by failing the assignment, while Ruby fills the trailing targets from the left
+            // when it underflows.
+            let reaches_trailing_targets = written_values + 1 >= targets.len()
+                || value_list.iter().any(|child| child.kind() == "list_splat");
             if reaches_trailing_targets {
                 targets.get(targets.len() - 1 - trailing).copied()
             } else if !splat_before && targets[splat].kind() == "rest_assignment" {
