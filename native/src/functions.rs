@@ -568,7 +568,9 @@ fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
         let next = match current.kind() {
             "generic_type" => current.child_by_field_name("type"),
             // Go allows parentheses around a type; they name the type they hold.
-            "parenthesized_type" => named_children(current).into_iter().next(),
+            // Parentheses name the type they hold, and a nested literal of a pointer element type
+            // elides the `&`, so both stand for the type they wrap.
+            "parenthesized_type" | "pointer_type" => named_children(current).into_iter().next(),
             _ => lookup_declared_type(current, code),
         };
         match next {

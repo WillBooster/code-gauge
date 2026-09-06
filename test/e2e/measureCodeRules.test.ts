@@ -672,6 +672,13 @@ describe('function names from binding sites', () => {
         'package p\ntype R[T ~map[string]func()] struct{}\nfunc (r R[T]) f() { _ = T{key: func(){}} }\nfunc (r *R[T]) g() { _ = T{key: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, 'g', undefined]);
+    // A nested literal of a pointer element type elides the `&`, so the pointee decides.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype S struct { run func() }\nfunc f() { _ = []*map[string]func(){{key: func(){}}}; _ = []*S{{run: func(){}}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
     // Parentheses around a type name the type they hold.
     expect(
       functionsOf('go', 'package p\ntype M (map[string]func())\nfunc f() { _ = M{key: func(){}} }').map((fn) => fn.name)
