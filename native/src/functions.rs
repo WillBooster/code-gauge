@@ -736,7 +736,11 @@ fn is_value_group(node: Node<'_>) -> bool {
 fn is_target_group(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
-        "pattern_list" | "left_assignment_list" | "tuple_pattern" | "destructured_left_assignment"
+        "pattern_list"
+            | "left_assignment_list"
+            | "tuple_pattern"
+            | "list_pattern"
+            | "destructured_left_assignment"
     )
 }
 
@@ -790,7 +794,10 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
     let splat_before = value_list[..index].iter().any(is_splat);
     let splat_after = value_list[index + 1..].iter().any(is_splat);
     let trailing = value_list.len() - 1 - index;
-    let unpacks = matches!(targets.kind(), "pattern_list" | "tuple_pattern");
+    let unpacks = matches!(
+        targets.kind(),
+        "pattern_list" | "tuple_pattern" | "list_pattern"
+    );
     let targets = binding_children(targets);
     let splats: Vec<usize> = targets
         .iter()
