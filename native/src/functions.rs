@@ -200,27 +200,31 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
     nodes
 }
 
-/// Expression wrappers whose first named child is the wrapped value, transparent for naming. Ruby's
-/// `parenthesized_statements` counts only when it holds that single value (`(a; b)` does not).
-const TRANSPARENT_VALUE_WRAPPER_TYPES: &[&str] = &[
-    "parenthesized_expression",
-    "parenthesized_statements",
-    "as_expression",
-    "satisfies_expression",
-    "non_null_expression",
-];
+/// The value a transparent wrapper wraps, if this node is one. Grouping parentheses and type-only
+/// wrappers do not change what a value is bound to, so naming looks through them. TypeScript's
+/// angle-bracket assertion puts the type first (`<Fn>(f)`), so its value is its last named child;
+/// Ruby's `parenthesized_statements` wraps a lone value only when it holds exactly one statement.
+fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
+    match wrapper.kind() {
+        "type_assertion" => wrapper.named_child(wrapper.named_child_count().checked_sub(1)?),
+        "parenthesized_statements" if wrapper.named_child_count() != 1 => None,
+        "parenthesized_expression"
+        | "parenthesized_statements"
+        | "as_expression"
+        | "satisfies_expression"
+        | "non_null_expression"
+        | "type_cast_expression" => wrapper.named_child(0),
+        _ => None,
+    }
+}
 
-/// Climbs from a value through grouping parentheses and TypeScript type wrappers
-/// (`(() => 1)`, `(() => 2) as Fn`), which do not change what it is bound to, to the outermost
-/// wrapper whose binding site is then looked up.
+/// Climbs from a value through the transparent wrappers around it (`(() => 1)`, `(() => 2) as Fn`,
+/// `<Fn>(() => 3)`, Rust `(|x| x) as fn(i32) -> i32`) to the outermost one, whose binding site
+/// names the value.
 fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     let mut bound = node;
     while let Some(wrapper) = bound.parent().filter(|wrapper| {
-        TRANSPARENT_VALUE_WRAPPER_TYPES.contains(&wrapper.kind())
-            && (wrapper.kind() != "parenthesized_statements" || wrapper.named_child_count() == 1)
-            && wrapper
-                .named_child(0)
-                .is_some_and(|inner| inner.id() == bound.id())
+        wrapped_transparent_value(*wrapper).is_some_and(|value| value.id() == bound.id())
     }) {
         bound = wrapper;
     }
