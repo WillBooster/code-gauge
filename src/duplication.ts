@@ -603,8 +603,9 @@ function combineHashes(hash: number, value: number): number {
  * (contradicting duplicateBlockGroupCount's "appears more than once" meaning). Line coverage
  * unions ranges, so the overlap between the retained exact group and the merged group is harmless.
  * Merging repeats to a fixpoint so a clone edited in several spots still reassembles; it
- * terminates because every merge marks its paired occurrences as counted elsewhere, and only
- * unmarked occurrences pair, so a given pair of occurrences merges at most once. Gap tokens are not matched
+ * terminates because a merge either removes the input groups it replaces or marks their paired
+ * occurrences as counted elsewhere, and only unmarked occurrences of remaining groups pair, so the
+ * number of pairable occurrences strictly decreases with every merge. Gap tokens are not matched
  * content: line coverage and sizes count only the matched segments. Generic so cross-file merging
  * can thread file identity through occurrences.
  */
