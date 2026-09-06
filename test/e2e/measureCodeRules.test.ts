@@ -606,6 +606,12 @@ describe('function names from binding sites', () => {
         'void f() { std::thread worker([]{}); std::function<void()> go{[]{}}; auto cb = []{}; auto braced{[]{}}; auto parens([]{}); }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, undefined, 'cb', 'braced', 'parens']);
+    // Copy-list initialization deduces a list holding the closure, so it names nothing.
+    expect(functionsOf('cpp', 'void g() { auto a = {[]{}}; auto b{[]{}}; }').map((fn) => fn.name)).toEqual([
+      'g',
+      undefined,
+      'b',
+    ]);
     // A compound assignment does not bind its target to the function (C# event subscription).
     expect(
       functionsOf('csharp', 'class A { void F() { Changed += () => 1; Handler = () => 2; } }').map((fn) => fn.name)

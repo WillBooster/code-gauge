@@ -300,7 +300,15 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
             "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
                 .parent()
                 .filter(|holder| holder.kind() == "init_declarator")
-                .filter(|holder| declares_deduced_type(*holder)),
+                .filter(|holder| declares_deduced_type(*holder))
+                // `auto f = {[] {}}` deduces a list holding the closure, not the closure itself;
+                // only the direct form `auto f{[] {}}` makes the variable the closure.
+                .filter(|holder| {
+                    parent.kind() == "argument_list"
+                        || !all_children(*holder)
+                            .iter()
+                            .any(|child| !child.is_named() && node_text(*child, code) == "=")
+                }),
             _ => None,
         };
         if let Some(declaration) = declaration {
