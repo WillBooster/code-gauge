@@ -568,12 +568,13 @@ describe('function names from binding sites', () => {
       )
     ).toEqual(['run', 'run', 'x', undefined]);
     expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
-    // A C++ variable initialized directly binds the lambda as an assignment would.
+    // Direct initialization passes the lambda to a constructor, so it names nothing; an assignment
+    // and a designated initializer do bind it.
     expect(
-      functionsOf('cpp', 'void f() { std::function<void()> run([]{}); std::function<void()> go{[]{}}; }').map(
+      functionsOf('cpp', 'void f() { std::thread worker([]{}); std::function<void()> go{[]{}}; auto cb = []{}; }').map(
         (fn) => fn.name
       )
-    ).toEqual(['f', 'run', 'go']);
+    ).toEqual(['f', undefined, undefined, 'cb']);
     // A compound assignment does not bind its target to the function (C# event subscription).
     expect(
       functionsOf('csharp', 'class A { void F() { Changed += () => 1; Handler = () => 2; } }').map((fn) => fn.name)

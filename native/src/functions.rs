@@ -290,20 +290,11 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         };
     }
 
-    // A C++ lambda initializing a variable takes its name, whether it is assigned (`auto f = [] {};`)
-    // or direct-initialized (`std::function<void()> f([] {});`, `f{[] {}}`), where the grammar puts
-    // the sole value in an argument or initializer list.
-    if node.kind() == "lambda_expression" {
-        let declaration = match parent.kind() {
-            "init_declarator" => Some(parent),
-            "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
-                .parent()
-                .filter(|holder| holder.kind() == "init_declarator"),
-            _ => None,
-        };
-        if let Some(declaration) = declaration {
-            return unwrap_declarator_name(declaration.child_by_field_name("declarator"), code);
-        }
+    // A C++ lambda assigned to a variable (`auto f = [](int x) { ... };`) takes the variable name.
+    // Direct initialization (`std::thread worker([] {});`) passes it to a constructor instead, which
+    // stores whatever it likes, so it names nothing, like any other call argument.
+    if node.kind() == "lambda_expression" && parent.kind() == "init_declarator" {
+        return unwrap_declarator_name(parent.child_by_field_name("declarator"), code);
     }
 
     // A Go func literal bound via `add := func...`, `var add = func...`, or `add = func...` takes
