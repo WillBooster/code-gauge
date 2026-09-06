@@ -532,6 +532,12 @@ describe('function names from binding sites', () => {
       )
     ).toEqual(['run', 'run', 'x', undefined]);
     expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
+    // A C++ variable initialized directly binds the lambda as an assignment would.
+    expect(
+      functionsOf('cpp', 'void f() { std::function<void()> run([]{}); std::function<void()> go{[]{}}; }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', 'run', 'go']);
     // A compound assignment does not bind its target to the function (C# event subscription).
     expect(
       functionsOf('csharp', 'class A { void F() { Changed += () => 1; Handler = () => 2; } }').map((fn) => fn.name)
@@ -675,6 +681,11 @@ describe('DepDegree across languages', () => {
     expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* arr[1] = {q}; return arr[0] == q; }')).toEqual(
       [3]
     );
+    expect(depDegreeOf('cpp', 'namespace N { struct C {}; } int f(int N::C::* q) { return q != nullptr; }')).toEqual([
+      1,
+    ]);
+    // The size of a member-pointer array parameter is a read, not the parameter's definition.
+    expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* a[n]) { return n; }')).toEqual([0]);
     expect(
       depDegreeOf(
         'cpp',

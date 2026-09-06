@@ -380,6 +380,9 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     }
     let mut current = leaf.node;
     let mut depth = 0usize;
+    // Only the member pointer's own declared name may climb past its qualified name; a size or
+    // other expression inside the same declarator (`int C::* a[n]`) is a read.
+    let declares_member_pointer = is_member_pointer_name(leaf.node);
     let mut in_member_pointer = false;
     loop {
         let Some(parent) = current.parent() else {
@@ -392,7 +395,8 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
         // side, so a qualified constant in a default value or array size (`int x = N::M::C`) stays
         // a read. Checking this before the field lookup also keeps reads inside high-arity nodes
         // O(1).
-        let continues_member_pointer = parent.kind() == "qualified_identifier"
+        let continues_member_pointer = declares_member_pointer
+            && parent.kind() == "qualified_identifier"
             && (current.kind() == "pointer_type_declarator" || in_member_pointer)
             && field_name_in_parent(current, parent) == Some("name");
         in_member_pointer = continues_member_pointer;
