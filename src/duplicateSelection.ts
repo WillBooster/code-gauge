@@ -68,7 +68,7 @@ export function selectMaximalGroups<T extends SelectableRegion>(
       const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
       // A plain loop: this runs once per candidate over every kept region of the bucket, so
       // allocating a filtered array per candidate would dominate project-scale runs. Kept regions
-      // never overlap each other, so a region containing the candidate rules out enclosed ones.
+      // never overlap each other, so a candidate inside one cannot partially overlap another.
       let containedInKept = false;
       let partiallyOverlaps = false;
       let enclosedKept: T[] | undefined;
@@ -97,17 +97,21 @@ export function selectMaximalGroups<T extends SelectableRegion>(
         continue;
       }
       // Containment must not depend on greedy order: a candidate enclosing kept copies of smaller
-      // groups occupies its region, and those copies become nested copies of their groups (their
-      // regions stay recorded, as they lie inside the new one).
-      for (const inner of enclosedKept ?? []) {
+      // groups occupies its region, and those copies become nested copies of their groups.
+      const enclosed = enclosedKept;
+      for (const inner of enclosed ?? []) {
         const group = counted.get(inner.fingerprint) ?? [];
         const index = group.indexOf(inner);
         if (index !== -1) {
           group[index] = { ...inner, nestedInLargerGroup: true };
         }
       }
-      keptRegions.push(candidate);
-      keptRegionsByBucket.set(candidate.regionBucket ?? 0, keptRegions);
+      // The enclosed regions give way to the enclosing one, keeping kept regions mutually
+      // non-overlapping: a later candidate inside this region must see it, not a region it
+      // swallowed (which the candidate could straddle instead).
+      const occupied = enclosed ? keptRegions.filter((region) => !enclosed.includes(region)) : keptRegions;
+      occupied.push(candidate);
+      keptRegionsByBucket.set(candidate.regionBucket ?? 0, occupied);
       const group = counted.get(candidate.fingerprint) ?? [];
       group.push(candidate);
       counted.set(candidate.fingerprint, group);

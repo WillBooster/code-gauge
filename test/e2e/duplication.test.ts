@@ -7,6 +7,7 @@ import {
   measureCrossFileDuplication,
   type LanguageName,
 } from '../../src/index.js';
+import { selectMaximalGroups, type SelectableRegion } from '../../src/duplicateSelection.js';
 import { mergeAdjacentGroups, type CountedOccurrence, type Token, type TokenRange } from '../../src/duplication.js';
 import { fixturesDir } from './fixtureCorpus.js';
 
@@ -950,6 +951,44 @@ describe('duplication: cross-file clones in every language', () => {
 /** A second function that makes two files whole-file clones, larger than the block a third file copies. */
 const arithmetic = (name: string): string =>
   `function ${name}(a, b) {\n  const x = a + b;\n  const y = a * b;\n  const z = x - y;\n  const w = x * y - z;\n  const v = [x, y, z, w].map((n) => n * 2);\n  const u = v.filter((n) => n > a);\n  return [x, y, z, w, v, u, a, b];\n}\n`;
+
+/** A selectable region of one file's token stream, for direct selectMaximalGroups tests. */
+const region = (
+  fingerprint: string,
+  bucket: number,
+  start: number,
+  end: number,
+  tokenCount: number
+): SelectableRegion => ({
+  fingerprint,
+  tokenCount,
+  startIndex: start,
+  endIndex: end,
+  regionBucket: bucket,
+});
+
+describe('duplication: maximal-group selection', () => {
+  it('keeps a copy contained in an enclosing region that was selected after the region it swallowed', () => {
+    // Coverage order: inner (31x2) before enclosing (30x2) before shared (10x2). Once the enclosing
+    // region is kept, the region it swallowed must no longer hide it from the shared copy at 5..15,
+    // which lies inside the enclosing region but straddles the swallowed one. The inner group ends
+    // up all-nested inside the enclosing clone, which already reports that duplication.
+    const counted = selectMaximalGroups(
+      [
+        region('inner', 0, 10, 20, 31),
+        region('inner', 1, 10, 20, 31),
+        region('enclosing', 0, 0, 30, 30),
+        region('enclosing', 1, 0, 30, 30),
+        region('shared', 0, 5, 15, 10),
+        region('shared', 2, 100, 110, 10),
+      ],
+      (group) => group.length >= 2 && new Set(group.map((candidate) => candidate.regionBucket)).size >= 2
+    );
+
+    expect([...counted.keys()].toSorted()).toEqual(['enclosing', 'shared']);
+    expect(counted.get('shared')?.map((candidate) => candidate.nestedInLargerGroup === true)).toEqual([false, true]);
+  });
+});
 
 describe('duplication: cross-file grouping and reporting', () => {
   const copy = (name: string): string => logicClone(name, 'console.log("midpoint", total);');
