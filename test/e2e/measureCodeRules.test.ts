@@ -486,6 +486,17 @@ describe('function names from binding sites', () => {
     expect(
       functionsOf('ruby', 'self.run = -> { 1 }\nobj.run = lambda { 1 }\n@handler = -> { 2 }\n').map((fn) => fn.name)
     ).toEqual(['run', 'run', '@handler']);
+    // A parallel assignment binds each value to the target at the same position.
+    expect(
+      functionsOf('ruby', 'run, stop = -> { 1 }, lambda { 2 }\nkeep, obj.drop = -> { 3 }, -> { 4 }\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'stop', 'keep', undefined]);
+    expect(
+      functionsOf('python', 'run, stop = (lambda: 1), lambda: 2\nkeep, d["k"] = lambda: 3, lambda: 4\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'stop', 'keep', undefined]);
     expect(
       functionsOf('ruby', 'h = { run: -> { 1 }, :sym => -> { 2 }, "str" => lambda { 3 }, "k#{x}" => -> { 4 } }\n').map(
         (fn) => fn.name

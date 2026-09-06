@@ -294,6 +294,9 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     if node.kind() == "lambda" && parent.kind() == "assignment" {
         return find_ruby_assignment_name(parent, code);
     }
+    if node.kind() == "lambda" && is_parallel_assignment_list(parent) {
+        return find_parallel_assignment_name(bound, parent, code);
+    }
 
     // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`, also through
     // a label or annotation prefix) takes the property name; one assigned to a variable or member
@@ -312,11 +315,15 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
     // A `lambda { }` / `proc { }` block is measured, but the call around it is what gets bound.
     if (node.kind() == "block" || node.kind() == "do_block") && is_ruby_lambda_call(parent, code) {
-        return match unwrap_transparent_value_wrappers(parent).parent() {
+        let call = unwrap_transparent_value_wrappers(parent);
+        return match call.parent() {
             Some(holder) if holder.kind() == "assignment" => {
                 find_ruby_assignment_name(holder, code)
             }
             Some(holder) if holder.kind() == "pair" => find_pair_key_name(holder, code),
+            Some(holder) if is_parallel_assignment_list(holder) => {
+                find_parallel_assignment_name(call, holder, code)
+            }
             _ => None,
         };
     }
@@ -590,15 +597,54 @@ fn first_named_child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>>
         .find(|child| child.kind() == kind)
 }
 
+/// The value side of a Python or Ruby parallel assignment (`run, stop = -> { 1 }, -> { 2 }`).
+fn is_parallel_assignment_list(node: Node<'_>) -> bool {
+    node.kind() == "expression_list" || node.kind() == "right_assignment_list"
+}
+
+/// A parallel assignment binds each value to the target at the same position. Comments are named
+/// children of both lists but bind nothing, so they are skipped on either side.
+fn find_parallel_assignment_name(
+    value: Node<'_>,
+    values: Node<'_>,
+    code: &Source<'_>,
+) -> Option<String> {
+    let assignment = values
+        .parent()
+        .filter(|parent| parent.kind() == "assignment")?;
+    if assignment.child_by_field_name("right")?.id() != values.id() {
+        return None;
+    }
+    let index = binding_children(values)
+        .iter()
+        .position(|child| child.id() == value.id())?;
+    let target = *binding_children(assignment.child_by_field_name("left")?).get(index)?;
+    is_plain_assignment_target(target).then(|| node_text(target, code).to_string())
+}
+
+fn binding_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
+    named_children(node)
+        .into_iter()
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+        .collect()
+}
+
+/// A local, constant, or Ruby instance/class/global variable; anything else (a subscript, an
+/// attribute, a splat) has no stable name for the value bound to it here.
+fn is_plain_assignment_target(target: Node<'_>) -> bool {
+    matches!(
+        target.kind(),
+        "identifier" | "constant" | "instance_variable" | "class_variable" | "global_variable"
+    )
+}
+
 /// A Ruby or Python `assignment` target: a local, constant, or Ruby instance/class/global variable,
 /// the method of a Ruby attribute writer call (`self.run = ...`), or a Python attribute
 /// (`obj.run = ...`); both member forms name `run`.
 fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     let left_node = assignment.child_by_field_name("left")?;
     match left_node.kind() {
-        "identifier" | "constant" | "instance_variable" | "class_variable" | "global_variable" => {
-            Some(node_text(left_node, code).to_string())
-        }
+        _ if is_plain_assignment_target(left_node) => Some(node_text(left_node, code).to_string()),
         "call" if left_node.child_by_field_name("receiver").is_some() => left_node
             .child_by_field_name("method")
             .map(|method| node_text(method, code).to_string()),
