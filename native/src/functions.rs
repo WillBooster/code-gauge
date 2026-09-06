@@ -835,6 +835,9 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
     }
     match splats.as_slice() {
         [] if !splat_before => targets.get(index).copied(),
+        // Python unpacking takes exactly as many values as it has targets, so a value with no splat
+        // after it sits at a fixed distance from the end however the earlier splat expands.
+        [] if unpacks && !splat_after => targets.get(targets.len() - 1 - trailing).copied(),
         &[splat] if !splat_before && index < splat => targets.get(index).copied(),
         &[splat] if !splat_after && trailing < targets.len() - splat - 1 => {
             // Aligning from the right needs the values to reach the trailing targets. Without a

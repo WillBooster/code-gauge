@@ -519,14 +519,15 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['run', 'stop', 'keep', undefined]);
-    // A splat expands at run time, so positions after it bind nothing knowable here.
+    // Ruby fills from the left when a splat runs short, so a position after one binds nothing
+    // knowable; Python takes exactly as many values as targets, fixing the distance from the end.
     expect(functionsOf('ruby', 'a, b = *xs, -> { 1 }\nc, *d = -> { 2 }, -> { 3 }\n').map((fn) => fn.name)).toEqual([
       undefined,
       'c',
       undefined,
     ]);
     expect(functionsOf('python', 'a, b = *xs, lambda: 1\nc, *d = lambda: 2, lambda: 3\n').map((fn) => fn.name)).toEqual(
-      [undefined, 'c', undefined]
+      ['b', 'c', undefined]
     );
     // Python raises when the counts do not fit, so nothing is bound and nothing is named.
     expect(
