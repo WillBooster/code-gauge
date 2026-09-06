@@ -782,6 +782,7 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
     let splat_before = value_list[..index].iter().any(is_splat);
     let splat_after = value_list[index + 1..].iter().any(is_splat);
     let trailing = value_list.len() - 1 - index;
+    let unpacks = matches!(targets.kind(), "pattern_list" | "tuple_pattern");
     let targets = binding_children(targets);
     let splats: Vec<usize> = targets
         .iter()
@@ -789,6 +790,19 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
         .filter(|(_, target)| is_splat(target))
         .map(|(index, _)| index)
         .collect();
+    // Python unpacking binds nothing unless the counts fit, since it raises instead; Ruby fills the
+    // extra targets with nil, so its names hold either way. A splat among the values hides the
+    // count, and Python then guarantees the fit by failing the assignment.
+    let counts_fit = !unpacks
+        || value_list.iter().any(is_splat)
+        || if splats.is_empty() {
+            value_list.len() == targets.len()
+        } else {
+            value_list.len() + 1 >= targets.len()
+        };
+    if !counts_fit {
+        return None;
+    }
     match splats.as_slice() {
         [] if !splat_before => targets.get(index).copied(),
         &[splat] if !splat_before && index < splat => targets.get(index).copied(),

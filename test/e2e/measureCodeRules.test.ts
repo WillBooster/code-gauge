@@ -523,6 +523,12 @@ describe('function names from binding sites', () => {
     expect(functionsOf('python', 'a, b = *xs, lambda: 1\nc, *d = lambda: 2, lambda: 3\n').map((fn) => fn.name)).toEqual(
       [undefined, 'c', undefined]
     );
+    // Python raises when the counts do not fit, so nothing is bound and nothing is named.
+    expect(
+      functionsOf('python', 'a, b, c = lambda: 1, lambda: 2\nd, e = (lambda: 3,)\nf, *g, h = (lambda: 4,)\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual([undefined, undefined, undefined, undefined]);
     // A starred target takes what is left over, so the values after it align from the right.
     expect(functionsOf('python', 'a, *rest, c = x, lambda: 1\n').map((fn) => fn.name)).toEqual(['c']);
     expect(functionsOf('ruby', 'a, *rest, c = x, -> { 1 }\n').map((fn) => fn.name)).toEqual(['c']);
