@@ -773,7 +773,9 @@ function pairableOccurrences<T extends CountedOccurrence>(group: T[]): [T[], num
     if (!occurrence.nestedInLargerGroup) {
       length += 1;
     }
-    if (!occurrence.spanCountedElsewhere) {
+    // Either flag keeps an occurrence out of pairing: its span is already counted elsewhere, or it
+    // is a nested copy of content the merged span would not cover.
+    if (!occurrence.spanCountedElsewhere && !occurrence.nestedInLargerGroup) {
       pairable.push(occurrence);
     }
   }
