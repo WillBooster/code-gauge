@@ -539,10 +539,11 @@ fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
     let mut visited = Vec::new();
     while !visited.contains(&current.id()) {
         visited.push(current.id());
-        let next = if current.kind() == "generic_type" {
-            current.child_by_field_name("type")
-        } else {
-            lookup_declared_type(current, code)
+        let next = match current.kind() {
+            "generic_type" => current.child_by_field_name("type"),
+            // Go allows parentheses around a type; they name the type they hold.
+            "parenthesized_type" => named_children(current).into_iter().next(),
+            _ => lookup_declared_type(current, code),
         };
         match next {
             Some(next) => current = next,

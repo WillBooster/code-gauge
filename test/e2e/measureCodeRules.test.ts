@@ -666,6 +666,10 @@ describe('function names from binding sites', () => {
         'package p\ntype R[T ~map[string]func()] struct{}\nfunc (r R[T]) f() { _ = T{key: func(){}} }\nfunc (r *R[T]) g() { _ = T{key: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, 'g', undefined]);
+    // Parentheses around a type name the type they hold.
+    expect(
+      functionsOf('go', 'package p\ntype M (map[string]func())\nfunc f() { _ = M{key: func(){}} }').map((fn) => fn.name)
+    ).toEqual(['f', undefined]);
     // A type declared inside a function resolves like a top-level one.
     expect(
       functionsOf('go', 'package p\nfunc f() { type M map[string]func(); _ = M{key: func(){}} }').map((fn) => fn.name)
