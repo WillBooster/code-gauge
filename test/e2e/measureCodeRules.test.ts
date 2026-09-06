@@ -652,6 +652,13 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['f', undefined]);
+    // A method's receiver carries the parameters of the type it is declared on.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype R[T ~map[string]func()] struct{}\nfunc (r R[T]) f() { _ = T{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined]);
     // A type declared inside a function resolves like a top-level one.
     expect(
       functionsOf('go', 'package p\nfunc f() { type M map[string]func(); _ = M{key: func(){}} }').map((fn) => fn.name)

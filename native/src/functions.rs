@@ -565,22 +565,62 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
         {
             return Some(core_constraint_type(constraint));
         }
-        let found = named_children(current)
-            .into_iter()
-            .filter(|child| child.kind() == "type_declaration")
-            .flat_map(named_children)
-            .filter(|spec| spec.kind() == "type_spec" || spec.kind() == "type_alias")
-            .find(|spec| {
-                spec.child_by_field_name("name")
-                    .is_some_and(|declared_name| node_text(declared_name, code) == name)
-            })
-            .and_then(|spec| spec.child_by_field_name("type"));
-        if found.is_some() {
-            return found;
+        // A method's receiver carries the parameters of the type it is declared on
+        // (`func (r R[T]) ...`), so the name resolves through that type's declaration.
+        if current.kind() == "method_declaration" {
+            if let Some(constraint) = receiver_parameter_constraint(current, name, code) {
+                return Some(core_constraint_type(constraint));
+            }
+        }
+        if let Some(found) = find_type_spec(current, name, code) {
+            return found.child_by_field_name("type");
         }
         scope = current.parent();
     }
     None
+}
+
+/// The declaration of a type named in this scope's own `type` declarations.
+fn find_type_spec<'t>(scope: Node<'t>, name: &str, code: &Source<'t>) -> Option<Node<'t>> {
+    named_children(scope)
+        .into_iter()
+        .filter(|child| child.kind() == "type_declaration")
+        .flat_map(named_children)
+        .filter(|spec| spec.kind() == "type_spec" || spec.kind() == "type_alias")
+        .find(|spec| {
+            spec.child_by_field_name("name")
+                .is_some_and(|declared_name| node_text(declared_name, code) == name)
+        })
+}
+
+/// The constraint a receiver type argument stands for: the parameter at the same position of the
+/// receiver's own type declaration (`type R[T ~map[string]F]` reached through `func (r R[T])`).
+fn receiver_parameter_constraint<'t>(
+    method: Node<'t>,
+    name: &str,
+    code: &Source<'t>,
+) -> Option<Node<'t>> {
+    let receiver = method.child_by_field_name("receiver")?;
+    let instantiation = named_children(receiver)
+        .into_iter()
+        .filter_map(|parameter| parameter.child_by_field_name("type"))
+        .find(|declared| declared.kind() == "generic_type")?;
+    let arguments = binding_children(instantiation.child_by_field_name("type_arguments")?);
+    let position = arguments.iter().position(|argument| {
+        let argument = named_children(*argument)
+            .into_iter()
+            .next()
+            .unwrap_or(*argument);
+        node_text(argument, code) == name
+    })?;
+    let declaration = find_type_spec(
+        method.parent()?,
+        node_text(instantiation.child_by_field_name("type")?, code),
+        code,
+    )?;
+    binding_children(declaration.child_by_field_name("type_parameters")?)
+        .get(position)?
+        .child_by_field_name("type")
 }
 
 /// The type governing a literal body's keys: the type its own literal declares, or, when a nested
