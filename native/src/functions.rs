@@ -407,7 +407,10 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
 fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     let key = pair.child_by_field_name("key")?;
     match key.kind() {
-        "property_identifier" | "hash_key_symbol" => Some(node_text(key, code).to_string()),
+        // A numeric key (`{ 1: () => {} }`) is as stable a property name as an identifier.
+        "property_identifier" | "hash_key_symbol" | "number" | "integer" | "float" => {
+            Some(node_text(key, code).to_string())
+        }
         "simple_symbol" => node_text(key, code)
             .strip_prefix(':')
             .map(|name| name.to_string()),

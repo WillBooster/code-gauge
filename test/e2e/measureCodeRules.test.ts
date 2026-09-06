@@ -458,6 +458,13 @@ describe('function names from binding sites', () => {
         'const o = { run: () => 1, "quoted": function () {}, [k]: () => 2 };\nobj.run = () => 3;\nplain = () => 4;\na.b.c = function () {};\no["s"] = () => 5;'
       ).map((fn) => fn.name)
     ).toEqual(['run', 'quoted', undefined, 'run', 'plain', 'c', undefined]);
+    // A numeric key names its value; Python and Ruby spell the same key as integer/float nodes.
+    expect(functionsOf('javascript', 'const o = { 1: () => 1, 2.5: function () {} };').map((fn) => fn.name)).toEqual([
+      '1',
+      '2.5',
+    ]);
+    expect(functionsOf('ruby', 'h = { 1 => -> { 1 } }\n').map((fn) => fn.name)).toEqual(['1']);
+    expect(functionsOf('python', 'd = {1: lambda: 1}\n').map((fn) => fn.name)).toEqual(['1']);
     // A class field is named like an object-literal key: computed stays anonymous, quoted is read
     // without its quotes, and a private name is kept as written.
     expect(
