@@ -574,6 +574,8 @@ describe('function names from binding sites', () => {
     expect(functionsOf('ruby', 'a, (b, c) = x, [-> { 1 }, y]\n').map((fn) => fn.name)).toEqual(['b']);
     // A fully parenthesized Ruby target list is one nested group holding the real targets.
     expect(functionsOf('ruby', '(a, b) = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['a', 'b']);
+    // A Python singleton tuple is a real destructuring level, unlike Ruby's redundant parentheses.
+    expect(functionsOf('python', '((a, b),) = ((lambda: 1, x),)\n').map((fn) => fn.name)).toEqual(['a']);
     // A bracketed Python target list unpacks like the parenthesized one.
     expect(
       functionsOf('python', '[a, b] = lambda: 1, lambda: 2\nc, [d, e] = x, (lambda: 3, y)\n').map((fn) => fn.name)

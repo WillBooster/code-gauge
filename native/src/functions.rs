@@ -781,13 +781,14 @@ fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<S
     };
     let mut target = assignment.child_by_field_name("left")?;
     for (values, child) in positions.iter().rev() {
-        // Ruby spells a fully parenthesized target list as one nested group (`(a, b) = f, g`), so a
-        // group holding nothing but another group aligns against that inner one.
-        while let [only] = binding_children(target).as_slice() {
-            if !is_target_group(target) || !is_target_group(*only) {
-                break;
+        // Ruby spells a fully parenthesized target list as a `left_assignment_list` holding one
+        // destructured group (`(a, b) = f, g`), which aligns against that inner one. A Python
+        // singleton tuple is a real destructuring level instead, so it is left alone.
+        while target.kind() == "left_assignment_list" {
+            match binding_children(target).as_slice() {
+                [only] if only.kind() == "destructured_left_assignment" => target = *only,
+                _ => break,
             }
-            target = *only;
         }
         if !is_target_group(target) {
             return None;
