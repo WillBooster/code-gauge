@@ -436,13 +436,14 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 }
 
-/// The type a constraint stands for: an approximation (`~map[string]F`) or a wrapper around one
-/// type names that type; a union of several names none of them in particular.
+/// The type a constraint stands for: an approximation (`~map[string]F`), an interface holding one
+/// type (`interface{ ~map[string]F }`), or a wrapper around one names that type; a union of several
+/// names none of them in particular.
 fn core_constraint_type(constraint: Node<'_>) -> Node<'_> {
     let mut current = constraint;
     while matches!(
         current.kind(),
-        "type_constraint" | "negated_type" | "type_elem"
+        "type_constraint" | "negated_type" | "type_elem" | "interface_type"
     ) {
         match named_children(current).as_slice() {
             [only] => current = *only,

@@ -647,6 +647,11 @@ describe('function names from binding sites', () => {
         'package p\ntype M struct { key func() }\nfunc f[M ~map[string]func()]() { _ = M{key: func(){}} }\nfunc g() { _ = M{key: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, 'g', 'key']);
+    expect(
+      functionsOf('go', 'package p\nfunc f[T interface{ ~map[string]func() }]() { _ = T{key: func(){}} }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', undefined]);
     // A type declared inside a function resolves like a top-level one.
     expect(
       functionsOf('go', 'package p\nfunc f() { type M map[string]func(); _ = M{key: func(){}} }').map((fn) => fn.name)
