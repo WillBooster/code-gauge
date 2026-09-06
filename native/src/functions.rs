@@ -680,12 +680,13 @@ fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
     false
 }
 
-/// A value group of a Python or Ruby parallel assignment: the value list itself, or a nested tuple
-/// or array that destructuring takes apart (`a, (b, c) = x, (f, y)`).
+/// A value group of a Python or Ruby parallel assignment: the value list itself, or a tuple, list,
+/// or array literal that destructuring takes apart (`a, (b, c) = x, (f, y)`, `a, b = [f, g]`). A set
+/// or a mapping is unordered, so it groups nothing positionally.
 fn is_value_group(node: Node<'_>) -> bool {
     matches!(
         node.kind(),
-        "expression_list" | "right_assignment_list" | "tuple" | "array"
+        "expression_list" | "right_assignment_list" | "tuple" | "list" | "array"
     )
 }
 

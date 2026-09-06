@@ -537,6 +537,13 @@ describe('function names from binding sites', () => {
     expect(
       functionsOf('python', 'a, *rest, c = *xs, lambda: 1\nd, *e, g = *xs, lambda: 2, *ys\n').map((fn) => fn.name)
     ).toEqual(['c', undefined]);
+    // A container literal on the right groups its values positionally, like the bare comma form.
+    expect(
+      functionsOf('python', 'run, stop = (lambda: 1, lambda: 2)\nkeep, drop = [lambda: 3, lambda: 4]\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'stop', 'keep', 'drop']);
+    expect(functionsOf('ruby', 'run, stop = [-> { 1 }, lambda { 2 }]\n').map((fn) => fn.name)).toEqual(['run', 'stop']);
     // Destructuring aligns at every level, and a group outside an assignment binds nothing.
     expect(functionsOf('python', 'a, (b, c) = x, (lambda: 1, y)\nf((lambda: 2, y))\n').map((fn) => fn.name)).toEqual([
       'b',
