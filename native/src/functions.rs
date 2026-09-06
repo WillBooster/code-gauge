@@ -521,7 +521,12 @@ fn is_value_keyed_type(declared: Node<'_>, code: &Source<'_>) -> bool {
     match resolved.kind() {
         "map_type" | "slice_type" | "array_type" | "implicit_length_array_type" => true,
         "type_constraint" | "interface_type" | "type_elem" | "negated_type" => {
-            let terms = binding_children(resolved);
+            // Method requirements restrict what a type does, not what it is, so only the type terms
+            // decide; a union counts when every one of them is value-keyed.
+            let terms: Vec<Node<'_>> = binding_children(resolved)
+                .into_iter()
+                .filter(|term| !matches!(term.kind(), "method_elem" | "method_spec"))
+                .collect();
             !terms.is_empty() && terms.iter().all(|term| is_value_keyed_type(*term, code))
         }
         _ => false,

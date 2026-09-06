@@ -695,6 +695,12 @@ describe('function names from binding sites', () => {
         'package p\ntype M1 map[string]func()\ntype M2 map[string]func()\nfunc f[T interface{ M1 | M2 }]() { _ = T{key: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined]);
+    // A method requirement restricts what a type does, not what it is.
+    expect(
+      functionsOf('go', 'package p\nfunc f[T interface{ ~map[string]func(); M() }]() { _ = T{key: func(){}} }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', undefined]);
     // An implicit-length array is a sequence like the sized ones, nested or not.
     expect(
       functionsOf(
