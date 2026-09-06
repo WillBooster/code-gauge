@@ -154,6 +154,12 @@ const suffixHalf = `
   return total + count + big - small;
 `;
 
+/** An occurrence tagged with the file it belongs to, for cross-file mergeAdjacentGroups tests. */
+const inFile = (file: string, occurrence: CountedOccurrence): CountedOccurrence & { file: string } => ({
+  ...occurrence,
+  file,
+});
+
 /** A cross-file copy nested inside a larger group's region. */
 const nested = (start: number, end: number): CountedOccurrence => ({
   ...occurrence(start, end),
@@ -255,6 +261,33 @@ describe('duplication: partial gapped-clone merging', () => {
     // Every span the merged group covers is counted there alone: the retained groups add only
     // their own unpaired copies.
     expect(merged.map((group) => countRedundantFragments(group))).toEqual([2, 1, 0]);
+  });
+
+  // A group whose standalone copies all sit in one file survives selection through a nested copy in
+  // another file. Merging pairs only same-file occurrences, so the merged group would cover that one
+  // file alone and must not form: its spans stay counted by the groups that remain.
+  it('does not form a merged group that covers a single file', () => {
+    const groupA = [inFile('a', occurrence(0, 10)), inFile('a', occurrence(50, 60)), inFile('b', nested(1000, 1010))];
+    const groupB = [
+      inFile('a', occurrence(12, 22)),
+      inFile('a', occurrence(62, 72)),
+      inFile('d', occurrence(112, 122)),
+    ];
+
+    const merged = mergeAdjacentGroups(
+      [groupA, groupB],
+      20,
+      (group) => new Set(group.map(({ file }) => file)).size >= 2
+    );
+
+    expect(merged).toEqual([groupA, groupB]);
+    // No standalone span was marked as counted elsewhere, so none is left counted by no group.
+    expect(
+      merged
+        .flat()
+        .filter(({ nestedInLargerGroup }) => !nestedInLargerGroup)
+        .some(({ spanCountedElsewhere }) => spanCountedElsewhere === true)
+    ).toBe(false);
   });
 
   // Three adjacent fragment groups where the first also occurs standalone: after A partially

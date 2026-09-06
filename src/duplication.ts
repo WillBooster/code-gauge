@@ -607,7 +607,11 @@ function combineHashes(hash: number, value: number): number {
  * content: line coverage and sizes count only the matched segments. Generic so cross-file merging
  * can thread file identity through occurrences.
  */
-export function mergeAdjacentGroups<T extends CountedOccurrence>(groups: T[][], maxGapTokens: number): T[][] {
+export function mergeAdjacentGroups<T extends CountedOccurrence>(
+  groups: T[][],
+  maxGapTokens: number,
+  isReportableGroup: (group: T[]) => boolean = () => true
+): T[][] {
   if (maxGapTokens <= 0 || groups.length < 2) {
     return groups;
   }
@@ -622,8 +626,8 @@ export function mergeAdjacentGroups<T extends CountedOccurrence>(groups: T[][], 
         if (!left || !right) {
           continue;
         }
-        const forward = mergeGroups(left, right, maxGapTokens);
-        const result = forward ?? mergeGroups(right, left, maxGapTokens);
+        const forward = mergeGroups(left, right, maxGapTokens, isReportableGroup);
+        const result = forward ?? mergeGroups(right, left, maxGapTokens, isReportableGroup);
         if (!result) {
           continue;
         }
@@ -689,7 +693,8 @@ interface MergeResult<T> {
 function mergeGroups<T extends CountedOccurrence>(
   first: T[],
   second: T[],
-  maxGapTokens: number
+  maxGapTokens: number,
+  isReportableGroup: (group: T[]) => boolean
 ): MergeResult<T> | undefined {
   // Occurrences a previous partial merge already paired into a merged group must not pair again:
   // their spans already live inside that merged group, so re-pairing them would assemble a second,
@@ -745,6 +750,12 @@ function mergeGroups<T extends CountedOccurrence>(
     endIndex: trailing.endIndex,
     endLine: trailing.endLine,
   }));
+  // Only occurrences of one file pair (file offsets exceed the gap), so a merged group spans the
+  // files its pairs sit in: with nested copies left out of pairing, that can be fewer files than
+  // the input groups covered, and a merged group that is no longer reportable must not form.
+  if (!isReportableGroup(merged)) {
+    return undefined;
+  }
   const pairedRetained = [
     ...(firstReplaced ? [] : pairs.map(([leading]) => leading)),
     ...(secondReplaced ? [] : pairs.map(([, trailing]) => trailing)),

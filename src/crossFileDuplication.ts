@@ -116,6 +116,11 @@ function collectWindowCandidates(files: CrossFileDuplicationSourceFile[], minTok
   });
 }
 
+/** A merged group is reported only while it still covers more than one file. */
+function spansMultipleFilesAfterMerge(group: CrossFileOccurrence[]): boolean {
+  return new Set(group.map((occurrence) => occurrence.file)).size >= 2;
+}
+
 function spansMultipleFiles(group: SelectableCandidate[]): boolean {
   return group.length >= 2 && new Set(group.map((candidate) => candidate.regionBucket)).size >= 2;
 }
@@ -170,7 +175,7 @@ function mergeGapAdjacentGroups(
       })
       .toSorted((left, right) => left.startTokenIndex - right.startTokenIndex)
   );
-  return mergeAdjacentGroups(occurrenceGroups, maxGapTokens);
+  return mergeAdjacentGroups(occurrenceGroups, maxGapTokens, spansMultipleFilesAfterMerge);
 }
 
 function summarize(
