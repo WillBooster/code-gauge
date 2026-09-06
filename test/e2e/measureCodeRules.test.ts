@@ -503,12 +503,12 @@ describe('function names from binding sites', () => {
     expect(
       functionsOf('ruby', 'self.run = -> { 1 }\nobj.run = lambda { 1 }\n@handler = -> { 2 }\n').map((fn) => fn.name)
     ).toEqual(['run', 'run', '@handler']);
-    // A parallel assignment binds each value to the target at the same position.
+    // A parallel assignment binds each value to the target at the same position, writers included.
     expect(
       functionsOf('ruby', 'run, stop = -> { 1 }, lambda { 2 }\nkeep, obj.drop = -> { 3 }, -> { 4 }\n').map(
         (fn) => fn.name
       )
-    ).toEqual(['run', 'stop', 'keep', undefined]);
+    ).toEqual(['run', 'stop', 'keep', 'drop']);
     expect(
       functionsOf('python', 'run, stop = (lambda: 1), lambda: 2\nkeep, d["k"] = lambda: 3, lambda: 4\n').map(
         (fn) => fn.name
@@ -526,6 +526,13 @@ describe('function names from binding sites', () => {
     // A starred target takes what is left over, so the values after it align from the right.
     expect(functionsOf('python', 'a, *rest, c = x, lambda: 1\n').map((fn) => fn.name)).toEqual(['c']);
     expect(functionsOf('ruby', 'a, *rest, c = x, -> { 1 }\n').map((fn) => fn.name)).toEqual(['c']);
+    // A parallel target names its value like a single one, attribute writers included.
+    expect(functionsOf('python', 'obj.run, x = lambda: 1, lambda: 2\n').map((fn) => fn.name)).toEqual(['run', 'x']);
+    expect(functionsOf('ruby', 'self.run, x = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['run', 'x']);
+    // Ruby fills trailing targets from the left when the values run out, so it aligns from the
+    // right only where they reach; Python fails such an assignment instead.
+    expect(functionsOf('ruby', 'a, *r, c, d = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['a', undefined]);
+    expect(functionsOf('ruby', 'a, *rest, c = *xs, -> { 1 }\n').map((fn) => fn.name)).toEqual([undefined]);
     // A trailing value still aligns from the right past a splat, unless splats surround it.
     expect(
       functionsOf('python', 'a, *rest, c = *xs, lambda: 1\nd, *e, g = *xs, lambda: 2, *ys\n').map((fn) => fn.name)

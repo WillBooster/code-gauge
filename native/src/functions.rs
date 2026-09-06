@@ -724,7 +724,7 @@ fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<S
         }
         target = aligned_target(*values, *child, target)?;
     }
-    is_plain_assignment_target(target).then(|| node_text(target, code).to_string())
+    find_assignment_target_text(target, code)
 }
 
 /// The target a value takes within one group. Comments are named children of both sides but bind
@@ -750,7 +750,19 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
         [] if !splat_before => targets.get(index).copied(),
         &[splat] if !splat_before && index < splat => targets.get(index).copied(),
         &[splat] if !splat_after && trailing < targets.len() - splat - 1 => {
-            targets.get(targets.len() - 1 - trailing).copied()
+            // Aligning from the right needs the values to reach the trailing targets. Without a
+            // splat among them their count says so; with one, only Python guarantees it, by failing
+            // the assignment otherwise, while Ruby fills the trailing targets from the left.
+            let reaches_trailing_targets = if splat_before {
+                value_list.iter().any(|child| child.kind() == "list_splat")
+            } else {
+                value_list.len() + 1 >= targets.len()
+            };
+            if reaches_trailing_targets {
+                targets.get(targets.len() - 1 - trailing).copied()
+            } else {
+                None
+            }
         }
         _ => None,
     }
@@ -771,30 +783,27 @@ fn binding_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
         .collect()
 }
 
-/// A local, constant, or Ruby instance/class/global variable; anything else (a subscript, an
-/// attribute, a splat) has no stable name for the value bound to it here.
-fn is_plain_assignment_target(target: Node<'_>) -> bool {
-    matches!(
-        target.kind(),
-        "identifier" | "constant" | "instance_variable" | "class_variable" | "global_variable"
-    )
-}
-
-/// A Ruby or Python `assignment` target: a local, constant, or Ruby instance/class/global variable,
-/// the method of a Ruby attribute writer call (`self.run = ...`), or a Python attribute
-/// (`obj.run = ...`); both member forms name `run`.
-fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
-    let left_node = assignment.child_by_field_name("left")?;
-    match left_node.kind() {
-        _ if is_plain_assignment_target(left_node) => Some(node_text(left_node, code).to_string()),
-        "call" if left_node.child_by_field_name("receiver").is_some() => left_node
+/// The name a Ruby or Python assignment target binds: a local, constant, or Ruby instance, class or
+/// global variable; the method of a Ruby attribute writer (`self.run = ...`); or a Python attribute
+/// (`obj.run = ...`). A subscript or a splat has no stable name and binds none.
+fn find_assignment_target_text(target: Node<'_>, code: &Source<'_>) -> Option<String> {
+    match target.kind() {
+        "identifier" | "constant" | "instance_variable" | "class_variable" | "global_variable" => {
+            Some(node_text(target, code).to_string())
+        }
+        "call" if target.child_by_field_name("receiver").is_some() => target
             .child_by_field_name("method")
             .map(|method| node_text(method, code).to_string()),
-        "attribute" => left_node
+        "attribute" => target
             .child_by_field_name("attribute")
             .map(|attribute| node_text(attribute, code).to_string()),
         _ => None,
     }
+}
+
+/// The name a Ruby or Python single assignment binds.
+fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    find_assignment_target_text(assignment.child_by_field_name("left")?, code)
 }
 
 fn is_ruby_lambda_call(node: Node<'_>, code: &Source<'_>) -> bool {
