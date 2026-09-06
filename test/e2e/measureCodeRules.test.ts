@@ -535,6 +535,12 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual([undefined, undefined, undefined, undefined]);
+    // A splat cannot rescue a count that is already too large.
+    expect(functionsOf('python', 'a, b = lambda: 1, lambda: 2, lambda: 3, *xs\n').map((fn) => fn.name)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
     // A starred target takes what is left over, so the values after it align from the right.
     expect(functionsOf('python', 'a, *rest, c = x, lambda: 1\n').map((fn) => fn.name)).toEqual(['c']);
     expect(functionsOf('ruby', 'a, *rest, c = x, -> { 1 }\n').map((fn) => fn.name)).toEqual(['c']);

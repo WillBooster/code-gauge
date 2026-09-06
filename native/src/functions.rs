@@ -820,15 +820,17 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
         .filter(|(_, target)| is_splat(target))
         .map(|(index, _)| index)
         .collect();
-    // Python unpacking binds nothing unless the counts fit, since it raises instead; Ruby fills the
-    // extra targets with nil, so its names hold either way. A splat among the values hides the
-    // count, and Python then guarantees the fit by failing the assignment.
+    // Python unpacking binds nothing unless the counts can fit, since it raises instead; Ruby fills
+    // the extra targets with nil, so its names hold either way. A splat among the values hides how
+    // many they are, but never fewer than the values written beside it.
+    let value_splat = value_list.iter().any(is_splat);
+    let written_values = value_list.iter().filter(|value| !is_splat(value)).count();
     let counts_fit = !unpacks
-        || value_list.iter().any(is_splat)
-        || if splats.is_empty() {
-            value_list.len() == targets.len()
-        } else {
-            value_list.len() + 1 >= targets.len()
+        || match (splats.is_empty(), value_splat) {
+            (true, false) => value_list.len() == targets.len(),
+            (true, true) => written_values <= targets.len(),
+            (false, false) => value_list.len() + 1 >= targets.len(),
+            (false, true) => true,
         };
     if !counts_fit {
         return None;
