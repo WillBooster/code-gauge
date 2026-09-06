@@ -559,6 +559,13 @@ describe('function names from binding sites', () => {
       ).map((fn) => fn.name)
     ).toEqual(['run', 'go', 'cb']);
     expect(functionsOf('ruby', 'run = (# why\nlambda { 1 })\n').map((fn) => fn.name)).toEqual(['run']);
+    // A cast to a functional interface leaves the same function value bound to the same name.
+    expect(
+      functionsOf('java', 'class A { void m() { Runnable r = (Runnable) () -> 1; } }').map((fn) => fn.name)
+    ).toEqual(['m', 'r']);
+    expect(
+      functionsOf('csharp', 'class A { void M() { System.Action a = (System.Action)(() => 1); } }').map((fn) => fn.name)
+    ).toEqual(['M', 'a']);
     expect(
       functionsOf('go', 'package p\nfunc f() { run = (func() {}); x := (func() {}) }').map((fn) => fn.name)
     ).toEqual(['f', 'run', 'x']);

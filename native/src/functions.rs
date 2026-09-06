@@ -202,7 +202,8 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
 
 /// The value a transparent wrapper wraps, if this node is one. Grouping parentheses and type-only
 /// wrappers do not change what a value is bound to, so naming looks through them. TypeScript's
-/// angle-bracket assertion puts the type first (`<Fn>(f)`), so its value is its last child; Ruby's
+/// angle-bracket assertion puts the type first (`<Fn>(f)`), so its value is its last child, as does
+/// a C-style cast (`(Runnable) () -> 1`), which names it through a field; Ruby's
 /// `parenthesized_statements` wraps a lone value only when it holds exactly one statement.
 fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
     // Comments are named children too (`(/* why */ () => 1)`), so they are skipped throughout.
@@ -211,6 +212,8 @@ fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
         .into_iter()
         .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()));
     match wrapper.kind() {
+        // A C-style cast (Java, C#, C/C++) names its type first, so its value comes from the field.
+        "cast_expression" => wrapper.child_by_field_name("value"),
         "type_assertion" => values.next_back(),
         "parenthesized_statements" => {
             let value = values.next()?;
