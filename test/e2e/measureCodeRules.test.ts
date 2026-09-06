@@ -624,6 +624,13 @@ describe('function names from binding sites', () => {
         'package p\ntype S struct { run func() }\nfunc f() { _ = map[string]func(){key: func(){}}; _ = []S{{run: func(){}}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, 'run']);
+    // A name may stand for another name or be instantiated; both resolve to the map they denote.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M map[string]func()\ntype Alias M\ntype G[T any] map[string]T\nfunc f() { _ = Alias{key: func(){}}; _ = G[func()]{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, undefined]);
     // A literal type declared in the same file resolves to the type it names.
     expect(
       functionsOf(

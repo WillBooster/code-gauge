@@ -474,8 +474,29 @@ fn has_value_keys(keyed: Node<'_>, code: &Source<'_>) -> bool {
 /// resolved to the type it stands for. A name declared elsewhere stays unresolved and keeps the
 /// struct reading, which is what a named literal type usually is.
 fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
+    let mut current = declared;
+    // A name may stand for another name (`type Alias M`) or be instantiated (`M[func()]`); the step
+    // limit bounds a declaration that names itself.
+    for _ in 0..8 {
+        if current.kind() == "generic_type" {
+            match current.child_by_field_name("type") {
+                Some(base) => current = base,
+                None => break,
+            }
+            continue;
+        }
+        match lookup_declared_type(current, code) {
+            Some(declared) => current = declared,
+            None => break,
+        }
+    }
+    current
+}
+
+/// The type a name declared at the file's top level stands for.
+fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Node<'t>> {
     if declared.kind() != "type_identifier" {
-        return declared;
+        return None;
     }
     let name = node_text(declared, code);
     let mut root = declared;
@@ -493,7 +514,6 @@ fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
                 .is_some_and(|declared_name| node_text(declared_name, code) == name)
         })
         .and_then(|spec| spec.child_by_field_name("type"))
-        .unwrap_or(declared)
 }
 
 /// The type governing a literal body's keys: the type its own literal declares, or, when a nested
