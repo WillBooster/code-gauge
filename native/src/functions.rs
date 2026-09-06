@@ -514,21 +514,27 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
         return None;
     }
     let name = node_text(declared, code);
-    let mut root = declared;
-    while let Some(parent) = root.parent() {
-        root = parent;
+    // Go allows a type declaration in any block, so each enclosing scope is searched from the
+    // innermost outwards, the way the language resolves the name; only its own declarations are
+    // read at each level, which keeps the lookup shallow.
+    let mut scope = Some(declared);
+    while let Some(current) = scope {
+        let found = named_children(current)
+            .into_iter()
+            .filter(|child| child.kind() == "type_declaration")
+            .flat_map(named_children)
+            .filter(|spec| spec.kind() == "type_spec" || spec.kind() == "type_alias")
+            .find(|spec| {
+                spec.child_by_field_name("name")
+                    .is_some_and(|declared_name| node_text(declared_name, code) == name)
+            })
+            .and_then(|spec| spec.child_by_field_name("type"));
+        if found.is_some() {
+            return found;
+        }
+        scope = current.parent();
     }
-    // Only the file's own top-level declarations are scanned, so this stays a shallow lookup.
-    named_children(root)
-        .into_iter()
-        .filter(|child| child.kind() == "type_declaration")
-        .flat_map(named_children)
-        .filter(|spec| spec.kind() == "type_spec" || spec.kind() == "type_alias")
-        .find(|spec| {
-            spec.child_by_field_name("name")
-                .is_some_and(|declared_name| node_text(declared_name, code) == name)
-        })
-        .and_then(|spec| spec.child_by_field_name("type"))
+    None
 }
 
 /// The type governing a literal body's keys: the type its own literal declares, or, when a nested

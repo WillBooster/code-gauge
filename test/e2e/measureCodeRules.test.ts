@@ -632,6 +632,10 @@ describe('function names from binding sites', () => {
         'package p\ntype M map[string]func()\ntype Alias M\ntype G[T any] map[string]T\nfunc f() { _ = Alias{key: func(){}}; _ = G[func()]{key: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, undefined]);
+    // A type declared inside a function resolves like a top-level one.
+    expect(
+      functionsOf('go', 'package p\nfunc f() { type M map[string]func(); _ = M{key: func(){}} }').map((fn) => fn.name)
+    ).toEqual(['f', undefined]);
     // A literal type declared in the same file resolves to the type it names.
     expect(
       functionsOf(
