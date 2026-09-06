@@ -72,6 +72,20 @@ const CSHARP_QUERY_BINDING_PARENT_TYPES: &[&str] = &[
     "query_expression",
 ];
 
+/// C/C++ declarators wrapping the declared name (`int* p = q;`, `int& r = *q;`, `int a[n] = {};`,
+/// `int (*fp)(int) = g;`, member pointer `int C::* p = q;`): the definition field is checked on the
+/// outermost wrapper.
+const DECLARATOR_WRAPPER_TYPES: &[&str] = &[
+    "pointer_declarator",
+    "reference_declarator",
+    "array_declarator",
+    "parenthesized_declarator",
+    "function_declarator",
+    "attributed_declarator",
+    "pointer_type_declarator",
+    "qualified_identifier",
+];
+
 /// Multi-target lists (`a, b = ...`, `a, b := ...`) whose holder's `left` field marks definitions.
 const DEFINITION_LIST_NODE_TYPES: &[&str] = &["expression_list", "pattern_list", "tuple_pattern"];
 const DEFINITION_LIST_HOLDER_TYPES: &[&str] = &[
@@ -119,9 +133,7 @@ pub fn measure_dep_degree(
     let mut pairs = 0u64;
     for index in 0..leaves.len() {
         let leaf = &leaves[index];
-        if !VARIABLE_NODE_TYPES.contains(&leaf.node.kind())
-            && !crate::util::is_kotlin_callable_receiver(leaf.node)
-        {
+        if !is_variable_leaf(leaf.node) {
             continue;
         }
         let name = node_text(leaf.node, code);
@@ -145,6 +157,33 @@ pub fn measure_dep_degree(
         }
     }
     pairs
+}
+
+/// A C++ member-pointer variable (`int C::* p`, also `int C::* arr[1]`) is declared as a
+/// `type_identifier` under the `pointer_type_declarator` spelling `C::*`, possibly through further
+/// declarator wrappers; every other `type_identifier` names a type, not a variable.
+fn is_variable_leaf(node: Node<'_>) -> bool {
+    VARIABLE_NODE_TYPES.contains(&node.kind())
+        || crate::util::is_kotlin_callable_receiver(node)
+        || (node.kind() == "type_identifier" && is_member_pointer_name(node))
+}
+
+fn is_member_pointer_name(node: Node<'_>) -> bool {
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "pointer_type_declarator" {
+            return true;
+        }
+        // The climb follows the declared-name position only, exactly like unwrap_declarator_wrappers.
+        if !DECLARATOR_WRAPPER_TYPES.contains(&parent.kind())
+            || parent.kind() == "qualified_identifier"
+            || field_name_in_parent(current, parent).is_some_and(|field| field != "declarator")
+        {
+            return false;
+        }
+        current = parent;
+    }
+    false
 }
 
 /// Names a C# accessor body can read without declaring them in its own subtree: the owning
@@ -270,11 +309,10 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     {
         return true;
     }
-    if DEFINITION_FIELD_BY_PARENT_TYPE
-        .iter()
-        .any(|(parent_type, definition_field)| {
-            *parent_type == parent.kind() && leaf.field_name == Some(definition_field)
-        })
+    let (declared, declared_field) = unwrap_declarator_wrappers(leaf);
+    if declared
+        .parent()
+        .is_some_and(|holder| is_definition_field(holder, declared_field))
     {
         return true;
     }
@@ -286,6 +324,42 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     };
     DEFINITION_LIST_HOLDER_TYPES.contains(&holder.kind())
         && field_name_in_parent(parent, holder) == Some("left")
+}
+
+fn is_definition_field(holder: Node<'_>, field_name: Option<&str>) -> bool {
+    DEFINITION_FIELD_BY_PARENT_TYPE
+        .iter()
+        .any(|(parent_type, definition_field)| {
+            *parent_type == holder.kind() && field_name == Some(definition_field)
+        })
+}
+
+/// Climbs from the identifier through the C/C++ declarator wrappers it is the declared name of
+/// (`reference_declarator` and `parenthesized_declarator` expose no field, so their name is the
+/// fieldless child; a member pointer's `pointer_type_declarator` is the `name` of a
+/// `qualified_identifier`; an `array_declarator` size or a nested parameter has another field and
+/// stops the climb) to the outermost wrapper and its field in the declaration.
+fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option<&'static str>) {
+    let mut current = leaf.node;
+    let mut field_name = leaf.field_name;
+    while let Some(parent) = current
+        .parent()
+        .filter(|parent| DECLARATOR_WRAPPER_TYPES.contains(&parent.kind()))
+    {
+        let declared_field = if parent.kind() == "qualified_identifier" {
+            "name"
+        } else {
+            "declarator"
+        };
+        if field_name.is_some_and(|name| name != declared_field) {
+            break;
+        }
+        field_name = parent
+            .parent()
+            .and_then(|grandparent| field_name_in_parent(parent, grandparent));
+        current = parent;
+    }
+    (current, field_name)
 }
 
 /// Mirrors isParameterDefinition in metrics.ts: an ancestor reached through declarator wrappers
@@ -306,14 +380,31 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     }
     let mut current = leaf.node;
     let mut depth = 0usize;
+    // Only the member pointer's own declared name may climb past its qualified name; a size or
+    // other expression inside the same declarator (`int C::* a[n]`) is a read.
+    let declares_member_pointer = is_member_pointer_name(leaf.node);
+    let mut in_member_pointer = false;
     loop {
         let Some(parent) = current.parent() else {
             return false;
         };
         let parent_is_parameterish = parent.kind().contains("parameter");
-        // Beyond the grandparent, only declarator wrappers keep climbing; checking this before
-        // the field lookup also keeps reads inside high-arity nodes O(1).
-        if depth >= 1 && !parent_is_parameterish && !parent.kind().contains("declarator") {
+        // Beyond the grandparent, only declarator wrappers keep climbing, plus the
+        // `qualified_identifier` nodes that spell a member-pointer parameter's class (`int C::* q`,
+        // `int N::C::* q`) — entered from the pointer declarator and continued through the `name`
+        // side, so a qualified constant in a default value or array size (`int x = N::M::C`) stays
+        // a read. Checking this before the field lookup also keeps reads inside high-arity nodes
+        // O(1).
+        let continues_member_pointer = declares_member_pointer
+            && parent.kind() == "qualified_identifier"
+            && (current.kind() == "pointer_type_declarator" || in_member_pointer)
+            && field_name_in_parent(current, parent) == Some("name");
+        in_member_pointer = continues_member_pointer;
+        if depth >= 1
+            && !parent_is_parameterish
+            && !parent.kind().contains("declarator")
+            && !continues_member_pointer
+        {
             return false;
         }
         let field = if depth == 0 {

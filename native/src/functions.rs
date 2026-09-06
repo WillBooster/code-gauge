@@ -200,6 +200,58 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
     nodes
 }
 
+/// The value a transparent wrapper wraps, if this node is one. Grouping parentheses and type-only
+/// wrappers do not change what a value is bound to, so naming looks through them. TypeScript's
+/// angle-bracket assertion puts the type first (`<Fn>(f)`), so its value is its last child, as does
+/// a C-style cast (`(Runnable) () -> 1`), which names it through a field; Ruby's
+/// `parenthesized_statements` wraps a lone value only when it holds exactly one statement.
+fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
+    // A C-style cast (Java, C#, C/C++) names its type first, so its value comes from the field.
+    if wrapper.kind() == "cast_expression" {
+        return wrapper.child_by_field_name("value");
+    }
+    if !matches!(
+        wrapper.kind(),
+        "type_assertion"
+            | "parenthesized_statements"
+            | "parenthesized_expression"
+            | "as_expression"
+            | "satisfies_expression"
+            | "non_null_expression"
+            | "type_cast_expression"
+    ) {
+        // Checked before the children are read: this runs for the parent of every function node,
+        // and a high-arity parent (a list of callbacks) would otherwise cost O(children) each time.
+        return None;
+    }
+    // Comments are named children too (`(/* why */ () => 1)`), so they are skipped throughout.
+    let children = named_children(wrapper);
+    let mut values = children
+        .into_iter()
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()));
+    match wrapper.kind() {
+        "type_assertion" => values.next_back(),
+        "parenthesized_statements" => {
+            let value = values.next()?;
+            values.next().is_none().then_some(value)
+        }
+        _ => values.next(),
+    }
+}
+
+/// Climbs from a value through the transparent wrappers around it (`(() => 1)`, `(() => 2) as Fn`,
+/// `<Fn>(() => 3)`, Rust `(|x| x) as fn(i32) -> i32`) to the outermost one, whose binding site
+/// names the value.
+fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
+    let mut bound = node;
+    while let Some(wrapper) = bound.parent().filter(|wrapper| {
+        wrapped_transparent_value(*wrapper).is_some_and(|value| value.id() == bound.id())
+    }) {
+        bound = wrapper;
+    }
+    bound
+}
+
 pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
     if let Some(wrapped_name) =
@@ -224,7 +276,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         return Some(declarator_name);
     }
 
-    let parent = node.parent()?;
+    let bound = unwrap_transparent_value_wrappers(node);
+    let parent = bound.parent()?;
 
     // A Rust closure bound to a simple `let` identifier takes that identifier as its name.
     if node.kind() == "closure_expression" && parent.kind() == "let_declaration" {
@@ -237,24 +290,49 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         };
     }
 
-    // A C++ lambda assigned to a variable (`auto f = [](int x) { ... };`) takes the variable name.
-    if node.kind() == "lambda_expression" && parent.kind() == "init_declarator" {
-        return unwrap_declarator_name(parent.child_by_field_name("declarator"), code);
+    // A C++ lambda assigned to a variable (`auto f = [](int x) { ... };`) takes the variable name,
+    // as does one that direct-initializes a deduced variable (`auto f{[] {}}`), whose type is the
+    // closure itself. With a written type (`std::thread worker([] {})`) the lambda is a constructor
+    // argument, and the constructor stores whatever it likes, so it names nothing.
+    if node.kind() == "lambda_expression" {
+        let declaration = match parent.kind() {
+            "init_declarator" => Some(parent),
+            "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
+                .parent()
+                .filter(|holder| holder.kind() == "init_declarator")
+                .filter(|holder| declares_deduced_type(*holder))
+                // `auto f = {[] {}}` deduces a list holding the closure, not the closure itself;
+                // only the direct form `auto f{[] {}}` makes the variable the closure.
+                .filter(|holder| {
+                    parent.kind() == "argument_list"
+                        || !all_children(*holder)
+                            .iter()
+                            .any(|child| !child.is_named() && node_text(*child, code) == "=")
+                }),
+            _ => None,
+        };
+        if let Some(declaration) = declaration {
+            return unwrap_declarator_name(declaration.child_by_field_name("declarator"), code);
+        }
     }
 
-    // A Go func literal bound via `add := func...` or `var add = func...` takes the identifier at
-    // the same list position.
+    // A Go func literal bound via `add := func...`, `var add = func...`, or `add = func...` takes
+    // the identifier (or selector field) at the same list position.
     if node.kind() == "func_literal" && parent.kind() == "expression_list" {
-        return find_go_func_literal_name(node, parent, code);
+        return find_go_func_literal_name(bound, parent, code);
     }
 
-    // Ruby lambdas assigned to a name take that name.
+    // Ruby and Python lambdas assigned to a name take that name.
     if node.kind() == "lambda" && parent.kind() == "assignment" {
         return find_ruby_assignment_name(parent, code);
     }
+    if node.kind() == "lambda" && is_value_group(parent) {
+        return find_parallel_assignment_name(bound, code);
+    }
 
     // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`, also through
-    // a label or annotation prefix) takes the property name.
+    // a label or annotation prefix) takes the property name; one assigned to a variable or member
+    // (`run = { ... }`, `obj.run = { ... }`) takes the assigned name.
     if node.kind() == "lambda_literal" || node.kind() == "anonymous_function" {
         let mut holder = parent;
         while holder.kind() == "prefix_expression" {
@@ -263,25 +341,550 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         if holder.kind() == "property_declaration" {
             return find_kotlin_property_name(holder, code);
         }
+        if holder.kind() == "assignment" {
+            return find_kotlin_assignment_name(holder, code);
+        }
     }
+    // A `lambda { }` / `proc { }` block is measured, but the call around it is what gets bound.
     if (node.kind() == "block" || node.kind() == "do_block") && is_ruby_lambda_call(parent, code) {
-        return match parent.parent() {
-            Some(grandparent) if grandparent.kind() == "assignment" => {
-                find_ruby_assignment_name(grandparent, code)
+        let call = unwrap_transparent_value_wrappers(parent);
+        return match call.parent() {
+            Some(holder) if holder.kind() == "assignment" => {
+                find_ruby_assignment_name(holder, code)
             }
+            Some(holder) if holder.kind() == "pair" => find_pair_key_name(holder, code),
+            Some(holder) if is_value_group(holder) => find_parallel_assignment_name(call, code),
             _ => None,
         };
     }
 
+    // An object-literal or Ruby hash property (`{ run: () => {} }`, `{ run: -> {} }`) names its value
+    // after the key; an assignment
+    // (`obj.run = () => {}`, `run = () => {}`, Rust/C++ `self.cb = |x| x`, C++ `N::run = [] {}`,
+    // C# `this.Run = () => 1`) after its target.
+    if parent.kind() == "pair" {
+        return find_pair_key_name(parent, code);
+    }
+    // A Go keyed composite-literal element (`S{run: func() {}}`) names its value after the key.
+    if parent.kind() == "literal_element" {
+        return find_go_keyed_element_name(parent, code);
+    }
+    // A Rust struct-literal field (`S { cb: || 1 }`) names its closure after the field.
+    if parent.kind() == "field_initializer" {
+        return parent
+            .child_by_field_name("field")
+            .map(|field| node_text(field, code).to_string());
+    }
+    // A C++20 designated initializer (`S s{.run = []{}}`) likewise names its value after the field;
+    // an array designator (`{[0] = ...}`) names nothing, like a subscript assignment target.
+    if parent.kind() == "initializer_pair" {
+        return find_children_by_field_name(parent, "designator")
+            .last()
+            .filter(|designator| designator.kind() == "field_designator")
+            .and_then(|designator| designator.named_child(0))
+            .map(|field| node_text(field, code).to_string());
+    }
+    if parent.kind() == "assignment_expression" {
+        return find_assignment_target_name(parent, code);
+    }
+
     // A JavaScript class field (`handle = () => {}`) names its property through the `property`
-    // field; TypeScript's `public_field_definition` exposes the same thing as `name`.
+    // field; TypeScript's `public_field_definition` exposes the same thing as `name`. A computed
+    // key is as unstable here as in an object literal, and a string key is read the same way.
     let field_name = if parent.kind() == "field_definition" {
         "property"
     } else {
         "name"
     };
-    parent
-        .child_by_field_name(field_name)
+    let name = parent.child_by_field_name(field_name)?;
+    // Checked only once a name exists, so a high-arity parent without one still costs O(1): the
+    // parent names the function only when the function is its value. A receiver borrows nothing
+    // (`((Runnable) () -> 1).run()` is not named `run`).
+    if !is_value_of_parent(bound, parent) {
+        return None;
+    }
+    match name.kind() {
+        "computed_property_name" => None,
+        "string" => find_string_literal_content(name, code),
+        _ => Some(node_text(name, code).to_string()),
+    }
+}
+
+/// The key of a `pair` when it is a plain, Ruby symbol, or string-literal property name; a
+/// computed key (`[k]: ...`), an interpolated string or symbol, or an empty string names nothing.
+fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let key = pair.child_by_field_name("key")?;
+    match key.kind() {
+        // A numeric key (`{ 1: () => {} }`) is as stable a property name as an identifier, signed
+        // (`{ -1: ... }`) or not; any other expression is computed and names nothing.
+        "property_identifier" | "hash_key_symbol" => Some(node_text(key, code).to_string()),
+        "number" | "integer" | "float" => Some(node_text(key, code).to_string()),
+        "unary_operator" | "unary" => signed_number_name(key, code),
+        "simple_symbol" => node_text(key, code)
+            .strip_prefix(':')
+            .map(|name| name.to_string()),
+        "string" | "delimited_symbol" => find_string_literal_content(key, code),
+        // Python's adjacent literals (`{"run" "ner": ...}`) are one compile-time key.
+        "concatenated_string" => {
+            let mut name = String::new();
+            for part in binding_children(key) {
+                if named_children(part)
+                    .iter()
+                    .any(|child| child.kind() == "interpolation")
+                {
+                    return None;
+                }
+                name.push_str(&find_string_literal_content(part, code).unwrap_or_default());
+            }
+            (!name.is_empty()).then_some(name)
+        }
+        _ => None,
+    }
+}
+
+/// The type a constraint stands for: an approximation (`~map[string]F`), an interface holding one
+/// type (`interface{ ~map[string]F }`), or a wrapper around one names that type; a union of several
+/// names none of them in particular.
+fn core_constraint_type(constraint: Node<'_>) -> Node<'_> {
+    let mut current = constraint;
+    while matches!(
+        current.kind(),
+        "type_constraint" | "negated_type" | "type_elem" | "interface_type"
+    ) {
+        match named_children(current).as_slice() {
+            [only] => current = *only,
+            _ => break,
+        }
+    }
+    current
+}
+
+/// The name a signed number spells: the sign and the number it applies to, written without any
+/// space between them and, for a rune, without its quotes. Any other unary expression is computed
+/// and names nothing.
+fn signed_number_name(key: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if !is_signed_number(key, code) {
+        return None;
+    }
+    let operand = named_children(key).into_iter().next()?;
+    let sign = all_children(key)
+        .into_iter()
+        .find(|child| !child.is_named())
+        .map(|child| node_text(child, code))
+        .unwrap_or_default();
+    let text = match operand.kind() {
+        "rune_literal" => find_string_literal_content(operand, code)?,
+        _ => node_text(operand, code).to_string(),
+    };
+    Some(format!("{sign}{text}"))
+}
+
+/// A number with a leading sign (`-1`), whose text is as stable a key as the number itself.
+fn is_signed_number(key: Node<'_>, code: &Source<'_>) -> bool {
+    let signed = all_children(key)
+        .into_iter()
+        .find(|child| !child.is_named())
+        .is_some_and(|sign| matches!(node_text(sign, code), "-" | "+"));
+    signed
+        && named_children(key).first().is_some_and(|operand| {
+            matches!(
+                operand.kind(),
+                "number"
+                    | "integer"
+                    | "float"
+                    | "int_literal"
+                    | "float_literal"
+                    | "rune_literal"
+                    | "imaginary_literal"
+            )
+        })
+}
+
+/// A Go keyed composite-literal element: the key is the first `literal_element` of the pair, the
+/// value the last. An unkeyed element sits under a `literal_value` instead and names nothing.
+fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let keyed = value_element
+        .parent()
+        .filter(|parent| parent.kind() == "keyed_element")?;
+    let elements = named_children(keyed);
+    if elements.len() < 2 || elements.last()?.id() != value_element.id() {
+        return None;
+    }
+    let key = named_children(*elements.first()?).into_iter().next()?;
+    match key.kind() {
+        "identifier" | "field_identifier" if !has_value_keys(keyed, code) => {
+            Some(node_text(key, code).to_string())
+        }
+        "interpreted_string_literal" | "raw_string_literal" => {
+            find_string_literal_content(key, code)
+        }
+        // A literal key is as stable a name here as in any other language's mapping, signed or not;
+        // a rune carries quotes, which are read off like a string's.
+        "rune_literal" => find_string_literal_content(key, code),
+        "int_literal" | "float_literal" | "imaginary_literal" => {
+            Some(node_text(key, code).to_string())
+        }
+        "unary_expression" => signed_number_name(key, code),
+        _ => None,
+    }
+}
+
+/// Whether the element belongs to a Go literal whose keys are evaluated values (a map, slice, or
+/// array) rather than the field names of a struct: `map[string]F{key: ...}` stores under whatever
+/// `key` holds, so it names nothing, exactly like a computed property key.
+fn has_value_keys(keyed: Node<'_>, code: &Source<'_>) -> bool {
+    keyed
+        .parent()
+        .and_then(|body| key_type_of_literal_body(body, code))
+        .is_some_and(|declared| is_value_keyed_type(declared, code))
+}
+
+/// Whether values written under this type are keyed by evaluated values rather than field names: a
+/// map, slice or array, a name standing for one, or a constraint that admits only such types (a
+/// union counts when every one of its terms does).
+fn is_value_keyed_type(declared: Node<'_>, code: &Source<'_>) -> bool {
+    value_keyed_type(declared, code, 0)
+}
+
+/// Constraints nest, and one that embeds itself would nest forever, so the walk is depth-bounded;
+/// real constraints are only a few levels deep.
+const MAX_CONSTRAINT_DEPTH: usize = 16;
+
+fn value_keyed_type(declared: Node<'_>, code: &Source<'_>, depth: usize) -> bool {
+    if depth >= MAX_CONSTRAINT_DEPTH {
+        return false;
+    }
+    let resolved = resolve_named_type(declared, code);
+    match resolved.kind() {
+        "map_type" | "slice_type" | "array_type" | "implicit_length_array_type" => true,
+        "type_constraint" | "interface_type" | "type_elem" | "negated_type" => {
+            // Method requirements restrict what a type does, not what it is, so only the type terms
+            // decide. One value-keyed term is enough: a union admitting a map has no stable field
+            // name, whichever type it is instantiated with.
+            binding_children(resolved)
+                .into_iter()
+                .filter(|term| !requires_methods_only(*term, code, depth + 1))
+                .any(|term| value_keyed_type(term, code, depth + 1))
+        }
+        _ => false,
+    }
+}
+
+/// Whether a constraint element only requires methods, directly or through an embedded interface
+/// that does; such an element leaves the underlying type free.
+fn requires_methods_only(declared: Node<'_>, code: &Source<'_>, depth: usize) -> bool {
+    if matches!(declared.kind(), "method_elem" | "method_spec") {
+        return true;
+    }
+    if depth >= MAX_CONSTRAINT_DEPTH {
+        return false;
+    }
+    let resolved = resolve_named_type(declared, code);
+    match resolved.kind() {
+        "interface_type" | "type_constraint" | "type_elem" => {
+            let terms = binding_children(resolved);
+            !terms.is_empty()
+                && terms
+                    .iter()
+                    .all(|term| requires_methods_only(*term, code, depth + 1))
+        }
+        _ => false,
+    }
+}
+
+/// A literal's type may be a name declared in the same file (`type M map[string]F`), so the name is
+/// resolved to the type it stands for. A name declared elsewhere stays unresolved and keeps the
+/// struct reading, which is what a named literal type usually is.
+fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
+    let mut current = declared;
+    // A name may stand for another name (`type Alias M`) or be instantiated (`M[func()]`); the walk
+    // follows the chain as far as it goes and stops on a node it has already seen, which is what a
+    // declaration naming itself produces.
+    let mut visited = Vec::new();
+    while !visited.contains(&current.id()) {
+        visited.push(current.id());
+        let next = match current.kind() {
+            "generic_type" => current.child_by_field_name("type"),
+            // Go allows parentheses around a type; they name the type they hold.
+            // Parentheses name the type they hold, and a nested literal of a pointer element type
+            // elides the `&`, so both stand for the type they wrap.
+            "parenthesized_type" | "pointer_type" => named_children(current).into_iter().next(),
+            _ => lookup_declared_type(current, code),
+        };
+        match next {
+            Some(next) => current = next,
+            None => break,
+        }
+    }
+    current
+}
+
+/// The type a name stands for, resolved through the scopes enclosing it, innermost first.
+fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Node<'t>> {
+    if declared.kind() != "type_identifier" {
+        return None;
+    }
+    let name = node_text(declared, code);
+    // Go allows a type declaration in any block, so each enclosing scope is searched from the
+    // innermost outwards, the way the language resolves the name; only its own declarations are
+    // read at each level, which keeps the lookup shallow.
+    let mut scope = Some(declared);
+    while let Some(current) = scope {
+        // A type parameter shadows any outer declaration of the same name, so its constraint is
+        // what the literal is written against.
+        if let Some(constraint) = named_children(current)
+            .into_iter()
+            .filter(|child| child.kind() == "type_parameter_list")
+            .flat_map(|list| declared_type_parameters(list))
+            .find(|(parameter_name, _)| node_text(*parameter_name, code) == name)
+            .and_then(|(_, constraint)| constraint)
+        {
+            return Some(core_constraint_type(constraint));
+        }
+        // A method's receiver carries the parameters of the type it is declared on
+        // (`func (r R[T]) ...`), so the name resolves through that type's declaration.
+        if current.kind() == "method_declaration" {
+            if let Some(constraint) = receiver_parameter_constraint(current, name, code) {
+                return Some(core_constraint_type(constraint));
+            }
+        }
+        if let Some(found) = find_type_spec(current, name, code) {
+            return found.child_by_field_name("type");
+        }
+        scope = current.parent();
+    }
+    None
+}
+
+/// The declaration of a type named in this scope's own `type` declarations, without looking out.
+fn find_type_spec<'t>(scope: Node<'t>, name: &str, code: &Source<'t>) -> Option<Node<'t>> {
+    named_children(scope)
+        .into_iter()
+        .filter(|child| child.kind() == "type_declaration")
+        .flat_map(named_children)
+        .filter(|spec| spec.kind() == "type_spec" || spec.kind() == "type_alias")
+        .find(|spec| {
+            spec.child_by_field_name("name")
+                .is_some_and(|declared_name| node_text(declared_name, code) == name)
+        })
+}
+
+/// The constraint a receiver type argument stands for: the parameter at the same position of the
+/// receiver's own type declaration (`type R[T ~map[string]F]` reached through `func (r R[T])`).
+fn receiver_parameter_constraint<'t>(
+    method: Node<'t>,
+    name: &str,
+    code: &Source<'t>,
+) -> Option<Node<'t>> {
+    let receiver = method.child_by_field_name("receiver")?;
+    let instantiation = named_children(receiver)
+        .into_iter()
+        .filter_map(|parameter| parameter.child_by_field_name("type"))
+        // A pointer or parenthesized receiver (`func (r *R[T])`, `func (r (R[T]))`) wraps the
+        // instantiation, in either order.
+        .map(unwrap_receiver_type)
+        .find(|declared| declared.kind() == "generic_type")?;
+    let arguments = binding_children(instantiation.child_by_field_name("type_arguments")?);
+    let position = arguments.iter().position(|argument| {
+        let argument = named_children(*argument)
+            .into_iter()
+            .next()
+            .unwrap_or(*argument);
+        node_text(argument, code) == name
+    })?;
+    let base = instantiation.child_by_field_name("type")?;
+    let declaration = find_declared_type_spec(method, node_text(base, code), code)?;
+    declared_type_parameters(declaration.child_by_field_name("type_parameters")?)
+        .get(position)?
+        .1
+}
+
+/// The type a receiver names, past the pointer and parenthesis wrappers it may carry.
+fn unwrap_receiver_type(declared: Node<'_>) -> Node<'_> {
+    let mut current = declared;
+    while matches!(current.kind(), "pointer_type" | "parenthesized_type") {
+        match named_children(current).into_iter().next() {
+            Some(inner) => current = inner,
+            None => break,
+        }
+    }
+    current
+}
+
+/// The parameters a type-parameter list declares, in order; one declaration can name several that
+/// share its constraint (`[A, B ~map[string]F]`), so each name is its own parameter.
+fn declared_type_parameters<'t>(list: Node<'t>) -> Vec<(Node<'t>, Option<Node<'t>>)> {
+    binding_children(list)
+        .into_iter()
+        .filter(|declaration| declaration.kind() == "type_parameter_declaration")
+        .flat_map(|declaration| {
+            let constraint = declaration.child_by_field_name("type");
+            find_children_by_field_name(declaration, "name")
+                .into_iter()
+                .map(|name| (name, constraint))
+                .collect::<Vec<_>>()
+        })
+        .collect()
+}
+
+/// The type governing a literal body's keys: the type its own literal declares, or, when a nested
+/// literal elides it, the element type of the literal holding it (`map[string]map[string]F{"a":
+/// {k: f}}` nests a map, `[]S{{run: f}}` a struct). A literal nested in a struct field keeps the
+/// struct reading, since the field's type is not written at the literal.
+fn key_type_of_literal_body<'t>(body: Node<'t>, code: &Source<'t>) -> Option<Node<'t>> {
+    let parent = body.parent()?;
+    if parent.kind() == "composite_literal" {
+        return parent.child_by_field_name("type");
+    }
+    if parent.kind() != "literal_element" {
+        return None;
+    }
+    let mut container = parent.parent()?;
+    if container.kind() == "keyed_element" {
+        container = container.parent()?;
+    }
+    if container.kind() != "literal_value" {
+        return None;
+    }
+    // The container's own type may be a name, which the element type is read through.
+    let declared = key_type_of_literal_body(container, code)?;
+    let holder = resolve_named_type(declared, code);
+    let element = match holder.kind() {
+        "map_type" => holder.child_by_field_name("value"),
+        "slice_type" | "array_type" | "implicit_length_array_type" => {
+            holder.child_by_field_name("element")
+        }
+        _ => None,
+    }?;
+    Some(instantiated_type_argument(element, declared, code).unwrap_or(element))
+}
+
+/// A generic container's element type may be one of its own parameters, which the instantiation
+/// binds (`G[map[string]F]` makes the element of `type G[T any] []T` that map).
+fn instantiated_type_argument<'t>(
+    element: Node<'t>,
+    declared: Node<'t>,
+    code: &Source<'t>,
+) -> Option<Node<'t>> {
+    if element.kind() != "type_identifier" || declared.kind() != "generic_type" {
+        return None;
+    }
+    let base = declared.child_by_field_name("type")?;
+    let declaration = find_declared_type_spec(base, node_text(base, code), code)?;
+    let position = declared_type_parameters(declaration.child_by_field_name("type_parameters")?)
+        .iter()
+        .position(|(name, _)| node_text(*name, code) == node_text(element, code))?;
+    let argument =
+        *binding_children(declared.child_by_field_name("type_arguments")?).get(position)?;
+    Some(
+        named_children(argument)
+            .into_iter()
+            .next()
+            .unwrap_or(argument),
+    )
+}
+
+/// The declaration of a type name, searched from the innermost scope outwards.
+fn find_declared_type_spec<'t>(from: Node<'t>, name: &str, code: &Source<'t>) -> Option<Node<'t>> {
+    let mut scope = Some(from);
+    while let Some(current) = scope {
+        if let Some(spec) = find_type_spec(current, name, code) {
+            return Some(spec);
+        }
+        scope = current.parent();
+    }
+    None
+}
+
+/// The literal's content as written (escapes kept), read from the grammar's content children so
+/// delimiters and prefixes (`"""k"""`, `r"k"`, `%q(k)`, `:"k"`) never leak into it. JavaScript
+/// splits the content into `string_fragment` and `escape_sequence` siblings; Ruby and Python emit
+/// `string_content` (Python nests escapes inside it). Interpolation makes the key unstable.
+fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let children = named_children(literal);
+    if children.iter().any(|child| child.kind() == "interpolation") {
+        return None;
+    }
+    // Go exposes no content node at all: it names only the escapes, so the concatenation is
+    // trusted only when the literal really spells its content out.
+    let mut content = String::new();
+    let mut has_content_node = false;
+    for child in &children {
+        match child.kind() {
+            "string_content" | "string_fragment" => {
+                has_content_node = true;
+                content.push_str(node_text(*child, code));
+            }
+            "escape_sequence" => content.push_str(node_text(*child, code)),
+            _ => {}
+        }
+    }
+    if has_content_node && !content.is_empty() {
+        return Some(content);
+    }
+    // A grammar that exposes no content child (Go's string literals) keeps its delimiters in the
+    // text; an empty literal is left without a name.
+    let text = node_text(literal, code);
+    let quote = text
+        .chars()
+        .next()
+        .filter(|first| matches!(first, '"' | '\'' | '`'))?;
+    let delimiter_length = text.chars().take_while(|char| *char == quote).count();
+    if text.len() < 2 * delimiter_length {
+        return None;
+    }
+    let (delimiter, rest) = text.split_at(delimiter_length);
+    let inner = rest.strip_suffix(delimiter)?;
+    (!inner.is_empty()).then(|| inner.to_string())
+}
+
+/// A compound assignment (`x += f`) does not bind the function to its target, so only a plain `=`
+/// names it. Grammars with an `operator` field (C/C++, C#, Java) expose it directly; Go and Kotlin
+/// have none, so the operator is the assignment's own anonymous token child.
+fn is_plain_assignment(assignment: Node<'_>, code: &Source<'_>) -> bool {
+    match assignment.child_by_field_name("operator") {
+        Some(operator) => node_text(operator, code) == "=",
+        None => all_children(assignment)
+            .iter()
+            .any(|child| !child.is_named() && node_text(*child, code) == "="),
+    }
+}
+
+/// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, or Java
+/// field access (`a.b.run` names `run`) or a C++ qualified name (`N::run`); subscripts (`o["run"]`)
+/// name nothing.
+fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if !is_plain_assignment(assignment, code) {
+        return None;
+    }
+    let target = assignment.child_by_field_name("left")?;
+    let name = match target.kind() {
+        "identifier" => target,
+        "member_expression" => target.child_by_field_name("property")?,
+        "field_expression" => target.child_by_field_name("field")?,
+        "member_access_expression" => target.child_by_field_name("name")?,
+        "field_access" => target.child_by_field_name("field")?,
+        "qualified_identifier" => return unwrap_declarator_name(Some(target), code),
+        _ => return None,
+    };
+    Some(node_text(name, code).to_string())
+}
+
+/// The Kotlin assignment target: the variable itself or the member of a trailing navigation suffix
+/// (`obj.run` names `run`); a trailing indexing suffix (`arr[0] = { }`) names nothing, like
+/// subscripts in the other languages.
+fn find_kotlin_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if !is_plain_assignment(assignment, code) {
+        return None;
+    }
+    let target = first_named_child_of_kind(assignment, "directly_assignable_expression")?;
+    let children = named_children(target);
+    let holder = match children.last()? {
+        last if last.kind() == "navigation_suffix" => *last,
+        last if last.kind() == "simple_identifier" && children.len() == 1 => target,
+        _ => return None,
+    };
+    first_named_child_of_kind(holder, "simple_identifier")
         .map(|name| node_text(name, code).to_string())
 }
 
@@ -390,13 +993,200 @@ fn first_named_child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>>
         .find(|child| child.kind() == kind)
 }
 
-fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
-    let left_node = assignment.child_by_field_name("left")?;
-    if left_node.kind() == "identifier" || left_node.kind() == "constant" {
-        Some(node_text(left_node, code).to_string())
-    } else {
-        None
+/// Whether the node occupies its parent's value position: the `value` field, or no field at all
+/// (a C# `variable_declarator` holds its initializer without one).
+fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
+    for index in 0..parent.child_count() {
+        if parent
+            .child(index)
+            .is_some_and(|child| child.id() == node.id())
+        {
+            return matches!(
+                parent.field_name_for_child(index as u32),
+                None | Some("value")
+            );
+        }
     }
+    false
+}
+
+/// A value group of a Python or Ruby parallel assignment: the value list itself, or a tuple, list,
+/// or array literal that destructuring takes apart (`a, (b, c) = x, (f, y)`, `a, b = [f, g]`). A set
+/// or a mapping is unordered, so it groups nothing positionally.
+fn is_value_group(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "expression_list" | "right_assignment_list" | "tuple" | "list" | "array"
+    )
+}
+
+/// The matching target groups, which a nested value group is aligned against level by level.
+fn is_target_group(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "pattern_list"
+            | "left_assignment_list"
+            | "tuple_pattern"
+            | "list_pattern"
+            | "destructured_left_assignment"
+    )
+}
+
+/// A parallel assignment binds each value to the target at the same position, at every level of
+/// destructuring. The position this value takes in each group it sits in is collected on the way up
+/// to the assignment, then replayed on the target side.
+fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let mut positions = Vec::new();
+    let mut current = value;
+    let assignment = loop {
+        let parent = current.parent()?;
+        if is_value_group(parent) {
+            positions.push((parent, current));
+            current = parent;
+            continue;
+        }
+        if parent.kind() == "assignment"
+            && parent.child_by_field_name("right")?.id() == current.id()
+        {
+            break parent;
+        }
+        return None;
+    };
+    let mut target = assignment.child_by_field_name("left")?;
+    for (values, child) in positions.iter().rev() {
+        // Ruby spells a fully parenthesized target list as a `left_assignment_list` holding one
+        // destructured group (`(a, b) = f, g`), which aligns against that inner one. A Python
+        // singleton tuple is a real destructuring level instead, so it is left alone.
+        while target.kind() == "left_assignment_list" {
+            match binding_children(target).as_slice() {
+                [only] if only.kind() == "destructured_left_assignment" => target = *only,
+                _ => break,
+            }
+        }
+        if !is_target_group(target) {
+            return None;
+        }
+        target = aligned_target(*values, *child, target)?;
+    }
+    find_assignment_target_text(target, code)
+}
+
+/// The target a value takes within one group. Comments are named children of both sides but bind
+/// nothing, so they are skipped. Values before every splat align from the left, and values after
+/// every splat align from the right against the targets that follow the starred one; a value with a
+/// splat on both sides, or one the star swallows, binds nothing knowable here.
+fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> Option<Node<'t>> {
+    let value_list = binding_children(values);
+    let index = value_list
+        .iter()
+        .position(|child| child.id() == value.id())?;
+    let splat_before = value_list[..index].iter().any(is_splat);
+    let splat_after = value_list[index + 1..].iter().any(is_splat);
+    let trailing = value_list.len() - 1 - index;
+    let unpacks = matches!(
+        targets.kind(),
+        "pattern_list" | "tuple_pattern" | "list_pattern"
+    );
+    let targets = binding_children(targets);
+    let splats: Vec<usize> = targets
+        .iter()
+        .enumerate()
+        .filter(|(_, target)| is_splat(target))
+        .map(|(index, _)| index)
+        .collect();
+    // Python unpacking binds nothing unless the counts can fit, since it raises instead; Ruby fills
+    // the extra targets with nil, so its names hold either way. A splat among the values hides how
+    // many they are, but never fewer than the values written beside it.
+    let value_splat = value_list.iter().any(is_splat);
+    let written_values = value_list.iter().filter(|value| !is_splat(value)).count();
+    let counts_fit = !unpacks
+        || match (splats.is_empty(), value_splat) {
+            (true, false) => value_list.len() == targets.len(),
+            (true, true) => written_values <= targets.len(),
+            (false, false) => value_list.len() + 1 >= targets.len(),
+            (false, true) => true,
+        };
+    if !counts_fit {
+        return None;
+    }
+    match splats.as_slice() {
+        [] if !splat_before => targets.get(index).copied(),
+        // Python unpacking takes exactly as many values as it has targets, so a value with no splat
+        // after it sits at a fixed distance from the end however the earlier splat expands.
+        [] if unpacks && !splat_after => targets.get(targets.len() - 1 - trailing).copied(),
+        &[splat] if !splat_before && index < splat => targets.get(index).copied(),
+        &[splat] if !splat_after && trailing < targets.len() - splat - 1 => {
+            // Aligning from the right needs the values to reach the trailing targets, which the
+            // values written beside any splat can already guarantee. Otherwise only Python assures
+            // it, by failing the assignment, while Ruby fills the trailing targets from the left
+            // when it underflows.
+            let reaches_trailing_targets = written_values + 1 >= targets.len()
+                || value_list.iter().any(|child| child.kind() == "list_splat");
+            if reaches_trailing_targets {
+                targets.get(targets.len() - 1 - trailing).copied()
+            } else if !splat_before && targets[splat].kind() == "rest_assignment" {
+                // Ruby empties the star and fills the trailing targets from the left when the
+                // values run out, so each one binds the next target (`a, *r, c, d = x, f` binds
+                // `f` to `c`); Python fails such an assignment instead.
+                targets.get(index + 1).copied()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// A splat on either side of a parallel assignment (`*xs`, `*rest`).
+fn is_splat(node: &Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "splat_argument" | "rest_assignment" | "list_splat" | "list_splat_pattern"
+    )
+}
+
+fn binding_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
+    named_children(node)
+        .into_iter()
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+        .collect()
+}
+
+/// The name a Ruby or Python assignment target binds: a local, constant, or Ruby instance, class or
+/// global variable; the method of a Ruby attribute writer (`self.run = ...`); or a Python attribute
+/// (`obj.run = ...`). A subscript or a splat has no stable name and binds none.
+fn find_assignment_target_text(target: Node<'_>, code: &Source<'_>) -> Option<String> {
+    match target.kind() {
+        "identifier" | "constant" | "instance_variable" | "class_variable" | "global_variable" => {
+            Some(node_text(target, code).to_string())
+        }
+        "call" if target.child_by_field_name("receiver").is_some() => target
+            .child_by_field_name("method")
+            .map(|method| node_text(method, code).to_string()),
+        "attribute" => target
+            .child_by_field_name("attribute")
+            .map(|attribute| node_text(attribute, code).to_string()),
+        _ => None,
+    }
+}
+
+/// The name a Ruby or Python single assignment binds. Ruby also allows a target list with one
+/// value: a value that is not an array goes to the first target that is not the star, descending
+/// into a nested group (`a, b = -> { 1 }` and `*a, b = -> { 1 }` both bind the lambda to a name).
+fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let left = assignment.child_by_field_name("left")?;
+    let mut target = left;
+    if matches!(
+        left.kind(),
+        "left_assignment_list" | "destructured_left_assignment"
+    ) {
+        while is_target_group(target) {
+            target = binding_children(target)
+                .into_iter()
+                .find(|child| !is_splat(child))?;
+        }
+    }
+    find_assignment_target_text(target, code)
 }
 
 fn is_ruby_lambda_call(node: Node<'_>, code: &Source<'_>) -> bool {
@@ -422,7 +1212,10 @@ fn find_go_func_literal_name(
         .collect();
     let value_index = values.iter().position(|child| child.id() == node.id())?;
 
-    if holder.kind() == "short_var_declaration" {
+    if holder.kind() == "assignment_statement" && !is_plain_assignment(holder, code) {
+        return None;
+    }
+    if holder.kind() == "short_var_declaration" || holder.kind() == "assignment_statement" {
         let targets = holder.child_by_field_name("left").map(|left| {
             named_children(left)
                 .into_iter()
@@ -448,12 +1241,16 @@ fn find_go_func_literal_name(
     None
 }
 
-/// Go's blank identifier `_` discards the value and creates no callable binding.
+/// Go's blank identifier `_` discards the value and creates no callable binding; a selector target
+/// (`m.run = func...`) names its field.
 fn as_go_binding_name(target: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
     match target {
         Some(target) if target.kind() == "identifier" && node_text(target, code) != "_" => {
             Some(node_text(target, code).to_string())
         }
+        Some(target) if target.kind() == "selector_expression" => target
+            .child_by_field_name("field")
+            .map(|field| node_text(field, code).to_string()),
         _ => None,
     }
 }
@@ -494,6 +1291,15 @@ fn is_react_component_wrapper_call(node: Node<'_>, code: &Source<'_>) -> bool {
         let text = node_text(callee, code);
         text == "memo" || text == "React.memo" || text == "forwardRef" || text == "React.forwardRef"
     })
+}
+
+/// Whether the declaration around this declarator deduces its type (`auto`), which makes the
+/// variable the closure itself rather than something constructed from it.
+fn declares_deduced_type(declarator: Node<'_>) -> bool {
+    declarator
+        .parent()
+        .and_then(|declaration| declaration.child_by_field_name("type"))
+        .is_some_and(|declared| declared.kind() == "placeholder_type_specifier")
 }
 
 /// Unwraps a C/C++ declarator chain to the declared name; see unwrapDeclaratorName in metrics.ts.

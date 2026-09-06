@@ -7,7 +7,13 @@ import {
   measureCrossFileDuplication,
   type LanguageName,
 } from '../../src/index.js';
-import { mergeAdjacentGroups, type CountedOccurrence, type Token, type TokenRange } from '../../src/duplication.js';
+import {
+  countRedundantFragments,
+  mergeAdjacentGroups,
+  type CountedOccurrence,
+  type Token,
+  type TokenRange,
+} from '../../src/duplication.js';
 import { fixturesDir } from './fixtureCorpus.js';
 
 // End-to-end coverage of the duplication detector across every supported language, plus the
@@ -147,6 +153,19 @@ const suffixHalf = `
   return total + count + big - small;
 `;
 
+/** An occurrence tagged with the file it belongs to, for cross-file mergeAdjacentGroups tests. */
+const inFile = (file: string, occurrence: CountedOccurrence): CountedOccurrence & { file: string } => ({
+  ...occurrence,
+  file,
+});
+
+/** A cross-file copy nested inside a larger group's region. */
+const nested = (start: number, end: number): CountedOccurrence => ({
+  ...occurrence(start, end),
+  spanCountedElsewhere: true,
+  nestedInLargerGroup: true,
+});
+
 /** A single-segment occurrence spanning [start, end) for direct mergeAdjacentGroups tests. */
 const occurrence = (start: number, end: number): CountedOccurrence => ({
   segments: [{ startTokenIndex: start, endTokenIndex: end }],
@@ -221,6 +240,55 @@ describe('duplication: partial gapped-clone merging', () => {
     expect(metrics.duplication.maxDuplicateBlockSize).toBe(139);
   });
 
+  // Cross-file nested copies (inside a larger group's region) are not copies of a merged span: they
+  // neither pair nor keep their group's standalone copies from merging with an adjacent group. The
+  // group holding them stays, because only it reports which files share the fragment it matched.
+  it('merges standalone copies while keeping the group that reports nested copies', () => {
+    const groupA = [nested(1000, 1010), nested(2000, 2010), occurrence(0, 10), occurrence(50, 60)];
+    const groupB = [occurrence(12, 22), occurrence(62, 72), occurrence(112, 122)];
+
+    const merged = mergeAdjacentGroups([groupA, groupB], 20);
+
+    const shapes = merged.map((group) =>
+      group.map((entry) => `${entry.startTokenIndex}..${entry.endTokenIndex}/${entry.segments.length}`)
+    );
+    expect(shapes).toEqual([
+      ['0..22/2', '50..72/2'],
+      ['12..22/1', '62..72/1', '112..122/1'],
+      ['1000..1010/1', '2000..2010/1', '0..10/1', '50..60/1'],
+    ]);
+    // Every span the merged group covers is counted there alone: the retained groups add only
+    // their own unpaired copies.
+    expect(merged.map((group) => countRedundantFragments(group))).toEqual([2, 1, 0]);
+  });
+
+  // A group whose standalone copies all sit in one file survives selection through a nested copy in
+  // another file. Merging pairs only same-file occurrences, so the merged group would cover that one
+  // file alone and must not form: its spans stay counted by the groups that remain.
+  it('does not form a merged group that covers a single file', () => {
+    const groupA = [inFile('a', occurrence(0, 10)), inFile('a', occurrence(50, 60)), inFile('b', nested(1000, 1010))];
+    const groupB = [
+      inFile('a', occurrence(12, 22)),
+      inFile('a', occurrence(62, 72)),
+      inFile('d', occurrence(112, 122)),
+    ];
+
+    const merged = mergeAdjacentGroups(
+      [groupA, groupB],
+      20,
+      (group) => new Set(group.map(({ file }) => file)).size >= 2
+    );
+
+    expect(merged).toEqual([groupA, groupB]);
+    // No standalone span was marked as counted elsewhere, so none is left counted by no group.
+    expect(
+      merged
+        .flat()
+        .filter(({ nestedInLargerGroup }) => !nestedInLargerGroup)
+        .some(({ spanCountedElsewhere }) => spanCountedElsewhere === true)
+    ).toBe(false);
+  });
+
   // Three adjacent fragment groups where the first also occurs standalone: after A partially
   // merges with B, the retained A occurrences must not pair AGAIN with C (which would build a
   // competing A+C group); instead the merged A+B group extends with C to the A+B+C fixed point.
@@ -241,7 +309,7 @@ describe('duplication: partial gapped-clone merging', () => {
       ['0..34/3', '50..84/3'],
     ]);
     // A's two paired occurrences are marked as shared with the merged group (no double counting).
-    expect(merged[0]?.map((entry) => entry.sharedWithMergedGroup === true)).toEqual([true, true, false]);
+    expect(merged[0]?.map((entry) => entry.spanCountedElsewhere === true)).toEqual([true, true, false]);
   });
 
   it('loses no duplicated-line coverage compared to unmerged reporting', () => {
@@ -923,6 +991,19 @@ describe('duplication: cross-file clones in every language', () => {
   }
 });
 
+/** Three statement runs, so files can share overlapping halves of one function body. */
+const straddleRuns = {
+  first: '  const alpha = compute(seed, base);\n  const beta = combine(alpha, seed);\n  report(alpha, beta);\n',
+  middle: '  const gamma = alpha * beta + 3;\n  const delta = gamma - beta;\n  log("mid", gamma, delta);\n',
+  last: '  const epsilon = delta / 2;\n  const zeta = epsilon + gamma;\n  log("end", epsilon, zeta);\n',
+};
+
+const straddleFile = (name: string, body: string): string => `function ${name}(seed, base) {\n${body}}\n`;
+
+/** A second function that makes two files whole-file clones, larger than the block a third file copies. */
+const arithmetic = (name: string): string =>
+  `function ${name}(a, b) {\n  const x = a + b;\n  const y = a * b;\n  const z = x - y;\n  const w = x * y - z;\n  const v = [x, y, z, w].map((n) => n * 2);\n  const u = v.filter((n) => n > a);\n  return [x, y, z, w, v, u, a, b];\n}\n`;
+
 describe('duplication: cross-file grouping and reporting', () => {
   const copy = (name: string): string => logicClone(name, 'console.log("midpoint", total);');
 
@@ -959,6 +1040,106 @@ describe('duplication: cross-file grouping and reporting', () => {
     // Two redundant copies of the big clone plus one of the small run.
     expect(metrics.duplicateBlockCount).toBe(3);
     expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 1, 'c.js': 2 });
+  });
+
+  // a.js and b.js are whole-file clones; c.js copies only their first function. The two copies
+  // nested inside the larger clone stay with c.js's group instead of being dropped as overlaps, and
+  // only c.js's copy adds to the block count (the nested ones are counted by the larger group).
+  // Whichever group the coverage ranking visits first (the 2-copy whole file when the second
+  // function is large, the 3-copy block when it is small), both groups are reported.
+  for (const [size, extra] of [
+    ['large', arithmetic],
+    ['small', (name: string): string => `function ${name}(a) {\n  return a + 1;\n}\n`],
+  ] as const) {
+    it(`reports a third file copying a block nested in a larger clone (${size} enclosing clone)`, () => {
+      expectNestedThirdCopy(extra);
+    });
+  }
+
+  function expectNestedThirdCopy(extra: (name: string) => string): void {
+    const metrics = measureCrossFileDuplication([
+      {
+        file: 'a.js',
+        ...collectCrossFileDuplicationFileData(copy('alpha') + extra('alphaExtra'), { language: 'javascript' }),
+      },
+      {
+        file: 'b.js',
+        ...collectCrossFileDuplicationFileData(copy('beta') + extra('betaExtra'), { language: 'javascript' }),
+      },
+      {
+        file: 'c.js',
+        ...collectCrossFileDuplicationFileData(`export const k = 1;\n${copy('gamma')}`, { language: 'javascript' }),
+      },
+    ]);
+
+    expect(metrics.groups.map((group) => group.files)).toEqual([
+      ['a.js', 'b.js'],
+      ['a.js', 'b.js', 'c.js'],
+    ]);
+    expect(metrics.duplicateBlockCount).toBe(2);
+    expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 2, 'c.js': 1 });
+  }
+
+  // The inner block group ranks above the whole-file group by coverage (four copies against two),
+  // so the whole-file clone is kept after the region it encloses. Both must still be reported: the
+  // block copies in a.js and b.js are nested in the whole-file clone, and c.js and d.js, which
+  // share only that block, keep it as a four-file group.
+  it('reports both an enclosing whole-file clone and the inner block a third and fourth file share', () => {
+    const metrics = measureCrossFileDuplication([
+      {
+        file: 'a.js',
+        ...collectCrossFileDuplicationFileData(copy('alpha') + arithmetic('alphaX'), { language: 'javascript' }),
+      },
+      {
+        file: 'b.js',
+        ...collectCrossFileDuplicationFileData(copy('beta') + arithmetic('betaX'), { language: 'javascript' }),
+      },
+      {
+        file: 'c.js',
+        ...collectCrossFileDuplicationFileData(`class Holder { constructor() { this.value = 1; } }\n${copy('gamma')}`, {
+          language: 'javascript',
+        }),
+      },
+      {
+        file: 'd.js',
+        ...collectCrossFileDuplicationFileData(`while (ready) { poll(); }\n${copy('delta')}`, {
+          language: 'javascript',
+        }),
+      },
+    ]);
+
+    expect(metrics.groups.map((group) => group.files)).toEqual([
+      ['a.js', 'b.js'],
+      ['a.js', 'b.js', 'c.js', 'd.js'],
+    ]);
+    // One redundant whole-file copy plus the two copies of the block that no larger group covers.
+    expect(metrics.duplicateBlockCount).toBe(3);
+    expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 2, 'c.js': 1, 'd.js': 1 });
+  });
+
+  // a.js and b.js hold all three runs, c.js and e.js the first two, and d.js the last two. The
+  // first-two region is kept before the whole-file clone that encloses it, and the last-two region
+  // then lies inside that clone while straddling the region it swallowed: it must be reported as a
+  // nested copy, which only holds while an enclosing candidate replaces the regions it absorbs.
+  it('reports a region straddling one the enclosing clone already absorbed', () => {
+    const { first, middle, last } = straddleRuns;
+    const metrics = measureCrossFileDuplication(
+      [
+        { file: 'a.js', code: straddleFile('a', first + middle + last) },
+        { file: 'b.js', code: straddleFile('b', first + middle + last) },
+        { file: 'c.js', code: straddleFile('c', `${first}${middle}  finish(1);\n`) },
+        { file: 'd.js', code: straddleFile('d', `  begin(2);\n${middle}${last}`) },
+        { file: 'e.js', code: straddleFile('e', `${first}${middle}  finish(3);\n`) },
+      ].map(({ file, code }) => ({ file, ...collectCrossFileDuplicationFileData(code, { language: 'javascript' }) })),
+      { maxGapTokens: 0 }
+    );
+
+    expect(metrics.groups.map((group) => group.files)).toEqual([
+      ['a.js', 'b.js'],
+      ['c.js', 'e.js'],
+      ['a.js', 'b.js', 'd.js'],
+    ]);
+    expect(metrics.duplicateBlockCount).toBe(3);
   });
 
   it('applies near-miss matching within files only, so a scattered-edit copy across files is not a clone', () => {

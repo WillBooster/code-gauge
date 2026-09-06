@@ -199,6 +199,11 @@ describe('cognitive complexity: language-specific decision constructs', () => {
       )
     ).toEqual([4]);
     expect(cognitiveOf('python', 'def f(a):\n    return 1 if a else 2\n')).toEqual([1]);
+    // A comprehension filter is an expression, not a statement-level decision; a `case` guard is.
+    expect(cognitiveOf('python', 'def f(xs):\n    return [x for x in xs if x]\n')).toEqual([0]);
+    expect(cognitiveOf('python', 'def f(xs):\n    match xs:\n        case [x] if x:\n            return x\n')).toEqual([
+      2,
+    ]);
     expect(cognitiveOf('python', 'def f(a, b, c):\n    return a and b or c\n')).toEqual([2]);
     expect(cognitiveOf('python', 'def f(a, b, c):\n    return not a and not b and not c\n')).toEqual([1]);
   });
@@ -445,6 +450,402 @@ describe('parameter counts', () => {
   });
 });
 
+describe('function names from binding sites', () => {
+  it('names object-literal properties and assignment targets, leaving computed keys and subscripts anonymous', () => {
+    expect(
+      functionsOf(
+        'javascript',
+        'const o = { run: () => 1, "quoted": function () {}, [k]: () => 2 };\nobj.run = () => 3;\nplain = () => 4;\na.b.c = function () {};\no["s"] = () => 5;'
+      ).map((fn) => fn.name)
+    ).toEqual(['run', 'quoted', undefined, 'run', 'plain', 'c', undefined]);
+    // A numeric key names its value; Python and Ruby spell the same key as integer/float nodes.
+    expect(functionsOf('javascript', 'const o = { 1: () => 1, 2.5: function () {} };').map((fn) => fn.name)).toEqual([
+      '1',
+      '2.5',
+    ]);
+    expect(functionsOf('ruby', 'h = { 1 => -> { 1 } }\n').map((fn) => fn.name)).toEqual(['1']);
+    expect(functionsOf('python', 'd = {1: lambda: 1, -2: lambda: 2, ~3: lambda: 3}\n').map((fn) => fn.name)).toEqual([
+      '1',
+      '-2',
+      undefined,
+    ]);
+    expect(functionsOf('ruby', 'h = { -1 => -> { 1 } }\n').map((fn) => fn.name)).toEqual(['-1']);
+    // A space between the sign and the number does not reach the name.
+    expect(functionsOf('python', 'd = {- 2: lambda: 1}\n').map((fn) => fn.name)).toEqual(['-2']);
+    // A class field is named like an object-literal key: computed stays anonymous, quoted is read
+    // without its quotes, and a private name is kept as written.
+    expect(
+      functionsOf('javascript', 'class A { [key] = () => 1; "s" = () => 2; #p = () => 3; plain = () => 4; }').map(
+        (fn) => fn.name
+      )
+    ).toEqual([undefined, 's', '#p', 'plain']);
+    expect(
+      functionsOf('typescript', 'class A { [key] = (() => 1) as Fn; plain = (() => 2) as Fn; }').map((fn) => fn.name)
+    ).toEqual([undefined, 'plain']);
+    // A string key keeps its escapes as written; an empty key names nothing.
+    expect(
+      functionsOf('javascript', String.raw`const o = { 'user\'s': () => {}, 'a\nb': () => {}, '': () => {} };`).map(
+        (fn) => fn.name
+      )
+    ).toEqual([String.raw`user\'s`, String.raw`a\nb`, undefined]);
+    expect(
+      functionsOf('csharp', 'class A { void F() { this.Run = () => 1; run = x => x; } }').map((fn) => fn.name)
+    ).toEqual(['F', 'Run', 'run']);
+    expect(
+      functionsOf('java', 'class A { void f() { this.run = () -> 1; run = () -> 2; } }').map((fn) => fn.name)
+    ).toEqual(['f', 'run', 'run']);
+  });
+
+  it('names Go, Kotlin, Ruby, Python, Rust, and C++ functions bound to variables, members, fields, and qualified names', () => {
+    expect(
+      functionsOf('go', 'package p\nfunc f() { run = func() {}; a, _ = func() {}, func() {}; m.run = func() {} }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', 'run', 'a', undefined, 'run']);
+    expect(
+      functionsOf('kotlin', 'fun f() { run = { 1 }; obj.run = { 2 }; arr[0] = { 3 }; obj.arr[0] = { 4 } }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', 'run', 'run', undefined, undefined]);
+    expect(
+      functionsOf('ruby', 'self.run = -> { 1 }\nobj.run = lambda { 1 }\n@handler = -> { 2 }\n').map((fn) => fn.name)
+    ).toEqual(['run', 'run', '@handler']);
+    // A parallel assignment binds each value to the target at the same position, writers included.
+    expect(
+      functionsOf('ruby', 'run, stop = -> { 1 }, lambda { 2 }\nkeep, obj.drop = -> { 3 }, -> { 4 }\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'stop', 'keep', 'drop']);
+    expect(
+      functionsOf('python', 'run, stop = (lambda: 1), lambda: 2\nkeep, d["k"] = lambda: 3, lambda: 4\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'stop', 'keep', undefined]);
+    // Ruby fills from the left when a splat runs short, so a position after one binds nothing
+    // knowable; Python takes exactly as many values as targets, fixing the distance from the end.
+    expect(functionsOf('ruby', 'a, b = *xs, -> { 1 }\nc, *d = -> { 2 }, -> { 3 }\n').map((fn) => fn.name)).toEqual([
+      undefined,
+      'c',
+      undefined,
+    ]);
+    expect(functionsOf('python', 'a, b = *xs, lambda: 1\nc, *d = lambda: 2, lambda: 3\n').map((fn) => fn.name)).toEqual(
+      ['b', 'c', undefined]
+    );
+    // Python raises when the counts do not fit, so nothing is bound and nothing is named.
+    expect(
+      functionsOf('python', 'a, b, c = lambda: 1, lambda: 2\nd, e = (lambda: 3,)\nf, *g, h = (lambda: 4,)\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual([undefined, undefined, undefined, undefined]);
+    // A splat cannot rescue a count that is already too large.
+    expect(functionsOf('python', 'a, b = lambda: 1, lambda: 2, lambda: 3, *xs\n').map((fn) => fn.name)).toEqual([
+      undefined,
+      undefined,
+      undefined,
+    ]);
+    // A starred target takes what is left over, so the values after it align from the right.
+    expect(functionsOf('python', 'a, *rest, c = x, lambda: 1\n').map((fn) => fn.name)).toEqual(['c']);
+    expect(functionsOf('ruby', 'a, *rest, c = x, -> { 1 }\n').map((fn) => fn.name)).toEqual(['c']);
+    // A parallel target names its value like a single one, attribute writers included.
+    expect(functionsOf('python', 'obj.run, x = lambda: 1, lambda: 2\n').map((fn) => fn.name)).toEqual(['run', 'x']);
+    expect(functionsOf('ruby', 'self.run, x = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['run', 'x']);
+    // Ruby fills trailing targets from the left when the values run out, so it aligns from the
+    // right only where they reach; Python fails such an assignment instead.
+    expect(functionsOf('ruby', 'a, *r, c, d = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['a', 'c']);
+    expect(functionsOf('ruby', 'a, *rest, c = *xs, -> { 1 }\n').map((fn) => fn.name)).toEqual([undefined]);
+    // Ruby gives a lone value to the first target that is not the star, nested groups included.
+    expect(
+      functionsOf('ruby', 'a, b = -> { 1 }\n*c, d = -> { 2 }\n(e, f), g = -> { 3 }\n').map((fn) => fn.name)
+    ).toEqual(['a', 'd', 'e']);
+    // A trailing value still aligns from the right past a splat, unless splats surround it.
+    expect(
+      functionsOf('python', 'a, *rest, c = *xs, lambda: 1\nd, *e, g = *xs, lambda: 2, *ys\n').map((fn) => fn.name)
+    ).toEqual(['c', undefined]);
+    // A container literal on the right groups its values positionally, like the bare comma form.
+    expect(
+      functionsOf('python', 'run, stop = (lambda: 1, lambda: 2)\nkeep, drop = [lambda: 3, lambda: 4]\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'stop', 'keep', 'drop']);
+    expect(functionsOf('ruby', 'run, stop = [-> { 1 }, lambda { 2 }]\n').map((fn) => fn.name)).toEqual(['run', 'stop']);
+    // Destructuring aligns at every level, and a group outside an assignment binds nothing.
+    expect(functionsOf('python', 'a, (b, c) = x, (lambda: 1, y)\nf((lambda: 2, y))\n').map((fn) => fn.name)).toEqual([
+      'b',
+      undefined,
+    ]);
+    expect(functionsOf('ruby', 'a, (b, c) = x, [-> { 1 }, y]\n').map((fn) => fn.name)).toEqual(['b']);
+    // A fully parenthesized Ruby target list is one nested group holding the real targets.
+    expect(functionsOf('ruby', '(a, b) = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['a', 'b']);
+    // A Python singleton tuple is a real destructuring level, unlike Ruby's redundant parentheses.
+    expect(functionsOf('python', '((a, b),) = ((lambda: 1, x),)\n').map((fn) => fn.name)).toEqual(['a']);
+    // A bracketed Python target list unpacks like the parenthesized one.
+    expect(
+      functionsOf('python', '[a, b] = lambda: 1, lambda: 2\nc, [d, e] = x, (lambda: 3, y)\n').map((fn) => fn.name)
+    ).toEqual(['a', 'b', 'd']);
+    expect(
+      functionsOf('ruby', 'h = { run: -> { 1 }, :sym => -> { 2 }, "str" => lambda { 3 }, "k#{x}" => -> { 4 } }\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'sym', 'str', undefined]);
+    expect(
+      functionsOf(
+        'ruby',
+        'h = { :"quoted" => -> { 1 }, :"q#{x}" => -> { 2 }, %q(pct) => -> { 3 }, "" => -> { 4 } }\n'
+      ).map((fn) => fn.name)
+    ).toEqual(['quoted', undefined, 'pct', undefined]);
+    // Grouping parentheses are transparent, but `(a; b)` binds its last statement to nothing.
+    expect(
+      functionsOf('ruby', 'h = { run: (lambda { 1 }) }\nrun = (lambda { 2 })\nx = (-> { 3 })\ny = (a; -> { 4 })\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['run', 'run', 'x', undefined]);
+    expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
+    // A written type means the lambda is a constructor argument, so it names nothing; a deduced one
+    // makes the variable the closure itself, like an assignment does.
+    expect(
+      functionsOf(
+        'cpp',
+        'void f() { std::thread worker([]{}); std::function<void()> go{[]{}}; auto cb = []{}; auto braced{[]{}}; auto parens([]{}); }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, undefined, 'cb', 'braced', 'parens']);
+    // Copy-list initialization deduces a list holding the closure, so it names nothing.
+    expect(functionsOf('cpp', 'void g() { auto a = {[]{}}; auto b{[]{}}; }').map((fn) => fn.name)).toEqual([
+      'g',
+      undefined,
+      'b',
+    ]);
+    // A compound assignment does not bind its target to the function (C# event subscription).
+    expect(
+      functionsOf('csharp', 'class A { void F() { Changed += () => 1; Handler = () => 2; } }').map((fn) => fn.name)
+    ).toEqual(['F', undefined, 'Handler']);
+    expect(functionsOf('kotlin', 'fun f() { run += { 1 } }').map((fn) => fn.name)).toEqual(['f', undefined]);
+    // A Go keyed composite-literal element names its value; an unkeyed one has no key to use.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype S struct { run func() }\nfunc f() { _ = S{run: func() {}}; _ = map[string]func(){"go": func() {}}; _ = []func(){func() {}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', 'run', 'go', undefined]);
+    // A map key identifier holds a runtime value, so it names nothing; a struct field still does.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype S struct { run func() }\nfunc f() { _ = map[string]func(){key: func(){}}; _ = []S{{run: func(){}}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
+    // A name may stand for another name or be instantiated; both resolve to the map they denote.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M map[string]func()\ntype Alias M\ntype G[T any] map[string]T\nfunc f() { _ = Alias{key: func(){}}; _ = G[func()]{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, undefined]);
+    // A chain of names resolves however long it is, and one that names itself stops the walk.
+    const chain = Array.from({ length: 9 }, (_, index) => `type A${index} A${index + 1}`).join('\n');
+    expect(
+      functionsOf(
+        'go',
+        `package p\n${chain}\ntype A9 map[string]func()\ntype C C\nfunc f() { _ = A0{key: func(){}}; _ = C{run: func(){}} }`
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
+    // A type parameter shadows a file-level type of the same name, and its constraint decides.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M struct { key func() }\nfunc f[M ~map[string]func()]() { _ = M{key: func(){}} }\nfunc g() { _ = M{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'g', 'key']);
+    expect(
+      functionsOf('go', 'package p\nfunc f[T interface{ ~map[string]func() }]() { _ = T{key: func(){}} }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', undefined]);
+    // One declaration can name several parameters that share its constraint.
+    expect(
+      functionsOf(
+        'go',
+        'package p\nfunc f[A, B ~map[string]func()]() { _ = B{key: func(){}} }\ntype R[A, B ~map[string]func()] struct{}\nfunc (r R[X, Y]) g() { _ = Y{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'g', undefined]);
+    // A method's receiver carries the parameters of the type it is declared on.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype R[T ~map[string]func()] struct{}\nfunc (r R[T]) f() { _ = T{key: func(){}} }\nfunc (r *R[T]) g() { _ = T{key: func(){}} }\nfunc (r (*R[T])) h() { _ = T{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'g', undefined, 'h', undefined]);
+    // An instantiation binds the container's own parameter, which its nested literal reads.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype F func()\ntype G[T any] []T\nfunc f() { _ = G[map[string]F]{{key: func(){}}}; _ = G[F]{func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, undefined]);
+    // A nested literal of a pointer element type elides the `&`, so the pointee decides.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype S struct { run func() }\nfunc f() { _ = []*map[string]func(){{key: func(){}}}; _ = []*S{{run: func(){}}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
+    // Parentheses around a type name the type they hold.
+    expect(
+      functionsOf('go', 'package p\ntype M (map[string]func())\nfunc f() { _ = M{key: func(){}} }').map((fn) => fn.name)
+    ).toEqual(['f', undefined]);
+    // A type declared inside a function resolves like a top-level one.
+    expect(
+      functionsOf('go', 'package p\nfunc f() { type M map[string]func(); _ = M{key: func(){}} }').map((fn) => fn.name)
+    ).toEqual(['f', undefined]);
+    // A literal type declared in the same file resolves to the type it names.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M map[string]func()\ntype S struct { run func() }\nfunc f() { _ = M{key: func(){}}; _ = S{run: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
+    // A named container resolves before its nested literal's keys are read, and a union of maps
+    // keys by value however it is instantiated.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M map[string]map[string]func()\ntype Rows []map[string]func()\nfunc f() { _ = M{"a": {key: func(){}}}; _ = Rows{{key: func(){}}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, undefined]);
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M1 map[string]func()\ntype M2 map[string]func()\nfunc f[T interface{ M1 | M2 }]() { _ = T{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined]);
+    // An embedded method-only interface leaves the underlying type free, and one that embeds
+    // itself terminates instead of recursing.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype HasM interface { M() }\ntype Loop interface { Loop }\nfunc f[T interface { ~map[string]func(); HasM }]() { _ = T{key: func(){}} }\nfunc g[U Loop]() { _ = U{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'g', 'key']);
+    // A method requirement restricts what a type does, not what it is.
+    expect(
+      functionsOf('go', 'package p\nfunc f[T interface{ ~map[string]func(); M() }]() { _ = T{key: func(){}} }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', undefined]);
+    // A union that admits a map has no stable field name, whichever type it takes.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M map[string]func()\ntype S struct{ key func() }\nfunc f[X interface{ M | S }]() { _ = X{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined]);
+    // An implicit-length array is a sequence like the sized ones, nested or not.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype S struct { run func() }\nfunc f() { _ = [...]map[string]func(){{key: func(){}}}; _ = [...]S{{run: func(){}}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
+    // A nested literal takes its keys from the element type it elides.
+    expect(
+      functionsOf('go', 'package p\nfunc f() { _ = map[string]map[string]func(){"outer": {key: func(){}}} }').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', undefined]);
+    // A Go literal key names its value, like the numeric keys of the other languages.
+    expect(
+      functionsOf(
+        'go',
+        'package p\nfunc f() { _ = map[int]func(){1: func(){}}; _ = map[float64]func(){1.5: func(){}}; _ = [2]func(){0: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', '1', '1.5', '0']);
+    expect(
+      functionsOf('go', "package p\nfunc f() { _ = map[rune]func(){'a': func(){}} }").map((fn) => fn.name)
+    ).toEqual(['f', 'a']);
+    expect(
+      functionsOf('go', 'package p\nfunc f() { _ = map[int]func(){-1: func(){}, +2: func(){}} }').map((fn) => fn.name)
+    ).toEqual(['f', '-1', '+2']);
+    expect(
+      functionsOf('go', "package p\nfunc f() { _ = map[rune]func(){-'a': func(){}} }").map((fn) => fn.name)
+    ).toEqual(['f', '-a']);
+    // Go names only the escapes of a string literal, so the key is read from its text instead.
+    expect(
+      functionsOf('go', 'package p\nfunc f() { _ = map[string]func(){"a\\nb": func() {}} }').map((fn) => fn.name)
+    ).toEqual(['f', String.raw`a\nb`]);
+    expect(functionsOf('go', 'package p\nfunc f() { run += func() {}; ok = func() {} }').map((fn) => fn.name)).toEqual([
+      'f',
+      undefined,
+      'ok',
+    ]);
+    expect(functionsOf('rust', 'fn f() { let s = S { cb: |x| x }; s.cb = |y| y; }').map((fn) => fn.name)).toEqual([
+      'f',
+      'cb',
+      'cb',
+    ]);
+    expect(
+      functionsOf('python', 'def f():\n    obj.run = lambda: 1\n    self.a.b = lambda: 2\n    run = lambda: 3\n').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['f', 'run', 'b', 'run']);
+    // Delimiters and prefixes never leak into the name; an f-string key is not stable.
+    expect(
+      functionsOf(
+        'python',
+        'd = { """t""": lambda: 1, r"raw": lambda: 2, f"x{y}": lambda: 3, "a\\nb": lambda: 4 }\n'
+      ).map((fn) => fn.name)
+    ).toEqual(['t', 'raw', undefined, String.raw`a\nb`]);
+    // Adjacent Python literals form one key; an interpolated part makes it unstable.
+    expect(functionsOf('python', 'd = {"run" "ner": lambda: 1, "a" f"{x}": lambda: 2}\n').map((fn) => fn.name)).toEqual(
+      ['runner', undefined]
+    );
+  });
+
+  it('looks through grouping parentheses and TypeScript type wrappers to the binding site', () => {
+    expect(
+      functionsOf(
+        'typescript',
+        'const o = { run: (() => 1), typed: (() => 2) as () => number, sat: (() => 3) satisfies Fn };\nobj.run = (() => 4)!;\nconst v = (() => 5) as Fn;'
+      ).map((fn) => fn.name)
+    ).toEqual(['run', 'typed', 'sat', 'run', 'v']);
+    // Angle-bracket assertions wrap the value after the type; a Rust cast wraps it directly.
+    expect(
+      functionsOf(
+        'typescript',
+        'const o = { run: <() => number>(() => 1) };\nobj.handle = <Fn>(() => 2);\nconst v = <Fn>(() => 3);'
+      ).map((fn) => fn.name)
+    ).toEqual(['run', 'handle', 'v']);
+    expect(functionsOf('rust', 'fn f() { let cb = (|x| x) as fn(i32) -> i32; }').map((fn) => fn.name)).toEqual([
+      'f',
+      'cb',
+    ]);
+    // A comment inside the wrapper is a named child, but not the wrapped value.
+    expect(
+      functionsOf(
+        'javascript',
+        'const run = (/* why */ () => 1);\nconst o = { go: (/* why */ function () {}) };\nobj.cb = (/* why */ () => 2);'
+      ).map((fn) => fn.name)
+    ).toEqual(['run', 'go', 'cb']);
+    expect(functionsOf('ruby', 'run = (# why\nlambda { 1 })\n').map((fn) => fn.name)).toEqual(['run']);
+    // A cast to a functional interface leaves the same function value bound to the same name.
+    expect(
+      functionsOf('java', 'class A { void m() { Runnable r = (Runnable) () -> 1; } }').map((fn) => fn.name)
+    ).toEqual(['m', 'r']);
+    expect(
+      functionsOf('csharp', 'class A { void M() { System.Action a = (System.Action)(() => 1); } }').map((fn) => fn.name)
+    ).toEqual(['M', 'a']);
+    // An immediately invoked lambda is a receiver, not a bound value, so it takes no name.
+    expect(functionsOf('java', 'class A { void m() { ((Runnable) () -> 1).run(); } }').map((fn) => fn.name)).toEqual([
+      'm',
+      undefined,
+    ]);
+    expect(
+      functionsOf('csharp', 'class A { void M() { ((System.Action)(() => 1)).Invoke(); } }').map((fn) => fn.name)
+    ).toEqual(['M', undefined]);
+    expect(
+      functionsOf('go', 'package p\nfunc f() { run = (func() {}); x := (func() {}) }').map((fn) => fn.name)
+    ).toEqual(['f', 'run', 'x']);
+  });
+});
+
 describe('DepDegree across languages', () => {
   const depDegreeOf = (language: string, code: string): number[] =>
     functionsOf(language, code).map((fn) => fn.depDegree);
@@ -485,6 +886,33 @@ describe('DepDegree across languages', () => {
         'int f(int n, int *p) { int total = 0; for (int i = 0; i < n; i++) { total += p[i]; } return total; }'
       )
     ).toEqual([7]);
+  });
+
+  it('recognizes C++ pointer, reference, array, and function-pointer declarators as definitions', () => {
+    // q (init), *q, xs, r (compound), x, *p, r, a, fp.
+    expect(
+      depDegreeOf(
+        'cpp',
+        'int f(int* q, std::vector<int> xs) { int* p = q; int& r = *q; for (const auto& x : xs) { r += x; } int a[2] = {1, 2}; int (*fp)(int) = g; return *p + r + a[0] + fp(1); }'
+      )
+    ).toEqual([9]);
+    // A member pointer declares its name as a type_identifier inside a pointer_type_declarator;
+    // a qualified constant in a parameter default is a read, so the body's read pairs with nothing.
+    expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* p = q; return p == q; }')).toEqual([3]);
+    expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* arr[1] = {q}; return arr[0] == q; }')).toEqual(
+      [3]
+    );
+    expect(depDegreeOf('cpp', 'namespace N { struct C {}; } int f(int N::C::* q) { return q != nullptr; }')).toEqual([
+      1,
+    ]);
+    // The size of a member-pointer array parameter is a read, not the parameter's definition.
+    expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* a[n]) { return n; }')).toEqual([0]);
+    expect(
+      depDegreeOf(
+        'cpp',
+        'namespace N { namespace M { const int C = 5; } } int f(int x = N::M::C) { return N::M::C + x; }'
+      )
+    ).toEqual([1]);
   });
 
   it('recognizes C# pattern, out-variable, and foreach bindings', () => {
