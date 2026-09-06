@@ -533,6 +533,10 @@ describe('function names from binding sites', () => {
     // right only where they reach; Python fails such an assignment instead.
     expect(functionsOf('ruby', 'a, *r, c, d = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['a', 'c']);
     expect(functionsOf('ruby', 'a, *rest, c = *xs, -> { 1 }\n').map((fn) => fn.name)).toEqual([undefined]);
+    // Ruby gives a lone value to the first target that is not the star, nested groups included.
+    expect(
+      functionsOf('ruby', 'a, b = -> { 1 }\n*c, d = -> { 2 }\n(e, f), g = -> { 3 }\n').map((fn) => fn.name)
+    ).toEqual(['a', 'd', 'e']);
     // A trailing value still aligns from the right past a splat, unless splats surround it.
     expect(
       functionsOf('python', 'a, *rest, c = *xs, lambda: 1\nd, *e, g = *xs, lambda: 2, *ys\n').map((fn) => fn.name)

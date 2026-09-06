@@ -822,9 +822,23 @@ fn find_assignment_target_text(target: Node<'_>, code: &Source<'_>) -> Option<St
     }
 }
 
-/// The name a Ruby or Python single assignment binds.
+/// The name a Ruby or Python single assignment binds. Ruby also allows a target list with one
+/// value: a value that is not an array goes to the first target that is not the star, descending
+/// into a nested group (`a, b = -> { 1 }` and `*a, b = -> { 1 }` both bind the lambda to a name).
 fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
-    find_assignment_target_text(assignment.child_by_field_name("left")?, code)
+    let left = assignment.child_by_field_name("left")?;
+    let mut target = left;
+    if matches!(
+        left.kind(),
+        "left_assignment_list" | "destructured_left_assignment"
+    ) {
+        while is_target_group(target) {
+            target = binding_children(target)
+                .into_iter()
+                .find(|child| !is_splat(child))?;
+        }
+    }
+    find_assignment_target_text(target, code)
 }
 
 fn is_ruby_lambda_call(node: Node<'_>, code: &Source<'_>) -> bool {
