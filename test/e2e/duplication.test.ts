@@ -8,7 +8,13 @@ import {
   type LanguageName,
 } from '../../src/index.js';
 import { selectMaximalGroups, type SelectableRegion } from '../../src/duplicateSelection.js';
-import { mergeAdjacentGroups, type CountedOccurrence, type Token, type TokenRange } from '../../src/duplication.js';
+import {
+  countRedundantFragments,
+  mergeAdjacentGroups,
+  type CountedOccurrence,
+  type Token,
+  type TokenRange,
+} from '../../src/duplication.js';
 import { fixturesDir } from './fixtureCorpus.js';
 
 // End-to-end coverage of the duplication detector across every supported language, plus the
@@ -230,8 +236,9 @@ describe('duplication: partial gapped-clone merging', () => {
   });
 
   // Cross-file nested copies (inside a larger group's region) are not copies of a merged span: they
-  // neither pair nor keep their group's standalone copies from being consumed by the merge.
-  it('lets standalone copies merge with an adjacent group despite nested copies in the same group', () => {
+  // neither pair nor keep their group's standalone copies from merging with an adjacent group. The
+  // group holding them stays, because only it reports which files share the fragment it matched.
+  it('merges standalone copies while keeping the group that reports nested copies', () => {
     const groupA = [nested(1000, 1010), nested(2000, 2010), occurrence(0, 10), occurrence(50, 60)];
     const groupB = [occurrence(12, 22), occurrence(62, 72), occurrence(112, 122)];
 
@@ -243,7 +250,11 @@ describe('duplication: partial gapped-clone merging', () => {
     expect(shapes).toEqual([
       ['0..22/2', '50..72/2'],
       ['12..22/1', '62..72/1', '112..122/1'],
+      ['1000..1010/1', '2000..2010/1', '0..10/1', '50..60/1'],
     ]);
+    // Every span the merged group covers is counted there alone: the retained groups add only
+    // their own unpaired copies.
+    expect(merged.map((group) => countRedundantFragments(group))).toEqual([2, 1, 0]);
   });
 
   // Three adjacent fragment groups where the first also occurs standalone: after A partially

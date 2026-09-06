@@ -594,7 +594,7 @@ function combineHashes(hash: number, value: number): number {
  * Merges duplicate groups separated by a small token gap into one gapped (Type-3) clone group: a
  * copy edited in one spot splits into two exact groups whose occurrences sit side by side in the
  * same order. Occurrences are paired greedily in source order; a merge happens when the pairing
- * fully consumes at least one group with at least two pairs. Equal-cardinality groups whose
+ * fully pairs at least one group with at least two pairs. Equal-cardinality groups whose
  * occurrences all pair merge into one group as before. When cardinalities differ (a fragment also
  * occurs standalone: prefix ×3, suffix ×2), the fully-paired group is subsumed into the merged
  * gapped group while the other group is RETAINED with ALL its occurrences: dropping the leftover
@@ -602,8 +602,8 @@ function combineHashes(hash: number, value: number): number {
  * (contradicting duplicateBlockGroupCount's "appears more than once" meaning). Line coverage
  * unions ranges, so the overlap between the retained exact group and the merged group is harmless.
  * Merging repeats to a fixpoint so a clone edited in several spots still reassembles; it
- * terminates because a full merge shrinks the group count and a partial merge keeps it while
- * strictly growing the bounded total span of merged occurrences. Gap tokens are not matched
+ * terminates because every merge marks its paired occurrences as counted elsewhere, and only
+ * unmarked occurrences pair, so a given pair of occurrences merges at most once. Gap tokens are not matched
  * content: line coverage and sizes count only the matched segments. Generic so cross-file merging
  * can thread file identity through occurrences.
  */
@@ -627,20 +627,24 @@ export function mergeAdjacentGroups<T extends CountedOccurrence>(groups: T[][], 
         if (!result) {
           continue;
         }
-        const leftConsumed = forward ? result.firstConsumed : result.secondConsumed;
-        const rightConsumed = forward ? result.secondConsumed : result.firstConsumed;
-        if (leftConsumed && rightConsumed) {
+        const leftReplaced = forward ? result.firstReplaced : result.secondReplaced;
+        const rightReplaced = forward ? result.secondReplaced : result.firstReplaced;
+        if (leftReplaced && rightReplaced) {
           groups[leftIndex] = result.merged;
           groups.splice(rightIndex, 1);
-        } else if (rightConsumed) {
+        } else if (rightReplaced) {
           groups[rightIndex] = result.merged;
-        } else {
+        } else if (leftReplaced) {
           groups[leftIndex] = result.merged;
+        } else {
+          // Both groups stay (each is only partly paired, or reports nested copies of its own), so
+          // the merged group joins them instead of taking a place.
+          groups.push(result.merged);
         }
-        // A partial merge retains the not-fully-consumed group with ALL its occurrences (line
-        // coverage must not shrink, and a reported group must keep >= 2 occurrences), so its
-        // paired occurrences now also live inside the merged group's occurrences: mark them so
-        // duplicateBlockCount counts each token span once.
+        // A group that stays keeps ALL its occurrences (line coverage must not shrink, and a
+        // reported group must keep >= 2 occurrences), so its paired occurrences now also live
+        // inside the merged group's occurrences: mark them so duplicateBlockCount counts each
+        // token span once, and so the same pair cannot merge again.
         for (const occurrence of result.pairedRetained) {
           occurrence.spanCountedElsewhere = true;
         }
@@ -664,10 +668,13 @@ function compareGroups(left: CountedOccurrence[], right: CountedOccurrence[]): n
 
 interface MergeResult<T> {
   merged: T[];
-  /** Whether every occurrence of the respective input group was paired into the merge. */
-  firstConsumed: boolean;
-  secondConsumed: boolean;
-  /** The retained (not fully consumed) group's occurrences that were paired into the merge. */
+  /**
+   * Whether the merged group takes the respective input group's place: its standalone occurrences
+   * were all paired and it holds no nested copies that only it can report.
+   */
+  firstReplaced: boolean;
+  secondReplaced: boolean;
+  /** The occurrences of groups that stay, which the merged group's spans now also cover. */
   pairedRetained: T[];
 }
 
@@ -717,11 +724,16 @@ function mergeGroups<T extends CountedOccurrence>(
       leadingIndex += 1;
     }
   }
-  const firstConsumed = pairs.length === firstLength;
-  const secondConsumed = pairs.length === secondLength;
-  if (pairs.length < 2 || (!firstConsumed && !secondConsumed)) {
+  const firstFullyPaired = pairs.length === firstLength;
+  const secondFullyPaired = pairs.length === secondLength;
+  if (pairs.length < 2 || (!firstFullyPaired && !secondFullyPaired)) {
     return undefined;
   }
+  // A group holding nested copies stays even when all its standalone copies pair: the merged
+  // group's content is larger than what those copies matched, so only the original group can
+  // report which files share the matched fragment.
+  const firstReplaced = firstFullyPaired && !first.some((occurrence) => occurrence.nestedInLargerGroup);
+  const secondReplaced = secondFullyPaired && !second.some((occurrence) => occurrence.nestedInLargerGroup);
   const merged = pairs.map(([leading, trailing]) => ({
     ...leading,
     // A merged occurrence is a fresh span combination; it never inherits shared-span marks.
@@ -733,9 +745,11 @@ function mergeGroups<T extends CountedOccurrence>(
     endIndex: trailing.endIndex,
     endLine: trailing.endLine,
   }));
-  const pairedRetained =
-    firstConsumed === secondConsumed ? [] : pairs.map(([leading, trailing]) => (firstConsumed ? trailing : leading));
-  return { merged, firstConsumed, secondConsumed, pairedRetained };
+  const pairedRetained = [
+    ...(firstReplaced ? [] : pairs.map(([leading]) => leading)),
+    ...(secondReplaced ? [] : pairs.map(([, trailing]) => trailing)),
+  ];
+  return { merged, firstReplaced, secondReplaced, pairedRetained };
 }
 
 /** One pass over a group: its pairable occurrences and its non-nested occurrence count. */
