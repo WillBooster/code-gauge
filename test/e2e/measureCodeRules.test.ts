@@ -670,6 +670,13 @@ describe('function names from binding sites', () => {
         'package p\ntype M map[string]func()\ntype S struct { run func() }\nfunc f() { _ = M{key: func(){}}; _ = S{run: func(){}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', undefined, 'run']);
+    // An implicit-length array is a sequence like the sized ones, nested or not.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype S struct { run func() }\nfunc f() { _ = [...]map[string]func(){{key: func(){}}}; _ = [...]S{{run: func(){}}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
     // A nested literal takes its keys from the element type it elides.
     expect(
       functionsOf('go', 'package p\nfunc f() { _ = map[string]map[string]func(){"outer": {key: func(){}}} }').map(

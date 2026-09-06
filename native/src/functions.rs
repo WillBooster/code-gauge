@@ -511,7 +511,12 @@ fn has_value_keys(keyed: Node<'_>, code: &Source<'_>) -> bool {
         .parent()
         .and_then(key_type_of_literal_body)
         .map(|declared| resolve_named_type(declared, code))
-        .is_some_and(|declared| matches!(declared.kind(), "map_type" | "slice_type" | "array_type"))
+        .is_some_and(|declared| {
+            matches!(
+                declared.kind(),
+                "map_type" | "slice_type" | "array_type" | "implicit_length_array_type"
+            )
+        })
 }
 
 /// A literal's type may be a name declared in the same file (`type M map[string]F`), so the name is
@@ -645,7 +650,9 @@ fn key_type_of_literal_body(body: Node<'_>) -> Option<Node<'_>> {
     let holder = key_type_of_literal_body(container)?;
     match holder.kind() {
         "map_type" => holder.child_by_field_name("value"),
-        "slice_type" | "array_type" => holder.child_by_field_name("element"),
+        "slice_type" | "array_type" | "implicit_length_array_type" => {
+            holder.child_by_field_name("element")
+        }
         _ => None,
     }
 }
