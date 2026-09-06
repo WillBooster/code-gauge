@@ -380,18 +380,22 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     }
     let mut current = leaf.node;
     let mut depth = 0usize;
+    let mut in_member_pointer = false;
     loop {
         let Some(parent) = current.parent() else {
             return false;
         };
         let parent_is_parameterish = parent.kind().contains("parameter");
         // Beyond the grandparent, only declarator wrappers keep climbing, plus the
-        // `qualified_identifier` that spells a member-pointer parameter's class (`int C::* q`) —
-        // and only from its declarator, so a qualified constant in a default value or array size
-        // (`int x = N::M::C`) stays a read. Checking this before the field lookup also keeps reads
-        // inside high-arity nodes O(1).
-        let continues_member_pointer =
-            parent.kind() == "qualified_identifier" && current.kind() == "pointer_type_declarator";
+        // `qualified_identifier` nodes that spell a member-pointer parameter's class (`int C::* q`,
+        // `int N::C::* q`) — entered from the pointer declarator and continued through the `name`
+        // side, so a qualified constant in a default value or array size (`int x = N::M::C`) stays
+        // a read. Checking this before the field lookup also keeps reads inside high-arity nodes
+        // O(1).
+        let continues_member_pointer = parent.kind() == "qualified_identifier"
+            && (current.kind() == "pointer_type_declarator" || in_member_pointer)
+            && field_name_in_parent(current, parent) == Some("name");
+        in_member_pointer = continues_member_pointer;
         if depth >= 1
             && !parent_is_parameterish
             && !parent.kind().contains("declarator")
