@@ -290,9 +290,20 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         };
     }
 
-    // A C++ lambda assigned to a variable (`auto f = [](int x) { ... };`) takes the variable name.
-    if node.kind() == "lambda_expression" && parent.kind() == "init_declarator" {
-        return unwrap_declarator_name(parent.child_by_field_name("declarator"), code);
+    // A C++ lambda initializing a variable takes its name, whether it is assigned (`auto f = [] {};`)
+    // or direct-initialized (`std::function<void()> f([] {});`, `f{[] {}}`), where the grammar puts
+    // the sole value in an argument or initializer list.
+    if node.kind() == "lambda_expression" {
+        let declaration = match parent.kind() {
+            "init_declarator" => Some(parent),
+            "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
+                .parent()
+                .filter(|holder| holder.kind() == "init_declarator"),
+            _ => None,
+        };
+        if let Some(declaration) = declaration {
+            return unwrap_declarator_name(declaration.child_by_field_name("declarator"), code);
+        }
     }
 
     // A Go func literal bound via `add := func...`, `var add = func...`, or `add = func...` takes
@@ -395,6 +406,20 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
             .strip_prefix(':')
             .map(|name| name.to_string()),
         "string" | "delimited_symbol" => find_string_literal_content(key, code),
+        // Python's adjacent literals (`{"run" "ner": ...}`) are one compile-time key.
+        "concatenated_string" => {
+            let mut name = String::new();
+            for part in binding_children(key) {
+                if named_children(part)
+                    .iter()
+                    .any(|child| child.kind() == "interpolation")
+                {
+                    return None;
+                }
+                name.push_str(&find_string_literal_content(part, code).unwrap_or_default());
+            }
+            (!name.is_empty()).then_some(name)
+        }
         _ => None,
     }
 }

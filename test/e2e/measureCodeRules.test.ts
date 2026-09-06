@@ -559,6 +559,10 @@ describe('function names from binding sites', () => {
         'd = { """t""": lambda: 1, r"raw": lambda: 2, f"x{y}": lambda: 3, "a\\nb": lambda: 4 }\n'
       ).map((fn) => fn.name)
     ).toEqual(['t', 'raw', undefined, String.raw`a\nb`]);
+    // Adjacent Python literals form one key; an interpolated part makes it unstable.
+    expect(functionsOf('python', 'd = {"run" "ner": lambda: 1, "a" f"{x}": lambda: 2}\n').map((fn) => fn.name)).toEqual(
+      ['runner', undefined]
+    );
   });
 
   it('looks through grouping parentheses and TypeScript type wrappers to the binding site', () => {
