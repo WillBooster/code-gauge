@@ -458,6 +458,16 @@ describe('function names from binding sites', () => {
         'const o = { run: () => 1, "quoted": function () {}, [k]: () => 2 };\nobj.run = () => 3;\nplain = () => 4;\na.b.c = function () {};\no["s"] = () => 5;'
       ).map((fn) => fn.name)
     ).toEqual(['run', 'quoted', undefined, 'run', 'plain', 'c', undefined]);
+    // A class field is named like an object-literal key: computed stays anonymous, quoted is read
+    // without its quotes, and a private name is kept as written.
+    expect(
+      functionsOf('javascript', 'class A { [key] = () => 1; "s" = () => 2; #p = () => 3; plain = () => 4; }').map(
+        (fn) => fn.name
+      )
+    ).toEqual([undefined, 's', '#p', 'plain']);
+    expect(
+      functionsOf('typescript', 'class A { [key] = (() => 1) as Fn; plain = (() => 2) as Fn; }').map((fn) => fn.name)
+    ).toEqual([undefined, 'plain']);
     // A string key keeps its escapes as written; an empty key names nothing.
     expect(
       functionsOf('javascript', String.raw`const o = { 'user\'s': () => {}, 'a\nb': () => {}, '': () => {} };`).map(
