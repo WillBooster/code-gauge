@@ -669,7 +669,9 @@ fn is_parallel_assignment_list(node: Node<'_>) -> bool {
 }
 
 /// A parallel assignment binds each value to the target at the same position. Comments are named
-/// children of both lists but bind nothing, so they are skipped on either side.
+/// children of both lists but bind nothing, so they are skipped on either side. A splat earlier in
+/// either list expands at run time (`a, b = *xs, -> { 1 }`), so positions after it bind nothing
+/// knowable here.
 fn find_parallel_assignment_name(
     value: Node<'_>,
     values: Node<'_>,
@@ -681,11 +683,24 @@ fn find_parallel_assignment_name(
     if assignment.child_by_field_name("right")?.id() != values.id() {
         return None;
     }
-    let index = binding_children(values)
+    let value_list = binding_children(values);
+    let index = value_list
         .iter()
         .position(|child| child.id() == value.id())?;
-    let target = *binding_children(assignment.child_by_field_name("left")?).get(index)?;
+    let targets = binding_children(assignment.child_by_field_name("left")?);
+    if value_list[..index].iter().any(is_splat) || targets.get(..index)?.iter().any(is_splat) {
+        return None;
+    }
+    let target = *targets.get(index)?;
     is_plain_assignment_target(target).then(|| node_text(target, code).to_string())
+}
+
+/// A splat on either side of a parallel assignment (`*xs`, `*rest`).
+fn is_splat(node: &Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "splat_argument" | "rest_assignment" | "list_splat" | "list_splat_pattern"
+    )
 }
 
 fn binding_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {

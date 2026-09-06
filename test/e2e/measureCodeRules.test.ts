@@ -514,6 +514,15 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['run', 'stop', 'keep', undefined]);
+    // A splat expands at run time, so positions after it bind nothing knowable here.
+    expect(functionsOf('ruby', 'a, b = *xs, -> { 1 }\nc, *d = -> { 2 }, -> { 3 }\n').map((fn) => fn.name)).toEqual([
+      undefined,
+      'c',
+      undefined,
+    ]);
+    expect(functionsOf('python', 'a, b = *xs, lambda: 1\nc, *d = lambda: 2, lambda: 3\n').map((fn) => fn.name)).toEqual(
+      [undefined, 'c', undefined]
+    );
     expect(
       functionsOf('ruby', 'h = { run: -> { 1 }, :sym => -> { 2 }, "str" => lambda { 3 }, "k#{x}" => -> { 4 } }\n').map(
         (fn) => fn.name
