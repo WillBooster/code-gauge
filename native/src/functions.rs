@@ -434,7 +434,7 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
     }
     let key = named_children(*elements.first()?).into_iter().next()?;
     match key.kind() {
-        "identifier" | "field_identifier" if !has_value_keys(keyed) => {
+        "identifier" | "field_identifier" if !has_value_keys(keyed, code) => {
             Some(node_text(key, code).to_string())
         }
         "interpreted_string_literal" | "raw_string_literal" => {
@@ -447,11 +447,38 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
 /// Whether the element belongs to a Go literal whose keys are evaluated values (a map, slice, or
 /// array) rather than the field names of a struct: `map[string]F{key: ...}` stores under whatever
 /// `key` holds, so it names nothing, exactly like a computed property key.
-fn has_value_keys(keyed: Node<'_>) -> bool {
+fn has_value_keys(keyed: Node<'_>, code: &Source<'_>) -> bool {
     keyed
         .parent()
         .and_then(key_type_of_literal_body)
+        .map(|declared| resolve_named_type(declared, code))
         .is_some_and(|declared| matches!(declared.kind(), "map_type" | "slice_type" | "array_type"))
+}
+
+/// A literal's type may be a name declared in the same file (`type M map[string]F`), so the name is
+/// resolved to the type it stands for. A name declared elsewhere stays unresolved and keeps the
+/// struct reading, which is what a named literal type usually is.
+fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
+    if declared.kind() != "type_identifier" {
+        return declared;
+    }
+    let name = node_text(declared, code);
+    let mut root = declared;
+    while let Some(parent) = root.parent() {
+        root = parent;
+    }
+    // Only the file's own top-level declarations are scanned, so this stays a shallow lookup.
+    named_children(root)
+        .into_iter()
+        .filter(|child| child.kind() == "type_declaration")
+        .flat_map(named_children)
+        .filter(|spec| spec.kind() == "type_spec" || spec.kind() == "type_alias")
+        .find(|spec| {
+            spec.child_by_field_name("name")
+                .is_some_and(|declared_name| node_text(declared_name, code) == name)
+        })
+        .and_then(|spec| spec.child_by_field_name("type"))
+        .unwrap_or(declared)
 }
 
 /// The type governing a literal body's keys: the type its own literal declares, or, when a nested
