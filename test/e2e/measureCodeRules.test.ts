@@ -572,6 +572,13 @@ describe('function names from binding sites', () => {
         'package p\ntype S struct { run func() }\nfunc f() { _ = S{run: func() {}}; _ = map[string]func(){"go": func() {}}; _ = []func(){func() {}} }'
       ).map((fn) => fn.name)
     ).toEqual(['f', 'run', 'go', undefined]);
+    // A map key identifier holds a runtime value, so it names nothing; a struct field still does.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype S struct { run func() }\nfunc f() { _ = map[string]func(){key: func(){}}; _ = []S{{run: func(){}}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined, 'run']);
     expect(functionsOf('go', 'package p\nfunc f() { run += func() {}; ok = func() {} }').map((fn) => fn.name)).toEqual([
       'f',
       undefined,

@@ -443,12 +443,27 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
     }
     let key = named_children(*elements.first()?).into_iter().next()?;
     match key.kind() {
-        "identifier" | "field_identifier" => Some(node_text(key, code).to_string()),
+        "identifier" | "field_identifier" if !has_value_keys(keyed) => {
+            Some(node_text(key, code).to_string())
+        }
         "interpreted_string_literal" | "raw_string_literal" => {
             find_string_literal_content(key, code)
         }
         _ => None,
     }
+}
+
+/// Whether the element belongs to a Go literal whose keys are evaluated values (a map, slice, or
+/// array) rather than the field names of a struct: `map[string]F{key: ...}` stores under whatever
+/// `key` holds, so it names nothing, exactly like a computed property key. A nested literal that
+/// elides its type keeps the struct reading, which is what such a literal almost always is.
+fn has_value_keys(keyed: Node<'_>) -> bool {
+    keyed
+        .parent()
+        .and_then(|body| body.parent())
+        .filter(|literal| literal.kind() == "composite_literal")
+        .and_then(|literal| literal.child_by_field_name("type"))
+        .is_some_and(|declared| matches!(declared.kind(), "map_type" | "slice_type" | "array_type"))
 }
 
 /// The literal's content as written (escapes kept), read from the grammar's content children so
