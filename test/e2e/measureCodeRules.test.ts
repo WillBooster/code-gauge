@@ -504,6 +504,16 @@ describe('function names from binding sites', () => {
       )
     ).toEqual(['run', 'run', 'x', undefined]);
     expect(functionsOf('cpp', 'void f() { N::run = []() {}; }').map((fn) => fn.name)).toEqual(['f', 'run']);
+    // A compound assignment does not bind its target to the function (C# event subscription).
+    expect(
+      functionsOf('csharp', 'class A { void F() { Changed += () => 1; Handler = () => 2; } }').map((fn) => fn.name)
+    ).toEqual(['F', undefined, 'Handler']);
+    expect(functionsOf('kotlin', 'fun f() { run += { 1 } }').map((fn) => fn.name)).toEqual(['f', undefined]);
+    expect(functionsOf('go', 'package p\nfunc f() { run += func() {}; ok = func() {} }').map((fn) => fn.name)).toEqual([
+      'f',
+      undefined,
+      'ok',
+    ]);
     expect(functionsOf('rust', 'fn f() { let s = S { cb: |x| x }; s.cb = |y| y; }').map((fn) => fn.name)).toEqual([
       'f',
       'cb',

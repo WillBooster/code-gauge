@@ -376,10 +376,25 @@ fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<S
     (!content.is_empty()).then_some(content)
 }
 
+/// A compound assignment (`x += f`) does not bind the function to its target, so only a plain `=`
+/// names it. Grammars with an `operator` field (C/C++, C#, Java) expose it directly; Go and Kotlin
+/// have none, so the operator is the assignment's own anonymous token child.
+fn is_plain_assignment(assignment: Node<'_>, code: &Source<'_>) -> bool {
+    match assignment.child_by_field_name("operator") {
+        Some(operator) => node_text(operator, code) == "=",
+        None => all_children(assignment)
+            .iter()
+            .any(|child| !child.is_named() && node_text(*child, code) == "="),
+    }
+}
+
 /// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, or Java
 /// field access (`a.b.run` names `run`) or a C++ qualified name (`N::run`); subscripts (`o["run"]`)
 /// name nothing.
 fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if !is_plain_assignment(assignment, code) {
+        return None;
+    }
     let target = assignment.child_by_field_name("left")?;
     let name = match target.kind() {
         "identifier" => target,
@@ -397,6 +412,9 @@ fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
 /// (`obj.run` names `run`); a trailing indexing suffix (`arr[0] = { }`) names nothing, like
 /// subscripts in the other languages.
 fn find_kotlin_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    if !is_plain_assignment(assignment, code) {
+        return None;
+    }
     let target = first_named_child_of_kind(assignment, "directly_assignable_expression")?;
     let children = named_children(target);
     let holder = match children.last()? {
@@ -555,6 +573,9 @@ fn find_go_func_literal_name(
         .collect();
     let value_index = values.iter().position(|child| child.id() == node.id())?;
 
+    if holder.kind() == "assignment_statement" && !is_plain_assignment(holder, code) {
+        return None;
+    }
     if holder.kind() == "short_var_declaration" || holder.kind() == "assignment_statement" {
         let targets = holder.child_by_field_name("left").map(|left| {
             named_children(left)
