@@ -1,6 +1,7 @@
 /**
  * Maximal, non-overlapping duplicate-group selection for the cross-file detector (the native
- * within-file detector mirrors it). Candidates are grouped by fingerprint, ranked by total
+ * within-file detector mirrors its greedy ranking and shedding, but not the nested-copy retention
+ * below, which is cross-file only). Candidates are grouped by fingerprint, ranked by total
  * coverage, kept greedily without overlapping a kept region, and groups that fall below the
  * survivor requirement are shed one at a time (largest first) so their regions stop blocking
  * smaller groups. A copy lying entirely inside a larger group's region stays with its group as a
