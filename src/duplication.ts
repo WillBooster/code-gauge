@@ -116,8 +116,9 @@ export interface CountedOccurrence {
   spanCountedElsewhere?: boolean;
   /**
    * Set on cross-file copies nested inside a larger group's region (they also set
-   * `spanCountedElsewhere`). They never pair in gapped merging and do not keep their group from
-   * being consumed by a merge of its standalone copies, which they are not copies of.
+   * `spanCountedElsewhere`). They never pair in gapped merging, and they do not keep their group's
+   * standalone copies from merging, which they are not copies of. They do keep the merged group
+   * from taking their group's place, since only the original group reports the nesting.
    */
   nestedInLargerGroup?: boolean;
   /** Sum of segment token counts (the gap tokens are not matched content). */
