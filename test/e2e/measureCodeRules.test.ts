@@ -671,9 +671,9 @@ describe('function names from binding sites', () => {
     expect(
       functionsOf(
         'go',
-        'package p\ntype R[T ~map[string]func()] struct{}\nfunc (r R[T]) f() { _ = T{key: func(){}} }\nfunc (r *R[T]) g() { _ = T{key: func(){}} }'
+        'package p\ntype R[T ~map[string]func()] struct{}\nfunc (r R[T]) f() { _ = T{key: func(){}} }\nfunc (r *R[T]) g() { _ = T{key: func(){}} }\nfunc (r (*R[T])) h() { _ = T{key: func(){}} }'
       ).map((fn) => fn.name)
-    ).toEqual(['f', undefined, 'g', undefined]);
+    ).toEqual(['f', undefined, 'g', undefined, 'h', undefined]);
     // An instantiation binds the container's own parameter, which its nested literal reads.
     expect(
       functionsOf(

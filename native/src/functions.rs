@@ -619,7 +619,7 @@ fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
     current
 }
 
-/// The type a name declared at the file's top level stands for.
+/// The type a name stands for, resolved through the scopes enclosing it, innermost first.
 fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Node<'t>> {
     if declared.kind() != "type_identifier" {
         return None;
@@ -656,7 +656,7 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
     None
 }
 
-/// The declaration of a type named in this scope's own `type` declarations.
+/// The declaration of a type named in this scope's own `type` declarations, without looking out.
 fn find_type_spec<'t>(scope: Node<'t>, name: &str, code: &Source<'t>) -> Option<Node<'t>> {
     named_children(scope)
         .into_iter()
@@ -680,14 +680,9 @@ fn receiver_parameter_constraint<'t>(
     let instantiation = named_children(receiver)
         .into_iter()
         .filter_map(|parameter| parameter.child_by_field_name("type"))
-        // A pointer receiver (`func (r *R[T])`) wraps the instantiation, which is otherwise direct.
-        .map(|declared| match declared.kind() {
-            "pointer_type" => named_children(declared)
-                .into_iter()
-                .next()
-                .unwrap_or(declared),
-            _ => declared,
-        })
+        // A pointer or parenthesized receiver (`func (r *R[T])`, `func (r (R[T]))`) wraps the
+        // instantiation, in either order.
+        .map(unwrap_receiver_type)
         .find(|declared| declared.kind() == "generic_type")?;
     let arguments = binding_children(instantiation.child_by_field_name("type_arguments")?);
     let position = arguments.iter().position(|argument| {
@@ -702,6 +697,18 @@ fn receiver_parameter_constraint<'t>(
     declared_type_parameters(declaration.child_by_field_name("type_parameters")?)
         .get(position)?
         .1
+}
+
+/// The type a receiver names, past the pointer and parenthesis wrappers it may carry.
+fn unwrap_receiver_type(declared: Node<'_>) -> Node<'_> {
+    let mut current = declared;
+    while matches!(current.kind(), "pointer_type" | "parenthesized_type") {
+        match named_children(current).into_iter().next() {
+            Some(inner) => current = inner,
+            None => break,
+        }
+    }
+    current
 }
 
 /// The parameters a type-parameter list declares, in order; one declaration can name several that
