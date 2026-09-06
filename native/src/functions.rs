@@ -455,15 +455,39 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
 
 /// Whether the element belongs to a Go literal whose keys are evaluated values (a map, slice, or
 /// array) rather than the field names of a struct: `map[string]F{key: ...}` stores under whatever
-/// `key` holds, so it names nothing, exactly like a computed property key. A nested literal that
-/// elides its type keeps the struct reading, which is what such a literal almost always is.
+/// `key` holds, so it names nothing, exactly like a computed property key.
 fn has_value_keys(keyed: Node<'_>) -> bool {
     keyed
         .parent()
-        .and_then(|body| body.parent())
-        .filter(|literal| literal.kind() == "composite_literal")
-        .and_then(|literal| literal.child_by_field_name("type"))
+        .and_then(key_type_of_literal_body)
         .is_some_and(|declared| matches!(declared.kind(), "map_type" | "slice_type" | "array_type"))
+}
+
+/// The type governing a literal body's keys: the type its own literal declares, or, when a nested
+/// literal elides it, the element type of the literal holding it (`map[string]map[string]F{"a":
+/// {k: f}}` nests a map, `[]S{{run: f}}` a struct). A literal nested in a struct field keeps the
+/// struct reading, since the field's type is not written at the literal.
+fn key_type_of_literal_body(body: Node<'_>) -> Option<Node<'_>> {
+    let parent = body.parent()?;
+    if parent.kind() == "composite_literal" {
+        return parent.child_by_field_name("type");
+    }
+    if parent.kind() != "literal_element" {
+        return None;
+    }
+    let mut container = parent.parent()?;
+    if container.kind() == "keyed_element" {
+        container = container.parent()?;
+    }
+    if container.kind() != "literal_value" {
+        return None;
+    }
+    let holder = key_type_of_literal_body(container)?;
+    match holder.kind() {
+        "map_type" => holder.child_by_field_name("value"),
+        "slice_type" | "array_type" => holder.child_by_field_name("element"),
+        _ => None,
+    }
 }
 
 /// The literal's content as written (escapes kept), read from the grammar's content children so
