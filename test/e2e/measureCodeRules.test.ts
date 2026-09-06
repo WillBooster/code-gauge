@@ -731,6 +731,13 @@ describe('function names from binding sites', () => {
         (fn) => fn.name
       )
     ).toEqual(['f', undefined]);
+    // A union that admits a map has no stable field name, whichever type it takes.
+    expect(
+      functionsOf(
+        'go',
+        'package p\ntype M map[string]func()\ntype S struct{ key func() }\nfunc f[X interface{ M | S }]() { _ = X{key: func(){}} }'
+      ).map((fn) => fn.name)
+    ).toEqual(['f', undefined]);
     // An implicit-length array is a sequence like the sized ones, nested or not.
     expect(
       functionsOf(

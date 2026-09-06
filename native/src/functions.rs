@@ -559,15 +559,12 @@ fn value_keyed_type(declared: Node<'_>, code: &Source<'_>, depth: usize) -> bool
         "map_type" | "slice_type" | "array_type" | "implicit_length_array_type" => true,
         "type_constraint" | "interface_type" | "type_elem" | "negated_type" => {
             // Method requirements restrict what a type does, not what it is, so only the type terms
-            // decide; a union counts when every one of them is value-keyed.
-            let terms: Vec<Node<'_>> = binding_children(resolved)
+            // decide. One value-keyed term is enough: a union admitting a map has no stable field
+            // name, whichever type it is instantiated with.
+            binding_children(resolved)
                 .into_iter()
                 .filter(|term| !requires_methods_only(*term, code, depth + 1))
-                .collect();
-            !terms.is_empty()
-                && terms
-                    .iter()
-                    .all(|term| value_keyed_type(*term, code, depth + 1))
+                .any(|term| value_keyed_type(term, code, depth + 1))
         }
         _ => false,
     }
