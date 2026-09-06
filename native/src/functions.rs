@@ -491,8 +491,10 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
         "interpreted_string_literal" | "raw_string_literal" => {
             find_string_literal_content(key, code)
         }
-        // A literal key is as stable a name here as in any other language's mapping, signed or not.
-        "int_literal" | "float_literal" | "rune_literal" | "imaginary_literal" => {
+        // A literal key is as stable a name here as in any other language's mapping, signed or not;
+        // a rune carries quotes, which are read off like a string's.
+        "rune_literal" => find_string_literal_content(key, code),
+        "int_literal" | "float_literal" | "imaginary_literal" => {
             Some(node_text(key, code).to_string())
         }
         "unary_expression" if is_signed_number(key, code) => Some(node_text(key, code).to_string()),
