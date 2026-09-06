@@ -475,17 +475,21 @@ fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<S
     if children.iter().any(|child| child.kind() == "interpolation") {
         return None;
     }
-    let content: String = children
-        .iter()
-        .filter(|child| {
-            matches!(
-                child.kind(),
-                "string_content" | "string_fragment" | "escape_sequence"
-            )
-        })
-        .map(|child| node_text(*child, code))
-        .collect();
-    if !content.is_empty() {
+    // Go exposes no content node at all: it names only the escapes, so the concatenation is
+    // trusted only when the literal really spells its content out.
+    let mut content = String::new();
+    let mut has_content_node = false;
+    for child in &children {
+        match child.kind() {
+            "string_content" | "string_fragment" => {
+                has_content_node = true;
+                content.push_str(node_text(*child, code));
+            }
+            "escape_sequence" => content.push_str(node_text(*child, code)),
+            _ => {}
+        }
+    }
+    if has_content_node && !content.is_empty() {
         return Some(content);
     }
     // A grammar that exposes no content child (Go's string literals) keeps its delimiters in the
