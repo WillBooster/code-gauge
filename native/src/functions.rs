@@ -466,6 +466,10 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
         "interpreted_string_literal" | "raw_string_literal" => {
             find_string_literal_content(key, code)
         }
+        // A literal key is as stable a name here as in any other language's mapping.
+        "int_literal" | "float_literal" | "rune_literal" | "imaginary_literal" => {
+            Some(node_text(key, code).to_string())
+        }
         _ => None,
     }
 }
