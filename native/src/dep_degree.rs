@@ -159,15 +159,31 @@ pub fn measure_dep_degree(
     pairs
 }
 
-/// A C++ member-pointer variable (`int C::* p`) is declared as a `type_identifier` inside a
-/// `pointer_type_declarator`; every other `type_identifier` names a type, not a variable.
+/// A C++ member-pointer variable (`int C::* p`, also `int C::* arr[1]`) is declared as a
+/// `type_identifier` under the `pointer_type_declarator` spelling `C::*`, possibly through further
+/// declarator wrappers; every other `type_identifier` names a type, not a variable.
 fn is_variable_leaf(node: Node<'_>) -> bool {
     VARIABLE_NODE_TYPES.contains(&node.kind())
         || crate::util::is_kotlin_callable_receiver(node)
-        || (node.kind() == "type_identifier"
-            && node
-                .parent()
-                .is_some_and(|parent| parent.kind() == "pointer_type_declarator"))
+        || (node.kind() == "type_identifier" && is_member_pointer_name(node))
+}
+
+fn is_member_pointer_name(node: Node<'_>) -> bool {
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "pointer_type_declarator" {
+            return true;
+        }
+        // The climb follows the declared-name position only, exactly like unwrap_declarator_wrappers.
+        if !DECLARATOR_WRAPPER_TYPES.contains(&parent.kind())
+            || parent.kind() == "qualified_identifier"
+            || field_name_in_parent(current, parent).is_some_and(|field| field != "declarator")
+        {
+            return false;
+        }
+        current = parent;
+    }
+    false
 }
 
 /// Names a C# accessor body can read without declaring them in its own subtree: the owning
