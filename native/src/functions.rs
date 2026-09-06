@@ -316,8 +316,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     if node.kind() == "lambda" && parent.kind() == "assignment" {
         return find_ruby_assignment_name(parent, code);
     }
-    if node.kind() == "lambda" && is_parallel_assignment_list(parent) {
-        return find_parallel_assignment_name(bound, parent, code);
+    if node.kind() == "lambda" && is_value_group(parent) {
+        return find_parallel_assignment_name(bound, code);
     }
 
     // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`, also through
@@ -343,9 +343,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
                 find_ruby_assignment_name(holder, code)
             }
             Some(holder) if holder.kind() == "pair" => find_pair_key_name(holder, code),
-            Some(holder) if is_parallel_assignment_list(holder) => {
-                find_parallel_assignment_name(call, holder, code)
-            }
+            Some(holder) if is_value_group(holder) => find_parallel_assignment_name(call, code),
             _ => None,
         };
     }
@@ -663,57 +661,86 @@ fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
     false
 }
 
-/// The value side of a Python or Ruby parallel assignment (`run, stop = -> { 1 }, -> { 2 }`).
-fn is_parallel_assignment_list(node: Node<'_>) -> bool {
-    node.kind() == "expression_list" || node.kind() == "right_assignment_list"
+/// A value group of a Python or Ruby parallel assignment: the value list itself, or a nested tuple
+/// or array that destructuring takes apart (`a, (b, c) = x, (f, y)`).
+fn is_value_group(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "expression_list" | "right_assignment_list" | "tuple" | "array"
+    )
 }
 
-/// A parallel assignment binds each value to the target at the same position. Comments are named
-/// children of both lists but bind nothing, so they are skipped on either side. A splat earlier in
-/// either list expands at run time (`a, b = *xs, -> { 1 }`), so positions after it bind nothing
-/// knowable here.
-fn find_parallel_assignment_name(
-    value: Node<'_>,
-    values: Node<'_>,
-    code: &Source<'_>,
-) -> Option<String> {
-    let assignment = values
-        .parent()
-        .filter(|parent| parent.kind() == "assignment")?;
-    if assignment.child_by_field_name("right")?.id() != values.id() {
+/// The matching target groups, which a nested value group is aligned against level by level.
+fn is_target_group(node: Node<'_>) -> bool {
+    matches!(
+        node.kind(),
+        "pattern_list" | "left_assignment_list" | "tuple_pattern" | "destructured_left_assignment"
+    )
+}
+
+/// A parallel assignment binds each value to the target at the same position, at every level of
+/// destructuring. The position this value takes in each group it sits in is collected on the way up
+/// to the assignment, then replayed on the target side.
+fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let mut positions = Vec::new();
+    let mut current = value;
+    let assignment = loop {
+        let parent = current.parent()?;
+        if is_value_group(parent) {
+            positions.push((parent, current));
+            current = parent;
+            continue;
+        }
+        if parent.kind() == "assignment"
+            && parent.child_by_field_name("right")?.id() == current.id()
+        {
+            break parent;
+        }
         return None;
+    };
+    let mut target = assignment.child_by_field_name("left")?;
+    for (values, child) in positions.iter().rev() {
+        if !is_target_group(target) {
+            return None;
+        }
+        target = aligned_target(*values, *child, target)?;
     }
+    is_plain_assignment_target(target).then(|| node_text(target, code).to_string())
+}
+
+/// The target a value takes within one group. Comments are named children of both sides but bind
+/// nothing, so they are skipped. A splat earlier among the values expands at run time
+/// (`a, b = *xs, -> { 1 }`), so no position after it is knowable.
+fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> Option<Node<'t>> {
     let value_list = binding_children(values);
     let index = value_list
         .iter()
         .position(|child| child.id() == value.id())?;
-    let targets = binding_children(assignment.child_by_field_name("left")?);
-    // A splat before this value shifts every later position by an unknown amount.
     if value_list[..index].iter().any(is_splat) {
         return None;
     }
+    let targets = binding_children(targets);
     let splats: Vec<usize> = targets
         .iter()
         .enumerate()
         .filter(|(_, target)| is_splat(target))
         .map(|(index, _)| index)
         .collect();
-    let target = match splats.as_slice() {
-        [] => *targets.get(index)?,
+    match splats.as_slice() {
+        [] => targets.get(index).copied(),
         // Targets before the starred one take the first values and those after it the last ones,
         // so a trailing value aligns from the right; the star swallows what is left, which binds no
         // name of its own. That alignment counts the values, so a splat among them rules it out.
-        &[splat] if index < splat => *targets.get(index)?,
+        &[splat] if index < splat => targets.get(index).copied(),
         &[splat] if !value_list.iter().any(is_splat) => {
             let tail_start = value_list.len().checked_sub(targets.len() - splat - 1)?;
             if index < tail_start || tail_start < splat {
                 return None;
             }
-            *targets.get(splat + 1 + index - tail_start)?
+            targets.get(splat + 1 + index - tail_start).copied()
         }
-        _ => return None,
-    };
-    is_plain_assignment_target(target).then(|| node_text(target, code).to_string())
+        _ => None,
+    }
 }
 
 /// A splat on either side of a parallel assignment (`*xs`, `*rest`).
