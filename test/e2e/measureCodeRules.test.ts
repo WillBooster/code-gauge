@@ -560,6 +560,8 @@ describe('function names from binding sites', () => {
       undefined,
     ]);
     expect(functionsOf('ruby', 'a, (b, c) = x, [-> { 1 }, y]\n').map((fn) => fn.name)).toEqual(['b']);
+    // A fully parenthesized Ruby target list is one nested group holding the real targets.
+    expect(functionsOf('ruby', '(a, b) = -> { 1 }, -> { 2 }\n').map((fn) => fn.name)).toEqual(['a', 'b']);
     expect(
       functionsOf('ruby', 'h = { run: -> { 1 }, :sym => -> { 2 }, "str" => lambda { 3 }, "k#{x}" => -> { 4 } }\n').map(
         (fn) => fn.name
