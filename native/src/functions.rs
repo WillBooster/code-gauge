@@ -709,16 +709,17 @@ fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<S
 }
 
 /// The target a value takes within one group. Comments are named children of both sides but bind
-/// nothing, so they are skipped. A splat earlier among the values expands at run time
-/// (`a, b = *xs, -> { 1 }`), so no position after it is knowable.
+/// nothing, so they are skipped. Values before every splat align from the left, and values after
+/// every splat align from the right against the targets that follow the starred one; a value with a
+/// splat on both sides, or one the star swallows, binds nothing knowable here.
 fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> Option<Node<'t>> {
     let value_list = binding_children(values);
     let index = value_list
         .iter()
         .position(|child| child.id() == value.id())?;
-    if value_list[..index].iter().any(is_splat) {
-        return None;
-    }
+    let splat_before = value_list[..index].iter().any(is_splat);
+    let splat_after = value_list[index + 1..].iter().any(is_splat);
+    let trailing = value_list.len() - 1 - index;
     let targets = binding_children(targets);
     let splats: Vec<usize> = targets
         .iter()
@@ -727,17 +728,10 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
         .map(|(index, _)| index)
         .collect();
     match splats.as_slice() {
-        [] => targets.get(index).copied(),
-        // Targets before the starred one take the first values and those after it the last ones,
-        // so a trailing value aligns from the right; the star swallows what is left, which binds no
-        // name of its own. That alignment counts the values, so a splat among them rules it out.
-        &[splat] if index < splat => targets.get(index).copied(),
-        &[splat] if !value_list.iter().any(is_splat) => {
-            let tail_start = value_list.len().checked_sub(targets.len() - splat - 1)?;
-            if index < tail_start || tail_start < splat {
-                return None;
-            }
-            targets.get(splat + 1 + index - tail_start).copied()
+        [] if !splat_before => targets.get(index).copied(),
+        &[splat] if !splat_before && index < splat => targets.get(index).copied(),
+        &[splat] if !splat_after && trailing < targets.len() - splat - 1 => {
+            targets.get(targets.len() - 1 - trailing).copied()
         }
         _ => None,
     }

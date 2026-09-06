@@ -526,6 +526,10 @@ describe('function names from binding sites', () => {
     // A starred target takes what is left over, so the values after it align from the right.
     expect(functionsOf('python', 'a, *rest, c = x, lambda: 1\n').map((fn) => fn.name)).toEqual(['c']);
     expect(functionsOf('ruby', 'a, *rest, c = x, -> { 1 }\n').map((fn) => fn.name)).toEqual(['c']);
+    // A trailing value still aligns from the right past a splat, unless splats surround it.
+    expect(
+      functionsOf('python', 'a, *rest, c = *xs, lambda: 1\nd, *e, g = *xs, lambda: 2, *ys\n').map((fn) => fn.name)
+    ).toEqual(['c', undefined]);
     // Destructuring aligns at every level, and a group outside an assignment binds nothing.
     expect(functionsOf('python', 'a, (b, c) = x, (lambda: 1, y)\nf((lambda: 2, y))\n').map((fn) => fn.name)).toEqual([
       'b',
