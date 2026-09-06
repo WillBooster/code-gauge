@@ -598,6 +598,14 @@ describe('function names from binding sites', () => {
     expect(
       functionsOf('csharp', 'class A { void M() { System.Action a = (System.Action)(() => 1); } }').map((fn) => fn.name)
     ).toEqual(['M', 'a']);
+    // An immediately invoked lambda is a receiver, not a bound value, so it takes no name.
+    expect(functionsOf('java', 'class A { void m() { ((Runnable) () -> 1).run(); } }').map((fn) => fn.name)).toEqual([
+      'm',
+      undefined,
+    ]);
+    expect(
+      functionsOf('csharp', 'class A { void M() { ((System.Action)(() => 1)).Invoke(); } }').map((fn) => fn.name)
+    ).toEqual(['M', undefined]);
     expect(
       functionsOf('go', 'package p\nfunc f() { run = (func() {}); x := (func() {}) }').map((fn) => fn.name)
     ).toEqual(['f', 'run', 'x']);

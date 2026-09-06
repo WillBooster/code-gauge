@@ -389,6 +389,12 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
         "name"
     };
     let name = parent.child_by_field_name(field_name)?;
+    // Checked only once a name exists, so a high-arity parent without one still costs O(1): the
+    // parent names the function only when the function is its value. A receiver borrows nothing
+    // (`((Runnable) () -> 1).run()` is not named `run`).
+    if !is_value_of_parent(bound, parent) {
+        return None;
+    }
     match name.kind() {
         "computed_property_name" => None,
         "string" => find_string_literal_content(name, code),
@@ -635,6 +641,23 @@ fn first_named_child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>>
     named_children(node)
         .into_iter()
         .find(|child| child.kind() == kind)
+}
+
+/// Whether the node occupies its parent's value position: the `value` field, or no field at all
+/// (a C# `variable_declarator` holds its initializer without one).
+fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
+    for index in 0..parent.child_count() {
+        if parent
+            .child(index)
+            .is_some_and(|child| child.id() == node.id())
+        {
+            return matches!(
+                parent.field_name_for_child(index as u32),
+                None | Some("value")
+            );
+        }
+    }
+    false
 }
 
 /// The value side of a Python or Ruby parallel assignment (`run, stop = -> { 1 }, -> { 2 }`).
