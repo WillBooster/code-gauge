@@ -369,13 +369,17 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
             return false;
         };
         let parent_is_parameterish = parent.kind().contains("parameter");
-        // Beyond the grandparent, only declarator wrappers (and the `qualified_identifier` of a
-        // member-pointer parameter) keep climbing; checking this before the field lookup also
-        // keeps reads inside high-arity nodes O(1).
+        // Beyond the grandparent, only declarator wrappers keep climbing, plus the
+        // `qualified_identifier` that spells a member-pointer parameter's class (`int C::* q`) —
+        // and only from its declarator, so a qualified constant in a default value or array size
+        // (`int x = N::M::C`) stays a read. Checking this before the field lookup also keeps reads
+        // inside high-arity nodes O(1).
+        let continues_member_pointer =
+            parent.kind() == "qualified_identifier" && current.kind() == "pointer_type_declarator";
         if depth >= 1
             && !parent_is_parameterish
             && !parent.kind().contains("declarator")
-            && parent.kind() != "qualified_identifier"
+            && !continues_member_pointer
         {
             return false;
         }

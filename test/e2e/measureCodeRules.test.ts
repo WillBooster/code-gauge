@@ -607,8 +607,15 @@ describe('DepDegree across languages', () => {
         'int f(int* q, std::vector<int> xs) { int* p = q; int& r = *q; for (const auto& x : xs) { r += x; } int a[2] = {1, 2}; int (*fp)(int) = g; return *p + r + a[0] + fp(1); }'
       )
     ).toEqual([9]);
-    // A member pointer declares its name as a type_identifier inside a pointer_type_declarator.
+    // A member pointer declares its name as a type_identifier inside a pointer_type_declarator;
+    // a qualified constant in a parameter default is a read, so the body's read pairs with nothing.
     expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* p = q; return p == q; }')).toEqual([3]);
+    expect(
+      depDegreeOf(
+        'cpp',
+        'namespace N { namespace M { const int C = 5; } } int f(int x = N::M::C) { return N::M::C + x; }'
+      )
+    ).toEqual([1]);
   });
 
   it('recognizes C# pattern, out-variable, and foreach bindings', () => {
