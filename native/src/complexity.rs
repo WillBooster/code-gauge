@@ -647,16 +647,20 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
         return label.is_some_and(|label| label.named_child_count() == 0);
     }
 
-    // C# `default:` sections and `_` switch-expression arms, and Kotlin `else ->` entries.
+    // C# `default:` sections and catch-all (`_`, `var x`) labels and arms, and Kotlin `else ->`
+    // entries. A guarded catch-all (`_ when cond =>`) is still a default arm: only its guard
+    // branches, which is_pattern_guard charges, like Python's `case _ if cond:` and Rust's
+    // `_ if cond =>`.
     if kind == "switch_section" {
-        return node.child(0).is_some_and(|first| first.kind() == "default");
+        return node.child(0).is_some_and(|first| first.kind() == "default")
+            || crate::util::named_children(node)
+                .into_iter()
+                .any(is_csharp_catch_all_pattern);
     }
-    // A guarded discard (`_ when cond =>`) is still a default arm: only its guard branches, which
-    // is_pattern_guard charges, like Python's `case _ if cond:` and Rust's `_ if cond =>`.
     if kind == "switch_expression_arm" {
         return crate::util::named_children(node)
             .first()
-            .is_some_and(|first| first.kind() == "discard");
+            .is_some_and(|first| is_csharp_catch_all_pattern(*first));
     }
     if kind == "when_entry" {
         return !crate::util::named_children(node)
@@ -701,6 +705,19 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
     }
 
     false
+}
+
+/// C# patterns that match every value: the discard `_` and `var x`/`var _` (but not a `var (a, b)`
+/// deconstruction, which requires a deconstructible value).
+fn is_csharp_catch_all_pattern(node: Node<'_>) -> bool {
+    node.kind() == "discard"
+        || (node.kind() == "declaration_pattern"
+            && node
+                .child_by_field_name("type")
+                .is_some_and(|ty| ty.kind() == "implicit_type")
+            && !crate::util::named_children(node)
+                .iter()
+                .any(|child| child.kind() == "parenthesized_variable_designation"))
 }
 
 /// The parent guard is required because the same tokens appear in non-boolean syntax (C++ `int&&`,
