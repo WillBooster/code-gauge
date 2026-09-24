@@ -241,5 +241,6 @@ function score(value) {
 console.log(metrics.maxCognitiveComplexity);
 ```
 
-`detectLanguage(filePath)` returns the language the CLI would use for a file extension (or
-`undefined` when unsupported), so `measureCode` can be fed arbitrary source files.
+`detectLanguage(filePath)` maps a file extension to a supported language (or `undefined`) with the
+same table as the CLI, so `measureCode` can be fed arbitrary source files. Unlike the CLI scan, it
+does not skip generated files (e.g. `.d.ts`, `.min.js`) or test files.
