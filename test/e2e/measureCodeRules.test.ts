@@ -267,6 +267,8 @@ describe('cyclomatic complexity: catch-all switch arms', () => {
     ['python', 'def f(x):\n    match x:\n        case y if x:\n            return 1\n', 2],
     ['python', 'def f(x):\n    match x:\n        case y, z:\n            return 1\n', 2],
     ['python', 'def f(x):\n    match x:\n        case _ as y, z:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case y,:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case (y),:\n            return 1\n', 2],
     ['python', 'def f(x):\n    match x:\n        case (y,):\n            return 1\n', 2],
     // A bare identifier may be a binding, a constant, or a unit variant (`None`); without name
     // resolution it stays a case label.
