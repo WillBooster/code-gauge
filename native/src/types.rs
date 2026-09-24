@@ -40,6 +40,7 @@ pub struct FunctionMetrics {
     pub start_line: usize,
     pub start_column: usize,
     pub end_line: usize,
+    pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
     pub nesting_depth: u64,
     pub ncss: u64,

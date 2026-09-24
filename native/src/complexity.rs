@@ -12,6 +12,7 @@ pub struct ComplexityResult {
 pub struct LanguageSets {
     pub function_nodes: HashSet<&'static str>,
     pub decision_nodes: HashSet<&'static str>,
+    pub cyclomatic_only_nodes: HashSet<&'static str>,
     pub nesting_nodes: HashSet<&'static str>,
     pub ncss_nodes: HashSet<&'static str>,
     pub ncss_containers: HashSet<&'static str>,
@@ -22,6 +23,11 @@ impl LanguageSets {
         LanguageSets {
             function_nodes: language.function_node_types.iter().copied().collect(),
             decision_nodes: language.decision_node_types.iter().copied().collect(),
+            cyclomatic_only_nodes: language
+                .cyclomatic_only_node_types
+                .iter()
+                .copied()
+                .collect(),
             nesting_nodes: language.nesting_node_types.iter().copied().collect(),
             ncss_nodes: language.ncss_node_types.iter().copied().collect(),
             ncss_containers: language.ncss_container_node_types.iter().copied().collect(),
@@ -74,7 +80,7 @@ const SWITCH_LIKE_NODE_TYPES: &[&str] = &[
     "case_match",
 ];
 
-// Per-case decision nodes add no cognitive point because the switch itself carries the cost.
+// Per-case decision nodes: cyclomatic-only, because the switch itself carries the cognitive cost.
 const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
     "case_clause",
     "switch_case",
@@ -95,6 +101,7 @@ const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
 const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "unless"];
 
 pub struct FunctionBodyMetrics {
+    pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
     pub nesting_depth: u64,
     pub ncss: u64,
@@ -102,6 +109,7 @@ pub struct FunctionBodyMetrics {
 
 /// Accumulator for one function body during measure_function_body_metrics' post-order pass.
 struct FunctionBodyFrame {
+    cyclomatic_complexity: u64,
     cognitive_complexity: u64,
     /// Count of `1 + nesting` cognitive increments, for re-basing on hoist into the parent frame.
     nesting_sensitive_count: u64,
@@ -117,6 +125,7 @@ struct FunctionBodyFrame {
 impl FunctionBodyFrame {
     fn new(entry_cognitive_nesting: u64, entry_structural_nesting: u64) -> Self {
         FunctionBodyFrame {
+            cyclomatic_complexity: 1,
             cognitive_complexity: 0,
             nesting_sensitive_count: 0,
             nesting_depth: 0,
@@ -141,8 +150,8 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
 /// already-computed totals: NCSS hoists as-is; cognitive complexity re-bases the nested function's
 /// nesting-sensitive increments (each worth `1 + nesting`) by the nesting offset at the embedding
 /// site, while flat increments (else branches, boolean-operator sequences, chain continuations,
-/// jumps, guards) hoist unchanged; nesting depth describes the own body only, so it does not
-/// hoist.
+/// jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
+/// only, so nothing hoists.
 pub fn measure_function_body_metrics(
     root: Node<'_>,
     sets: &LanguageSets,
@@ -186,7 +195,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         }
         // The node's own increments target the frame it is embedded in, not the one it opens; a
         // frame-opening or charged-class-body node contributes nothing to that frame's own body
-        // (nesting), matching the per-function traversal this pass replaces.
+        // (cyclomatic/nesting), matching the per-function traversal this pass replaces.
         let entry_cognitive_nesting = self.top_frame().entry_cognitive_nesting;
         let entry_structural_nesting = self.top_frame().entry_structural_nesting;
         let relative_nesting = current_nesting + function_nesting_bonus - entry_cognitive_nesting;
@@ -211,6 +220,15 @@ impl FunctionBodyPass<'_, '_, '_> {
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
+        // Each boolean operator and pattern guard is one more execution path; `else` adds none.
+        if counts_for_own_body
+            && (is_decision
+                || (current.is_named() && self.sets.cyclomatic_only_nodes.contains(current.kind()))
+                || is_boolean_operator(current, self.code)
+                || is_pattern_guard(current))
+        {
+            self.top_frame().cyclomatic_complexity += 1;
+        }
         if is_decision && !is_case_clause {
             if is_continuation {
                 self.top_frame().cognitive_complexity += 1;
@@ -295,6 +313,7 @@ impl FunctionBodyPass<'_, '_, '_> {
             self.results.insert(
                 current.id(),
                 FunctionBodyMetrics {
+                    cyclomatic_complexity: closed.cyclomatic_complexity,
                     cognitive_complexity: closed.cognitive_complexity,
                     nesting_depth: closed.nesting_depth,
                     // A function node without a countable declaration of its own (arrow functions,

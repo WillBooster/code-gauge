@@ -81,6 +81,14 @@ export interface FunctionMetrics {
   startLine: number;
   startColumn: number;
   endLine: number;
+  /**
+   * McCabe cyclomatic complexity of the function's own body, PMD-style: 1 plus one per decision
+   * point (branch, loop, non-default case label, catch, ternary, boolean operator, pattern guard,
+   * and, for Java, `throw`). Nested function bodies are excluded, so summing over functions counts
+   * each decision point once. Not used by ranking or the regression gate; exposed for consumers
+   * that report PMD-compatible metrics.
+   */
+  cyclomaticComplexity: number;
   cognitiveComplexity: number;
   nestingDepth: number;
   /**

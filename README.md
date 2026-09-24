@@ -173,6 +173,9 @@ The `duplication` section tunes how clones are detected:
   import declarations count, and statement-shaped content is counted uniformly in expression
   positions too
 - Per-function and file-level nesting depth
+- Per-function cyclomatic complexity (McCabe, own body only), matching PMD's
+  `CyclomaticComplexity` rule for Java; an API-only compatibility metric that ranking and the
+  regression gate ignore
 - Per-function parameter counts and locations (name, node type, line span)
 - Within-file duplication: copy-pasted blocks matched on normalized tokens (identifiers anonymized
   consistently, literals by kind, and literal-dense data tables excluded unless their values also
@@ -187,8 +190,9 @@ The `duplication` section tunes how clones are detected:
   a file-local single-assignment approximation that is stable enough for regression ratcheting
 
 Metrics that the validation literature shows to be weakly grounded or that invite misdirected
-"improvements" (cyclomatic complexity, call-graph fan-in/fan-out, coupling and cohesion counts,
-maintainability index, and similar) are intentionally not measured; see
+"improvements" (call-graph fan-in/fan-out, coupling and cohesion counts, maintainability index,
+and similar) are intentionally not measured, and cyclomatic complexity is kept out of the CLI
+output for the same reason; see
 [issue #44](https://github.com/WillBooster/code-gauge/issues/44) for the rationale and references.
 
 ## Supported languages
