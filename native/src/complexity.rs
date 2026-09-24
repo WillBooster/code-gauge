@@ -12,7 +12,6 @@ pub struct ComplexityResult {
 pub struct LanguageSets {
     pub function_nodes: HashSet<&'static str>,
     pub decision_nodes: HashSet<&'static str>,
-    pub pmd_cyclomatic: bool,
     pub nesting_nodes: HashSet<&'static str>,
     pub ncss_nodes: HashSet<&'static str>,
     pub ncss_containers: HashSet<&'static str>,
@@ -23,7 +22,6 @@ impl LanguageSets {
         LanguageSets {
             function_nodes: language.function_node_types.iter().copied().collect(),
             decision_nodes: language.decision_node_types.iter().copied().collect(),
-            pmd_cyclomatic: language.pmd_cyclomatic,
             nesting_nodes: language.nesting_node_types.iter().copied().collect(),
             ncss_nodes: language.ncss_node_types.iter().copied().collect(),
             ncss_containers: language.ncss_container_node_types.iter().copied().collect(),
@@ -201,7 +199,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         // `if` keyword token), so only named nodes count as decisions.
         let is_decision = current.is_named()
             && self.sets.decision_nodes.contains(current.kind())
-            && !is_default_switch_branch(current);
+            && !is_pathless_switch_branch(current);
         let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
         // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
         // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
@@ -216,18 +214,12 @@ impl FunctionBodyPass<'_, '_, '_> {
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
-        if counts_for_own_body {
-            self.top_frame().cyclomatic_complexity += if self.sets.pmd_cyclomatic {
-                crate::cyclomatic::pmd_cyclomatic_increment(current, self.code)
-            } else {
-                // Each boolean operator and pattern guard is one more execution path; `else` adds
-                // none.
-                u64::from(
-                    is_decision
-                        || is_boolean_operator(current, self.code)
-                        || is_pattern_guard(current),
-                )
-            };
+        // Each branch, short-circuit operator, and pattern guard adds one path (McCabe; NIST SP
+        // 500-235 §4); `else` adds none.
+        if counts_for_own_body
+            && (is_decision || is_boolean_operator(current, self.code) || is_pattern_guard(current))
+        {
+            self.top_frame().cyclomatic_complexity += 1;
         }
         if is_decision && !is_case_clause {
             if is_continuation {
@@ -380,7 +372,7 @@ pub fn measure_complexity(
         // `if` keyword token), so only named nodes count as decisions.
         let is_decision = current.is_named()
             && sets.decision_nodes.contains(current.kind())
-            && !is_default_switch_branch(current);
+            && !is_pathless_switch_branch(current);
         let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
         // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
         // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
@@ -633,11 +625,45 @@ fn is_flat_chain_continuation(node: Node<'_>) -> bool {
             .is_some_and(|alternative| alternative.id() == node.id())
 }
 
-/// Default branches of switch-like constructs add no decision.
+/// Switch branches that add no path: default branches, and label-only cases that fall through to
+/// the next labelled statement. NIST SP 500-235 counts one path per case-labelled statement, so
+/// `case 1: case 2: f();` adds one path, and `case 3: default: g();` merges into the default.
+fn is_pathless_switch_branch(node: Node<'_>) -> bool {
+    is_default_switch_branch(node) || is_label_only_case(node)
+}
+
+/// A C/C++/JS/Java/C# case whose labels share the next case's statements; every grammar parses each
+/// stacked label as its own case node.
+fn is_label_only_case(node: Node<'_>) -> bool {
+    let children = non_comment_children(node);
+    match node.kind() {
+        "case_statement" => {
+            let value = node.child_by_field_name("value").map(|value| value.id());
+            children.iter().all(|child| Some(child.id()) == value)
+        }
+        "switch_case" => node.child_by_field_name("body").is_none(),
+        "switch_block_statement_group" => {
+            children.iter().all(|child| child.kind() == "switch_label")
+        }
+        "switch_section" => !children
+            .iter()
+            .any(|child| child.kind() == "block" || child.kind().ends_with("_statement")),
+        _ => false,
+    }
+}
+
 fn is_default_switch_branch(node: Node<'_>) -> bool {
     let kind = node.kind();
     if kind == "case_statement" {
         return node.child_by_field_name("value").is_none();
+    }
+
+    // Java `default:` groups and `default ->` rules: a label with no expression or pattern.
+    if kind == "switch_block_statement_group" || kind == "switch_rule" {
+        return non_comment_children(node)
+            .into_iter()
+            .filter(|child| child.kind() == "switch_label")
+            .any(|label| non_comment_children(label).is_empty());
     }
 
     // C# `default:` sections and catch-all (`_`, `var x`) labels and arms, and Kotlin `else ->`

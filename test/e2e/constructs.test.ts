@@ -190,7 +190,6 @@ const expectations: Record<LanguageName, ConstructExpectation> = {
       ['Shipment', 0, 0, 2, 2],
       ['label', 0, 0, 2, 0],
       ['label', 0, 0, 2, 0],
-      ['audit', 0, 0, 1, 1],
       ['twice', 0, 0, 2, 1],
       ['Warehouse', 0, 0, 2, 1],
       ['Warehouse', 1, 1, 5, 2],
@@ -281,13 +280,13 @@ const expectations: Record<LanguageName, ConstructExpectation> = {
     // Receive: for +1, foreach +2, if +3, goto +1, if +2 (lock does not nest) with `&&` +1,
     // else-if +1 with `||` +1, else +1, switch inside the else branch +3, `case 1 when` guard +1,
     // do-while +1 (using/checked do not nest), two catches +2 (the exception filter is not
-    // charged) = 20. Auto-property and interface accessors without bodies are not functions;
-    // event accessors, expression-bodied members, operators, and the destructor are.
+    // charged) = 20. Declarations without a body (the interface method, auto-property and
+    // interface accessors) are not functions; event accessors, expression-bodied members,
+    // operators, and the destructor are.
     ncss: 107,
     cognitiveComplexity: 29,
     nestingDepth: 3,
     functions: [
-      ['Receive', 0, 0, 1, 2],
       ['Drained.add', 0, 0, 2, 0],
       ['Drained.remove', 0, 0, 2, 0],
       ['Warehouse', 1, 1, 3, 1],
@@ -312,15 +311,15 @@ const expectations: Record<LanguageName, ConstructExpectation> = {
     file: 'constructs.kt',
     // receive: labeled for +1, for +2, if +3, `continue@outer` +1, if +2 with `&&` +1, else-if
     // +1 with `||` +1, else +1, when inside the else branch +3, do-while +1, two catches +2 = 19.
-    // A bodyless interface method is a function as in Java (the first entry); a bodyless
-    // interface property, `init` blocks, and a visibility-only `private set` are not, while
-    // property getters/setters, secondary constructors, anonymous functions, and lambdas are. NCSS counts the package and import lines, class/object/companion
+    // Declarations without a body (the interface method and property) are not functions, nor
+    // are `init` blocks or a visibility-only `private set`, while property getters/setters,
+    // secondary constructors, anonymous functions, and lambdas are. NCSS counts the package and
+    // import lines, class/object/companion
     // declarations, enum-constant bodies, `init` blocks, and every when entry and its body.
     ncss: 126,
     cognitiveComplexity: 36,
     nestingDepth: 3,
     functions: [
-      ['receive', 0, 0, 1, 2],
       ['describe', 0, 0, 2, 0],
       ['describe', 0, 0, 2, 0],
       ['size.get', 0, 0, 2, 0],

@@ -173,9 +173,9 @@ The `duplication` section tunes how clones are detected:
   import declarations count, and statement-shaped content is counted uniformly in expression
   positions too
 - Per-function and file-level nesting depth
-- Per-function cyclomatic complexity (McCabe, own body only), matching PMD's
-  `CyclomaticComplexity` rule for Java; an API-only compatibility metric that ranking and the
-  regression gate ignore
+- Per-function cyclomatic complexity (McCabe, own body only), counted as NIST SP 500-235 defines it:
+  every decision and short-circuit operator adds one, one per case-labelled statement; an API-only
+  metric that ranking and the regression gate ignore
 - Per-function parameter counts and locations (name, node type, line span)
 - Within-file duplication: copy-pasted blocks matched on normalized tokens (identifiers anonymized
   consistently, literals by kind, and literal-dense data tables excluded unless their values also

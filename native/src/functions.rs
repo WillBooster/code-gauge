@@ -12,6 +12,8 @@ use crate::util::{all_children, find_children_by_field_name, named_children, nod
 /// expression-bodied form (`int X => ...`), otherwise its accessors are the functions.
 const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
     "function_definition",
+    "function_declaration",
+    "method_declaration",
     "constructor_declaration",
     "compact_constructor_declaration",
     "function_signature_item",
@@ -29,14 +31,22 @@ pub fn is_implemented_function(node: Node<'_>) -> bool {
         return true;
     }
 
+    // A C# expression-bodied method (`int F() => 1;`) holds its arrow clause outside `body`.
+    if node.kind() == "method_declaration" {
+        return named_children(node)
+            .iter()
+            .any(|child| child.kind() == "arrow_expression_clause");
+    }
+
     if node.kind() == "property_declaration" || node.kind() == "indexer_declaration" {
         return node
             .child_by_field_name("value")
             .is_some_and(|value| value.kind() == "arrow_expression_clause");
     }
 
-    // The Kotlin grammar has no fields; an implemented accessor holds a `function_body` child.
-    if node.kind() == "getter" || node.kind() == "setter" {
+    // The Kotlin grammar has no fields; an implemented function or accessor holds a
+    // `function_body` child.
+    if node.kind() == "getter" || node.kind() == "setter" || node.kind() == "function_declaration" {
         return named_children(node)
             .iter()
             .any(|child| child.kind() == "function_body");
