@@ -53,6 +53,7 @@ pub fn measure(
                 // yields the JavaScript string (UTF-16 code unit) column.
                 start_column: node.start_position().column / 2,
                 end_line: node.end_position().row + 1,
+                end_column: node.end_position().column / 2,
                 cyclomatic_complexity: body_metrics.cyclomatic_complexity,
                 // Sonar's written spec adds +1 cognitive complexity per function in a recursion
                 // cycle, but this is intentionally not implemented (issue #22): mainstream

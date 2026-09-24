@@ -215,6 +215,7 @@ function makeFunction(name: string, overrides: Partial<FunctionMetrics> = {}): F
     startLine: 1,
     startColumn: 0,
     endLine: 5,
+    endColumn: 1,
     cyclomaticComplexity: 1,
     cognitiveComplexity: 0,
     nestingDepth: 0,

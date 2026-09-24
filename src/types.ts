@@ -81,6 +81,8 @@ export interface FunctionMetrics {
   startLine: number;
   startColumn: number;
   endLine: number;
+  /** Exclusive end column, so functions can be tested for containment in each other. */
+  endColumn: number;
   /**
    * McCabe cyclomatic complexity of the function's own body, PMD-style: 1 plus one per decision
    * point (branch, loop, non-default case label, catch, ternary, boolean operator, pattern guard,
