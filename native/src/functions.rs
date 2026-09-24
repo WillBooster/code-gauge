@@ -3,11 +3,10 @@ use tree_sitter::Node;
 
 use crate::util::{all_children, find_children_by_field_name, named_children, node_text, Source};
 
-/// C++ `function_definition` also covers pure-virtual/`= default`/`= delete` members; those have no
-/// `body` and are signatures, not implementations, matching how TypeScript method signatures are
-/// excluded. Java `method_declaration` is NOT here: PMD reports abstract/interface methods as
-/// methods (NCSS 1), so bodyless Java methods stay in the function list (as do C#'s and Kotlin's).
-/// C# auto-property accessors (`{ get; set; }`) and Kotlin visibility-only accessors (`private
+/// Declarations without a body have no control flow, so they are signatures, not functions: C++
+/// pure-virtual/`= default`/`= delete` members, abstract/interface/extern methods (Java, C#,
+/// Kotlin), Go assembly-backed function declarations, and Rust trait method signatures, matching
+/// how TypeScript method signatures are excluded. C# auto-property accessors (`{ get; set; }`) and Kotlin visibility-only accessors (`private
 /// set`) hold no code, so they need a body too; a C# property or indexer is a function only in its
 /// expression-bodied form (`int X => ...`), otherwise its accessors are the functions.
 const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
