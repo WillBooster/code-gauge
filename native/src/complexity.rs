@@ -683,9 +683,13 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
             .into_iter()
             .find(|child| child.kind() == "match_pattern")
             .is_some_and(|pattern| {
-                pattern.child(0).is_some_and(|first| first.kind() == "_")
-                    && (pattern.child_count() == 1
-                        || pattern.child(1).is_some_and(|second| second.kind() == "if"))
+                // The guard keyword is anonymous, so filter all children, not just named ones.
+                let parts: Vec<Node<'_>> = all_children(pattern)
+                    .into_iter()
+                    .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+                    .collect();
+                matches!(parts[..], [first, ..] if first.kind() == "_")
+                    && parts.get(1).is_none_or(|second| second.kind() == "if")
             });
     }
 
