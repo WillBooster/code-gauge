@@ -72,6 +72,12 @@ const expectedByFixture: Record<string, Record<string, readonly [number, number,
     twoThrows: [4, 1, 4],
     existingResource: [1, 0, 2],
   },
+  // Measured with PMD's Java language version set to 21, since comma-separated case labels need it.
+  'ProbeSwitchAlternatives.java': {
+    colonLabels: [3, 1, 7],
+    arrowAlternatives: [3, 1, 6],
+    colonAlternatives: [3, 1, 6],
+  },
 };
 
 function measureFixture(fixture: string): CodeMetrics {
@@ -147,6 +153,7 @@ describe('PMD parity (Java): code-analyzer aggregate metrics', () => {
       'ProbeBranches.java': [19, 21, 28],
       'ProbeNestedDecisions.java': [15, 18, 22],
       'ProbeSignatures.java': [1, 11, 14],
+      'ProbeSwitchAlternatives.java': [3, 9, 19],
     };
     for (const [fixture, [cognitive, cyclomatic, ncss]] of Object.entries(expectedAggregates)) {
       expect(pmdStyleAggregate(measureFixture(fixture)), fixture).toEqual({

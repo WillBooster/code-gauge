@@ -221,13 +221,16 @@ impl FunctionBodyPass<'_, '_, '_> {
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
         // Each boolean operator and pattern guard is one more execution path; `else` adds none.
-        if counts_for_own_body
-            && (is_decision
-                || (current.is_named() && self.sets.cyclomatic_only_nodes.contains(current.kind()))
+        if counts_for_own_body {
+            if is_decision {
+                self.top_frame().cyclomatic_complexity += count_case_alternatives(current);
+            } else if (current.is_named()
+                && self.sets.cyclomatic_only_nodes.contains(current.kind()))
                 || is_boolean_operator(current, self.code)
-                || is_pattern_guard(current))
-        {
-            self.top_frame().cyclomatic_complexity += 1;
+                || is_pattern_guard(current)
+            {
+                self.top_frame().cyclomatic_complexity += 1;
+            }
         }
         if is_decision && !is_case_clause {
             if is_continuation {
@@ -631,6 +634,24 @@ fn is_flat_chain_continuation(node: Node<'_>) -> bool {
         || parent
             .child_by_field_name("alternative")
             .is_some_and(|alternative| alternative.id() == node.id())
+}
+
+/// Cyclomatic paths of a decision node: a Java case with comma-separated alternatives
+/// (`case 1, 2 ->`) adds one per alternative like PMD's `numAlternatives`; every other decision
+/// adds one. Colon labels (`case 1: case 2:`) already parse as one group per label.
+fn count_case_alternatives(node: Node<'_>) -> u64 {
+    if node.kind() != "switch_block_statement_group" && node.kind() != "switch_rule" {
+        return 1;
+    }
+    let alternatives = crate::util::named_children(node)
+        .into_iter()
+        .filter(|child| child.kind() == "switch_label")
+        .flat_map(crate::util::named_children)
+        .filter(|child| {
+            child.kind() != "guard" && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
+        })
+        .count() as u64;
+    alternatives.max(1)
 }
 
 /// Default branches of switch-like constructs add no decision.
