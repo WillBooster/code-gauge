@@ -74,8 +74,9 @@ export interface FunctionMetrics {
   /**
    * The tree-sitter node type of the function (e.g. `method_declaration`, `arrow_function`,
    * `lambda_expression`), letting consumers distinguish declared methods from lambdas — e.g. to
-   * sum per-function metrics without double-counting lambda content already attributed to the
-   * enclosing function.
+   * sum cognitive complexity or NCSS, which already include nested lambdas in the enclosing
+   * function, without double-counting them. `cyclomaticComplexity` covers the own body only, so
+   * skipping lambdas drops their paths instead.
    */
   nodeType: string;
   startLine: number;
