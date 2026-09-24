@@ -669,11 +669,13 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
     }
 
     // Python arms with an irrefutable pattern are unconditional like `default`.
+    // A bare `case y, z:` is a sequence pattern spread over several case_pattern children.
     if kind == "case_clause" {
-        return crate::util::named_children(node)
+        let patterns: Vec<Node<'_>> = crate::util::named_children(node)
             .into_iter()
-            .find(|child| child.kind() == "case_pattern")
-            .is_some_and(is_python_irrefutable_pattern);
+            .filter(|child| child.kind() == "case_pattern")
+            .collect();
+        return matches!(patterns[..], [pattern] if is_python_irrefutable_pattern(pattern));
     }
     // Rust `_ =>` (optionally guarded) fallback arms.
     if kind == "match_arm" {
