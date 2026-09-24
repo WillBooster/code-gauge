@@ -668,33 +668,22 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
             .any(|child| child.kind() == "when_condition");
     }
 
-    // Python `case _:` / `case y:` and Rust `_ =>` fallback arms are unconditional like `default`.
-    if kind == "case_clause" || kind == "match_arm" {
-        let pattern = crate::util::named_children(node)
+    // Python arms with an irrefutable pattern are unconditional like `default`.
+    if kind == "case_clause" {
+        return crate::util::named_children(node)
             .into_iter()
-            .find(|child| child.kind() == "case_pattern" || child.kind() == "match_pattern");
-        let Some(pattern) = pattern else {
-            return false;
-        };
-        let pattern = unwrap_python_group_pattern(pattern);
-        if pattern.child(0).is_some_and(|first| first.kind() == "_")
-            && (pattern.child_count() == 1
-                || pattern.child(1).is_some_and(|second| second.kind() == "if"))
-        {
-            return true;
-        }
-        let sole_child = if pattern.named_child_count() == 1 {
-            pattern.named_child(0)
-        } else {
-            None
-        };
-        return kind == "case_clause"
-            && sole_child.is_some_and(|child| {
-                child.kind() == "dotted_name"
-                    && child.named_child_count() == 1
-                    && child
-                        .named_child(0)
-                        .is_some_and(|inner| inner.kind() == "identifier")
+            .find(|child| child.kind() == "case_pattern")
+            .is_some_and(is_python_irrefutable_pattern);
+    }
+    // Rust `_ =>` (optionally guarded) fallback arms.
+    if kind == "match_arm" {
+        return crate::util::named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "match_pattern")
+            .is_some_and(|pattern| {
+                pattern.child(0).is_some_and(|first| first.kind() == "_")
+                    && (pattern.child_count() == 1
+                        || pattern.child(1).is_some_and(|second| second.kind() == "if"))
             });
     }
 
@@ -708,23 +697,35 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
     false
 }
 
-/// Python parses a parenthesized pattern `(p)` as a one-element tuple pattern that differs from
-/// the real tuple `(p,)` only by the comma token, so strip those groups to reach `p`.
-fn unwrap_python_group_pattern(pattern: Node<'_>) -> Node<'_> {
-    let mut pattern = pattern;
-    loop {
-        let [group] = non_comment_children(pattern)[..] else {
-            return pattern;
-        };
-        if group.kind() != "tuple_pattern"
-            || all_children(group).iter().any(|child| child.kind() == ",")
-        {
-            return pattern;
+/// PEP 634's irrefutable patterns: the wildcard `_`, a capture `y`, a group `(p)`, `p as y`, and
+/// `p | q` when `p` (or, for `|`, any alternative) is irrefutable. A group parses as a one-element
+/// tuple pattern that differs from the real tuple `(p,)` only by the comma token.
+fn is_python_irrefutable_pattern(node: Node<'_>) -> bool {
+    match node.kind() {
+        "_" => true,
+        "case_pattern" => match non_comment_children(node)[..] {
+            [] => all_children(node).iter().any(|child| child.kind() == "_"),
+            [inner] => is_python_irrefutable_pattern(inner),
+            _ => false,
+        },
+        "dotted_name" => matches!(
+            non_comment_children(node)[..],
+            [name] if name.kind() == "identifier"
+        ),
+        "tuple_pattern" => {
+            !all_children(node).iter().any(|child| child.kind() == ",")
+                && matches!(
+                    non_comment_children(node)[..],
+                    [inner] if is_python_irrefutable_pattern(inner)
+                )
         }
-        match non_comment_children(group)[..] {
-            [inner] if inner.kind() == "case_pattern" => pattern = inner,
-            _ => return pattern,
-        }
+        "as_pattern" => non_comment_children(node)
+            .first()
+            .is_some_and(|pattern| is_python_irrefutable_pattern(*pattern)),
+        "union_pattern" => all_children(node)
+            .into_iter()
+            .any(is_python_irrefutable_pattern),
+        _ => false,
     }
 }
 
