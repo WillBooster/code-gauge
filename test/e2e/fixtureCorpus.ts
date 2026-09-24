@@ -1,6 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { LanguageName } from '../../src/index.js';
+import { detectLanguage, type LanguageName } from '../../src/index.js';
 
 export interface CorpusEntry {
   /** Path relative to the fixtures directory, used as a stable test name. */
@@ -8,22 +8,6 @@ export interface CorpusEntry {
   language: LanguageName;
   code: string;
 }
-
-const languageByExtension = new Map<string, LanguageName>([
-  ['.c', 'c'],
-  ['.cpp', 'cpp'],
-  ['.cs', 'csharp'],
-  ['.go', 'go'],
-  ['.java', 'java'],
-  ['.js', 'javascript'],
-  ['.jsx', 'jsx'],
-  ['.kt', 'kotlin'],
-  ['.py', 'python'],
-  ['.rb', 'ruby'],
-  ['.rs', 'rust'],
-  ['.ts', 'typescript'],
-  ['.tsx', 'tsx'],
-]);
 
 export const fixturesDir = path.join(import.meta.dirname, '..', 'fixtures');
 
@@ -43,7 +27,7 @@ export function loadFixtureCorpus(options?: { includeOss?: boolean }): CorpusEnt
     if (!file.isFile()) {
       continue;
     }
-    const language = languageByExtension.get(path.extname(file.name));
+    const language = detectLanguage(file.name);
     if (!language) {
       continue;
     }

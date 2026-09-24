@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
+import { detectLanguage } from './languages.js';
 import { collectCrossFileDuplicationFileData, measureCode } from './metrics.js';
 import { NativeAddonError } from './nativeMetrics.js';
 import type { CodeMetrics, DuplicationOptions, LanguageName } from './types.js';
@@ -29,37 +30,6 @@ export interface ScanResult {
   fatalError?: string;
   files: FileMetrics[];
 }
-
-const languageByExtension = new Map<string, LanguageName>([
-  ['.c', 'c'],
-  ['.c++', 'cpp'],
-  ['.cc', 'cpp'],
-  ['.cjs', 'javascript'],
-  ['.cp', 'cpp'],
-  ['.cpp', 'cpp'],
-  ['.cs', 'csharp'],
-  ['.tcc', 'cpp'],
-  ['.cts', 'typescript'],
-  ['.cxx', 'cpp'],
-  ['.go', 'go'],
-  // Headers may be C or C++; the C++ grammar parses both.
-  ['.h', 'cpp'],
-  ['.hh', 'cpp'],
-  ['.hpp', 'cpp'],
-  ['.hxx', 'cpp'],
-  ['.java', 'java'],
-  ['.js', 'javascript'],
-  ['.jsx', 'jsx'],
-  ['.kt', 'kotlin'],
-  ['.kts', 'kotlin'],
-  ['.mjs', 'javascript'],
-  ['.mts', 'typescript'],
-  ['.py', 'python'],
-  ['.rb', 'ruby'],
-  ['.rs', 'rust'],
-  ['.ts', 'typescript'],
-  ['.tsx', 'tsx'],
-]);
 
 const ignoredDirectoryNames = new Set([
   '.agents',
@@ -462,12 +432,7 @@ export function getLanguage(file: string, options: ScanOptions, explicitTarget =
     return undefined;
   }
 
-  // GCC treats an uppercase `.C` as C++; lowercasing first would misparse it with the C grammar.
-  if (path.extname(file) === '.C') {
-    return 'cpp';
-  }
-
-  return languageByExtension.get(path.extname(lowerFile));
+  return detectLanguage(file);
 }
 
 export function formatPath(file: string, base: string): string {

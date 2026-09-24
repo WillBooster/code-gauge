@@ -240,3 +240,6 @@ function score(value) {
 
 console.log(metrics.maxCognitiveComplexity);
 ```
+
+`detectLanguage(filePath)` returns the language the CLI would use for a file extension (or
+`undefined` when unsupported), so `measureCode` can be fed arbitrary source files.

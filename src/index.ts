@@ -6,7 +6,7 @@ export type {
   CrossFileDuplicationSourceFile,
 } from './crossFileDuplication.js';
 export type { CrossFileDuplicateCandidate, CrossFileDuplicationFileData } from './duplication.js';
-export { defaultLanguages, supportedLanguages } from './languages.js';
+export { defaultLanguages, detectLanguage, supportedLanguages } from './languages.js';
 export {
   TreeMeasurer,
   collectCrossFileDuplicationFileData,
