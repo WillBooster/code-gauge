@@ -676,6 +676,7 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
         let Some(pattern) = pattern else {
             return false;
         };
+        let pattern = unwrap_python_group_pattern(pattern);
         if pattern.child(0).is_some_and(|first| first.kind() == "_")
             && (pattern.child_count() == 1
                 || pattern.child(1).is_some_and(|second| second.kind() == "if"))
@@ -705,6 +706,27 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
     }
 
     false
+}
+
+/// Python parses a parenthesized pattern `(p)` as a one-element tuple pattern that differs from
+/// the real tuple `(p,)` only by the comma token, so strip those groups to reach `p`.
+fn unwrap_python_group_pattern(pattern: Node<'_>) -> Node<'_> {
+    let mut pattern = pattern;
+    loop {
+        let Some(group) = crate::util::named_children(pattern)
+            .into_iter()
+            .next()
+            .filter(|child| pattern.named_child_count() == 1 && child.kind() == "tuple_pattern")
+        else {
+            return pattern;
+        };
+        let elements = crate::util::named_children(group);
+        let has_comma = all_children(group).iter().any(|child| child.kind() == ",");
+        match elements.as_slice() {
+            [inner] if !has_comma && inner.kind() == "case_pattern" => pattern = *inner,
+            _ => return pattern,
+        }
+    }
 }
 
 /// C# patterns that match every value: the discard `_` and `var x`/`var _`, possibly parenthesized
