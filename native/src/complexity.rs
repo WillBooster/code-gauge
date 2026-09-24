@@ -707,9 +707,15 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
     false
 }
 
-/// C# patterns that match every value: the discard `_` and `var x`/`var _` (but not a `var (a, b)`
-/// deconstruction, which requires a deconstructible value).
+/// C# patterns that match every value: the discard `_` and `var x`/`var _`, possibly parenthesized
+/// (but not a `var (a, b)` deconstruction, which requires a deconstructible value).
 fn is_csharp_catch_all_pattern(node: Node<'_>) -> bool {
+    if node.kind() == "parenthesized_pattern" {
+        return crate::util::named_children(node)
+            .into_iter()
+            .find(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+            .is_some_and(is_csharp_catch_all_pattern);
+    }
     node.kind() == "discard"
         || (node.kind() == "declaration_pattern"
             && node
