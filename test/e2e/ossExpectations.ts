@@ -19,8 +19,9 @@ import type { LanguageName } from '../../src/index.js';
  *   JavaScript, TypeScript, JSX, and TSX.
  *
  * C, C++, C#, Kotlin, Ruby, and Rust have NO per-function oracle: for C, C++, Ruby, and Rust
- * the only per-function reference tool (lizard) measured cyclomatic complexity, which code-gauge
- * no longer reports. Ruby has no readily runnable open-source implementation of SonarSource
+ * the only per-function reference tool (lizard) measures cyclomatic complexity, which code-gauge
+ * reports only as an API-level compatibility metric calibrated against PMD for Java, so lizard's
+ * values are not adopted. Ruby has no readily runnable open-source implementation of SonarSource
  * cognitive complexity; for C, C++, and Rust the one candidate — Mozilla's rust-code-analysis —
  * implements its own cognitive-complexity variant that has not been reconciled with the
  * SonarSource model here, so its values are not adopted as oracles (yet). The C# (SonarAnalyzer)
