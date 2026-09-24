@@ -255,6 +255,7 @@ describe('cyclomatic complexity: catch-all switch arms', () => {
     ['rust', 'fn f(x: i32) -> i32 { match x { 1 => 1, _ if x > 0 => 2, _ => 0 } }', 3],
     ['python', 'def f(x):\n    match x:\n        case ((y)):\n            return 1\n', 1],
     ['python', 'def f(x):\n    match x:\n        case (_):\n            return 1\n', 1],
+    ['python', 'def f(x):\n    match x:\n        case (  # c\n            y):\n            return 1\n', 1],
     ['python', 'def f(x):\n    match x:\n        case (y,):\n            return 1\n', 2],
     // A bare identifier may be a binding, a constant, or a unit variant (`None`); without name
     // resolution it stays a case label.

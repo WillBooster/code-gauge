@@ -713,20 +713,26 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
 fn unwrap_python_group_pattern(pattern: Node<'_>) -> Node<'_> {
     let mut pattern = pattern;
     loop {
-        let Some(group) = crate::util::named_children(pattern)
-            .into_iter()
-            .next()
-            .filter(|child| pattern.named_child_count() == 1 && child.kind() == "tuple_pattern")
-        else {
+        let [group] = non_comment_children(pattern)[..] else {
             return pattern;
         };
-        let elements = crate::util::named_children(group);
-        let has_comma = all_children(group).iter().any(|child| child.kind() == ",");
-        match elements.as_slice() {
-            [inner] if !has_comma && inner.kind() == "case_pattern" => pattern = *inner,
+        if group.kind() != "tuple_pattern"
+            || all_children(group).iter().any(|child| child.kind() == ",")
+        {
+            return pattern;
+        }
+        match non_comment_children(group)[..] {
+            [inner] if inner.kind() == "case_pattern" => pattern = inner,
             _ => return pattern,
         }
     }
+}
+
+fn non_comment_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
+    crate::util::named_children(node)
+        .into_iter()
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+        .collect()
 }
 
 /// C# patterns that match every value: the discard `_` and `var x`/`var _`, possibly parenthesized
