@@ -647,16 +647,16 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
         return label.is_some_and(|label| label.named_child_count() == 0);
     }
 
-    // C# `default:` sections, `_ =>` switch-expression arms, and Kotlin `else ->` entries.
+    // C# `default:` sections and `_` switch-expression arms, and Kotlin `else ->` entries.
     if kind == "switch_section" {
         return node.child(0).is_some_and(|first| first.kind() == "default");
     }
+    // A guarded discard (`_ when cond =>`) is still a default arm: only its guard branches, which
+    // is_pattern_guard charges, like Python's `case _ if cond:` and Rust's `_ if cond =>`.
     if kind == "switch_expression_arm" {
-        let children = crate::util::named_children(node);
-        return children
+        return crate::util::named_children(node)
             .first()
-            .is_some_and(|first| first.kind() == "discard")
-            && !children.iter().any(|child| child.kind() == "when_clause");
+            .is_some_and(|first| first.kind() == "discard");
     }
     if kind == "when_entry" {
         return !crate::util::named_children(node)
