@@ -640,13 +640,6 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
         return node.child_by_field_name("value").is_none();
     }
 
-    if kind == "switch_block_statement_group" || kind == "switch_rule" {
-        let label = crate::util::named_children(node)
-            .into_iter()
-            .find(|child| child.kind() == "switch_label");
-        return label.is_some_and(|label| label.named_child_count() == 0);
-    }
-
     // C# `default:` sections and catch-all (`_`, `var x`) labels and arms, and Kotlin `else ->`
     // entries. A guarded catch-all (`_ when cond =>`) is still a default arm: only its guard
     // branches, which is_pattern_guard charges, like Python's `case _ if cond:` and Rust's
