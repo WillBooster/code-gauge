@@ -12,7 +12,7 @@ pub struct ComplexityResult {
 pub struct LanguageSets {
     pub function_nodes: HashSet<&'static str>,
     pub decision_nodes: HashSet<&'static str>,
-    pub cyclomatic_only_nodes: HashSet<&'static str>,
+    pub pmd_cyclomatic: bool,
     pub nesting_nodes: HashSet<&'static str>,
     pub ncss_nodes: HashSet<&'static str>,
     pub ncss_containers: HashSet<&'static str>,
@@ -23,11 +23,7 @@ impl LanguageSets {
         LanguageSets {
             function_nodes: language.function_node_types.iter().copied().collect(),
             decision_nodes: language.decision_node_types.iter().copied().collect(),
-            cyclomatic_only_nodes: language
-                .cyclomatic_only_node_types
-                .iter()
-                .copied()
-                .collect(),
+            pmd_cyclomatic: language.pmd_cyclomatic,
             nesting_nodes: language.nesting_node_types.iter().copied().collect(),
             ncss_nodes: language.ncss_node_types.iter().copied().collect(),
             ncss_containers: language.ncss_container_node_types.iter().copied().collect(),
@@ -220,17 +216,18 @@ impl FunctionBodyPass<'_, '_, '_> {
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
-        // Each boolean operator and pattern guard is one more execution path; `else` adds none.
         if counts_for_own_body {
-            if is_decision {
-                self.top_frame().cyclomatic_complexity += count_case_alternatives(current);
-            } else if (current.is_named()
-                && self.sets.cyclomatic_only_nodes.contains(current.kind()))
-                || is_boolean_operator(current, self.code)
-                || is_pattern_guard(current)
-            {
-                self.top_frame().cyclomatic_complexity += 1;
-            }
+            self.top_frame().cyclomatic_complexity += if self.sets.pmd_cyclomatic {
+                crate::cyclomatic::pmd_cyclomatic_increment(current, self.code)
+            } else {
+                // Each boolean operator and pattern guard is one more execution path; `else` adds
+                // none.
+                u64::from(
+                    is_decision
+                        || is_boolean_operator(current, self.code)
+                        || is_pattern_guard(current),
+                )
+            };
         }
         if is_decision && !is_case_clause {
             if is_continuation {
@@ -636,24 +633,6 @@ fn is_flat_chain_continuation(node: Node<'_>) -> bool {
             .is_some_and(|alternative| alternative.id() == node.id())
 }
 
-/// Cyclomatic paths of a decision node: a Java case with comma-separated alternatives
-/// (`case 1, 2 ->`) adds one per alternative like PMD's `numAlternatives`; every other decision
-/// adds one. Colon labels (`case 1: case 2:`) already parse as one group per label.
-fn count_case_alternatives(node: Node<'_>) -> u64 {
-    if node.kind() != "switch_block_statement_group" && node.kind() != "switch_rule" {
-        return 1;
-    }
-    let alternatives = crate::util::named_children(node)
-        .into_iter()
-        .filter(|child| child.kind() == "switch_label")
-        .flat_map(crate::util::named_children)
-        .filter(|child| {
-            child.kind() != "guard" && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
-        })
-        .count() as u64;
-    alternatives.max(1)
-}
-
 /// Default branches of switch-like constructs add no decision.
 fn is_default_switch_branch(node: Node<'_>) -> bool {
     let kind = node.kind();
@@ -666,6 +645,23 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
             .into_iter()
             .find(|child| child.kind() == "switch_label");
         return label.is_some_and(|label| label.named_child_count() == 0);
+    }
+
+    // C# `default:` sections, `_ =>` switch-expression arms, and Kotlin `else ->` entries.
+    if kind == "switch_section" {
+        return node.child(0).is_some_and(|first| first.kind() == "default");
+    }
+    if kind == "switch_expression_arm" {
+        let children = crate::util::named_children(node);
+        return children
+            .first()
+            .is_some_and(|first| first.kind() == "discard")
+            && !children.iter().any(|child| child.kind() == "when_clause");
+    }
+    if kind == "when_entry" {
+        return !crate::util::named_children(node)
+            .iter()
+            .any(|child| child.kind() == "when_condition");
     }
 
     // Python `case _:` / `case y:` and Rust `_ =>` fallback arms are unconditional like `default`.

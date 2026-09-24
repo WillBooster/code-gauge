@@ -84,11 +84,13 @@ export interface FunctionMetrics {
   /** Exclusive end column, so functions can be tested for containment in each other. */
   endColumn: number;
   /**
-   * McCabe cyclomatic complexity of the function's own body, PMD-style: 1 plus one per decision
-   * point (branch, loop, non-default case label, catch, ternary, boolean operator, pattern guard,
-   * and, for Java, `throw`). Nested function bodies are excluded, so summing over functions counts
-   * each decision point once. Not used by ranking or the regression gate; exposed for consumers
-   * that report PMD-compatible metrics.
+   * McCabe cyclomatic complexity of the function's own body: 1 plus one per decision point
+   * (branch, loop, non-default case label, catch, ternary, boolean operator, pattern guard). Java
+   * follows PMD's `CyclomaticComplexity` instead, which also counts `throw` but counts `&&`/`||`
+   * only inside branch, loop, ternary, and switch conditions and adds nothing for pattern labels
+   * and guards. Nested function bodies are excluded, so summing over functions counts each
+   * decision point once. Not used by ranking or the regression gate; exposed for consumers that
+   * report PMD-compatible metrics.
    */
   cyclomaticComplexity: number;
   cognitiveComplexity: number;

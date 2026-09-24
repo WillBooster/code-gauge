@@ -72,7 +72,15 @@ const expectedByFixture: Record<string, Record<string, readonly [number, number,
     twoThrows: [4, 1, 4],
     existingResource: [1, 0, 2],
   },
-  // Measured with PMD's Java language version set to 21, since comma-separated case labels need it.
+  // This and the next fixture were measured with PMD's Java language version set to 21, which
+  // comma-separated case labels and pattern labels need.
+  'ProbeBooleanPaths.java': {
+    initializer: [1, 2, 3],
+    condition: [4, 3, 3],
+    ternaryInCondition: [6, 4, 2],
+    switchOnTernary: [7, 3, 6],
+    guardedPattern: [1, 2, 8],
+  },
   'ProbeSwitchAlternatives.java': {
     colonLabels: [3, 1, 7],
     arrowAlternatives: [3, 1, 6],
@@ -153,6 +161,7 @@ describe('PMD parity (Java): code-analyzer aggregate metrics', () => {
       'ProbeBranches.java': [19, 21, 28],
       'ProbeNestedDecisions.java': [15, 18, 22],
       'ProbeSignatures.java': [1, 11, 14],
+      'ProbeBooleanPaths.java': [14, 19, 22],
       'ProbeSwitchAlternatives.java': [3, 9, 19],
     };
     for (const [fixture, [cognitive, cyclomatic, ncss]] of Object.entries(expectedAggregates)) {
