@@ -12,6 +12,7 @@ pub struct ComplexityResult {
 pub struct LanguageSets {
     pub function_nodes: HashSet<&'static str>,
     pub decision_nodes: HashSet<&'static str>,
+    pub pmd_cyclomatic: bool,
     pub nesting_nodes: HashSet<&'static str>,
     pub ncss_nodes: HashSet<&'static str>,
     pub ncss_containers: HashSet<&'static str>,
@@ -22,6 +23,7 @@ impl LanguageSets {
         LanguageSets {
             function_nodes: language.function_node_types.iter().copied().collect(),
             decision_nodes: language.decision_node_types.iter().copied().collect(),
+            pmd_cyclomatic: language.pmd_cyclomatic,
             nesting_nodes: language.nesting_node_types.iter().copied().collect(),
             ncss_nodes: language.ncss_node_types.iter().copied().collect(),
             ncss_containers: language.ncss_container_node_types.iter().copied().collect(),
@@ -74,7 +76,7 @@ const SWITCH_LIKE_NODE_TYPES: &[&str] = &[
     "case_match",
 ];
 
-// Per-case decision nodes add no cognitive point because the switch itself carries the cost.
+// Per-case decision nodes: cyclomatic-only, because the switch itself carries the cognitive cost.
 const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
     "case_clause",
     "switch_case",
@@ -95,6 +97,7 @@ const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
 const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "unless"];
 
 pub struct FunctionBodyMetrics {
+    pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
     pub nesting_depth: u64,
     pub ncss: u64,
@@ -102,6 +105,7 @@ pub struct FunctionBodyMetrics {
 
 /// Accumulator for one function body during measure_function_body_metrics' post-order pass.
 struct FunctionBodyFrame {
+    cyclomatic_complexity: u64,
     cognitive_complexity: u64,
     /// Count of `1 + nesting` cognitive increments, for re-basing on hoist into the parent frame.
     nesting_sensitive_count: u64,
@@ -117,6 +121,7 @@ struct FunctionBodyFrame {
 impl FunctionBodyFrame {
     fn new(entry_cognitive_nesting: u64, entry_structural_nesting: u64) -> Self {
         FunctionBodyFrame {
+            cyclomatic_complexity: 1,
             cognitive_complexity: 0,
             nesting_sensitive_count: 0,
             nesting_depth: 0,
@@ -141,8 +146,8 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
 /// already-computed totals: NCSS hoists as-is; cognitive complexity re-bases the nested function's
 /// nesting-sensitive increments (each worth `1 + nesting`) by the nesting offset at the embedding
 /// site, while flat increments (else branches, boolean-operator sequences, chain continuations,
-/// jumps, guards) hoist unchanged; nesting depth describes the own body only, so it does not
-/// hoist.
+/// jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
+/// only, so nothing hoists.
 pub fn measure_function_body_metrics(
     root: Node<'_>,
     sets: &LanguageSets,
@@ -186,7 +191,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         }
         // The node's own increments target the frame it is embedded in, not the one it opens; a
         // frame-opening or charged-class-body node contributes nothing to that frame's own body
-        // (nesting), matching the per-function traversal this pass replaces.
+        // (cyclomatic/nesting), matching the per-function traversal this pass replaces.
         let entry_cognitive_nesting = self.top_frame().entry_cognitive_nesting;
         let entry_structural_nesting = self.top_frame().entry_structural_nesting;
         let relative_nesting = current_nesting + function_nesting_bonus - entry_cognitive_nesting;
@@ -211,6 +216,19 @@ impl FunctionBodyPass<'_, '_, '_> {
         // surcharge (Sonar cognitive-complexity semantics).
         let is_continuation = is_decision && is_flat_chain_continuation(current);
 
+        if counts_for_own_body {
+            self.top_frame().cyclomatic_complexity += if self.sets.pmd_cyclomatic {
+                crate::cyclomatic::pmd_cyclomatic_increment(current, self.code)
+            } else {
+                // Each boolean operator and pattern guard is one more execution path; `else` adds
+                // none.
+                u64::from(
+                    is_decision
+                        || is_boolean_operator(current, self.code)
+                        || is_pattern_guard(current),
+                )
+            };
+        }
         if is_decision && !is_case_clause {
             if is_continuation {
                 self.top_frame().cognitive_complexity += 1;
@@ -295,6 +313,7 @@ impl FunctionBodyPass<'_, '_, '_> {
             self.results.insert(
                 current.id(),
                 FunctionBodyMetrics {
+                    cyclomatic_complexity: closed.cyclomatic_complexity,
                     cognitive_complexity: closed.cognitive_complexity,
                     nesting_depth: closed.nesting_depth,
                     // A function node without a countable declaration of its own (arrow functions,
@@ -621,39 +640,51 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
         return node.child_by_field_name("value").is_none();
     }
 
-    if kind == "switch_block_statement_group" || kind == "switch_rule" {
-        let label = crate::util::named_children(node)
-            .into_iter()
-            .find(|child| child.kind() == "switch_label");
-        return label.is_some_and(|label| label.named_child_count() == 0);
+    // C# `default:` sections and catch-all (`_`, `var x`) labels and arms, and Kotlin `else ->`
+    // entries. A guarded catch-all (`_ when cond =>`) is still a default arm: only its guard
+    // branches, which is_pattern_guard charges, like Python's `case _ if cond:` and Rust's
+    // `_ if cond =>`.
+    if kind == "switch_section" {
+        return node.child(0).is_some_and(|first| first.kind() == "default")
+            || crate::util::named_children(node)
+                .into_iter()
+                .any(is_csharp_catch_all_pattern);
+    }
+    if kind == "switch_expression_arm" {
+        return crate::util::named_children(node)
+            .first()
+            .is_some_and(|first| is_csharp_catch_all_pattern(*first));
+    }
+    if kind == "when_entry" {
+        return !crate::util::named_children(node)
+            .iter()
+            .any(|child| child.kind() == "when_condition");
     }
 
-    // Python `case _:` / `case y:` and Rust `_ =>` fallback arms are unconditional like `default`.
-    if kind == "case_clause" || kind == "match_arm" {
-        let pattern = crate::util::named_children(node)
+    // Python arms with an irrefutable pattern are unconditional like `default`.
+    // A bare `case y, z:` or `case y,:` is a sequence pattern: its elements are direct
+    // case_pattern children separated by comma tokens of the clause itself.
+    if kind == "case_clause" {
+        let patterns: Vec<Node<'_>> = crate::util::named_children(node)
             .into_iter()
-            .find(|child| child.kind() == "case_pattern" || child.kind() == "match_pattern");
-        let Some(pattern) = pattern else {
-            return false;
-        };
-        if pattern.child(0).is_some_and(|first| first.kind() == "_")
-            && (pattern.child_count() == 1
-                || pattern.child(1).is_some_and(|second| second.kind() == "if"))
-        {
-            return true;
-        }
-        let sole_child = if pattern.named_child_count() == 1 {
-            pattern.named_child(0)
-        } else {
-            None
-        };
-        return kind == "case_clause"
-            && sole_child.is_some_and(|child| {
-                child.kind() == "dotted_name"
-                    && child.named_child_count() == 1
-                    && child
-                        .named_child(0)
-                        .is_some_and(|inner| inner.kind() == "identifier")
+            .filter(|child| child.kind() == "case_pattern")
+            .collect();
+        return !all_children(node).iter().any(|child| child.kind() == ",")
+            && matches!(patterns[..], [pattern] if is_python_irrefutable_pattern(pattern));
+    }
+    // Rust `_ =>` (optionally guarded) fallback arms.
+    if kind == "match_arm" {
+        return crate::util::named_children(node)
+            .into_iter()
+            .find(|child| child.kind() == "match_pattern")
+            .is_some_and(|pattern| {
+                // The guard keyword is anonymous, so filter all children, not just named ones.
+                let parts: Vec<Node<'_>> = all_children(pattern)
+                    .into_iter()
+                    .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+                    .collect();
+                matches!(parts[..], [first, ..] if first.kind() == "_")
+                    && parts.get(1).is_none_or(|second| second.kind() == "if")
             });
     }
 
@@ -665,6 +696,64 @@ fn is_default_switch_branch(node: Node<'_>) -> bool {
     }
 
     false
+}
+
+/// PEP 634's irrefutable patterns: the wildcard `_`, a capture `y`, a group `(p)`, `p as y`, and
+/// `p | q` when `p` (or, for `|`, any alternative) is irrefutable. A group parses as a one-element
+/// tuple pattern that differs from the real tuple `(p,)` only by the comma token.
+fn is_python_irrefutable_pattern(node: Node<'_>) -> bool {
+    match node.kind() {
+        "_" => true,
+        "case_pattern" => match non_comment_children(node)[..] {
+            [] => all_children(node).iter().any(|child| child.kind() == "_"),
+            [inner] => is_python_irrefutable_pattern(inner),
+            _ => false,
+        },
+        "dotted_name" => matches!(
+            non_comment_children(node)[..],
+            [name] if name.kind() == "identifier"
+        ),
+        "tuple_pattern" => {
+            !all_children(node).iter().any(|child| child.kind() == ",")
+                && matches!(
+                    non_comment_children(node)[..],
+                    [inner] if is_python_irrefutable_pattern(inner)
+                )
+        }
+        "as_pattern" => non_comment_children(node)
+            .first()
+            .is_some_and(|pattern| is_python_irrefutable_pattern(*pattern)),
+        "union_pattern" => all_children(node)
+            .into_iter()
+            .any(is_python_irrefutable_pattern),
+        _ => false,
+    }
+}
+
+fn non_comment_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
+    crate::util::named_children(node)
+        .into_iter()
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+        .collect()
+}
+
+/// C# patterns that match every value: the discard `_` and `var x`/`var _`, possibly parenthesized
+/// (but not a `var (a, b)` deconstruction, which requires a deconstructible value).
+fn is_csharp_catch_all_pattern(node: Node<'_>) -> bool {
+    if node.kind() == "parenthesized_pattern" {
+        return crate::util::named_children(node)
+            .into_iter()
+            .find(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+            .is_some_and(is_csharp_catch_all_pattern);
+    }
+    node.kind() == "discard"
+        || (node.kind() == "declaration_pattern"
+            && node
+                .child_by_field_name("type")
+                .is_some_and(|ty| ty.kind() == "implicit_type")
+            && !crate::util::named_children(node)
+                .iter()
+                .any(|child| child.kind() == "parenthesized_variable_designation"))
 }
 
 /// The parent guard is required because the same tokens appear in non-boolean syntax (C++ `int&&`,

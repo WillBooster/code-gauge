@@ -232,6 +232,52 @@ describe('cognitive complexity: language-specific decision constructs', () => {
   });
 });
 
+describe('cyclomatic complexity: catch-all switch arms', () => {
+  const cyclomaticOf = (language: string, code: string): number[] =>
+    functionsOf(language, code).map((fn) => fn.cyclomaticComplexity);
+
+  // An arm that matches every value adds no path; only its guard does.
+  it.each([
+    ['csharp', 'class P { int F(int x) { switch (x) { case 1: return 1; default: return 0; } } }', 2],
+    ['csharp', 'class P { int F(int x) { switch (x) { case 1: return 1; case var _: return 0; } } }', 2],
+    ['csharp', 'class P { int F(object x) { switch (x) { case (var y): return 1; } } }', 1],
+    ['csharp', 'class P { int F(object x) { switch (x) { case var y when y is string: return 1; } } }', 2],
+    ['csharp', 'class P { int F(int x) => x switch { 1 => 1, _ => 0 }; }', 2],
+    ['csharp', 'class P { int F(int x) => x switch { (var y) => 1 }; }', 1],
+    ['csharp', 'class P { int F(int x) => x switch { _ when x > 0 => 1, _ => 0 }; }', 2],
+    ['csharp', 'class P { int F(object x) => x switch { var (a, b) => 1, _ => 0 }; }', 2],
+    ['kotlin', 'fun f(x: Int) { when (x) { 1 -> println(1); else -> println(0) } }', 2],
+    [
+      'python',
+      'def f(x):\n    match x:\n        case 1:\n            return 1\n        case _ if x:\n            return 2\n',
+      3,
+    ],
+    ['rust', 'fn f(x: i32) -> i32 { match x { 1 => 1, _ if x > 0 => 2, _ => 0 } }', 3],
+    ['rust', 'fn f(x: i32) -> i32 { match x { 1 => 1, _ /* c */ if x > 0 => 2, _ => 0 } }', 3],
+    ['python', 'def f(x):\n    match x:\n        case ((y)):\n            return 1\n', 1],
+    ['python', 'def f(x):\n    match x:\n        case (_):\n            return 1\n', 1],
+    ['python', 'def f(x):\n    match x:\n        case (  # c\n            y):\n            return 1\n', 1],
+    ['python', 'def f(x):\n    match x:\n        case _ as y:\n            return 1\n', 1],
+    ['python', 'def f(x):\n    match x:\n        case (y) as z:\n            return 1\n', 1],
+    ['python', 'def f(x):\n    match x:\n        case 1 | _:\n            return 1\n', 1],
+    ['python', 'def f(x):\n    match x:\n        case (1 | y) as z:\n            return 1\n', 1],
+    ['python', 'def f(x):\n    match x:\n        case 1 | 2:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case Point(x=0):\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case [_, *rest]:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case y if x:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case y, z:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case _ as y, z:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case y,:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case (y),:\n            return 1\n', 2],
+    ['python', 'def f(x):\n    match x:\n        case (y,):\n            return 1\n', 2],
+    // A bare identifier may be a binding, a constant, or a unit variant (`None`); without name
+    // resolution it stays a case label.
+    ['rust', 'fn f(x: Option<i32>) -> i32 { match x { None => 0, y => 1 } }', 3],
+  ])('%s: %s', (language, code, expected) => {
+    expect(cyclomaticOf(language, code)).toEqual([expected]);
+  });
+});
+
 describe('nesting depth', () => {
   const nestingOf = (language: string, code: string): number[] =>
     functionsOf(language, code).map((fn) => fn.nestingDepth);

@@ -74,13 +74,26 @@ export interface FunctionMetrics {
   /**
    * The tree-sitter node type of the function (e.g. `method_declaration`, `arrow_function`,
    * `lambda_expression`), letting consumers distinguish declared methods from lambdas — e.g. to
-   * sum per-function metrics without double-counting lambda content already attributed to the
-   * enclosing function.
+   * sum cognitive complexity or NCSS, which already include nested lambdas in the enclosing
+   * function, without double-counting them. `cyclomaticComplexity` covers the own body only, so
+   * skipping lambdas drops their paths instead.
    */
   nodeType: string;
   startLine: number;
   startColumn: number;
   endLine: number;
+  /** Exclusive end column, so functions can be tested for containment in each other. */
+  endColumn: number;
+  /**
+   * McCabe cyclomatic complexity of the function's own body: 1 plus one per decision point
+   * (branch, loop, non-default case label, catch, ternary, boolean operator, pattern guard). Java
+   * follows PMD's `CyclomaticComplexity` instead, which also counts `throw` but counts `&&`/`||`
+   * only inside branch, loop, ternary, and switch conditions and adds nothing for pattern labels
+   * and guards. Nested function bodies are excluded, so summing over functions counts each
+   * decision point once. Not used by ranking or the regression gate; exposed for consumers that
+   * report PMD-compatible metrics.
+   */
+  cyclomaticComplexity: number;
   cognitiveComplexity: number;
   nestingDepth: number;
   /**

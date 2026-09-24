@@ -85,6 +85,8 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
       startLine: fn.startLine,
       startColumn: fn.startColumn,
       endLine: fn.endLine,
+      endColumn: fn.endColumn,
+      cyclomaticComplexity: fn.cyclomaticComplexity,
       cognitiveComplexity: fn.cognitiveComplexity,
       nestingDepth: fn.nestingDepth,
       ncss: fn.ncss,

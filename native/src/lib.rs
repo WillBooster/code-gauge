@@ -6,6 +6,7 @@ use napi_derive::napi;
 use crate::duplication::DuplicationSettings;
 
 mod complexity;
+mod cyclomatic;
 mod dep_degree;
 mod duplication;
 mod functions;
@@ -21,7 +22,7 @@ mod util;
 /// together with `expectedPayloadVersion` in src/nativeMetrics.ts.
 #[napi]
 pub fn payload_version() -> u32 {
-    4
+    5
 }
 
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON.

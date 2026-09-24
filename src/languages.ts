@@ -1,4 +1,5 @@
-import type { LanguageDefinition, LanguageName } from './types.js';
+import path from 'node:path';
+import type { LanguageDefinition, LanguageName, SupportedLanguage } from './types.js';
 
 /**
  * The built-in languages. Grammars and per-language node-type configuration live in the Rust
@@ -37,3 +38,44 @@ export function createLanguageRegistry(
 }
 
 export const supportedLanguages = defaultLanguages.map((language) => language.name);
+
+const languageByExtension = new Map<string, SupportedLanguage>([
+  ['.c', 'c'],
+  ['.c++', 'cpp'],
+  ['.cc', 'cpp'],
+  ['.cjs', 'javascript'],
+  ['.cp', 'cpp'],
+  ['.cpp', 'cpp'],
+  ['.cs', 'csharp'],
+  ['.tcc', 'cpp'],
+  ['.cts', 'typescript'],
+  ['.cxx', 'cpp'],
+  ['.go', 'go'],
+  // Headers may be C or C++; the C++ grammar parses both.
+  ['.h', 'cpp'],
+  ['.hh', 'cpp'],
+  ['.hpp', 'cpp'],
+  ['.hxx', 'cpp'],
+  ['.java', 'java'],
+  ['.js', 'javascript'],
+  ['.jsx', 'jsx'],
+  ['.kt', 'kotlin'],
+  ['.kts', 'kotlin'],
+  ['.mjs', 'javascript'],
+  ['.mts', 'typescript'],
+  ['.py', 'python'],
+  ['.rb', 'ruby'],
+  ['.rs', 'rust'],
+  ['.ts', 'typescript'],
+  ['.tsx', 'tsx'],
+]);
+
+/** Detects the language of a source file from its extension, or `undefined` when unsupported. */
+export function detectLanguage(filePath: string): SupportedLanguage | undefined {
+  const extension = path.extname(filePath);
+  // GCC treats an uppercase `.C` as C++; lowercasing first would misparse it with the C grammar.
+  if (extension === '.C') {
+    return 'cpp';
+  }
+  return languageByExtension.get(extension.toLowerCase());
+}
