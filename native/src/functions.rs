@@ -30,13 +30,6 @@ pub fn is_implemented_function(node: Node<'_>) -> bool {
         return true;
     }
 
-    // A C# expression-bodied method (`int F() => 1;`) holds its arrow clause outside `body`.
-    if node.kind() == "method_declaration" {
-        return named_children(node)
-            .iter()
-            .any(|child| child.kind() == "arrow_expression_clause");
-    }
-
     if node.kind() == "property_declaration" || node.kind() == "indexer_declaration" {
         return node
             .child_by_field_name("value")
