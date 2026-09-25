@@ -162,13 +162,16 @@ fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bo
     let children = named_children(root);
     match language.name {
         "csharp" => children.into_iter().any(is_csharp_top_level_statement),
-        // An ERROR node is the grammar giving up on (often valid) code, not evidence of a
-        // top-level statement.
-        "kotlin" => children.iter().any(|child| {
-            !child.is_error()
-                && !KOTLIN_DECLARATIONS.contains(&child.kind())
-                && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
-        }),
+        // The grammar mis-parses some valid declarations (non-empty companion objects, `fun
+        // interface`) and leaves recovery residue at the top level, so a file with parse errors is
+        // never taken for a script.
+        "kotlin" => {
+            !root.has_error()
+                && children.iter().any(|child| {
+                    !KOTLIN_DECLARATIONS.contains(&child.kind())
+                        && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
+                })
+        }
         _ => false,
     }
 }
