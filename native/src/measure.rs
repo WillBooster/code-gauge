@@ -142,6 +142,8 @@ fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bo
         "type_alias",
         "shebang_line",
         "file_annotation",
+        "getter",
+        "setter",
     ];
     let children = named_children(root);
     match language.name {
