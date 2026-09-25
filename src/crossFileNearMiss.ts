@@ -80,8 +80,23 @@ export function collectCrossFileNearMissGroups(
     }
     return root;
   };
+  // Every candidate pair of one `right` block is visited consecutively, so one LCS counter (its
+  // position masks built once) serves them all.
+  let counterBlock = -1;
+  let counter: ((sequence: Int32Array) => number) | undefined;
+  const lcsLengthWithRight = (right: number, sequence: Int32Array): number => {
+    if (counterBlock !== right || !counter) {
+      counterBlock = right;
+      counter = createLcsLengthCounter(blocks[right]?.sequence ?? new Int32Array());
+    }
+    return counter(sequence);
+  };
   forEachCandidatePair(blocks, anchored, minSimilarityPercent, (left, right) => {
-    if (isNearMissPair(blocks[left], blocks[right], minSimilarityPercent)) {
+    if (
+      isNearMissPair(blocks[left], blocks[right], minSimilarityPercent, (sequence) =>
+        lcsLengthWithRight(right, sequence)
+      )
+    ) {
       const leftRoot = find(left);
       const rightRoot = find(right);
       parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
@@ -232,7 +247,8 @@ function forEachCandidatePair(
 function isNearMissPair(
   left: NormalizedBlock | undefined,
   right: NormalizedBlock | undefined,
-  minSimilarityPercent: number
+  minSimilarityPercent: number,
+  lcsLengthWithRight: (sequence: Int32Array) => number
 ): boolean {
   if (!left || !right) {
     return false;
@@ -250,7 +266,7 @@ function isNearMissPair(
   if (sortedOverlap(left.sortedSequence, right.sortedSequence) * 100 < required) {
     return false;
   }
-  return createLcsLengthCounter(left.sequence)(right.sequence) * 100 >= required;
+  return lcsLengthWithRight(left.sequence) * 100 >= required;
 }
 
 /** Multiset intersection size of two ascending arrays. */
