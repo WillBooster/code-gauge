@@ -273,6 +273,22 @@ describe('cyclomatic complexity: NIST SP 500-235 counting', () => {
       'class A { int F(int x) { switch (x) {\ncase 1:\n#if DEBUG\n    return 1;\n#endif\ndefault:\n    return 0;\n} } }',
       2,
     ],
+    // A guarded catch-all is conditional, so a case label stacked with it keeps its path.
+    [
+      'csharp',
+      'class A { int F(int x, bool c) { switch (x) { case 1: case _ when c: return 0; default: return 1; } } }',
+      3,
+    ],
+    [
+      'csharp',
+      'class A { int F(int x, bool c) { switch (x) { case _ when c: case 1: return 0; default: return 1; } } }',
+      3,
+    ],
+    [
+      'csharp',
+      'class A { int F(int x, bool c) { switch (x) { case 1: return 1; case _ when c: return 0; default: return 1; } } }',
+      3,
+    ],
   ])('%s: %s', (language, code, expected) => {
     expect(cyclomaticOf(language, code)).toEqual([expected]);
   });

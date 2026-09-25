@@ -625,38 +625,43 @@ fn is_flat_chain_continuation(node: Node<'_>) -> bool {
             .is_some_and(|alternative| alternative.id() == node.id())
 }
 
-/// Switch branches that add no path: default branches, and label-only cases that fall through to
-/// the next labelled statement. NIST SP 500-235 counts one path per case-labelled statement, so
-/// `case 1: case 2: f();` adds one path, and `case 3: default: g();` merges into the default.
+/// Switch branches that add no path. NIST SP 500-235 counts one path per case-labelled statement:
+/// a label-only case shares the statement of the case below it, and that statement adds a path
+/// unless one of its stacked labels is an unguarded default or catch-all (`case 3: default: g();`
+/// and `default: case 3: g();` are the default outcome) or all of them are catch-alls. Guards are
+/// charged separately, so a guarded catch-all never absorbs a case stacked with it.
 fn is_pathless_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
-    is_default_switch_branch(node, code)
-        || is_label_only_case(node)
-        || falls_through_from_default(node, code)
-}
-
-/// Whether a label-only `default` stacked above this case shares its statements
-/// (`default: case 3: g();`), which makes them the default outcome like `case 3: default: g();`.
-fn falls_through_from_default(node: Node<'_>, code: &Source<'_>) -> bool {
+    if is_label_only_case(node) {
+        return true;
+    }
+    let mut stacked = vec![node];
     let mut previous = node.prev_named_sibling();
     while let Some(sibling) = previous {
-        if crate::ncss::COMMENT_NODE_TYPES.contains(&sibling.kind()) {
-            previous = sibling.prev_named_sibling();
-            continue;
-        }
-        let is_label_only_default = if sibling.kind() == "switch_default" {
-            sibling.child_by_field_name("body").is_none()
-        } else {
-            is_label_only_case(sibling) && is_default_switch_branch(sibling, code)
-        };
-        if is_label_only_default {
-            return true;
-        }
-        if !is_label_only_case(sibling) {
-            return false;
+        if !crate::ncss::COMMENT_NODE_TYPES.contains(&sibling.kind()) {
+            if !is_label_only_case(sibling) {
+                break;
+            }
+            stacked.push(sibling);
         }
         previous = sibling.prev_named_sibling();
     }
-    false
+    stacked
+        .iter()
+        .any(|label| is_default_switch_branch(*label, code) && !has_pattern_guard(*label))
+        || stacked
+            .iter()
+            .all(|label| is_default_switch_branch(*label, code))
+}
+
+/// A guard directly on the arm (C# `when`, Python `if`, Ruby `if`/`unless`) or inside its label or
+/// pattern (Java `when`, Rust `if`).
+fn has_pattern_guard(node: Node<'_>) -> bool {
+    crate::util::named_children(node).into_iter().any(|child| {
+        is_pattern_guard(child)
+            || crate::util::named_children(child)
+                .into_iter()
+                .any(is_pattern_guard)
+    })
 }
 
 /// A C/C++/JS/Java/C# case whose labels share the next case's statements; every grammar parses each
@@ -668,7 +673,7 @@ fn is_label_only_case(node: Node<'_>) -> bool {
             let value = node.child_by_field_name("value").map(|value| value.id());
             children.iter().all(|child| Some(child.id()) == value)
         }
-        "switch_case" => node.child_by_field_name("body").is_none(),
+        "switch_case" | "switch_default" => node.child_by_field_name("body").is_none(),
         "switch_block_statement_group" => {
             children.iter().all(|child| child.kind() == "switch_label")
         }
@@ -685,6 +690,9 @@ fn is_label_only_case(node: Node<'_>) -> bool {
 
 fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     let kind = node.kind();
+    if kind == "switch_default" {
+        return true;
+    }
     if kind == "case_statement" {
         return node.child_by_field_name("value").is_none();
     }
