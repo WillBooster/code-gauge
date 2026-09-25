@@ -77,8 +77,9 @@ pub fn measure(
         language: language.name.to_string(),
         bytes: code.code.len(),
         lines,
-        // McCabe's v = e - n + 2p over the file's components: every function, plus the module body
-        // when the language runs top-level code; decisions outside functions belong to the file.
+        // McCabe's v = e - n + 2p over the file's components: every function, every initializer
+        // block, and the module body when the file runs top-level code; decisions outside functions
+        // belong to the file.
         cyclomatic_complexity: function_metrics
             .iter()
             .map(|function| function.cyclomatic_complexity)
