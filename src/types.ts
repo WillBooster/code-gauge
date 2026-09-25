@@ -169,7 +169,8 @@ export interface CodeMetrics {
    * `init`, JavaScript/TypeScript class `static` blocks), plus the decisions outside functions,
    * plus 1 for the module body when
    * the file runs top-level code (always for JavaScript, TypeScript, Python, and Ruby; for C# and
-   * Kotlin when the file has top-level statements).
+   * Kotlin when the file has top-level statements, except a Kotlin file with parse errors, whose top
+   * level the grammar cannot be trusted to have read correctly).
    */
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
