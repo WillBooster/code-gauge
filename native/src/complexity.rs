@@ -140,6 +140,14 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
     nested_class_decisions: u64,
 }
 
+/// Per-function body metrics, plus the cyclomatic decisions no function body owns.
+pub struct BodyMetrics {
+    pub by_function: HashMap<usize, FunctionBodyMetrics>,
+    /// Cyclomatic decisions outside every function body (top-level statements, field initializers,
+    /// including those of classes nested in functions).
+    pub top_level_decisions: u64,
+}
+
 /// Per-function complexity and NCSS for every function boundary, in one post-order pass so each
 /// node is visited once instead of once per enclosing function (issue #35). A function's metrics
 /// are its own-body contributions plus, per directly nested function, that function's
@@ -148,13 +156,6 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
 /// site, while flat increments (else branches, boolean-operator sequences, chain continuations,
 /// jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
 /// only, so nothing hoists.
-pub struct BodyMetrics {
-    pub by_function: HashMap<usize, FunctionBodyMetrics>,
-    /// Cyclomatic decisions outside every function body (top-level statements, field initializers,
-    /// including those of classes nested in functions).
-    pub top_level_decisions: u64,
-}
-
 pub fn measure_function_body_metrics(
     root: Node<'_>,
     sets: &LanguageSets,
