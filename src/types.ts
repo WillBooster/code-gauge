@@ -163,6 +163,13 @@ export interface CodeMetrics {
   bytes: number;
   lines: LineMetrics;
   functions: FunctionMetrics[];
+  /**
+   * The file's cyclomatic complexity as McCabe's v = e - n + 2p over its components: the sum of
+   * every function's value, plus the decisions outside functions, plus 1 for the module body when
+   * the file runs top-level code (always for JavaScript, TypeScript, Python, and Ruby; for C# when
+   * the file has top-level statements).
+   */
+  cyclomaticComplexity: number;
   cognitiveComplexity: number;
   maxCognitiveComplexity: number;
   nestingDepth: number;

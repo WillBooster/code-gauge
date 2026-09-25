@@ -38,11 +38,12 @@ pub fn measure(
         .filter(|node| !is_lambda_body_block(*node) && is_implemented_function(*node))
         .collect();
 
-    let body_metrics_by_node_id = measure_function_body_metrics(root, &sets, code);
+    let body_metrics = measure_function_body_metrics(root, &sets, code);
     let function_metrics: Vec<FunctionMetrics> = functions
         .iter()
         .map(|node| {
-            let body_metrics = body_metrics_by_node_id
+            let body_metrics = body_metrics
+                .by_function
                 .get(&node.id())
                 .expect("every collected function node opens a frame in the body-metrics pass");
             FunctionMetrics {
@@ -76,6 +77,19 @@ pub fn measure(
         language: language.name.to_string(),
         bytes: code.code.len(),
         lines,
+        // McCabe's v = e - n + 2p over the file's components: every function, plus the module body
+        // when the language runs top-level code; decisions outside functions belong to the file.
+        cyclomatic_complexity: function_metrics
+            .iter()
+            .map(|function| function.cyclomatic_complexity)
+            .sum::<u64>()
+            + body_metrics.top_level_decisions
+            + u64::from(
+                language.executes_top_level
+                    || named_children(root)
+                        .iter()
+                        .any(|child| child.kind() == "global_statement"),
+            ),
         cognitive_complexity: global_complexity.cognitive_complexity,
         max_cognitive_complexity: function_metrics
             .iter()

@@ -11,6 +11,7 @@ pub struct NativeMetrics {
     pub bytes: usize,
     pub lines: LineMetrics,
     pub functions: Vec<FunctionMetrics>,
+    pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
     pub max_cognitive_complexity: u64,
     pub nesting_depth: u64,

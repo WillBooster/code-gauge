@@ -307,6 +307,24 @@ describe('cyclomatic complexity: NIST SP 500-235 counting', () => {
   });
 });
 
+describe('cyclomatic complexity: file totals over McCabe components', () => {
+  // Every function is a component, decisions outside functions belong to the file, and a module
+  // body that runs top-level code is one more component.
+  it.each([
+    ['python', 'n = int(input())\nif n > 0 and n < 10:\n  print(1)\nelse:\n  for i in range(n):\n    print(i)\n', 4],
+    ['python', 'print(1)\n', 1],
+    ['python', 'def f(x):\n    return 1 if x else 2\n', 3],
+    ['ruby', 'n = gets.to_i\nif n > 0 && n < 5\n  puts 1\nend\n', 3],
+    ['javascript', 'const n = 3;\nif (n > 0 && n < 5) { console.log(1); }', 3],
+    ['csharp', 'var n = 3;\nif (n > 1) System.Console.WriteLine(n);\n', 2],
+    ['csharp', 'class A { void F() { } }', 1],
+    ['java', 'class A { int x = Math.random() > 0.5 ? 1 : 2; void f(boolean b) { if (b) { } } }', 3],
+    ['go', 'package p\nfunc f(x int) int { if x > 0 { return 1 }; return 0 }', 2],
+  ])('%s: %s', (language, code, expected) => {
+    expect(measureCode(code, { language }).cyclomaticComplexity).toBe(expected);
+  });
+});
+
 describe('cyclomatic complexity: catch-all switch arms', () => {
   const cyclomaticOf = (language: string, code: string): number[] =>
     functionsOf(language, code).map((fn) => fn.cyclomaticComplexity);

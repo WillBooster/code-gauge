@@ -4,6 +4,7 @@ exports[`measureCode: golden edge cases > matches the golden metrics for empty i
 {
   "bytes": 0,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 1,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -42,6 +43,7 @@ exports[`measureCode: golden edge cases > matches the golden metrics for whitesp
 {
   "bytes": 7,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 1,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -82,6 +84,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1144,
   "cognitiveComplexity": 2,
+  "cyclomaticComplexity": 26,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -649,6 +652,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 228,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 5,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -760,6 +764,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 233,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 6,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -823,6 +828,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1927,
   "cognitiveComplexity": 23,
+  "cyclomaticComplexity": 23,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -1006,6 +1012,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 2550,
   "cognitiveComplexity": 33,
+  "cyclomaticComplexity": 39,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -1381,6 +1388,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 4125,
   "cognitiveComplexity": 29,
+  "cyclomaticComplexity": 41,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -1852,6 +1860,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1390,
   "cognitiveComplexity": 23,
+  "cyclomaticComplexity": 22,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -2059,6 +2068,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 2908,
   "cognitiveComplexity": 28,
+  "cyclomaticComplexity": 32,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -2386,6 +2396,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1629,
   "cognitiveComplexity": 26,
+  "cyclomaticComplexity": 28,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -2641,6 +2652,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1164,
   "cognitiveComplexity": 6,
+  "cyclomaticComplexity": 16,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -2920,6 +2932,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 3764,
   "cognitiveComplexity": 36,
+  "cyclomaticComplexity": 42,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -3415,6 +3428,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1862,
   "cognitiveComplexity": 24,
+  "cyclomaticComplexity": 29,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -3670,6 +3684,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 2064,
   "cognitiveComplexity": 37,
+  "cyclomaticComplexity": 42,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -3997,6 +4012,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 2523,
   "cognitiveComplexity": 28,
+  "cyclomaticComplexity": 23,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -4204,6 +4220,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1381,
   "cognitiveComplexity": 6,
+  "cyclomaticComplexity": 14,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -4435,6 +4452,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1386,
   "cognitiveComplexity": 6,
+  "cyclomaticComplexity": 14,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -4690,6 +4708,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 320,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -4753,6 +4772,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 599,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 9,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -4876,6 +4896,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1346,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 10,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -5047,6 +5068,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1394,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 10,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -5218,6 +5240,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1534,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 10,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -5393,6 +5416,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1123,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 10,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -5570,6 +5594,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1340,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 10,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -5741,6 +5766,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1133,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 11,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -5912,6 +5938,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1435,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 11,
   "duplication": {
     "duplicateBlockCount": 2,
     "duplicateBlockGroupCount": 2,
@@ -6115,6 +6142,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1442,
   "cognitiveComplexity": 10,
+  "cyclomaticComplexity": 10,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -6286,6 +6314,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1102,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 11,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -6449,6 +6478,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1023,
   "cognitiveComplexity": 6,
+  "cyclomaticComplexity": 11,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -6664,6 +6694,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1280,
   "cognitiveComplexity": 10,
+  "cyclomaticComplexity": 10,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -6835,6 +6866,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1295,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 11,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -7006,6 +7038,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1655,
   "cognitiveComplexity": 8,
+  "cyclomaticComplexity": 11,
   "duplication": {
     "duplicateBlockCount": 2,
     "duplicateBlockGroupCount": 2,
@@ -7209,6 +7242,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 134,
   "cognitiveComplexity": 3,
+  "cyclomaticComplexity": 4,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7272,6 +7306,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 180,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 3,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7335,6 +7370,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 35,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7398,6 +7434,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 40,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 1,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7436,6 +7473,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 80,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 3,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7547,6 +7585,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 130,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 3,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7610,6 +7649,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 356,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 4,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7721,6 +7761,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 50,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 1,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7759,6 +7800,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 139,
   "cognitiveComplexity": 2,
+  "cyclomaticComplexity": 5,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -7846,6 +7888,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 169,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 5,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8005,6 +8048,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 396,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 7,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8068,6 +8112,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 423,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 7,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8131,6 +8176,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 633,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 7,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8194,6 +8240,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 327,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 7,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8257,6 +8304,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 434,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 7,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8320,6 +8368,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 359,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 8,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8383,6 +8432,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 392,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 8,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8446,6 +8496,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 392,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 7,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8509,6 +8560,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 364,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 8,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8572,6 +8624,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 277,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 8,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8635,6 +8688,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 383,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 7,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8698,6 +8752,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 392,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 8,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8761,6 +8816,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 430,
   "cognitiveComplexity": 7,
+  "cyclomaticComplexity": 8,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -8824,6 +8880,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 5248,
   "cognitiveComplexity": 14,
+  "cyclomaticComplexity": 27,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -9151,6 +9208,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 702,
   "cognitiveComplexity": 14,
+  "cyclomaticComplexity": 19,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -9310,6 +9368,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 945,
   "cognitiveComplexity": 19,
+  "cyclomaticComplexity": 23,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -9493,6 +9552,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 919,
   "cognitiveComplexity": 12,
+  "cyclomaticComplexity": 18,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -9676,6 +9736,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 653,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 6,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -9835,6 +9896,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1005,
   "cognitiveComplexity": 12,
+  "cyclomaticComplexity": 14,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -10042,6 +10104,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 449,
   "cognitiveComplexity": 3,
+  "cyclomaticComplexity": 6,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -10153,6 +10216,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 791,
   "cognitiveComplexity": 2,
+  "cyclomaticComplexity": 9,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -10360,6 +10424,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1513,
   "cognitiveComplexity": 11,
+  "cyclomaticComplexity": 17,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -10519,6 +10584,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1837,
   "cognitiveComplexity": 16,
+  "cyclomaticComplexity": 26,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -10822,6 +10888,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 3231,
   "cognitiveComplexity": 19,
+  "cyclomaticComplexity": 32,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -11221,6 +11288,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1416,
   "cognitiveComplexity": 13,
+  "cyclomaticComplexity": 21,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -11452,6 +11520,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 2216,
   "cognitiveComplexity": 17,
+  "cyclomaticComplexity": 26,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -11731,6 +11800,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1406,
   "cognitiveComplexity": 11,
+  "cyclomaticComplexity": 17,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -11914,6 +11984,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 872,
   "cognitiveComplexity": 4,
+  "cyclomaticComplexity": 10,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -12073,6 +12144,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 3039,
   "cognitiveComplexity": 30,
+  "cyclomaticComplexity": 33,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -12424,6 +12496,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 2012,
   "cognitiveComplexity": 30,
+  "cyclomaticComplexity": 28,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -12655,6 +12728,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1491,
   "cognitiveComplexity": 21,
+  "cyclomaticComplexity": 29,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -12982,6 +13056,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 2177,
   "cognitiveComplexity": 17,
+  "cyclomaticComplexity": 20,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -13213,6 +13288,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 2613,
   "cognitiveComplexity": 27,
+  "cyclomaticComplexity": 23,
   "duplication": {
     "duplicateBlockCount": 1,
     "duplicateBlockGroupCount": 1,
@@ -13454,6 +13530,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 1322,
   "cognitiveComplexity": 4,
+  "cyclomaticComplexity": 13,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -13709,6 +13786,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 81,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -13772,6 +13850,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 120,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -13835,6 +13914,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 158,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -13898,6 +13978,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 99,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -13961,6 +14042,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 124,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14024,6 +14106,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 157,
   "cognitiveComplexity": 3,
+  "cyclomaticComplexity": 5,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14087,6 +14170,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 101,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 3,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14150,6 +14234,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 136,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14213,6 +14298,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 73,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 3,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14276,6 +14362,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 66,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 3,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14339,6 +14426,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 88,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14402,6 +14490,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 94,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 3,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14465,6 +14554,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 143,
   "cognitiveComplexity": 1,
+  "cyclomaticComplexity": 3,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14528,6 +14618,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 275,
   "cognitiveComplexity": 3,
+  "cyclomaticComplexity": 5,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14591,6 +14682,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 295,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 2,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14654,6 +14746,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 389,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 4,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,
@@ -14789,6 +14882,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
 {
   "bytes": 659,
   "cognitiveComplexity": 0,
+  "cyclomaticComplexity": 9,
   "duplication": {
     "duplicateBlockCount": 0,
     "duplicateBlockGroupCount": 0,

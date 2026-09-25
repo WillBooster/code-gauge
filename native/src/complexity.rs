@@ -146,20 +146,29 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
 /// site, while flat increments (else branches, boolean-operator sequences, chain continuations,
 /// jumps, guards) hoist unchanged; cyclomatic complexity and nesting depth describe the own body
 /// only, so nothing hoists.
+pub struct BodyMetrics {
+    pub by_function: HashMap<usize, FunctionBodyMetrics>,
+    /// Cyclomatic decisions outside every function (top-level statements, field initializers).
+    pub top_level_decisions: u64,
+}
+
 pub fn measure_function_body_metrics(
     root: Node<'_>,
     sets: &LanguageSets,
     code: &Source<'_>,
-) -> HashMap<usize, FunctionBodyMetrics> {
+) -> BodyMetrics {
     let mut pass = FunctionBodyPass {
         sets,
         code,
-        // frames[0] is a sentinel for top-level code; its accumulation is discarded.
+        // frames[0] is a sentinel for top-level code; only its cyclomatic decisions are kept.
         frames: vec![FunctionBodyFrame::new(0, 0)],
         results: HashMap::new(),
     };
     pass.visit(root, 0, 0, false, false, false);
-    pass.results
+    BodyMetrics {
+        by_function: pass.results,
+        top_level_decisions: pass.frames[0].cyclomatic_complexity - 1,
+    }
 }
 
 impl FunctionBodyPass<'_, '_, '_> {
