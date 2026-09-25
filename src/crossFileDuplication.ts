@@ -29,8 +29,9 @@ export interface CrossFileDuplicateBlockGroup {
   files: string[];
   occurrences: CrossFileDuplicateOccurrence[];
   /**
-   * Matched token count of the smallest occurrence (gaps are not counted). Exact and gapped groups'
-   * occurrences all share it; near-miss (Type-3) occurrences differ by their edits.
+   * Token count of the smallest occurrence. For exact and gapped groups it is the matched token
+   * count every occurrence shares (gaps are not counted); for near-miss (Type-3) groups it is the
+   * smallest whole block's length, edited tokens included.
    */
   tokenCount: number;
 }
@@ -41,8 +42,9 @@ export interface CrossFileDuplicationMetrics {
   /** Groups the file participates in, keyed by the file name passed in. */
   duplicateBlockGroupCountByFile: Record<string, number>;
   /**
-   * Per file, the 1-based code lines covered by matched tokens of its cross-file occurrences,
-   * sorted ascending. Exact like within-file duplicateLineNumbers: the unmatched gap of a merged
+   * Per file, the 1-based code lines covered by the tokens of its cross-file occurrences, sorted
+   * ascending: the matched tokens of exact and gapped occurrences, and every token of a near-miss
+   * block, edited ones included (like within-file near-miss coverage). The unmatched gap of a merged
    * clone and comment/blank lines inside an occurrence's bounding range are excluded (blank rows
    * inside multi-row tokens only when the file supplied codeLineNumbers). A file that supplied
    * only candidates (no `tokens`) has no entry — without its token stream the matched lines are
