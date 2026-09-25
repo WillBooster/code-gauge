@@ -162,8 +162,11 @@ fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bo
     let children = named_children(root);
     match language.name {
         "csharp" => children.into_iter().any(is_csharp_top_level_statement),
+        // An ERROR node is the grammar giving up on (often valid) code, not evidence of a
+        // top-level statement.
         "kotlin" => children.iter().any(|child| {
-            !KOTLIN_DECLARATIONS.contains(&child.kind())
+            !child.is_error()
+                && !KOTLIN_DECLARATIONS.contains(&child.kind())
                 && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
         }),
         _ => false,

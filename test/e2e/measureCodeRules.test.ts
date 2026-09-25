@@ -327,6 +327,8 @@ describe('cyclomatic complexity: file totals over McCabe components', () => {
     ['kotlin', 'val n = 3\nif (n > 0 && n < 5) { println(1) }\n', 3],
     ['kotlin', 'package p\nclass A\nfun f() { }\nval x = 1\n', 1],
     ['kotlin', 'val x: Int\n    get() = 1\nvar y = 1\n    private set\n', 1],
+    // The grammar mis-parses non-empty companion objects into an ERROR node, which is no script.
+    ['kotlin', 'class A { companion object { val x = 1 } }', 0],
     // Decisions in a class body nested in a function belong to no function but still count.
     ['java', 'class A { void f(boolean b) { Object o = new Object() { int x = b ? 1 : 2; }; } }', 2],
     ['typescript', 'function f(b: boolean) { class B { x = b ? 1 : 2; } }', 3],
