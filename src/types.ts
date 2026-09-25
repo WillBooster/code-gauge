@@ -39,7 +39,7 @@ export interface DuplicationOptions {
    * Minimum similarity percent (1-100) for near-miss (Type-3) clone blocks, measured as the
    * token-level longest common subsequence relative to the larger block (NiCad-style per-fragment
    * similarity). 100 disables near-miss detection and reports exact (Type-1/2) matches plus gapped
-   * merges only (default 70). Applies to within-file detection only.
+   * merges only (default 70). Applies to within-file and cross-file detection.
    */
   minSimilarityPercent?: number;
 }

@@ -1304,7 +1304,7 @@ fn declares_deduced_type(declarator: Node<'_>) -> bool {
         .is_some_and(|declared| declared.kind() == "placeholder_type_specifier")
 }
 
-/// Unwraps a C/C++ declarator chain to the declared name; see unwrapDeclaratorName in metrics.ts.
+/// Unwraps a C/C++ declarator chain to the declared name.
 fn unwrap_declarator_name(declarator: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
     let mut current = declarator;
     while let Some(node) = current {

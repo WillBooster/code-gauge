@@ -26,7 +26,6 @@ const COMPOUND_ASSIGNMENT_OPERATORS: &[&str] = &[
 
 /// Parent type -> field under which an identifier is a definition target even when a type
 /// annotation separates it from the `=` token, plus loop bindings with no assignment token at all.
-/// Mirrors definitionFieldByParentType in metrics.ts.
 const DEFINITION_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("variable_declarator", "name"),
     ("let_declaration", "pattern"),
@@ -109,7 +108,7 @@ struct DepDegreeLeaf<'t> {
     scope: String,
 }
 
-/// Approximate def-use pairs of the function's subtree; mirrors measureDepDegree in metrics.ts.
+/// Approximate def-use pairs of the function's subtree.
 pub fn measure_dep_degree(
     function_node: Node<'_>,
     code: &Source<'_>,
@@ -362,7 +361,7 @@ fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option
     (current, field_name)
 }
 
-/// Mirrors isParameterDefinition in metrics.ts: an ancestor reached through declarator wrappers
+/// Whether an identifier defines a parameter: an ancestor reached through declarator wrappers
 /// (C/C++ function-pointer or array parameters) is a parameter-ish node, or the identifier
 /// directly occupies a parameter field; type annotations and default values bind nothing.
 fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {

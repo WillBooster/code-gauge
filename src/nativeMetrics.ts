@@ -23,6 +23,7 @@ export interface NativeMetricsPayload extends Omit<CodeMetrics, 'halstead' | 'fu
   functions: NativeFunctionMetricsPayload[];
   halsteadCounts: NativeHalsteadCounts;
   syntaxTree?: string;
+  crossFileData?: NativeCrossFileDataPayload;
 }
 
 /** One file's cross-file clone-detection contribution as serialized by the native addon. */
@@ -30,6 +31,7 @@ export interface NativeCrossFileDataPayload {
   candidates: CrossFileDuplicateCandidate[];
   tokens: Token[];
   containerStatements: TokenRange[][];
+  nearMissBlocks: TokenRange[];
   /** 1-based lines that are neither blank nor comment-only, sorted ascending. */
   codeLineNumbers: number[];
 }
@@ -41,7 +43,8 @@ interface NativeBinding {
     includeSyntaxTree: boolean,
     minTokens?: number,
     maxGapTokens?: number,
-    minSimilarityPercent?: number
+    minSimilarityPercent?: number,
+    includeCrossFileData?: boolean
   ): string;
   collectCrossFileDataNative(code: string, language: string, minTokens?: number): string;
   collectFunctionTokenSequencesNative(code: string, language: string): string;
@@ -53,14 +56,18 @@ interface NativeBinding {
  * `git pull` untouched, so without this handshake it would silently return payloads missing
  * newer fields instead of failing with a clear rebuild message.
  */
-const expectedPayloadVersion = 6;
+const expectedPayloadVersion = 7;
 
-/** Measures one file via the native addon, returning the raw payload for assembly in metrics.ts. */
+/**
+ * Measures one file via the native addon, returning the raw payload for assembly in metrics.ts;
+ * with `includeCrossFileData`, the payload also carries the file's cross-file contribution.
+ */
 export function measureCodeNative(
   code: string,
   language: string,
   includeSyntaxTree: boolean,
-  duplication?: DuplicationOptions
+  duplication?: DuplicationOptions,
+  includeCrossFileData = false
 ): NativeMetricsPayload {
   return JSON.parse(
     loadBinding().measureCodeNative(
@@ -69,7 +76,8 @@ export function measureCodeNative(
       includeSyntaxTree,
       clampToU32(duplication?.minTokens),
       clampToU32(duplication?.maxGapTokens),
-      clampToU32(duplication?.minSimilarityPercent)
+      clampToU32(duplication?.minSimilarityPercent),
+      includeCrossFileData
     )
   ) as NativeMetricsPayload;
 }

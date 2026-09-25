@@ -7,7 +7,8 @@ use crate::complexity::{
 };
 use crate::dep_degree::measure_dep_degree;
 use crate::duplication::{
-    collect_cross_file_file_data, hash_text, measure_duplication, DuplicationSettings,
+    collect_cross_file_file_data, hash_text, measure_duplication, tokenize, DuplicationSettings,
+    TokenizedSource,
 };
 use crate::functions::{
     collect_nodes, count_parameters, find_function_name, is_implemented_function,
@@ -25,6 +26,7 @@ pub fn measure(
     code: &str,
     language: &LanguageDefinition,
     include_syntax_tree: bool,
+    include_cross_file_data: bool,
     duplication_settings: &DuplicationSettings,
 ) -> Result<NativeMetrics, String> {
     let source = Source::new(code);
@@ -72,6 +74,7 @@ pub fn measure(
     let global_complexity = measure_complexity(root, &sets, code);
     let (lines, code_line_numbers) = classify_lines(code, root);
     let halstead_counts = measure_halstead(root, code);
+    let tokenized = tokenize(root, code);
 
     Ok(NativeMetrics {
         language: language.name.to_string(),
@@ -95,7 +98,14 @@ pub fn measure(
             .unwrap_or(0),
         nesting_depth: global_complexity.nesting_depth,
         ncss_count: crate::ncss::count_ncss(root, &sets.ncss_nodes, &sets.ncss_containers),
-        duplication: measure_duplication(root, &code_line_numbers, code, duplication_settings),
+        duplication: measure_duplication(&tokenized, &code_line_numbers, duplication_settings),
+        cross_file_data: include_cross_file_data.then(|| {
+            to_cross_file_data(
+                &tokenized,
+                &code_line_numbers,
+                duplication_settings.min_tokens,
+            )
+        }),
         halstead_counts,
         functions: function_metrics,
         syntax_tree: if include_syntax_tree {
@@ -185,17 +195,30 @@ pub fn collect_cross_file_data(
     let source = Source::new(code);
     let tree = parse_source(&source, language)?;
     let root = tree.root_node();
-    let (candidates, tokens, container_statements) =
-        collect_cross_file_file_data(root, &source, min_tokens);
     let (_, code_line_numbers) = classify_lines(&source, root);
-    let mut code_line_numbers: Vec<usize> = code_line_numbers.into_iter().collect();
+    Ok(to_cross_file_data(
+        &tokenize(root, &source),
+        &code_line_numbers,
+        min_tokens,
+    ))
+}
+
+fn to_cross_file_data(
+    tokenized: &TokenizedSource<'_>,
+    code_line_numbers: &HashSet<usize>,
+    min_tokens: usize,
+) -> CrossFileFileData {
+    let (candidates, tokens, container_statements, near_miss_blocks) =
+        collect_cross_file_file_data(tokenized, min_tokens);
+    let mut code_line_numbers: Vec<usize> = code_line_numbers.iter().copied().collect();
     code_line_numbers.sort_unstable();
-    Ok(CrossFileFileData {
+    CrossFileFileData {
         candidates,
         tokens,
         container_statements,
+        near_miss_blocks,
         code_line_numbers,
-    })
+    }
 }
 
 /// Name-carrying leaf types anonymized by tokenize_function so consistent renames still match.
@@ -214,7 +237,7 @@ const IDENTIFIER_LEAF_NODE_TYPES: &[&str] = &[
 ];
 
 /// Normalized token hash sequences of every function, index-parallel to the functions array of
-/// measure(); a faithful port of tokenizeFunction in src/metrics.ts.
+/// measure().
 pub fn collect_function_token_sequences(
     code: &str,
     language: &LanguageDefinition,
@@ -326,8 +349,9 @@ struct CommentSpan {
     end_column: usize,
 }
 
-/// 1-based numbers of lines that are neither blank nor comment-only, matching classifyLines in
-/// metrics.ts so duplication line coverage and its code-line denominator agree.
+/// Line metrics plus the 1-based numbers of lines that are neither blank nor comment-only, shared
+/// by the line counts and duplication line coverage so the coverage and its code-line denominator
+/// agree.
 fn classify_lines(code: &Source<'_>, root: Node<'_>) -> (LineMetrics, HashSet<usize>) {
     let source_lines = split_lines(code.code);
     // Spans are bucketed by line so classification stays linear.
@@ -606,7 +630,7 @@ const OPERAND_NODE_TYPES: &[&str] = &[
     "none",
 ];
 
-/// Non-leaf literals counted as one Halstead operand without descending; see metrics.ts.
+/// Non-leaf literals counted as one Halstead operand without descending.
 /// `character_literal` is a leaf in Java and Kotlin but wraps a content node in C#; Kotlin's
 /// suffixed numbers (`1L`, `1u`) wrap the bare literal, so `1` and `1L` stay distinct.
 const ATOMIC_OPERAND_NODE_TYPES: &[&str] = &[

@@ -155,6 +155,12 @@ export interface CrossFileDuplicationFileData {
   tokens: Token[];
   containerStatements: TokenRange[][];
   /**
+   * The mutually disjoint blocks (at least `minTokens` long, not literal-dense) compared for
+   * cross-file near-miss (Type-3) clones. Optional for backward compatibility; without it, the
+   * file takes part in exact and gapped cross-file matching only.
+   */
+  nearMissBlocks?: TokenRange[];
+  /**
    * 1-based lines that are neither blank nor comment-only, so cross-file line coverage counts only
    * code lines (blank rows inside multi-row tokens such as template literals carry no content).
    * Optional for backward compatibility; without it, every matched-token row counts.
@@ -403,6 +409,14 @@ function enumerateContainerWindows(tokens: Token[], statements: TokenRange[], mi
  * `v = x & ~(x - ((v << 1) | 1))` over multi-word bit vectors; the set bits of `v` count the LCS.
  */
 export function lcsLength(a: Int32Array, b: Int32Array): number {
+  return createLcsLengthCounter(a)(b);
+}
+
+/**
+ * lcsLength against a fixed `a`, whose per-symbol position masks are built once and reused for
+ * every `b` compared with it.
+ */
+export function createLcsLengthCounter(a: Int32Array): (b: Int32Array) => number {
   const wordCount = (a.length + 31) >>> 5;
   const positionMasks = new Map<number, Uint32Array>();
   for (const [index, symbol] of a.entries()) {
@@ -419,30 +433,33 @@ export function lcsLength(a: Int32Array, b: Int32Array): number {
   }
 
   const v = new Uint32Array(wordCount);
-  for (const symbol of b) {
-    const matchMask = positionMasks.get(symbol);
-    // `(v << 1) | 1` shifts a carry bit across words; subtraction borrows across words.
-    let shiftCarry = 1;
-    let borrow = 0;
-    for (let word = 0; word < wordCount; word += 1) {
-      const previous = v[word] ?? 0;
-      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `>>> 0` reinterprets the signed int32 bit pattern as unsigned so the borrow subtraction below compares magnitudes; Math.trunc would keep it negative.
-      const x = ((matchMask?.[word] ?? 0) | previous) >>> 0;
-      // oxlint-disable-next-line unicorn/prefer-math-trunc -- same unsigned reinterpretation as `x`.
-      const shifted = ((previous << 1) | shiftCarry) >>> 0;
-      shiftCarry = previous >>> 31;
-      const difference = x - shifted - borrow;
-      borrow = difference < 0 ? 1 : 0;
-      // The Uint32Array store wraps the signed int32 bit pattern to unsigned.
-      v[word] = x & ~difference;
+  return (b) => {
+    v.fill(0);
+    for (const symbol of b) {
+      const matchMask = positionMasks.get(symbol);
+      // `(v << 1) | 1` shifts a carry bit across words; subtraction borrows across words.
+      let shiftCarry = 1;
+      let borrow = 0;
+      for (let word = 0; word < wordCount; word += 1) {
+        const previous = v[word] ?? 0;
+        // oxlint-disable-next-line unicorn/prefer-math-trunc -- `>>> 0` reinterprets the signed int32 bit pattern as unsigned so the borrow subtraction below compares magnitudes; Math.trunc would keep it negative.
+        const x = ((matchMask?.[word] ?? 0) | previous) >>> 0;
+        // oxlint-disable-next-line unicorn/prefer-math-trunc -- same unsigned reinterpretation as `x`.
+        const shifted = ((previous << 1) | shiftCarry) >>> 0;
+        shiftCarry = previous >>> 31;
+        const difference = x - shifted - borrow;
+        borrow = difference < 0 ? 1 : 0;
+        // The Uint32Array store wraps the signed int32 bit pattern to unsigned.
+        v[word] = x & ~difference;
+      }
     }
-  }
 
-  let length = 0;
-  for (const word of v) {
-    length += popCount(word);
-  }
-  return length;
+    let length = 0;
+    for (const word of v) {
+      length += popCount(word);
+    }
+    return length;
+  };
 }
 
 function popCount(value: number): number {
@@ -621,8 +638,9 @@ export function mergeAdjacentGroups<T extends CountedOccurrence>(
   groups.sort(compareGroups);
   for (let restart = true; restart;) {
     restart = false;
+    const partnersByGroup = collectGapAdjacentPartners(groups, maxGapTokens);
     for (let leftIndex = 0; leftIndex < groups.length && !restart; leftIndex += 1) {
-      for (let rightIndex = leftIndex + 1; rightIndex < groups.length; rightIndex += 1) {
+      for (const rightIndex of partnersByGroup[leftIndex] ?? []) {
         const left = groups[leftIndex];
         const right = groups[rightIndex];
         if (!left || !right) {
@@ -661,6 +679,52 @@ export function mergeAdjacentGroups<T extends CountedOccurrence>(
     }
   }
   return groups;
+}
+
+/**
+ * Per group index, the ascending indexes of later groups that mergeGroups can pair with it in
+ * either direction: an occurrence of one starts within `maxGapTokens` after an occurrence of the
+ * other ends. Every other pair fails mergeGroups, so skipping it leaves the fixpoint unchanged
+ * while each restart stops costing a comparison per pair of groups.
+ */
+function collectGapAdjacentPartners(groups: CountedOccurrence[][], maxGapTokens: number): number[][] {
+  const starts: { startTokenIndex: number; groupIndex: number }[] = [];
+  for (const [groupIndex, group] of groups.entries()) {
+    for (const occurrence of group) {
+      starts.push({ startTokenIndex: occurrence.startTokenIndex, groupIndex });
+    }
+  }
+  starts.sort((left, right) => left.startTokenIndex - right.startTokenIndex);
+  const partners = groups.map(() => new Set<number>());
+  for (const [groupIndex, group] of groups.entries()) {
+    for (const occurrence of group) {
+      for (
+        let index = lowerBoundByStart(starts, occurrence.endTokenIndex);
+        index < starts.length && (starts[index]?.startTokenIndex ?? 0) <= occurrence.endTokenIndex + maxGapTokens;
+        index += 1
+      ) {
+        const other = starts[index]?.groupIndex ?? groupIndex;
+        if (other !== groupIndex) {
+          partners[Math.min(other, groupIndex)]?.add(Math.max(other, groupIndex));
+        }
+      }
+    }
+  }
+  return partners.map((set) => [...set].toSorted((left, right) => left - right));
+}
+
+function lowerBoundByStart(sorted: { startTokenIndex: number }[], target: number): number {
+  let low = 0;
+  let high = sorted.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if ((sorted[middle]?.startTokenIndex ?? 0) < target) {
+      low = middle + 1;
+    } else {
+      high = middle;
+    }
+  }
+  return low;
 }
 
 function compareGroups(left: CountedOccurrence[], right: CountedOccurrence[]): number {

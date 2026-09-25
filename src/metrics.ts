@@ -4,6 +4,7 @@ import {
   collectCrossFileDataNative,
   collectFunctionTokenSequencesNative,
   measureCodeNative,
+  type NativeCrossFileDataPayload,
   type NativeHalsteadCounts,
   type NativeMetricsPayload,
 } from './nativeMetrics.js';
@@ -28,6 +29,23 @@ export class TreeMeasurer {
     return assembleNativeMetrics(payload, includeSyntaxTree);
   }
 
+  /** Measures a file and collects its cross-file clone-detection contribution from one parse. */
+  measureWithCrossFileData(
+    code: string,
+    options: MeasureOptions
+  ): { metrics: CodeMetrics; crossFileData: CrossFileDuplicationFileData } {
+    const language = this.resolveLanguage(options.language);
+    const includeSyntaxTree = options.includeSyntaxTree ?? false;
+    const payload = measureCodeNative(code, language.name, includeSyntaxTree, options.duplication, true);
+    if (!payload.crossFileData) {
+      throw new Error('The native addon returned no cross-file duplication data');
+    }
+    return {
+      metrics: assembleNativeMetrics(payload, includeSyntaxTree),
+      crossFileData: toCrossFileDuplicationFileData(payload.crossFileData),
+    };
+  }
+
   /** Collects one file's duplicate candidates for cross-file clone detection. */
   collectDuplicationCandidates(code: string, options: MeasureOptions): CrossFileDuplicateCandidate[] {
     return this.collectCrossFileDuplicationFileData(code, options).candidates;
@@ -39,14 +57,9 @@ export class TreeMeasurer {
    */
   collectCrossFileDuplicationFileData(code: string, options: MeasureOptions): CrossFileDuplicationFileData {
     const language = this.resolveLanguage(options.language);
-    const payload = collectCrossFileDataNative(code, language.name, options.duplication?.minTokens);
-    return {
-      candidates: payload.candidates,
-      tokens: payload.tokens,
-      containerStatements: payload.containerStatements,
-      // Lets cross-file line coverage count only code lines, like within-file coverage.
-      codeLineNumbers: new Set(payload.codeLineNumbers),
-    };
+    return toCrossFileDuplicationFileData(
+      collectCrossFileDataNative(code, language.name, options.duplication?.minTokens)
+    );
   }
 
   /**
@@ -67,6 +80,17 @@ export class TreeMeasurer {
     }
     return language;
   }
+}
+
+function toCrossFileDuplicationFileData(payload: NativeCrossFileDataPayload): CrossFileDuplicationFileData {
+  return {
+    candidates: payload.candidates,
+    tokens: payload.tokens,
+    containerStatements: payload.containerStatements,
+    nearMissBlocks: payload.nearMissBlocks,
+    // Lets cross-file line coverage count only code lines, like within-file coverage.
+    codeLineNumbers: new Set(payload.codeLineNumbers),
+  };
 }
 
 /**
@@ -129,6 +153,14 @@ export const defaultMeasurer = new TreeMeasurer();
 
 export function measureCode(code: string, options: MeasureOptions): CodeMetrics {
   return defaultMeasurer.measure(code, options);
+}
+
+/** Standalone helper mirroring measureCode for the default measurer. */
+export function measureCodeWithCrossFileData(
+  code: string,
+  options: MeasureOptions
+): { metrics: CodeMetrics; crossFileData: CrossFileDuplicationFileData } {
+  return defaultMeasurer.measureWithCrossFileData(code, options);
 }
 
 /** Standalone helper mirroring measureCode for the default measurer. */

@@ -158,7 +158,9 @@ The `duplication` section tunes how clones are detected:
   similarity (n-gram filtration, then token-level longest-common-subsequence verification, following
   NIL and NiCad), so a near-miss (Type-3) clone with scattered small edits is still reported when
   both blocks are at least this similar and share more than half of their content-bearing tokens.
-  `100` disables near-miss detection. Applies to within-file detection only.
+  `100` disables near-miss detection. Applies to within-file detection and to cross-file matching
+  alike; across files, n-grams shared by more than 1000 blocks (syntax boilerplate) are left out of
+  the filtration index so boilerplate cannot make candidate counting quadratic in the block count.
 
 ## Metrics
 
@@ -184,7 +186,8 @@ The `duplication` section tunes how clones are detected:
   match), with adjacent matches around a small edit merged into gapped (Type-3) clone groups and
   near-miss (Type-3) clones matched by token-LCS similarity, plus duplicated line count and ratio
 - Cross-file duplication (via `measureCrossFileDuplication`): copy-pasted blocks shared between
-  files, matched with the same normalization and reported as groups with their file locations
+  files, matched with the same normalization (exact, gapped, and near-miss clones) and reported as
+  groups with their file locations
 - Halstead base counts, vocabulary, length, volume, and effort, per function and per file — the
   strongest correlates of measured cognitive load in the EEG/fMRI validation literature
 - Per-function DepDegree (Beyer & Fararooy 2010), approximated as the number of variable reads
