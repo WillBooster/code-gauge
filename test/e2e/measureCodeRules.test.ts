@@ -232,6 +232,81 @@ describe('cognitive complexity: language-specific decision constructs', () => {
   });
 });
 
+describe('cyclomatic complexity: NIST SP 500-235 counting', () => {
+  const cyclomaticOf = (language: string, code: string): number[] =>
+    functionsOf(language, code).map((fn) => fn.cyclomaticComplexity);
+
+  it.each([
+    // Short-circuit operators add a path wherever they appear; full-evaluation `&`/`|` do not.
+    ['java', 'class A { boolean f(boolean a, boolean b) { boolean x = a && b; return x || a; } }', 3],
+    ['java', 'class A { void f(boolean a, boolean b) { if (a & b) { } } }', 2],
+    ['python', 'def f(a, b):\n    return a and b or a\n', 3],
+    ['cpp', 'bool f(bool a, bool b) { return a and b; }', 2],
+    // `throw` is not a decision.
+    ['java', 'class A { void f(boolean a) { if (a) { throw new IllegalStateException(); } } }', 2],
+    ['typescript', 'function f(a: boolean) { if (a) { throw new Error(); } }', 2],
+    // One path per case-labelled statement: stacked labels share one, and a label stacked on
+    // `default` merges into the default outcome.
+    ['java', 'class A { int f(int x) { switch (x) { case 1: case 2: return 1; case 3: default: return 0; } } }', 2],
+    ['java', 'class A { int f(int x) { switch (x) { case 1, 2 -> { return 1; } default -> { return 0; } } } }', 2],
+    ['c', 'int f(int x) { switch (x) { case 1: case 2: return 1; case 3: default: return 0; } }', 2],
+    ['javascript', 'function f(x) { switch (x) { case 1: case 2: return 1; case 3: default: return 0; } }', 2],
+    ['csharp', 'class A { int F(int x) { switch (x) { case 1: case 2: return 1; case 3: default: return 0; } } }', 2],
+    ['go', 'package p\nfunc f(x int) int { switch x { case 1, 2: return 1 }; return 0 }', 2],
+    // Pattern cases and their guards are decisions like any other case and guard.
+    [
+      'java',
+      'class A { int f(Object o) { return switch (o) { case String s when s.isEmpty() -> 1; case Integer i -> 2; default -> 0; }; } }',
+      4,
+    ],
+    // `case null, default` is the default outcome; `case null` alone is an ordinary case.
+    ['java', 'class A { int f(Object x) { return switch (x) { case String s -> 1; case null, default -> 0; }; } }', 2],
+    ['java', 'class A { int f(Object x) { return switch (x) { case null -> 1; default -> 0; }; } }', 2],
+    // A label-only `default` stacked above cases merges them into the default outcome too.
+    ['c', 'int f(int x) { switch (x) { case 1: return 1; default: case 2: case 3: return 0; } }', 2],
+    ['java', 'class A { int f(int x) { switch (x) { case 1: return 1; default: case 3: return 0; } } }', 2],
+    ['javascript', 'function f(x) { switch (x) { case 1: return 1; default: case 3: return 0; } }', 2],
+    ['csharp', 'class A { int F(int x) { switch (x) { case 1: return 1; default: case 3: return 0; } } }', 2],
+    // A C# section whose body sits inside `#if` still has a statement.
+    [
+      'csharp',
+      'class A { int F(int x) { switch (x) {\ncase 1:\n#if DEBUG\n    return 1;\n#endif\ndefault:\n    return 0;\n} } }',
+      2,
+    ],
+    // A guarded catch-all is conditional, so a case label stacked with it keeps its path.
+    [
+      'csharp',
+      'class A { int F(int x, bool c) { switch (x) { case 1: case _ when c: return 0; default: return 1; } } }',
+      3,
+    ],
+    [
+      'csharp',
+      'class A { int F(int x, bool c) { switch (x) { case _ when c: case 1: return 0; default: return 1; } } }',
+      3,
+    ],
+    [
+      'csharp',
+      'class A { int F(int x, bool c) { switch (x) { case 1: return 1; case _ when c: return 0; default: return 1; } } }',
+      3,
+    ],
+  ])('%s: %s', (language, code, expected) => {
+    expect(cyclomaticOf(language, code)).toEqual([expected]);
+  });
+
+  it('does not report declarations without a body as functions', () => {
+    expect(functionsOf('java', 'interface I { int a(); default int b() { return 1; } }').map((fn) => fn.name)).toEqual([
+      'b',
+    ]);
+    expect(
+      functionsOf('csharp', 'abstract class C { public abstract void D(); public int E() => 2; }').map((fn) => fn.name)
+    ).toEqual(['E']);
+    expect(functionsOf('kotlin', 'interface I { fun a(): Int; fun b(): Int = 1 }').map((fn) => fn.name)).toEqual(['b']);
+    expect(functionsOf('go', 'package p\nfunc asm() int\nfunc F() int { return 1 }\n').map((fn) => fn.name)).toEqual([
+      'F',
+    ]);
+  });
+});
+
 describe('cyclomatic complexity: catch-all switch arms', () => {
   const cyclomaticOf = (language: string, code: string): number[] =>
     functionsOf(language, code).map((fn) => fn.cyclomaticComplexity);

@@ -6,7 +6,6 @@ use napi_derive::napi;
 use crate::duplication::DuplicationSettings;
 
 mod complexity;
-mod cyclomatic;
 mod dep_degree;
 mod duplication;
 mod functions;
