@@ -10,7 +10,7 @@ use crate::types::{
 };
 use crate::util::{all_children, is_identifier_leaf, named_children, node_text, to_int32, Source};
 
-/// Block-like nodes considered as whole-subtree duplicate candidates; see duplication.ts.
+/// Block-like nodes considered as whole-subtree duplicate candidates.
 const DUPLICATE_BLOCK_TYPES: &[&str] = &[
     "statement_block",
     "block",
@@ -314,11 +314,12 @@ impl Default for DuplicationSettings {
         }
     }
 }
-/// N-gram size for the near-miss candidate index (NIL's default); see duplication.ts.
+/// N-gram size for the near-miss candidate index (NIL's default); shared with crossFileNearMiss.ts.
 const NEAR_MISS_NGRAM_SIZE: usize = 5;
-/// Filtration threshold: shared distinct n-grams over the smaller set; see duplication.ts.
+/// Filtration threshold: shared distinct n-grams over the smaller set; shared with crossFileNearMiss.ts.
 const NEAR_MISS_FILTRATION_PERCENT: usize = 10;
-/// Exclusive bound on shared content-bearing tokens (names and literal values); see duplication.ts.
+/// Exclusive bound on shared content-bearing tokens (names and literal values); shared with
+/// crossFileNearMiss.ts.
 const MIN_CONTENT_SIMILARITY_PERCENT: usize = 50;
 
 /// See isLiteralDense in duplication.ts: >= 20% literal values marks a region as data-like.
@@ -377,15 +378,17 @@ struct DuplicateCandidate {
     end_line: usize,
 }
 
-/// Detects copy-pasted regions within a file; a faithful port of measureDuplication in
-/// duplication.ts, including its JavaScript int32 hash arithmetic and insertion-order maps.
-pub fn measure_duplication(
-    root: Node<'_>,
-    code_line_numbers: &HashSet<usize>,
-    code: &Source<'_>,
-    settings: &DuplicationSettings,
-) -> DuplicationMetrics {
-    let mut tokens: Vec<Token<'_>> = Vec::new();
+/// A file's normalized token stream with the block and statement structure clone detection
+/// matches over, built once per parse and shared by within-file and cross-file detection.
+pub struct TokenizedSource<'a> {
+    tokens: Vec<Token<'a>>,
+    block_ranges: Vec<TokenRange>,
+    container_statement_ranges: Vec<Vec<TokenRange>>,
+    literal_count_prefix: Vec<usize>,
+}
+
+pub fn tokenize<'a>(root: Node<'_>, code: &Source<'a>) -> TokenizedSource<'a> {
+    let mut tokens: Vec<Token<'a>> = Vec::new();
     let mut block_ranges: Vec<TokenRange> = Vec::new();
     let mut container_statement_ranges: Vec<Vec<TokenRange>> = Vec::new();
     collect_tokens(
@@ -395,66 +398,70 @@ pub fn measure_duplication(
         &mut block_ranges,
         &mut container_statement_ranges,
     );
-
     let literal_count_prefix = build_literal_count_prefix(&tokens);
+    TokenizedSource {
+        tokens,
+        block_ranges,
+        container_statement_ranges,
+        literal_count_prefix,
+    }
+}
+
+/// Detects copy-pasted regions within a file; a faithful port of measureDuplication in
+/// duplication.ts, including its JavaScript int32 hash arithmetic and insertion-order maps.
+pub fn measure_duplication(
+    source: &TokenizedSource<'_>,
+    code_line_numbers: &HashSet<usize>,
+    settings: &DuplicationSettings,
+) -> DuplicationMetrics {
+    let tokens = &source.tokens;
+    let literal_count_prefix = &source.literal_count_prefix;
     let mut candidates = collect_block_candidates(
-        &tokens,
-        &literal_count_prefix,
-        &block_ranges,
+        tokens,
+        literal_count_prefix,
+        &source.block_ranges,
         settings.min_tokens,
     );
     candidates.extend(collect_sequence_candidates(
-        &tokens,
-        &literal_count_prefix,
-        &container_statement_ranges,
+        tokens,
+        literal_count_prefix,
+        &source.container_statement_ranges,
         settings.min_tokens,
     ));
     let counted = select_maximal_duplicates(candidates);
     let mut groups = merge_adjacent_groups(to_counted_groups(&counted), settings.max_gap_tokens);
-    let near_miss = collect_near_miss_groups(
-        &tokens,
-        &literal_count_prefix,
-        &block_ranges,
-        settings,
-        &mut groups,
-    );
+    let near_miss = collect_near_miss_groups(source, settings, &mut groups);
     // Near-miss clustering can merge exact groups away, leaving empty entries behind.
     groups.retain(|group| !group.is_empty());
     groups.extend(near_miss);
-    summarize_duplicates(&groups, code_line_numbers, &tokens)
+    summarize_duplicates(&groups, code_line_numbers, tokens)
 }
 
 /// Collects one file's contribution to cross-file clone detection: catalogued candidates (whole
-/// block subtrees plus each statement container's full run) together with the normalized token
-/// stream and statement structure. A faithful port of collectCrossFileDuplicateCandidates in
-/// duplication.ts. Source indexes are emitted in UTF-16 code units (the tree is parsed from
-/// UTF-16, so node byte offsets are halved) to match JavaScript string indexes.
+/// block subtrees plus each statement container's full run), the normalized token stream and
+/// statement structure, and the blocks near-miss comparison considers. Source indexes are emitted
+/// in UTF-16 code units (the tree is parsed from UTF-16, so node byte offsets are halved) to match
+/// JavaScript string indexes.
 pub fn collect_cross_file_file_data(
-    root: Node<'_>,
-    code: &Source<'_>,
+    source: &TokenizedSource<'_>,
     min_tokens: usize,
 ) -> (
     Vec<CrossFileCandidate>,
     Vec<CrossFileToken>,
     Vec<Vec<CrossFileTokenRange>>,
+    Vec<CrossFileTokenRange>,
 ) {
-    let mut tokens: Vec<Token<'_>> = Vec::new();
-    let mut block_ranges: Vec<TokenRange> = Vec::new();
-    let mut container_statement_ranges: Vec<Vec<TokenRange>> = Vec::new();
-    collect_tokens(
-        root,
-        code,
-        &mut tokens,
-        &mut block_ranges,
-        &mut container_statement_ranges,
+    let tokens = &source.tokens;
+    let literal_count_prefix = &source.literal_count_prefix;
+    let mut candidates = collect_block_candidates(
+        tokens,
+        literal_count_prefix,
+        &source.block_ranges,
+        min_tokens,
     );
-    let literal_count_prefix = build_literal_count_prefix(&tokens);
-
-    let mut candidates =
-        collect_block_candidates(&tokens, &literal_count_prefix, &block_ranges, min_tokens);
     // Single-statement containers are catalogued too: a file whose only top-level statement is not
     // a block type (a lone exported table) must still be matchable when wholly copied.
-    for statements in &container_statement_ranges {
+    for statements in &source.container_statement_ranges {
         let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
             continue;
         };
@@ -465,8 +472,8 @@ pub fn collect_cross_file_file_data(
         let fingerprint = format!(
             "s:{}",
             fingerprint_key(
-                &tokens,
-                &literal_count_prefix,
+                tokens,
+                literal_count_prefix,
                 first.start_token_index,
                 last.end_token_index
             )
@@ -507,27 +514,32 @@ pub fn collect_cross_file_file_data(
             end_row: token.end_row,
         })
         .collect();
-    let container_statement_payloads = container_statement_ranges
+    let container_statement_payloads = source
+        .container_statement_ranges
         .iter()
-        .map(|statements| {
-            statements
-                .iter()
-                .map(|range| CrossFileTokenRange {
-                    start_token_index: range.start_token_index,
-                    end_token_index: range.end_token_index,
-                    start_index: range.start_index / 2,
-                    end_index: range.end_index / 2,
-                    start_line: range.start_line,
-                    end_line: range.end_line,
-                })
-                .collect()
-        })
+        .map(|statements| statements.iter().map(to_token_range_payload).collect())
+        .collect();
+    let near_miss_block_payloads = select_near_miss_blocks(source, min_tokens)
+        .into_iter()
+        .map(to_token_range_payload)
         .collect();
     (
         candidate_payloads,
         token_payloads,
         container_statement_payloads,
+        near_miss_block_payloads,
     )
+}
+
+fn to_token_range_payload(range: &TokenRange) -> CrossFileTokenRange {
+    CrossFileTokenRange {
+        start_token_index: range.start_token_index,
+        end_token_index: range.end_token_index,
+        start_index: range.start_index / 2,
+        end_index: range.end_index / 2,
+        start_line: range.start_line,
+        end_line: range.end_line,
+    }
 }
 
 fn collect_tokens<'a>(
@@ -577,8 +589,9 @@ fn collect_tokens<'a>(
                     statement_ranges.push(child_range);
                 }
             }
-            // Single-statement containers are recorded too, mirroring collectTokens in
-            // duplication.ts: window enumeration needs two statements and yields nothing for them.
+            // Single-statement containers are recorded too: window enumeration needs two
+            // statements and yields nothing for them, but cross-file matching catalogues each
+            // container's full run.
             if is_container && !statement_ranges.is_empty() {
                 container_statement_ranges.push(statement_ranges);
             }
@@ -731,8 +744,8 @@ fn make_text_token<'a>(
     }
 }
 
-/// The value of a literal as folded into literal-dense fingerprints; see literalValueText in
-/// duplication.ts for the delimiter-independence rationale mirrored here.
+/// The value of a literal as folded into literal-dense fingerprints, independent of its delimiter
+/// spelling (quote style, C# verbatim prefix) so equal values in differently quoted copies match.
 fn literal_value_text<'a>(node: Node<'_>, kind: &str, code: &Source<'a>) -> Cow<'a, str> {
     if kind != "#str" && kind != "#char" {
         return Cow::Borrowed(node_text(node, code));
@@ -759,8 +772,8 @@ fn literal_value_text<'a>(node: Node<'_>, kind: &str, code: &Source<'a>) -> Cow<
     Cow::Borrowed(strip_matching_quotes(text))
 }
 
-/// Strips one matching pair of surrounding ASCII quotes, matching stripMatchingQuotes in
-/// duplication.ts (quote characters are ASCII, so byte indexing is UTF-8 safe).
+/// Strips one matching pair of surrounding ASCII quotes (quote characters are ASCII, so byte
+/// indexing is UTF-8 safe).
 fn strip_matching_quotes(text: &str) -> &str {
     let bytes = text.as_bytes();
     if bytes.len() >= 2 {
@@ -989,7 +1002,7 @@ struct ContainerWindows {
     statement_hashes: Vec<i32>,
 }
 
-/// Enumerates runs of consecutive sibling statements; see collectSequenceCandidates in
+/// Enumerates runs of consecutive sibling statements; see collectSequenceWindowCandidates in
 /// duplication.ts for the maximality and sub-window rules replicated here.
 fn collect_sequence_candidates(
     tokens: &[Token<'_>],
@@ -1319,7 +1332,7 @@ fn combine_hashes(hash: i64, value: i64) -> i64 {
     (to_int32(hash).wrapping_mul(31)) as i64 + value
 }
 
-/// Keeps only maximal, non-overlapping duplicates; see selectMaximalDuplicates in duplication.ts.
+/// Keeps only maximal, non-overlapping duplicates; see selectMaximalGroups in duplicateSelection.ts.
 fn select_maximal_duplicates(
     candidates: Vec<DuplicateCandidate>,
 ) -> IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> {
@@ -1474,8 +1487,9 @@ fn merge_adjacent_groups(
     let mut restart = true;
     while restart {
         restart = false;
-        'outer: for left_index in 0..groups.len() {
-            for right_index in left_index + 1..groups.len() {
+        let partners_by_group = collect_gap_adjacent_partners(&groups, max_gap_tokens);
+        'outer: for (left_index, partners) in partners_by_group.iter().enumerate() {
+            for &right_index in partners {
                 let forward =
                     merge_groups(&groups[left_index], &groups[right_index], max_gap_tokens);
                 let swapped = forward.is_none();
@@ -1514,6 +1528,43 @@ fn merge_adjacent_groups(
         }
     }
     groups
+}
+
+/// Per group index, the ascending indexes of later groups that merge_groups can pair with it;
+/// see collectGapAdjacentPartners in duplication.ts.
+fn collect_gap_adjacent_partners(
+    groups: &[Vec<CountedOccurrence>],
+    max_gap_tokens: usize,
+) -> Vec<Vec<usize>> {
+    let mut starts: Vec<(usize, usize)> = groups
+        .iter()
+        .enumerate()
+        .flat_map(|(group_index, group)| {
+            group
+                .iter()
+                .map(move |occurrence| (occurrence.start_token_index, group_index))
+        })
+        .collect();
+    starts.sort_unstable();
+    let mut partners: Vec<std::collections::BTreeSet<usize>> =
+        vec![std::collections::BTreeSet::new(); groups.len()];
+    for (group_index, group) in groups.iter().enumerate() {
+        for occurrence in group {
+            let first = starts.partition_point(|&(start, _)| start < occurrence.end_token_index);
+            for &(start, other) in &starts[first..] {
+                if start > occurrence.end_token_index + max_gap_tokens {
+                    break;
+                }
+                if other != group_index {
+                    partners[other.min(group_index)].insert(other.max(group_index));
+                }
+            }
+        }
+    }
+    partners
+        .into_iter()
+        .map(|set| set.into_iter().collect())
+        .collect()
 }
 
 fn group_sort_key(group: &[CountedOccurrence]) -> (usize, usize) {
@@ -1612,41 +1663,19 @@ fn merge_groups(
 }
 
 /// Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
-/// unreported; a faithful port of collectNearMissGroups in duplication.ts (NIL-style n-gram
-/// filtration, then token-level LCS with NiCad-style per-fragment similarity, then transitive
-/// clustering of verified pairs).
+/// unreported: NIL-style n-gram filtration, then token-level LCS with NiCad-style per-fragment
+/// similarity, then transitive clustering of verified pairs (crossFileNearMiss.ts applies the same
+/// model across files).
 fn collect_near_miss_groups(
-    tokens: &[Token<'_>],
-    literal_count_prefix: &[usize],
-    block_ranges: &[TokenRange],
+    source: &TokenizedSource<'_>,
     settings: &DuplicationSettings,
     reported_groups: &mut [Vec<CountedOccurrence>],
 ) -> Vec<Vec<CountedOccurrence>> {
     if settings.min_similarity_percent >= 100 {
         return Vec::new();
     }
-    let mut eligible: Vec<&TokenRange> = block_ranges
-        .iter()
-        .filter(|range| {
-            let token_count = range.end_token_index - range.start_token_index;
-            let literal_count = literal_count_prefix
-                .get(range.end_token_index)
-                .copied()
-                .unwrap_or(0)
-                - literal_count_prefix
-                    .get(range.start_token_index)
-                    .copied()
-                    .unwrap_or(0);
-            token_count >= settings.min_tokens && !is_literal_dense(literal_count, token_count)
-        })
-        .collect();
-    eligible.sort_by_key(|range| {
-        (
-            range.start_token_index,
-            std::cmp::Reverse(range.end_token_index),
-        )
-    });
-    let comparable = select_comparable_blocks(&eligible);
+    let tokens = &source.tokens;
+    let comparable = select_near_miss_blocks(source, settings.min_tokens);
     if comparable.len() < 2 {
         return Vec::new();
     }
@@ -1712,7 +1741,7 @@ fn collect_near_miss_groups(
             continue;
         }
         // A structural match must be backed by shared content (names and literal values); the
-        // bound is exclusive, matching duplication.ts.
+        // bound is exclusive, matching crossFileNearMiss.ts.
         if content_overlap(left, right) * 100
             <= MIN_CONTENT_SIMILARITY_PERCENT * left.content_total.max(right.content_total)
         {
@@ -1770,7 +1799,7 @@ fn collect_near_miss_groups(
             continue;
         }
         // An anchored cluster extends a reported group only when that group lies entirely inside
-        // the cluster; see collectNearMissGroups in duplication.ts.
+        // the cluster: a group reaching outside it also duplicates content the cluster lacks.
         let overlaps_member = |occurrence: &CountedOccurrence| {
             members.iter().any(|&index| {
                 let range = comparable[index];
@@ -1790,15 +1819,14 @@ fn collect_near_miss_groups(
             })
             .collect();
         if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
-            // Rebuild the component as ONE group with one coalesced occurrence per member block;
-            // see collectNearMissGroups in duplication.ts.
+            // Rebuild the component as ONE group with one coalesced occurrence per member block.
             let mut consumed: HashSet<(usize, usize)> = HashSet::new();
             let mut merged: Vec<CountedOccurrence> = Vec::new();
             for &member_index in members {
                 let range = comparable[member_index];
                 // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
                 // groups belong to the same copy. Consecutive position-order slices keep the
-                // coalesced spans disjoint; see collectNearMissGroups in duplication.ts.
+                // coalesced spans disjoint.
                 let mut fragments: Vec<(CountedOccurrence, usize)> = Vec::new();
                 for &group_index in &fully_clustered {
                     for (occurrence_index, occurrence) in
@@ -1859,9 +1887,35 @@ fn collect_near_miss_groups(
     groups
 }
 
-/// Keeps the block ranges the near-miss phase compares; a faithful port of selectComparableBlocks
-/// in duplication.ts (wrappers whose subtree branches into two or more disjoint eligible
-/// sub-blocks are descended through; linear chains keep their top).
+/// The mutually disjoint blocks near-miss comparison considers: at least `min_tokens` long, not
+/// literal-dense (data tables are compared by value, not shape), and selected by
+/// select_comparable_blocks.
+fn select_near_miss_blocks<'s>(
+    source: &'s TokenizedSource<'_>,
+    min_tokens: usize,
+) -> Vec<&'s TokenRange> {
+    let literal_count_prefix = &source.literal_count_prefix;
+    let mut eligible: Vec<&TokenRange> = source
+        .block_ranges
+        .iter()
+        .filter(|range| {
+            let token_count = range.end_token_index - range.start_token_index;
+            let literal_count = literal_count_prefix[range.end_token_index]
+                - literal_count_prefix[range.start_token_index];
+            token_count >= min_tokens && !is_literal_dense(literal_count, token_count)
+        })
+        .collect();
+    eligible.sort_by_key(|range| {
+        (
+            range.start_token_index,
+            std::cmp::Reverse(range.end_token_index),
+        )
+    });
+    select_comparable_blocks(&eligible)
+}
+
+/// Keeps the block ranges the near-miss phase compares: wrappers whose subtree branches into two
+/// or more disjoint eligible sub-blocks are descended through; linear chains keep their top.
 fn select_comparable_blocks<'a>(eligible: &[&'a TokenRange]) -> Vec<&'a TokenRange> {
     struct ForestNode<'a> {
         range: &'a TokenRange,
@@ -1919,8 +1973,7 @@ fn select_comparable_blocks<'a>(eligible: &[&'a TokenRange]) -> Vec<&'a TokenRan
     kept
 }
 
-/// One copy's fragments (an exact prefix and suffix split by a large edit) as one occurrence;
-/// mirrors coalesceOccurrences in duplication.ts.
+/// One copy's fragments (an exact prefix and suffix split by a large edit) as one occurrence.
 fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrence {
     if occurrences.len() == 1 {
         return occurrences.into_iter().next().expect("non-empty");
@@ -1966,8 +2019,8 @@ struct NormalizedBlock {
     content_total: usize,
 }
 
-/// A block's tokens as comparable integers; see normalizeBlockSequence in duplication.ts
-/// (literal VALUES are folded into the symbol, unlike the exact fingerprint's kind tags).
+/// A block's tokens as comparable integers (literal VALUES are folded into the symbol, unlike the
+/// exact fingerprint's kind tags).
 fn normalize_block_sequence(
     tokens: &[Token<'_>],
     range: &TokenRange,

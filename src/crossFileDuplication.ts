@@ -1,3 +1,4 @@
+import { collectCrossFileNearMissGroups } from './crossFileNearMiss.js';
 import { selectMaximalGroups, type SelectableRegion } from './duplicateSelection.js';
 import {
   buildLiteralCountPrefix,
@@ -27,7 +28,10 @@ export interface CrossFileDuplicateOccurrence {
 export interface CrossFileDuplicateBlockGroup {
   files: string[];
   occurrences: CrossFileDuplicateOccurrence[];
-  /** Matched token count of one occurrence (all occurrences share it; gaps are not counted). */
+  /**
+   * Matched token count of the smallest occurrence (gaps are not counted). Exact and gapped groups'
+   * occurrences all share it; near-miss (Type-3) occurrences differ by their edits.
+   */
   tokenCount: number;
 }
 
@@ -56,6 +60,7 @@ interface SelectableCandidate extends CrossFileDuplicateCandidate, SelectableReg
 /** A cross-file occurrence: a within-file occurrence in the project-wide token index space. */
 interface CrossFileOccurrence extends CountedOccurrence {
   file: string;
+  fileIndex: number;
 }
 
 /**
@@ -70,12 +75,14 @@ interface CrossFileOccurrence extends CountedOccurrence {
  * a whole function, a third file only a block of it) is reported with its group, so the third
  * file's copy still shows what it duplicates. Groups separated by a small token gap within each file then
  * merge into gapped (Type-3) clone groups under `maxGapTokens`, exactly like within-file merging.
+ * Finally, blocks of files that supplied `nearMissBlocks` are compared across files for near-miss
+ * (Type-3) clones under `minSimilarityPercent` (see crossFileNearMiss.ts).
  */
 export function measureCrossFileDuplication(
   files: CrossFileDuplicationSourceFile[],
   options?: DuplicationOptions
 ): CrossFileDuplicationMetrics {
-  const { minTokens, maxGapTokens } = resolveDuplicationOptions(options);
+  const { minTokens, maxGapTokens, minSimilarityPercent } = resolveDuplicationOptions(options);
   const candidates: SelectableCandidate[] = files.flatMap(({ file, candidates }, fileIndex) =>
     candidates.map((candidate) => ({ ...candidate, regionBucket: fileIndex, file }))
   );
@@ -91,7 +98,43 @@ export function measureCrossFileDuplication(
     (left, right) => left.regionBucket - right.regionBucket || left.startIndex - right.startIndex
   );
   const tokenOffsets = computeTokenOffsets(files, maxGapTokens);
-  return summarize(mergeGapAdjacentGroups([...counted.values()], tokenOffsets, maxGapTokens), files, tokenOffsets);
+  const groups = mergeGapAdjacentGroups([...counted.values()], tokenOffsets, maxGapTokens);
+  for (const group of collectNearMissGroups(files, groups, tokenOffsets, minSimilarityPercent)) {
+    groups.push(group);
+  }
+  return summarize(groups, files, tokenOffsets);
+}
+
+/** Near-miss groups among the blocks the exact groups leave unreported, in the project token space. */
+function collectNearMissGroups(
+  files: CrossFileDuplicationSourceFile[],
+  exactGroups: CrossFileOccurrence[][],
+  tokenOffsets: number[],
+  minSimilarityPercent: number
+): CrossFileOccurrence[][] {
+  const reportedSpansByFile: { startTokenIndex: number; endTokenIndex: number }[][] = files.map(() => []);
+  for (const { fileIndex, startTokenIndex, endTokenIndex } of exactGroups.flat()) {
+    const offset = tokenOffsets[fileIndex] ?? 0;
+    reportedSpansByFile[fileIndex]?.push({
+      startTokenIndex: startTokenIndex - offset,
+      endTokenIndex: endTokenIndex - offset,
+    });
+  }
+  return collectCrossFileNearMissGroups(files, reportedSpansByFile, minSimilarityPercent).map((group) =>
+    group.map((occurrence) => {
+      const offset = tokenOffsets[occurrence.fileIndex] ?? 0;
+      return {
+        ...occurrence,
+        file: files[occurrence.fileIndex]?.file ?? '',
+        segments: occurrence.segments.map((segment) => ({
+          startTokenIndex: segment.startTokenIndex + offset,
+          endTokenIndex: segment.endTokenIndex + offset,
+        })),
+        startTokenIndex: occurrence.startTokenIndex + offset,
+        endTokenIndex: occurrence.endTokenIndex + offset,
+      };
+    })
+  );
 }
 
 /** Repeated sub-windows of sibling statements matched across the whole project's files. */
@@ -161,6 +204,7 @@ function mergeGapAdjacentGroups(
         const end = candidate.endTokenIndex + (tokenOffsets[candidate.regionBucket] ?? 0);
         return {
           file: candidate.file,
+          fileIndex: candidate.regionBucket,
           spanCountedElsewhere: candidate.nestedInLargerGroup,
           nestedInLargerGroup: candidate.nestedInLargerGroup,
           segments: [{ startTokenIndex: start, endTokenIndex: end }],
@@ -210,7 +254,7 @@ function summarize(
     for (const file of files) {
       groupCountByFile.set(file, (groupCountByFile.get(file) ?? 0) + 1);
     }
-    reported.push({ files, occurrences, tokenCount: group[0]?.tokenCount ?? 0 });
+    reported.push({ files, occurrences, tokenCount: Math.min(...group.map(({ tokenCount }) => tokenCount)) });
   }
   reported.sort(
     (left, right) =>

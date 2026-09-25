@@ -4,9 +4,9 @@ import path from 'node:path';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
 import { detectLanguage } from './languages.js';
-import { collectCrossFileDuplicationFileData, measureCode } from './metrics.js';
+import { measureCode, measureCodeWithCrossFileData } from './metrics.js';
 import { NativeAddonError } from './nativeMetrics.js';
-import type { CodeMetrics, DuplicationOptions, LanguageName } from './types.js';
+import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } from './types.js';
 
 /** The scan settings shared by every command (a structural subset of each command's options). */
 export interface ScanOptions {
@@ -315,22 +315,20 @@ async function measureFile(
 
     const code = await readFile(file, 'utf8');
     const measureOptions = { language, duplication: context.options.duplication };
-    const fileMetrics: FileMetrics = { file, metrics: measureCode(code, measureOptions) };
     // Only directory scans compare files against each other; a single-file target has no peers.
-    // Candidate collection is an auxiliary pass: if it fails where measureCode succeeded (an
-    // addon error specific to this pass), that must not discard the measured metrics.
-    if (mode === 'directory') {
-      try {
-        fileMetrics.duplicationCandidates = collectCrossFileDuplicationFileData(code, measureOptions);
-      } catch (error) {
-        // A warning, not an error: the file's metrics are complete, only its participation in
-        // cross-file matching is lost, so it is not "skipped" and must not fail --fail-on-error.
-        context.warnings.push(
-          `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates unavailable: ${formatError(error)}`
-        );
-      }
+    if (mode === 'single-file') {
+      context.files.push({ file, metrics: measureCode(code, measureOptions) });
+      return;
     }
-    context.files.push(fileMetrics);
+    const { metrics, crossFileData, crossFileError } = measureWithCrossFileData(code, measureOptions);
+    if (crossFileError !== undefined) {
+      // A warning, not an error: the file's metrics are complete, only its participation in
+      // cross-file matching is lost, so it is not "skipped" and must not fail --fail-on-error.
+      context.warnings.push(
+        `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates unavailable: ${crossFileError}`
+      );
+    }
+    context.files.push({ file, metrics, duplicationCandidates: crossFileData });
   } catch (error) {
     // A missing native addon fails every file identically: propagate it once as a fatal scan
     // error instead of recording one "skipped" entry per file behind a successful exit code.
@@ -338,6 +336,26 @@ async function measureFile(
       throw error;
     }
     context.errors.push(`${formatPath(file, context.rootDirectory)}: ${formatError(error)}`);
+  }
+}
+
+/**
+ * Measures a file together with its cross-file contribution from one parse. The contribution is
+ * auxiliary: if collecting it fails where plain measurement succeeds (e.g. a payload too large to
+ * cross the addon boundary), the metrics are still returned with the failure message, which
+ * callers report as a warning rather than an error.
+ */
+export function measureWithCrossFileData(
+  code: string,
+  measureOptions: MeasureOptions
+): { metrics: CodeMetrics; crossFileData?: CrossFileDuplicationFileData; crossFileError?: string } {
+  try {
+    return measureCodeWithCrossFileData(code, measureOptions);
+  } catch (error) {
+    if (error instanceof NativeAddonError) {
+      throw error;
+    }
+    return { metrics: measureCode(code, measureOptions), crossFileError: formatError(error) };
   }
 }
 

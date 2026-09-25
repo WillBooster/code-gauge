@@ -21,10 +21,12 @@ mod util;
 /// together with `expectedPayloadVersion` in src/nativeMetrics.ts.
 #[napi]
 pub fn payload_version() -> u32 {
-    6
+    7
 }
 
-/// Measures code metrics for the given source, returning the NativeMetrics payload as JSON.
+/// Measures code metrics for the given source, returning the NativeMetrics payload as JSON; with
+/// `include_cross_file_data`, the payload also carries the file's cross-file clone-detection
+/// contribution from the same parse.
 /// The TypeScript wrapper derives the remaining float metrics (Halstead volume/effort/...): they
 /// involve transcendental functions whose last-bit results can differ between V8 and Rust's libm,
 /// and results must not depend on which side computes them.
@@ -36,6 +38,7 @@ pub fn measure_code_native(
     min_tokens: Option<u32>,
     max_gap_tokens: Option<u32>,
     min_similarity_percent: Option<u32>,
+    include_cross_file_data: Option<bool>,
 ) -> Result<String> {
     let definition = find_language(&language)?;
     let settings = to_duplication_settings(min_tokens, max_gap_tokens, min_similarity_percent);
@@ -43,6 +46,7 @@ pub fn measure_code_native(
         &code,
         definition,
         include_syntax_tree.unwrap_or(false),
+        include_cross_file_data.unwrap_or(false),
         &settings,
     )
     .map_err(Error::from_reason)?;

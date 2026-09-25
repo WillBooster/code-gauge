@@ -17,6 +17,9 @@ pub struct NativeMetrics {
     pub nesting_depth: u64,
     pub ncss_count: u64,
     pub duplication: DuplicationMetrics,
+    /// Collected from the same parse on request, so a directory scan tokenizes each file once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cross_file_data: Option<CrossFileFileData>,
     pub halstead_counts: HalsteadCounts,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub syntax_tree: Option<String>,
@@ -80,6 +83,8 @@ pub struct CrossFileFileData {
     pub candidates: Vec<CrossFileCandidate>,
     pub tokens: Vec<CrossFileToken>,
     pub container_statements: Vec<Vec<CrossFileTokenRange>>,
+    /// The mutually disjoint blocks cross-file near-miss (Type-3) comparison considers.
+    pub near_miss_blocks: Vec<CrossFileTokenRange>,
     /// 1-based lines that are neither blank nor comment-only, sorted ascending.
     pub code_line_numbers: Vec<usize>,
 }

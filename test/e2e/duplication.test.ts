@@ -5,6 +5,8 @@ import {
   collectCrossFileDuplicationFileData,
   measureCode,
   measureCrossFileDuplication,
+  type CrossFileDuplicationMetrics,
+  type DuplicationOptions,
   type LanguageName,
 } from '../../src/index.js';
 import {
@@ -739,13 +741,18 @@ describe('duplication: cross-file clones', () => {
     expect(Object.hasOwn(metrics.duplicateLineNumbersByFile, 'b.js')).toBe(false);
   });
 
-  it('does not match code calling different APIs', () => {
-    // Renaming the invoked member (.amount -> .price) is a semantic change, not a rename.
+  it('does not match code calling different APIs exactly', () => {
+    // Renaming the invoked member (.amount -> .price) is a semantic change, not a rename; with
+    // near-miss matching on, the copy is a Type-3 clone instead, exactly as within one file.
     const differentApi = fileB.replaceAll('.amount', '.price');
-    const metrics = measureCrossFileDuplication([
-      { file: 'a.js', ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript' }) },
-      { file: 'b.js', ...collectCrossFileDuplicationFileData(differentApi, { language: 'javascript' }) },
-    ]);
+    const options = { language: 'javascript', duplication: { minSimilarityPercent: 100 } };
+    const metrics = measureCrossFileDuplication(
+      [
+        { file: 'a.js', ...collectCrossFileDuplicationFileData(fileA, options) },
+        { file: 'b.js', ...collectCrossFileDuplicationFileData(differentApi, options) },
+      ],
+      options.duplication
+    );
 
     expect(metrics.groups).toEqual([]);
   });
@@ -1142,18 +1149,6 @@ describe('duplication: cross-file grouping and reporting', () => {
     expect(metrics.duplicateBlockCount).toBe(3);
   });
 
-  it('applies near-miss matching within files only, so a scattered-edit copy across files is not a clone', () => {
-    const first = scatteredEditClone('totalPrice', 'item', 'price', '+=');
-    const second = scatteredEditClone('totalWeight', 'row', 'weight', '-=');
-    expect(measureCode(first + second, { language: 'javascript' }).duplication.duplicateBlockGroupCount).toBe(1);
-
-    const metrics = measureCrossFileDuplication([
-      { file: 'a.js', ...collectCrossFileDuplicationFileData(first, { language: 'javascript' }) },
-      { file: 'b.js', ...collectCrossFileDuplicationFileData(second, { language: 'javascript' }) },
-    ]);
-    expect(metrics.groups).toEqual([]);
-  });
-
   it('handles empty files and files without candidates', () => {
     const metrics = measureCrossFileDuplication([
       { file: 'empty.js', ...collectCrossFileDuplicationFileData('', { language: 'javascript' }) },
@@ -1188,6 +1183,71 @@ describe('duplication: cross-file grouping and reporting', () => {
 
 const javaMethod = (name: string): string =>
   `  int ${name}(int[] xs) {\n    int total = 0;\n    int count = 0;\n    for (int x : xs) {\n      if (x > 0) {\n        total += x;\n        count += 1;\n      }\n    }\n    return count == 0 ? 0 : total / count;\n  }\n`;
+
+function measureJavaScriptFiles(
+  sources: Record<string, string>,
+  duplication?: DuplicationOptions
+): CrossFileDuplicationMetrics {
+  return measureCrossFileDuplication(
+    Object.entries(sources).map(([file, code]) => ({
+      file,
+      ...collectCrossFileDuplicationFileData(code, { language: 'javascript', duplication }),
+    })),
+    duplication
+  );
+}
+
+describe('duplication: cross-file near-miss (Type-3) clones', () => {
+  // The copies differ in a member name, an operator, and scattered renames, so no exact fragment
+  // reaches minTokens: only the similarity pipeline can pair them.
+  const first = scatteredEditClone('totalPrice', 'item', 'price', '+=');
+  const second = scatteredEditClone('totalWeight', 'row', 'weight', '-=');
+
+  it('detects a scattered-edit copy across files that the exact pipeline misses', () => {
+    const metrics = measureJavaScriptFiles({ 'a.js': first, 'b.js': second });
+
+    expect(metrics.groups.map((group) => group.files)).toEqual([['a.js', 'b.js']]);
+    expect(metrics.duplicateBlockCount).toBe(1);
+    // Each occurrence spans its whole function body, edited tokens included.
+    for (const occurrence of metrics.groups[0]?.occurrences ?? []) {
+      expect(occurrence.endLine - occurrence.startLine).toBeGreaterThan(10);
+    }
+    expect(metrics.duplicateLineNumbersByFile['a.js']?.length).toBeGreaterThan(10);
+  });
+
+  it('reports exact matches only when minSimilarityPercent is 100', () => {
+    expect(measureJavaScriptFiles({ 'a.js': first, 'b.js': second }, { minSimilarityPercent: 100 }).groups).toEqual([]);
+  });
+
+  it('does not pair same-skeleton functions calling entirely different APIs across files', () => {
+    const metrics = measureJavaScriptFiles({
+      'a.js': callRunClone('One', 'parse', 'persist', 'record', 'ctx'),
+      'b.js': callRunClone('Two', 'connect', 'upload', 'asset', 'session'),
+    });
+
+    expect(metrics.groups).toEqual([]);
+  });
+
+  it('links an edited third copy to an exact cross-file pair without recounting the pair', () => {
+    const metrics = measureJavaScriptFiles({ 'a.js': first, 'b.js': first, 'c.js': second });
+
+    const exact = metrics.groups.find((group) => !group.files.includes('c.js'));
+    const nearMiss = metrics.groups.find((group) => group.files.includes('c.js'));
+    expect(exact?.files).toEqual(['a.js', 'b.js']);
+    expect(nearMiss?.files.length).toBeGreaterThanOrEqual(2);
+    // One redundant copy each: b.js duplicating a.js exactly, and c.js duplicating it with edits.
+    expect(metrics.duplicateBlockCount).toBe(2);
+    expect(metrics.duplicateLineNumbersByFile['c.js']?.length).toBeGreaterThan(10);
+  });
+
+  it('clusters copies in three files into one group', () => {
+    const third = scatteredEditClone('totalVolume', 'box', 'volume', '+=');
+    const metrics = measureJavaScriptFiles({ 'a.js': first, 'b.js': second, 'c.js': third });
+
+    expect(metrics.groups.map((group) => group.files)).toEqual([['a.js', 'b.js', 'c.js']]);
+    expect(metrics.duplicateBlockCount).toBe(2);
+  });
+});
 
 describe('duplication: within-file statement runs and containers', () => {
   it('detects a repeated statement run embedded in two functions with different surroundings', () => {

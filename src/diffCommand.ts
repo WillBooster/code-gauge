@@ -12,7 +12,7 @@ import {
   resolveRepoRoot,
   type ChangedFile,
 } from './git.js';
-import { collectCrossFileDuplicationFileData, collectFunctionTokenSequences, measureCode } from './metrics.js';
+import { collectFunctionTokenSequences } from './metrics.js';
 import {
   evaluateRegressionGate,
   type CheckedFunctionReport,
@@ -27,6 +27,7 @@ import {
   formatPath,
   getLanguage,
   isScannedPath,
+  measureWithCrossFileData,
   resolveTarget,
   scanListedFiles,
   writeStderr,
@@ -306,18 +307,20 @@ async function measureBaseRevision(
   let baseContent;
   try {
     baseContent = await readFileAtRevision(context.repoRoot, context.mergeBase, basePath);
-    file.baseMetrics = measureCode(baseContent, measureOptions);
+    const measured = measureWithCrossFileData(baseContent, measureOptions);
+    file.baseMetrics = measured.metrics;
+    file.baseCandidates = measured.crossFileData;
+    if (measured.crossFileError !== undefined) {
+      warnings.push(`${basePath} (at merge-base): duplication candidates unavailable: ${measured.crossFileError}`);
+    }
   } catch (error) {
     errors.push(`${basePath} (at merge-base): ${formatError(error)}`);
     return false;
   }
   try {
-    file.baseCandidates = collectCrossFileDuplicationFileData(baseContent, measureOptions);
     file.baseFunctionTokens = collectFunctionTokenSequences(baseContent, measureOptions);
   } catch (error) {
-    warnings.push(
-      `${basePath} (at merge-base): duplication candidates and token sequences unavailable: ${formatError(error)}`
-    );
+    warnings.push(`${basePath} (at merge-base): function token sequences unavailable: ${formatError(error)}`);
   }
   return true;
 }
