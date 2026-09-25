@@ -267,6 +267,12 @@ describe('cyclomatic complexity: NIST SP 500-235 counting', () => {
     ['java', 'class A { int f(int x) { switch (x) { case 1: return 1; default: case 3: return 0; } } }', 2],
     ['javascript', 'function f(x) { switch (x) { case 1: return 1; default: case 3: return 0; } }', 2],
     ['csharp', 'class A { int F(int x) { switch (x) { case 1: return 1; default: case 3: return 0; } } }', 2],
+    // A C# section whose body sits inside `#if` still has a statement.
+    [
+      'csharp',
+      'class A { int F(int x) { switch (x) {\ncase 1:\n#if DEBUG\n    return 1;\n#endif\ndefault:\n    return 0;\n} } }',
+      2,
+    ],
   ])('%s: %s', (language, code, expected) => {
     expect(cyclomaticOf(language, code)).toEqual([expected]);
   });

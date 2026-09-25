@@ -672,9 +672,13 @@ fn is_label_only_case(node: Node<'_>) -> bool {
         "switch_block_statement_group" => {
             children.iter().all(|child| child.kind() == "switch_label")
         }
-        "switch_section" => !children
-            .iter()
-            .any(|child| child.kind() == "block" || child.kind().ends_with("_statement")),
+        // A C# label is a pattern (`case 1:` parses as a constant pattern) plus an optional `when`
+        // guard; anything else, a `#if` block included, is the section's body.
+        "switch_section" => children.iter().all(|child| {
+            child.kind().ends_with("pattern")
+                || child.kind() == "discard"
+                || child.kind() == "when_clause"
+        }),
         _ => false,
     }
 }
