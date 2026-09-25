@@ -8,7 +8,8 @@ pub struct LanguageDefinition {
     pub function_node_types: &'static [&'static str],
     pub decision_node_types: &'static [&'static str],
     /// Whether every file's top-level code runs as a module body (a component of its own in the
-    /// file's cyclomatic complexity); C# decides per file by the presence of top-level statements.
+    /// file's cyclomatic complexity); C# and Kotlin decide per file by the presence of top-level
+    /// statements.
     pub executes_top_level: bool,
     pub nesting_node_types: &'static [&'static str],
     pub ncss_node_types: &'static [&'static str],

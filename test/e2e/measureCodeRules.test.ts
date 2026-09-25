@@ -320,6 +320,13 @@ describe('cyclomatic complexity: file totals over McCabe components', () => {
     ['csharp', 'class A { void F() { } }', 1],
     ['java', 'class A { int x = Math.random() > 0.5 ? 1 : 2; void f(boolean b) { if (b) { } } }', 3],
     ['go', 'package p\nfunc f(x int) int { if x > 0 { return 1 }; return 0 }', 2],
+    // A Kotlin script runs its top-level statements; a declaration-only Kotlin file does not.
+    ['kotlin', 'println(1)\n', 1],
+    ['kotlin', 'val n = 3\nif (n > 0 && n < 5) { println(1) }\n', 3],
+    ['kotlin', 'package p\nclass A\nfun f() { }\nval x = 1\n', 1],
+    // Decisions in a class body nested in a function belong to no function but still count.
+    ['java', 'class A { void f(boolean b) { Object o = new Object() { int x = b ? 1 : 2; }; } }', 2],
+    ['typescript', 'function f(b: boolean) { class B { x = b ? 1 : 2; } }', 3],
   ])('%s: %s', (language, code, expected) => {
     expect(measureCode(code, { language }).cyclomaticComplexity).toBe(expected);
   });

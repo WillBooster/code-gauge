@@ -84,12 +84,7 @@ pub fn measure(
             .map(|function| function.cyclomatic_complexity)
             .sum::<u64>()
             + body_metrics.top_level_decisions
-            + u64::from(
-                language.executes_top_level
-                    || named_children(root)
-                        .iter()
-                        .any(|child| child.kind() == "global_statement"),
-            ),
+            + u64::from(language.executes_top_level || has_top_level_statements(root, language)),
         cognitive_complexity: global_complexity.cognitive_complexity,
         max_cognitive_complexity: function_metrics
             .iter()
@@ -107,6 +102,33 @@ pub fn measure(
             None
         },
     })
+}
+
+/// Whether a C# or Kotlin file runs top-level code: C# top-level statements, or a Kotlin script's
+/// statements beside its declarations.
+fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bool {
+    const KOTLIN_DECLARATIONS: &[&str] = &[
+        "package_header",
+        "import_list",
+        "class_declaration",
+        "object_declaration",
+        "function_declaration",
+        "property_declaration",
+        "type_alias",
+        "shebang_line",
+        "file_annotation",
+    ];
+    let children = named_children(root);
+    match language.name {
+        "csharp" => children
+            .iter()
+            .any(|child| child.kind() == "global_statement"),
+        "kotlin" => children.iter().any(|child| {
+            !KOTLIN_DECLARATIONS.contains(&child.kind())
+                && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
+        }),
+        _ => false,
+    }
 }
 
 /// Collects one file's cross-file clone-detection contribution; see CrossFileFileData.

@@ -136,6 +136,8 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
     code: &'code Source<'source>,
     frames: Vec<FunctionBodyFrame>,
     results: HashMap<usize, FunctionBodyMetrics>,
+    /// Cyclomatic decisions inside class bodies nested in functions, which no function owns.
+    nested_class_decisions: u64,
 }
 
 /// Per-function complexity and NCSS for every function boundary, in one post-order pass so each
@@ -148,7 +150,8 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
 /// only, so nothing hoists.
 pub struct BodyMetrics {
     pub by_function: HashMap<usize, FunctionBodyMetrics>,
-    /// Cyclomatic decisions outside every function (top-level statements, field initializers).
+    /// Cyclomatic decisions outside every function body (top-level statements, field initializers,
+    /// including those of classes nested in functions).
     pub top_level_decisions: u64,
 }
 
@@ -163,11 +166,12 @@ pub fn measure_function_body_metrics(
         // frames[0] is a sentinel for top-level code; only its cyclomatic decisions are kept.
         frames: vec![FunctionBodyFrame::new(0, 0)],
         results: HashMap::new(),
+        nested_class_decisions: 0,
     };
     pass.visit(root, 0, 0, false, false, false);
     BodyMetrics {
         by_function: pass.results,
-        top_level_decisions: pass.frames[0].cyclomatic_complexity - 1,
+        top_level_decisions: pass.frames[0].cyclomatic_complexity - 1 + pass.nested_class_decisions,
     }
 }
 
@@ -225,10 +229,12 @@ impl FunctionBodyPass<'_, '_, '_> {
 
         // Each branch, short-circuit operator, and pattern guard adds one path (McCabe; NIST SP
         // 500-235 §4); `else` adds none.
-        if counts_for_own_body
-            && (is_decision || is_boolean_operator(current, self.code) || is_pattern_guard(current))
-        {
-            self.top_frame().cyclomatic_complexity += 1;
+        if is_decision || is_boolean_operator(current, self.code) || is_pattern_guard(current) {
+            if counts_for_own_body {
+                self.top_frame().cyclomatic_complexity += 1;
+            } else if !opens_frame {
+                self.nested_class_decisions += 1;
+            }
         }
         if is_decision && !is_case_clause {
             if is_continuation {
