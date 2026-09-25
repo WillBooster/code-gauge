@@ -407,8 +407,9 @@ pub fn tokenize<'a>(root: Node<'_>, code: &Source<'a>) -> TokenizedSource<'a> {
     }
 }
 
-/// Detects copy-pasted regions within a file; a faithful port of measureDuplication in
-/// duplication.ts, including its JavaScript int32 hash arithmetic and insertion-order maps.
+/// Detects copy-pasted regions within a file. Fingerprints replicate the JavaScript int32 hash
+/// arithmetic of fingerprintKey in duplication.ts, so its candidates group with the window
+/// candidates cross-file matching fingerprints in TypeScript.
 pub fn measure_duplication(
     source: &TokenizedSource<'_>,
     code_line_numbers: &HashSet<usize>,
