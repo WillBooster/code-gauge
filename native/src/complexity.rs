@@ -629,7 +629,34 @@ fn is_flat_chain_continuation(node: Node<'_>) -> bool {
 /// the next labelled statement. NIST SP 500-235 counts one path per case-labelled statement, so
 /// `case 1: case 2: f();` adds one path, and `case 3: default: g();` merges into the default.
 fn is_pathless_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
-    is_default_switch_branch(node, code) || is_label_only_case(node)
+    is_default_switch_branch(node, code)
+        || is_label_only_case(node)
+        || falls_through_from_default(node, code)
+}
+
+/// Whether a label-only `default` stacked above this case shares its statements
+/// (`default: case 3: g();`), which makes them the default outcome like `case 3: default: g();`.
+fn falls_through_from_default(node: Node<'_>, code: &Source<'_>) -> bool {
+    let mut previous = node.prev_named_sibling();
+    while let Some(sibling) = previous {
+        if crate::ncss::COMMENT_NODE_TYPES.contains(&sibling.kind()) {
+            previous = sibling.prev_named_sibling();
+            continue;
+        }
+        let is_label_only_default = if sibling.kind() == "switch_default" {
+            sibling.child_by_field_name("body").is_none()
+        } else {
+            is_label_only_case(sibling) && is_default_switch_branch(sibling, code)
+        };
+        if is_label_only_default {
+            return true;
+        }
+        if !is_label_only_case(sibling) {
+            return false;
+        }
+        previous = sibling.prev_named_sibling();
+    }
+    false
 }
 
 /// A C/C++/JS/Java/C# case whose labels share the next case's statements; every grammar parses each

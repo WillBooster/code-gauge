@@ -262,6 +262,11 @@ describe('cyclomatic complexity: NIST SP 500-235 counting', () => {
     // `case null, default` is the default outcome; `case null` alone is an ordinary case.
     ['java', 'class A { int f(Object x) { return switch (x) { case String s -> 1; case null, default -> 0; }; } }', 2],
     ['java', 'class A { int f(Object x) { return switch (x) { case null -> 1; default -> 0; }; } }', 2],
+    // A label-only `default` stacked above cases merges them into the default outcome too.
+    ['c', 'int f(int x) { switch (x) { case 1: return 1; default: case 2: case 3: return 0; } }', 2],
+    ['java', 'class A { int f(int x) { switch (x) { case 1: return 1; default: case 3: return 0; } } }', 2],
+    ['javascript', 'function f(x) { switch (x) { case 1: return 1; default: case 3: return 0; } }', 2],
+    ['csharp', 'class A { int F(int x) { switch (x) { case 1: return 1; default: case 3: return 0; } } }', 2],
   ])('%s: %s', (language, code, expected) => {
     expect(cyclomaticOf(language, code)).toEqual([expected]);
   });
