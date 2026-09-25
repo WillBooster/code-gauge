@@ -318,6 +318,8 @@ describe('cyclomatic complexity: file totals over McCabe components', () => {
     ['javascript', 'const n = 3;\nif (n > 0 && n < 5) { console.log(1); }', 3],
     ['csharp', 'var n = 3;\nif (n > 1) System.Console.WriteLine(n);\n', 2],
     ['csharp', 'class A { void F() { } }', 1],
+    ['csharp', '#if DEBUG\nSystem.Console.WriteLine(1);\n#endif\n', 1],
+    ['csharp', '#if DEBUG\nclass A { }\n#endif\n', 0],
     ['java', 'class A { int x = Math.random() > 0.5 ? 1 : 2; void f(boolean b) { if (b) { } } }', 3],
     ['go', 'package p\nfunc f(x int) int { if x > 0 { return 1 }; return 0 }', 2],
     // A Kotlin script runs its top-level statements; a declaration-only Kotlin file does not.

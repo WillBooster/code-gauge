@@ -130,6 +130,19 @@ fn count_initializer_blocks(root: Node<'_>) -> u64 {
         .count() as u64
 }
 
+/// A C# top-level statement: a `global_statement`, or a statement inside a top-level `#if` block,
+/// which the grammar does not wrap in `global_statement`; preprocessor blocks are transparent.
+fn is_csharp_top_level_statement(node: Node<'_>) -> bool {
+    if node.kind().starts_with("preproc_") {
+        return named_children(node)
+            .into_iter()
+            .any(is_csharp_top_level_statement);
+    }
+    node.kind() == "global_statement"
+        || node.kind() == "block"
+        || node.kind().ends_with("_statement")
+}
+
 /// Whether a C# or Kotlin file runs top-level code: C# top-level statements, or a Kotlin script's
 /// statements beside its declarations.
 fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bool {
@@ -148,9 +161,7 @@ fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bo
     ];
     let children = named_children(root);
     match language.name {
-        "csharp" => children
-            .iter()
-            .any(|child| child.kind() == "global_statement"),
+        "csharp" => children.into_iter().any(is_csharp_top_level_statement),
         "kotlin" => children.iter().any(|child| {
             !KOTLIN_DECLARATIONS.contains(&child.kind())
                 && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
