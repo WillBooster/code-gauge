@@ -327,6 +327,10 @@ describe('cyclomatic complexity: file totals over McCabe components', () => {
     // Decisions in a class body nested in a function belong to no function but still count.
     ['java', 'class A { void f(boolean b) { Object o = new Object() { int x = b ? 1 : 2; }; } }', 2],
     ['typescript', 'function f(b: boolean) { class B { x = b ? 1 : 2; } }', 3],
+    // Initializer blocks run code of their own, so each is a component like a function.
+    ['java', 'class A { static { int x = 1; } { if (x > 0) { } } }', 3],
+    ['kotlin', 'class K {\n  init { println(1) }\n}\n', 1],
+    ['typescript', 'class A { static { if (x) { } } }', 3],
   ])('%s: %s', (language, code, expected) => {
     expect(measureCode(code, { language }).cyclomaticComplexity).toBe(expected);
   });

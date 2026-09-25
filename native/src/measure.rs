@@ -84,7 +84,8 @@ pub fn measure(
             .map(|function| function.cyclomatic_complexity)
             .sum::<u64>()
             + body_metrics.top_level_decisions
-            + u64::from(language.executes_top_level || has_top_level_statements(root, language)),
+            + u64::from(language.executes_top_level || has_top_level_statements(root, language))
+            + count_initializer_blocks(root),
         cognitive_complexity: global_complexity.cognitive_complexity,
         max_cognitive_complexity: function_metrics
             .iter()
@@ -102,6 +103,30 @@ pub fn measure(
             None
         },
     })
+}
+
+/// Initializer blocks run code of their own, so each is a component like a function: Java static
+/// and instance initializers, Kotlin `init` blocks, and JavaScript/TypeScript class `static`
+/// blocks. Their decisions already count as decisions outside functions.
+fn count_initializer_blocks(root: Node<'_>) -> u64 {
+    let initializer_types: HashSet<&'static str> = [
+        "static_initializer",
+        "anonymous_initializer",
+        "class_static_block",
+        "block",
+    ]
+    .into_iter()
+    .collect();
+    collect_nodes(root, &initializer_types)
+        .into_iter()
+        .filter(|node| {
+            // A bare block is an initializer only directly in a Java class body.
+            node.kind() != "block"
+                || node
+                    .parent()
+                    .is_some_and(|parent| parent.kind() == "class_body")
+        })
+        .count() as u64
 }
 
 /// Whether a C# or Kotlin file runs top-level code: C# top-level statements, or a Kotlin script's
