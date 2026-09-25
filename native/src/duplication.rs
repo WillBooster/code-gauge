@@ -1799,8 +1799,9 @@ fn collect_near_miss_groups(
         if uncovered.is_empty() {
             continue;
         }
-        // An anchored cluster extends a reported group only when that group lies entirely inside
-        // the cluster: a group reaching outside it also duplicates content the cluster lacks.
+        // An anchored cluster extends a reported group only when every occurrence of that group
+        // overlaps one of the cluster's member blocks: an occurrence disjoint from all members
+        // reports content the cluster does not share.
         let overlaps_member = |occurrence: &CountedOccurrence| {
             members.iter().any(|&index| {
                 let range = comparable[index];
