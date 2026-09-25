@@ -21,7 +21,7 @@ mod util;
 /// together with `expectedPayloadVersion` in src/nativeMetrics.ts.
 #[napi]
 pub fn payload_version() -> u32 {
-    5
+    6
 }
 
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON.

@@ -38,11 +38,12 @@ pub fn measure(
         .filter(|node| !is_lambda_body_block(*node) && is_implemented_function(*node))
         .collect();
 
-    let body_metrics_by_node_id = measure_function_body_metrics(root, &sets, code);
+    let body_metrics = measure_function_body_metrics(root, &sets, code);
     let function_metrics: Vec<FunctionMetrics> = functions
         .iter()
         .map(|node| {
-            let body_metrics = body_metrics_by_node_id
+            let body_metrics = body_metrics
+                .by_function
                 .get(&node.id())
                 .expect("every collected function node opens a frame in the body-metrics pass");
             FunctionMetrics {
@@ -76,6 +77,16 @@ pub fn measure(
         language: language.name.to_string(),
         bytes: code.code.len(),
         lines,
+        // McCabe's v = e - n + 2p over the file's components: every function, every initializer
+        // block, and the module body when the file runs top-level code; decisions outside functions
+        // belong to the file.
+        cyclomatic_complexity: function_metrics
+            .iter()
+            .map(|function| function.cyclomatic_complexity)
+            .sum::<u64>()
+            + body_metrics.top_level_decisions
+            + u64::from(language.executes_top_level || has_top_level_statements(root, language))
+            + count_initializer_blocks(root),
         cognitive_complexity: global_complexity.cognitive_complexity,
         max_cognitive_complexity: function_metrics
             .iter()
@@ -93,6 +104,76 @@ pub fn measure(
             None
         },
     })
+}
+
+/// Initializer blocks run code of their own, so each is a component like a function: Java static
+/// and instance initializers, Kotlin `init` blocks, and JavaScript/TypeScript class `static`
+/// blocks. Their decisions already count as decisions outside functions.
+fn count_initializer_blocks(root: Node<'_>) -> u64 {
+    let initializer_types: HashSet<&'static str> = [
+        "static_initializer",
+        "anonymous_initializer",
+        "class_static_block",
+        "block",
+    ]
+    .into_iter()
+    .collect();
+    collect_nodes(root, &initializer_types)
+        .into_iter()
+        .filter(|node| {
+            // A bare block is an initializer only as a direct member of a Java class or enum body.
+            node.kind() != "block"
+                || node.parent().is_some_and(|parent| {
+                    matches!(parent.kind(), "class_body" | "enum_body_declarations")
+                })
+        })
+        .count() as u64
+}
+
+/// A C# top-level statement: a `global_statement`, or a statement inside a top-level `#if` block,
+/// which the grammar does not wrap in `global_statement`; preprocessor blocks are transparent.
+fn is_csharp_top_level_statement(node: Node<'_>) -> bool {
+    if node.kind().starts_with("preproc_") {
+        return named_children(node)
+            .into_iter()
+            .any(is_csharp_top_level_statement);
+    }
+    node.kind() == "global_statement"
+        || node.kind() == "block"
+        || node.kind().ends_with("_statement")
+}
+
+/// Whether a C# or Kotlin file runs top-level code: C# top-level statements, or a Kotlin script's
+/// statements beside its declarations.
+fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bool {
+    const KOTLIN_DECLARATIONS: &[&str] = &[
+        "package_header",
+        "import_list",
+        "class_declaration",
+        "object_declaration",
+        "function_declaration",
+        "property_declaration",
+        "type_alias",
+        "shebang_line",
+        "file_annotation",
+        "getter",
+        "setter",
+    ];
+    let children = named_children(root);
+    match language.name {
+        "csharp" => children.into_iter().any(is_csharp_top_level_statement),
+        // The grammar mis-parses some valid declarations (non-empty companion objects, `fun
+        // interface`) and leaves recovery residue at the top level, so a file with parse errors is
+        // never taken for a script.
+        "kotlin" => {
+            !root.has_error()
+                && children.iter().any(|child| {
+                    !KOTLIN_DECLARATIONS.contains(&child.kind())
+                        && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
+                })
+        }
+        _ => false,
+    }
 }
 
 /// Collects one file's cross-file clone-detection contribution; see CrossFileFileData.

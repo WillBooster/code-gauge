@@ -53,7 +53,7 @@ interface NativeBinding {
  * `git pull` untouched, so without this handshake it would silently return payloads missing
  * newer fields instead of failing with a clear rebuild message.
  */
-const expectedPayloadVersion = 5;
+const expectedPayloadVersion = 6;
 
 /** Measures one file via the native addon, returning the raw payload for assembly in metrics.ts. */
 export function measureCodeNative(

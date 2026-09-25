@@ -233,6 +233,7 @@ function makeMetrics(functions: FunctionMetrics[], overrides: Partial<CodeMetric
     bytes: 100,
     lines: { total: 20, code: 15, comment: 2, blank: 3 },
     functions,
+    cyclomaticComplexity: functions.reduce((sum, fn) => sum + fn.cyclomaticComplexity, 0),
     cognitiveComplexity: 0,
     maxCognitiveComplexity: Math.max(0, ...functions.map((fn) => fn.cognitiveComplexity)),
     nestingDepth: 1,

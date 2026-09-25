@@ -42,6 +42,7 @@ type RoundedAggregates = Omit<Record<AggregateKey, unknown>, 'duplication' | 'ha
 function roundFloats(metrics: CodeMetrics): RoundedAggregates {
   return {
     lines: metrics.lines,
+    cyclomaticComplexity: metrics.cyclomaticComplexity,
     cognitiveComplexity: metrics.cognitiveComplexity,
     maxCognitiveComplexity: metrics.maxCognitiveComplexity,
     nestingDepth: metrics.nestingDepth,

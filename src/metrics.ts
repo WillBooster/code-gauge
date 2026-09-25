@@ -94,6 +94,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
       halstead: deriveHalsteadMetrics(fn.halsteadCounts),
       depDegree: fn.depDegree,
     })),
+    cyclomaticComplexity: payload.cyclomaticComplexity,
     cognitiveComplexity: payload.cognitiveComplexity,
     maxCognitiveComplexity: payload.maxCognitiveComplexity,
     nestingDepth: payload.nestingDepth,

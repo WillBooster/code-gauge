@@ -307,6 +307,43 @@ describe('cyclomatic complexity: NIST SP 500-235 counting', () => {
   });
 });
 
+describe('cyclomatic complexity: file totals over McCabe components', () => {
+  // Every function is a component, decisions outside functions belong to the file, and a module
+  // body that runs top-level code is one more component.
+  it.each([
+    ['python', 'n = int(input())\nif n > 0 and n < 10:\n  print(1)\nelse:\n  for i in range(n):\n    print(i)\n', 4],
+    ['python', 'print(1)\n', 1],
+    ['python', 'def f(x):\n    return 1 if x else 2\n', 3],
+    ['ruby', 'n = gets.to_i\nif n > 0 && n < 5\n  puts 1\nend\n', 3],
+    ['javascript', 'const n = 3;\nif (n > 0 && n < 5) { console.log(1); }', 3],
+    ['csharp', 'var n = 3;\nif (n > 1) System.Console.WriteLine(n);\n', 2],
+    ['csharp', 'class A { void F() { } }', 1],
+    ['csharp', '#if DEBUG\nSystem.Console.WriteLine(1);\n#endif\n', 1],
+    ['csharp', '#if DEBUG\nclass A { }\n#endif\n', 0],
+    ['java', 'class A { int x = Math.random() > 0.5 ? 1 : 2; void f(boolean b) { if (b) { } } }', 3],
+    ['go', 'package p\nfunc f(x int) int { if x > 0 { return 1 }; return 0 }', 2],
+    // A Kotlin script runs its top-level statements; a declaration-only Kotlin file does not.
+    ['kotlin', 'println(1)\n', 1],
+    ['kotlin', 'val n = 3\nif (n > 0 && n < 5) { println(1) }\n', 3],
+    ['kotlin', 'package p\nclass A\nfun f() { }\nval x = 1\n', 1],
+    ['kotlin', 'val x: Int\n    get() = 1\nvar y = 1\n    private set\n', 1],
+    // The grammar mis-parses some valid declarations (non-empty companion objects, `fun interface`),
+    // and a file with parse errors is never taken for a script.
+    ['kotlin', 'class A { companion object { val x = 1 } }', 0],
+    ['kotlin', 'fun interface A { fun f(): Int }\n', 1],
+    // Decisions in a class body nested in a function belong to no function but still count.
+    ['java', 'class A { void f(boolean b) { Object o = new Object() { int x = b ? 1 : 2; }; } }', 2],
+    ['typescript', 'function f(b: boolean) { class B { x = b ? 1 : 2; } }', 3],
+    // Initializer blocks run code of their own, so each is a component like a function.
+    ['java', 'class A { static { int x = 1; } { if (x > 0) { } } }', 3],
+    ['java', 'enum E { A; { if (x > 0) { } } }', 2],
+    ['kotlin', 'class K {\n  init { println(1) }\n}\n', 1],
+    ['typescript', 'class A { static { if (x) { } } }', 3],
+  ])('%s: %s', (language, code, expected) => {
+    expect(measureCode(code, { language }).cyclomaticComplexity).toBe(expected);
+  });
+});
+
 describe('cyclomatic complexity: catch-all switch arms', () => {
   const cyclomaticOf = (language: string, code: string): number[] =>
     functionsOf(language, code).map((fn) => fn.cyclomaticComplexity);
