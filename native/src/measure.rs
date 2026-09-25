@@ -121,11 +121,11 @@ fn count_initializer_blocks(root: Node<'_>) -> u64 {
     collect_nodes(root, &initializer_types)
         .into_iter()
         .filter(|node| {
-            // A bare block is an initializer only directly in a Java class body.
+            // A bare block is an initializer only as a direct member of a Java class or enum body.
             node.kind() != "block"
-                || node
-                    .parent()
-                    .is_some_and(|parent| parent.kind() == "class_body")
+                || node.parent().is_some_and(|parent| {
+                    matches!(parent.kind(), "class_body" | "enum_body_declarations")
+                })
         })
         .count() as u64
 }

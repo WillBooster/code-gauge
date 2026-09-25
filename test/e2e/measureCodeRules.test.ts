@@ -330,6 +330,7 @@ describe('cyclomatic complexity: file totals over McCabe components', () => {
     ['typescript', 'function f(b: boolean) { class B { x = b ? 1 : 2; } }', 3],
     // Initializer blocks run code of their own, so each is a component like a function.
     ['java', 'class A { static { int x = 1; } { if (x > 0) { } } }', 3],
+    ['java', 'enum E { A; { if (x > 0) { } } }', 2],
     ['kotlin', 'class K {\n  init { println(1) }\n}\n', 1],
     ['typescript', 'class A { static { if (x) { } } }', 3],
   ])('%s: %s', (language, code, expected) => {
