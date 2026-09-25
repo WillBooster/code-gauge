@@ -199,7 +199,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         // `if` keyword token), so only named nodes count as decisions.
         let is_decision = current.is_named()
             && self.sets.decision_nodes.contains(current.kind())
-            && !is_pathless_switch_branch(current);
+            && !is_pathless_switch_branch(current, self.code);
         let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
         // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
         // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
@@ -372,7 +372,7 @@ pub fn measure_complexity(
         // `if` keyword token), so only named nodes count as decisions.
         let is_decision = current.is_named()
             && sets.decision_nodes.contains(current.kind())
-            && !is_pathless_switch_branch(current);
+            && !is_pathless_switch_branch(current, code);
         let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
         // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
         // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
@@ -628,8 +628,8 @@ fn is_flat_chain_continuation(node: Node<'_>) -> bool {
 /// Switch branches that add no path: default branches, and label-only cases that fall through to
 /// the next labelled statement. NIST SP 500-235 counts one path per case-labelled statement, so
 /// `case 1: case 2: f();` adds one path, and `case 3: default: g();` merges into the default.
-fn is_pathless_switch_branch(node: Node<'_>) -> bool {
-    is_default_switch_branch(node) || is_label_only_case(node)
+fn is_pathless_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
+    is_default_switch_branch(node, code) || is_label_only_case(node)
 }
 
 /// A C/C++/JS/Java/C# case whose labels share the next case's statements; every grammar parses each
@@ -652,18 +652,25 @@ fn is_label_only_case(node: Node<'_>) -> bool {
     }
 }
 
-fn is_default_switch_branch(node: Node<'_>) -> bool {
+fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     let kind = node.kind();
     if kind == "case_statement" {
         return node.child_by_field_name("value").is_none();
     }
 
-    // Java `default:` groups and `default ->` rules: a label with no expression or pattern.
+    // Java `default:` groups and `default ->` rules: a label with no expression or pattern, or a
+    // `case null, default` label, whose `default` the grammar parses as an identifier.
     if kind == "switch_block_statement_group" || kind == "switch_rule" {
         return non_comment_children(node)
             .into_iter()
             .filter(|child| child.kind() == "switch_label")
-            .any(|label| non_comment_children(label).is_empty());
+            .any(|label| {
+                let parts = non_comment_children(label);
+                parts.is_empty()
+                    || parts.iter().any(|part| {
+                        part.kind() == "identifier" && node_text(*part, code) == "default"
+                    })
+            });
     }
 
     // C# `default:` sections and catch-all (`_`, `var x`) labels and arms, and Kotlin `else ->`
