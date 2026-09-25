@@ -47,7 +47,7 @@ export interface CrossFileDuplicationMetrics {
    * block, edited ones included (like within-file near-miss coverage). The unmatched gap of a merged
    * clone and comment/blank lines inside an occurrence's bounding range are excluded (blank rows
    * inside multi-row tokens only when the file supplied codeLineNumbers). A file that supplied
-   * only candidates (no `tokens`) has no entry — without its token stream the matched lines are
+   * only candidates (no `tokens`) has no entry — without its token stream the covered lines are
    * unknowable, and an approximate bounding range would break this field's exactness.
    */
   duplicateLineNumbersByFile: Record<string, number[]>;
@@ -275,7 +275,8 @@ function summarize(
 }
 
 /**
- * Adds the code lines an occurrence's matched tokens cover to its file's line set, mapping the
+ * Adds the code lines an occurrence's segment tokens cover (matched tokens of an exact or gapped
+ * occurrence, the whole block of a near-miss one) to its file's line set, mapping the
  * project-wide token segments back into the file's own token stream. A file that supplied only
  * candidates (no token stream) is skipped rather than approximated from the bounding line range,
  * which would include gap and comment/blank lines and break the field's exactness contract.
