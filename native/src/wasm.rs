@@ -14,10 +14,18 @@ pub extern "C" fn payload_version() -> u32 {
     crate::payload_version()
 }
 
+/// Allocates with an exact layout: `Vec::with_capacity` may over-allocate, so rebuilding a `Vec`
+/// from the pointer and `len` would not be sound.
 #[no_mangle]
 pub extern "C" fn alloc(len: usize) -> *mut u8 {
-    let mut buffer = std::mem::ManuallyDrop::new(Vec::<u8>::with_capacity(len));
-    buffer.as_mut_ptr()
+    if len == 0 {
+        return std::ptr::NonNull::dangling().as_ptr();
+    }
+    let pointer = unsafe { std::alloc::alloc(byte_layout(len)) };
+    if pointer.is_null() {
+        std::alloc::handle_alloc_error(byte_layout(len));
+    }
+    pointer
 }
 
 #[no_mangle]
@@ -92,7 +100,18 @@ pub unsafe extern "C" fn collect_function_token_sequences(
 
 /// Takes ownership of a buffer returned by `alloc(len)` and filled by the host.
 unsafe fn take_string(ptr: *mut u8, len: usize) -> Result<String, String> {
-    String::from_utf8(Vec::from_raw_parts(ptr, len, len)).map_err(|error| error.to_string())
+    if len == 0 {
+        return Ok(String::new());
+    }
+    let text = std::str::from_utf8(std::slice::from_raw_parts(ptr, len))
+        .map(str::to_owned)
+        .map_err(|error| error.to_string());
+    std::alloc::dealloc(ptr, byte_layout(len));
+    text
+}
+
+fn byte_layout(len: usize) -> std::alloc::Layout {
+    std::alloc::Layout::array::<u8>(len).expect("buffer size overflows isize")
 }
 
 fn to_option(value: f64) -> Option<u32> {
