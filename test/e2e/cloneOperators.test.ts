@@ -289,6 +289,48 @@ describe('clone operators: recall per edit type', () => {
     expect(withinFileCount).toBe(2);
   });
 
+  it('counts a block once when its two cores join one group', () => {
+    const [first, second] = seeds;
+    if (!first || !second) {
+      throw new Error('two seeds are required');
+    }
+    const parameters = `${first.parameters}, ${second.parameters}, logger, metrics`;
+    const shared = [...first.statements.slice(0, -1), ...second.statements.slice(0, -1)];
+    const returned = 'return { subtotal, tax, accept, language, timeout };';
+    // `embedded` matches `plain` locally at two cores around a different middle, while `plain` and
+    // `variant` match whole, so both cores of `embedded` fall into one group.
+    const files = {
+      'embedded.js': renderFunction('embedded', parameters, [
+        ...scatterEdits(first.statements.slice(0, -1)),
+        ...wrapperPrologue,
+        "const quota = await metrics.quota('summaries', { window: '1m', burst: 20 });",
+        "if (quota.remaining <= 0) logger.warn('quota exhausted', { resetAt: quota.resetAt });",
+        'const cache = await metrics.cache.lookup(`summary:${orders.length}`, { staleMs: 60000 });',
+        "if (cache.hit) logger.debug('cache hit', { key: cache.key, age: Date.now() - cache.storedAt });",
+        ...scatterEdits(second.statements.slice(0, -1)),
+        returned,
+      ]),
+      'plain.js': renderFunction('plain', parameters, [...shared, returned]),
+      'variant.js': renderFunction('variant', parameters, [...declareWithLet(shared), returned]),
+    };
+
+    const crossFile = measureCrossFileDuplication(
+      Object.entries(files).map(([file, code]) => ({
+        file,
+        ...collectCrossFileDuplicationFileData(code, { language: 'javascript' }),
+      }))
+    );
+    expect(crossFile.groups.map((group) => group.occurrences.map(({ file }) => file))).toEqual([
+      ['embedded.js', 'plain.js', 'variant.js'],
+    ]);
+    // Two redundant copies of three: `embedded` counts once, not once per core.
+    expect(crossFile.duplicateBlockCount).toBe(2);
+
+    const withinFile = measureCode(Object.values(files).join('\n'), { language: 'javascript' }).duplication;
+    expect(withinFile.duplicateBlockGroups.map((group) => group.length)).toEqual([3]);
+    expect(withinFile.duplicateBlockCount).toBe(2);
+  });
+
   it('does not pair a same-shape function over different APIs and data', () => {
     const original = renderFunction(seeds[0]?.name ?? '', seeds[0]?.parameters ?? '', seeds[0]?.statements ?? []);
 
