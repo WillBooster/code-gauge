@@ -53,10 +53,13 @@ pub unsafe extern "C" fn measure_code(
     min_similarity_percent: f64,
     include_cross_file_data: u32,
 ) -> u32 {
+    // Both buffers are taken before `?` so that neither leaks when the other is invalid.
+    let code = take_string(code_ptr, code_len);
+    let language = take_string(language_ptr, language_len);
     store_result((|| {
         crate::measure_code(
-            &take_string(code_ptr, code_len)?,
-            &take_string(language_ptr, language_len)?,
+            &code?,
+            &language?,
             include_syntax_tree != 0,
             to_option(min_tokens),
             to_option(max_gap_tokens),
@@ -74,12 +77,10 @@ pub unsafe extern "C" fn collect_cross_file_data(
     language_len: usize,
     min_tokens: f64,
 ) -> u32 {
+    let code = take_string(code_ptr, code_len);
+    let language = take_string(language_ptr, language_len);
     store_result((|| {
-        crate::collect_cross_file_data(
-            &take_string(code_ptr, code_len)?,
-            &take_string(language_ptr, language_len)?,
-            to_option(min_tokens),
-        )
+        crate::collect_cross_file_data(&code?, &language?, to_option(min_tokens))
     })())
 }
 
@@ -90,11 +91,10 @@ pub unsafe extern "C" fn collect_function_token_sequences(
     language_ptr: *mut u8,
     language_len: usize,
 ) -> u32 {
+    let code = take_string(code_ptr, code_len);
+    let language = take_string(language_ptr, language_len);
     store_result((|| {
-        crate::collect_function_token_sequences(
-            &take_string(code_ptr, code_len)?,
-            &take_string(language_ptr, language_len)?,
-        )
+        crate::collect_function_token_sequences(&code?, &language?)
     })())
 }
 
