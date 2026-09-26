@@ -125,6 +125,7 @@ export function collectCrossFileNearMissGroups(
   const overlapsReportedSpan = reportedSpansByFile.map(createOverlapTest);
   const coveredByReportedSpans = reportedSpansByFile.map(createCoverageTest);
   const fullyReported = blocks.map(({ fileIndex, range }) => coveredByReportedSpans[fileIndex]?.(range) ?? false);
+  const touchesReported = blocks.map(({ fileIndex, range }) => overlapsReportedSpan[fileIndex]?.(range) ?? false);
   const edges: [number, [number, number] | undefined, number, [number, number] | undefined][] = [];
   forEachCandidatePair(blocks, fullyReported, minSimilarityPercent, (left, right) => {
     const leftBlock = blocks[left];
@@ -132,7 +133,11 @@ export function collectCrossFileNearMissGroups(
     const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
     if (match) {
       if (match.kind === 'whole') {
-        edges.push([left, undefined, right, undefined]);
+        // A whole match between two blocks that both overlap reported spans could never join a
+        // group, and recording it would collapse the blocks' core nodes.
+        if (!(touchesReported[left] && touchesReported[right])) {
+          edges.push([left, undefined, right, undefined]);
+        }
       } else {
         for (const [leftCore, rightCore] of match.cores) {
           edges.push([left, leftCore, right, rightCore]);

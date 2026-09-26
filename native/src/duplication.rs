@@ -1711,13 +1711,24 @@ fn collect_near_miss_groups(
         settings.min_similarity_percent,
     );
 
+    let block_touched: Vec<bool> = comparable
+        .iter()
+        .map(|range| !touched_groups_in(range.start_token_index, range.end_token_index).is_empty())
+        .collect();
     let mut edges: Vec<(usize, Option<(usize, usize)>, usize, Option<(usize, usize)>)> = Vec::new();
     for_each_candidate_pair(
         &blocks,
         settings.min_similarity_percent,
         |left_index, right_index| match matcher.verify(&blocks[left_index], &blocks[right_index]) {
             None => {}
-            Some(PairMatch::Whole) => edges.push((left_index, None, right_index, None)),
+            // A whole match between two blocks that both overlap reported content could never join
+            // a group, and recording it would collapse the blocks' core nodes.
+            Some(PairMatch::Whole)
+                if !(block_touched[left_index] && block_touched[right_index]) =>
+            {
+                edges.push((left_index, None, right_index, None))
+            }
+            Some(PairMatch::Whole) => {}
             Some(PairMatch::Local(cores)) => {
                 for (left_core, right_core) in cores {
                     edges.push((left_index, Some(left_core), right_index, Some(right_core)));
