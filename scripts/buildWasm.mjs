@@ -5,11 +5,11 @@
 // downloaded into native/target. Requires a Rust toolchain.
 
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { wasiLibcCommit, wasiSdkVersion } from './wasiSdk.mjs';
 
-const wasiSdkVersion = '34.0';
 const target = 'wasm32-wasip1';
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -18,7 +18,7 @@ const wasiSdkPath = process.env.WASI_SDK_PATH || downloadWasiSdk();
 const executableSuffix = process.platform === 'win32' ? '.exe' : '';
 
 execFileSync('rustup', ['target', 'add', target], { cwd: nativeDir, stdio: 'inherit' });
-execFileSync('cargo', ['build', '--release', '--target', target], {
+execFileSync('cargo', ['build', '--release', '--locked', '--target', target], {
   cwd: nativeDir,
   stdio: 'inherit',
   env: {
@@ -47,6 +47,12 @@ function downloadWasiSdk() {
     console.log(`Downloading ${url}`);
     execFileSync('curl', ['-fsSL', '-o', `${sdkPath}.tar.gz`, url], { stdio: 'inherit' });
     execFileSync('tar', ['-xzf', `${sdkPath}.tar.gz`, '-C', downloadDir], { stdio: 'inherit' });
+  }
+  const linkedCommit = /^wasi-libc: (\S+)$/m.exec(readFileSync(path.join(sdkPath, 'VERSION'), 'utf8'))?.[1];
+  if (linkedCommit !== wasiLibcCommit) {
+    throw new Error(
+      `wasi-sdk ${wasiSdkVersion} links wasi-libc ${linkedCommit}, but scripts/wasiSdk.mjs names ${wasiLibcCommit}`
+    );
   }
   return sdkPath;
 }

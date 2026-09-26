@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { wasiLibcCommit } from './wasiSdk.mjs';
 
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const nativeDirPath = path.join(packageRoot, 'native');
@@ -67,9 +68,6 @@ execFileSync('cargo', ['vendor', '--versioned-dirs', vendorDirPath], {
   stdio: ['ignore', 'ignore', 'inherit'],
 });
 
-// The wasi-libc commit that the wasi-sdk release pinned in scripts/buildWasm.mjs was built from
-// (the `wasi-libc:` line of the SDK's VERSION file).
-const wasiLibcCommit = '2e6fb9d8ee0c';
 const wasiLibcLicenseFiles = [
   'LICENSE',
   'LICENSE-MIT',

@@ -79,9 +79,16 @@ export function detectLanguage(filePath: string): SupportedLanguage | undefined 
   return languageByExtension.get(extension.toLowerCase());
 }
 
-/** path.extname() for both POSIX and Windows separators, without depending on node:path. */
+/**
+ * path.extname() without node:path, which runtimes such as Cloudflare Workers lack. Like Node.js,
+ * backslashes separate paths only on Windows; elsewhere they are ordinary file-name characters.
+ */
 function extname(filePath: string): string {
-  const baseName = filePath.slice(Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1);
+  const separatorIndex = Math.max(
+    filePath.lastIndexOf('/'),
+    globalThis.process?.platform === 'win32' ? filePath.lastIndexOf('\\') : -1
+  );
+  const baseName = filePath.slice(separatorIndex + 1);
   const dotIndex = baseName.lastIndexOf('.');
   return dotIndex > 0 ? baseName.slice(dotIndex) : '';
 }
