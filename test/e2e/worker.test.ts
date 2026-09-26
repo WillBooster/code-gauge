@@ -13,7 +13,7 @@ type WorkerApi = {
   ) => Promise<ReturnType<(typeof codeGauge)[Name]>>;
 };
 
-let server: TestHarness;
+let server: TestHarness | undefined;
 let worker: WorkerApi;
 
 beforeAll(async () => {
@@ -27,7 +27,7 @@ beforeAll(async () => {
 }, 1_320_000);
 
 afterAll(async () => {
-  await server.close();
+  await server?.close();
 });
 
 describe('Cloudflare Workers', () => {
