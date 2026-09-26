@@ -214,11 +214,17 @@ export function collectCrossFileNearMissGroups(
     if (members.length < 2 || members.every((node) => anchored[nodes[node]?.blockIndex ?? 0])) {
       continue;
     }
+    // A group's nodes from one block become ONE occurrence whose segments are its cores, so the
+    // fragment-weighted count charges the block as one copy (as for gapped clones), not once per core.
+    const coresByBlock = new Map<number, ([number, number] | undefined)[]>();
+    for (const node of members) {
+      const { blockIndex = 0, core } = nodes[node] ?? {};
+      coresByBlock.set(blockIndex, [...(coresByBlock.get(blockIndex) ?? []), core]);
+    }
     groups.push(
-      members.flatMap((node) => {
-        const { blockIndex = 0, core } = nodes[node] ?? {};
+      [...coresByBlock].flatMap(([blockIndex, cores]) => {
         const block = blocks[blockIndex];
-        return block ? [toOccurrence(block, files, core, anchored[blockIndex] ?? false)] : [];
+        return block ? [toOccurrence(block, files, cores, anchored[blockIndex] ?? false)] : [];
       })
     );
   }
@@ -269,28 +275,35 @@ function createOverlapTest(
 }
 
 /**
- * The block's occurrence, narrowed to `core` when it matched only locally. Source offsets stay the
- * block's: tokens carry none, and near-miss occurrences report lines only.
+ * The block's occurrence with one segment per entry of `cores` (the whole block for `undefined`,
+ * a whole match). Source offsets stay the block's: tokens carry none, and near-miss occurrences
+ * report lines only.
  */
 function toOccurrence(
   { fileIndex, range }: NormalizedBlock,
   files: NearMissSourceFile[],
-  core: [number, number] | undefined,
+  cores: ([number, number] | undefined)[],
   anchor: boolean
 ): NearMissOccurrence {
-  const [start, end] = core ?? [range.startTokenIndex, range.endTokenIndex];
+  const whole = cores.includes(undefined);
+  const segments = cores
+    .map((core): [number, number] => core ?? [range.startTokenIndex, range.endTokenIndex])
+    .toSorted((left, right) => left[0] - right[0])
+    .map(([startTokenIndex, endTokenIndex]) => ({ startTokenIndex, endTokenIndex }));
+  const start = segments[0]?.startTokenIndex ?? range.startTokenIndex;
+  const end = segments.at(-1)?.endTokenIndex ?? range.endTokenIndex;
   const tokens = files[fileIndex]?.tokens;
   return {
     fileIndex,
     spanCountedElsewhere: anchor || undefined,
-    segments: [{ startTokenIndex: start, endTokenIndex: end }],
-    tokenCount: end - start,
+    segments,
+    tokenCount: segments.reduce((sum, segment) => sum + segment.endTokenIndex - segment.startTokenIndex, 0),
     startTokenIndex: start,
     endTokenIndex: end,
     startIndex: range.startIndex,
     endIndex: range.endIndex,
-    startLine: core ? (tokens?.[start]?.startRow ?? 0) + 1 : range.startLine,
-    endLine: core ? (tokens?.[end - 1]?.endRow ?? 0) + 1 : range.endLine,
+    startLine: whole ? range.startLine : (tokens?.[start]?.startRow ?? 0) + 1,
+    endLine: whole ? range.endLine : (tokens?.[end - 1]?.endRow ?? 0) + 1,
   };
 }
 

@@ -243,17 +243,23 @@ describe('clone operators: recall per edit type', () => {
       lineOf(code, second.statements[1]),
     ];
 
-    const { duplicateLineNumbersByFile } = measureCrossFileDuplication(
+    const { duplicateBlockCount, duplicateLineNumbersByFile } = measureCrossFileDuplication(
       Object.entries({ 'traced.js': traced, 'checked.js': checked }).map(([file, code]) => ({
         file,
         ...collectCrossFileDuplicationFileData(code, { language: 'javascript' }),
       }))
     );
     expect(duplicateLineNumbersByFile['checked.js']).toEqual(expect.arrayContaining(sharedLines(checked)));
+    // Each shared region is one redundant copy: two regions count 2 whether reported as separate
+    // groups or as one copy's two segments.
+    expect(duplicateBlockCount).toBe(2);
 
-    const { duplicateLineNumbers } = measureCode(`${traced}\n${checked}`, { language: 'javascript' }).duplication;
+    const { duplicateBlockCount: withinFileCount, duplicateLineNumbers } = measureCode(`${traced}\n${checked}`, {
+      language: 'javascript',
+    }).duplication;
     const offset = traced.split('\n').length;
     expect(duplicateLineNumbers).toEqual(expect.arrayContaining(sharedLines(checked).map((line) => line + offset)));
+    expect(withinFileCount).toBe(2);
   });
 
   it('does not pair a same-shape function over different APIs and data', () => {

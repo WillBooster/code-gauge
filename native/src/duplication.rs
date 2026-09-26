@@ -1807,31 +1807,47 @@ fn collect_near_miss_groups(
         let root = find(&mut parent, node);
         members_by_root.entry(root).or_default().push(node);
     }
-    let to_occurrence = |node: usize| {
-        let range = comparable[node_blocks[node]];
-        let (start, end, start_line, end_line) = match node_spans[node] {
-            Some((start, end)) => (
-                start,
-                end,
-                tokens[start].start_row + 1,
-                tokens[end - 1].end_row + 1,
-            ),
-            None => (
-                range.start_token_index,
-                range.end_token_index,
-                range.start_line,
-                range.end_line,
-            ),
-        };
-        CountedOccurrence {
-            shared_with_merged_group: false,
-            segments: vec![(start, end)],
-            token_count: end - start,
-            start_token_index: start,
-            end_token_index: end,
-            start_line,
-            end_line,
+    // A group's nodes from one block become ONE occurrence whose segments are its cores, so the
+    // fragment-weighted count charges the block as one copy (as for gapped clones), not once per
+    // core.
+    let to_occurrences = |nodes: &[usize]| -> Vec<CountedOccurrence> {
+        let mut spans_by_block: IndexMap<usize, Vec<Option<(usize, usize)>>> = IndexMap::new();
+        for &node in nodes {
+            spans_by_block
+                .entry(node_blocks[node])
+                .or_default()
+                .push(node_spans[node]);
         }
+        spans_by_block
+            .into_iter()
+            .map(|(block, spans)| {
+                let range = comparable[block];
+                let mut segments: Vec<(usize, usize)> = spans
+                    .iter()
+                    .map(|span| span.unwrap_or((range.start_token_index, range.end_token_index)))
+                    .collect();
+                segments.sort_unstable();
+                let whole = spans.iter().any(Option::is_none);
+                let (start, end) = (segments[0].0, segments[segments.len() - 1].1);
+                CountedOccurrence {
+                    shared_with_merged_group: false,
+                    token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
+                    segments,
+                    start_token_index: start,
+                    end_token_index: end,
+                    start_line: if whole {
+                        range.start_line
+                    } else {
+                        tokens[start].start_row + 1
+                    },
+                    end_line: if whole {
+                        range.end_line
+                    } else {
+                        tokens[end - 1].end_row + 1
+                    },
+                }
+            })
+            .collect()
     };
     let touched_groups_of = |node: usize| &touched_groups_by_block[node_blocks[node]];
     let mut groups: Vec<Vec<CountedOccurrence>> = Vec::new();
@@ -1850,7 +1866,10 @@ fn collect_near_miss_groups(
             .filter(|&index| !touched_groups_of(index).is_empty())
             .collect();
         if covered.is_empty() {
-            groups.push(members.iter().map(|&index| to_occurrence(index)).collect());
+            let occurrences = to_occurrences(members);
+            if occurrences.len() >= 2 {
+                groups.push(occurrences);
+            }
             continue;
         }
         if uncovered.is_empty() {
@@ -1881,6 +1900,7 @@ fn collect_near_miss_groups(
             // Rebuild the component as ONE group with one coalesced occurrence per member block.
             let mut consumed: HashSet<(usize, usize)> = HashSet::new();
             let mut merged: Vec<CountedOccurrence> = Vec::new();
+            let mut unanchored_nodes: Vec<usize> = Vec::new();
             for &member_index in members {
                 let range = comparable[node_blocks[member_index]];
                 // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
@@ -1918,9 +1938,10 @@ fn collect_near_miss_groups(
                     merged.push(coalesce_occurrences(copy_parts));
                 }
                 if !had_fragments && touched_groups_of(member_index).is_empty() {
-                    merged.push(to_occurrence(member_index));
+                    unanchored_nodes.push(member_index);
                 }
             }
+            merged.extend(to_occurrences(&unanchored_nodes));
             merged.sort_by_key(|occurrence| {
                 (occurrence.start_token_index, occurrence.end_token_index)
             });
@@ -1933,13 +1954,11 @@ fn collect_near_miss_groups(
             for &source_index in source_indexes {
                 reported_groups[source_index].clear();
             }
-        } else if uncovered.len() >= 2 {
-            groups.push(
-                uncovered
-                    .iter()
-                    .map(|&index| to_occurrence(index))
-                    .collect(),
-            );
+        } else {
+            let occurrences = to_occurrences(&uncovered);
+            if occurrences.len() >= 2 {
+                groups.push(occurrences);
+            }
         }
     }
     groups.sort_by_key(|group| group_sort_key(group));
