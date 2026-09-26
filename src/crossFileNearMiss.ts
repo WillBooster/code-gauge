@@ -22,7 +22,7 @@ export interface NearMissSourceFile {
   nearMissBlocks?: TokenRange[];
 }
 
-/** A block the exact cross-file pipeline did not report, or one it did (an anchor). */
+/** One copy (a block or its matched cores) in a near-miss group; anchors carry `spanCountedElsewhere` (see collectCrossFileNearMissGroups). */
 export interface NearMissOccurrence extends CountedOccurrence {
   fileIndex: number;
 }
