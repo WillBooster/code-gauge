@@ -32,8 +32,8 @@ const ngramSize = 5;
 /** Filtration threshold: shared distinct n-grams over the smaller block's (NIL's default). */
 const filtrationPercent = 10;
 /**
- * Pairs whose longer block exceeds this multiple of the shorter are not compared: whole-block
- * similarity already needs a ratio of at most 100 / minSimilarityPercent, and the bound keeps
+ * Pairs whose longer block exceeds this multiple of the shorter are compared only when whole-block
+ * similarity still allows their ratio (below a minSimilarityPercent of 34): the bound keeps
  * local-match candidate counting near-linear.
  */
 const maxLengthRatio = 3;
@@ -78,10 +78,6 @@ interface NormalizedBlock {
   sequence: Int32Array;
   /** The sequence sorted, for the token-bag upper bound on the LCS. */
   sortedSequence: Int32Array;
-  /**
-   * Identifier-blind n-gram hash per start offset, so a block copied into different surroundings
-   * (renumbering its identifiers) or with reordered statements still shares them.
-   */
   /** Distinct non-stop n-gram hashes. */
   ngrams: Int32Array;
   /**
@@ -138,7 +134,7 @@ export function collectCrossFileNearMissGroups(
     const hull = localHulls.get(index);
     localHulls.set(index, hull ? [Math.min(hull[0], core[0]), Math.max(hull[1], core[1])] : core);
   };
-  forEachCandidatePair(blocks, anchored, (left, right) => {
+  forEachCandidatePair(blocks, anchored, minSimilarityPercent, (left, right) => {
     const leftBlock = blocks[left];
     const rightBlock = blocks[right];
     const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
@@ -238,13 +234,15 @@ function toOccurrence(
 
 /**
  * Visits every cross-file block pair sharing at least `filtrationPercent` of the smaller block's
- * non-stop n-grams, except pairs of two anchors and pairs beyond `maxLengthRatio`. Blocks are
+ * non-stop n-grams, except pairs of two anchors and pairs whose length ratio rules out both
+ * whole-block similarity and `maxLengthRatio`. Blocks are
  * indexed in ascending length, so each posting list is scanned backwards only while its blocks
  * are long enough; shared counts accumulate in a dense counter, so no pair map is materialized.
  */
 function forEachCandidatePair(
   blocks: NormalizedBlock[],
   anchored: boolean[],
+  minSimilarityPercent: number,
   visit: (left: number, right: number) => void
 ): void {
   const blockFrequency = new Map<number, number>();
@@ -269,7 +267,10 @@ function forEachCandidatePair(
   for (const right of order) {
     const fileIndex = fileIndexes[right];
     const rightAnchored = anchorFlags[right] === 1;
-    const minLeftLength = Math.ceil((lengths[right] ?? 0) / maxLengthRatio);
+    const minLeftLength = Math.min(
+      Math.ceil((lengths[right] ?? 0) / maxLengthRatio),
+      Math.ceil((minSimilarityPercent * (lengths[right] ?? 0)) / 100)
+    );
     const ngrams = blocks[right]?.ngrams ?? [];
     for (const ngram of ngrams) {
       const posting = postings.get(ngram);
@@ -730,7 +731,11 @@ function tokenKey(token: Token): number {
   return (primary >>> 0) * 0x20_00_00 + (secondary >>> 11);
 }
 
-/** Identifier-blind n-gram hash per start offset (every identifier hashes as -1). */
+/**
+ * N-gram hash per start offset, identifier-blind (every identifier hashes as -1) so a block copied
+ * into different surroundings (renumbering its identifiers) or with reordered statements still
+ * shares its n-grams.
+ */
 function collectNgramHashes(symbols: Int32Array): Int32Array {
   const hashes = new Int32Array(Math.max(symbols.length - ngramSize + 1, 0));
   for (let start = 0; start < hashes.length; start += 1) {

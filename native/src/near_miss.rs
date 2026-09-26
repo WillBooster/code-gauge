@@ -6,8 +6,8 @@ const NGRAM_SIZE: usize = 5;
 /// Filtration threshold: shared distinct n-grams over the smaller set; shared with
 /// crossFileNearMiss.ts.
 pub(crate) const FILTRATION_PERCENT: usize = 10;
-/// Pairs whose longer block exceeds this multiple of the shorter are not compared: whole-block
-/// similarity already needs a ratio of at most 100 / minSimilarityPercent, and the bound keeps
+/// Pairs whose longer block exceeds this multiple of the shorter are compared only when whole-block
+/// similarity still allows their ratio (below a minSimilarityPercent of 34): the bound keeps
 /// local-match candidate counting near-linear. Shared with crossFileNearMiss.ts.
 pub(crate) const MAX_LENGTH_RATIO: usize = 3;
 /// Exclusive bound on the information-weighted share of content-bearing tokens (names and literal

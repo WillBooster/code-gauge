@@ -1738,7 +1738,9 @@ fn collect_near_miss_groups(
             continue;
         }
         if shared * 100 < FILTRATION_PERCENT * left.ngrams.len().min(right.ngrams.len())
-            || left.len().max(right.len()) > MAX_LENGTH_RATIO * left.len().min(right.len())
+            || (left.len().max(right.len()) > MAX_LENGTH_RATIO * left.len().min(right.len())
+                && left.len().min(right.len()) * 100
+                    < settings.min_similarity_percent * left.len().max(right.len()))
         {
             continue;
         }
