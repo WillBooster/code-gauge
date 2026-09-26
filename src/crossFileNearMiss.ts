@@ -356,21 +356,17 @@ function createMatcher(
   for (const [symbol, frequency] of documentFrequencies) {
     weights.set(symbol, selfInformation(frequency));
   }
-  const sharesContent = (left: Map<number, number>, right: Map<number, number>): boolean => {
-    const weight = (symbol: number): number => weights.get(symbol) ?? selfInformation(1);
-    const total = (counts: Map<number, number>): number => {
-      let sum = 0;
-      for (const [symbol, count] of counts) {
-        sum += count * weight(symbol);
-      }
-      return sum;
-    };
-    let overlap = 0;
-    for (const [symbol, count] of left) {
-      overlap += Math.min(count, right.get(symbol) ?? 0) * weight(symbol);
+  const weigh = (counts: Map<number, number>): WeightedContent => {
+    const symbols = Int32Array.from(counts.keys()).toSorted();
+    // Span content comes from blocks, so every symbol has a weight.
+    const weightedCounts = Int32Array.from(symbols, (symbol) => (counts.get(symbol) ?? 0) * (weights.get(symbol) ?? 0));
+    let total = 0;
+    for (const count of weightedCounts) {
+      total += count;
     }
-    return overlap * 100 > minContentSimilarityPercent * Math.max(total(left), total(right));
+    return { symbols, weightedCounts, total };
   };
+  const blockContents = new Map(blocks.map((block) => [block, weigh(block.contentCounts)]));
 
   // Every candidate pair of one `right` block is visited consecutively, so one LCS counter (its
   // position masks built once) serves them all.
@@ -438,8 +434,8 @@ function createMatcher(
       shorter * 100 < required ||
       anchoredTokenCount(segment) * 100 < minAnchorCoveragePercent * shorter ||
       !sharesContent(
-        countContent(left.symbols, left.isContent, leftStart, leftEnd),
-        countContent(right.symbols, right.isContent, rightStart, rightEnd)
+        weigh(countContent(left.symbols, left.isContent, leftStart, leftEnd)),
+        weigh(countContent(right.symbols, right.isContent, rightStart, rightEnd))
       ) ||
       lcsLength(
         anonymize(left.symbols.subarray(leftStart, leftEnd)),
@@ -464,7 +460,7 @@ function createMatcher(
     const required = minSimilarityPercent * Math.max(left.sequence.length, right.sequence.length);
     if (
       Math.min(left.sequence.length, right.sequence.length) * 100 >= required &&
-      sharesContent(left.contentCounts, right.contentCounts) &&
+      sharesContent(blockContents.get(left), blockContents.get(right)) &&
       ((sortedOverlap(left.sortedSequence, right.sortedSequence) * 100 >= required &&
         lcsLengthWithRight(right, rightIndex, left.sequence) * 100 >= required) ||
         matchesReordered(left, right, required))
@@ -473,6 +469,39 @@ function createMatcher(
     }
     return matchLocally(left, right);
   };
+}
+
+/** Content-bearing symbols, sorted, with their information-weighted counts. */
+interface WeightedContent {
+  symbols: Int32Array;
+  weightedCounts: Int32Array;
+  total: number;
+}
+
+/**
+ * A structural match must be backed by shared content: more than `minContentSimilarityPercent` of
+ * the larger side's information-weighted names and literal values. Two sides without content never
+ * pass.
+ */
+function sharesContent(left: WeightedContent | undefined, right: WeightedContent | undefined): boolean {
+  if (!left || !right) {
+    return false;
+  }
+  let overlap = 0;
+  for (let leftIndex = 0, rightIndex = 0; leftIndex < left.symbols.length && rightIndex < right.symbols.length;) {
+    const leftSymbol = left.symbols[leftIndex] ?? 0;
+    const rightSymbol = right.symbols[rightIndex] ?? 0;
+    if (leftSymbol === rightSymbol) {
+      overlap += Math.min(left.weightedCounts[leftIndex] ?? 0, right.weightedCounts[rightIndex] ?? 0);
+    }
+    if (leftSymbol <= rightSymbol) {
+      leftIndex += 1;
+    }
+    if (rightSymbol <= leftSymbol) {
+      rightIndex += 1;
+    }
+  }
+  return overlap * 100 > minContentSimilarityPercent * Math.max(left.total, right.total);
 }
 
 /**
