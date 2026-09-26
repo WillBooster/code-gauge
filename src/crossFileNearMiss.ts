@@ -146,7 +146,7 @@ export function collectCrossFileNearMissGroups(
     }
   });
 
-  // Clustering runs over (block, core) nodes: a block that matched some partner whole is one node,
+  // Clustering runs over (block, core) nodes: a block with a recorded whole match is one node,
   // and otherwise each union of its overlapping local cores is its own node, so disjoint cores
   // matched with different partners fall into separate groups.
   const matchedWhole = blocks.map(() => false);

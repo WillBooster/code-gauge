@@ -1740,7 +1740,7 @@ fn collect_near_miss_groups(
         },
     );
 
-    // Clustering runs over (block, core) nodes: a block that matched some partner whole is one
+    // Clustering runs over (block, core) nodes: a block with a recorded whole match is one
     // node, and otherwise each union of its overlapping local cores is its own node, so disjoint
     // cores matched with different partners fall into separate groups.
     let mut matched_whole = vec![false; comparable.len()];
