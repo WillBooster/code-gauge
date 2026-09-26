@@ -1729,8 +1729,10 @@ fn collect_near_miss_groups(
             match matcher.verify(&blocks[left_index], &blocks[right_index]) {
                 None => {}
                 Some(PairMatch::Whole) => edges.push((left_index, None, right_index, None)),
-                Some(PairMatch::Local(left_core, right_core)) => {
-                    edges.push((left_index, Some(left_core), right_index, Some(right_core)))
+                Some(PairMatch::Local(cores)) => {
+                    for (left_core, right_core) in cores {
+                        edges.push((left_index, Some(left_core), right_index, Some(right_core)));
+                    }
                 }
             }
         },

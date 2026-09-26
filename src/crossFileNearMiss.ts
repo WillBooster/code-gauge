@@ -96,7 +96,11 @@ interface NormalizedBlock {
 }
 
 /** How a verified pair matched: whole blocks, or the anchored file-relative token cores. */
-type PairMatch = { kind: 'whole' } | { kind: 'local'; left: [number, number]; right: [number, number] };
+/** A verified core in each block of a pair, as file token ranges. */
+type CorePair = [[number, number], [number, number]];
+
+/** How a verified pair matched: whole blocks, or every anchored core pair (one per gap-split chain segment). */
+type PairMatch = { kind: 'whole' } | { kind: 'local'; cores: CorePair[] };
 
 /**
  * Clusters verified cross-file near-miss pairs into groups. A block overlapping an occurrence of
@@ -126,7 +130,13 @@ export function collectCrossFileNearMissGroups(
     const rightBlock = blocks[right];
     const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
     if (match) {
-      edges.push(match.kind === 'whole' ? [left, undefined, right, undefined] : [left, match.left, right, match.right]);
+      if (match.kind === 'whole') {
+        edges.push([left, undefined, right, undefined]);
+      } else {
+        for (const [leftCore, rightCore] of match.cores) {
+          edges.push([left, leftCore, right, rightCore]);
+        }
+      }
     }
   });
 
@@ -410,7 +420,8 @@ function createMatcher(
    * (CCAligner's large-gap and LVMapper's large-variance clones). N-grams unique to each block
    * anchor the alignment; their longest chain increasing in both blocks (a run filter keeps only
    * anchors continuing a diagonal, but the chain may shift diagonals at small insertions), split at
-   * gaps, delimits the cores, which must then be near-miss clones of each other.
+   * gaps, delimits the cores, and every core pair that is a near-miss clone in its own right is
+   * returned.
    */
   const matchLocally = (left: NormalizedBlock, right: NormalizedBlock): PairMatch | undefined => {
     const anchors: [number, number][] = [];
@@ -441,42 +452,40 @@ function createMatcher(
         (next?.[0] === leftOffset + 1 && next[1] === rightOffset + 1)
       );
     });
-    const segment = densestChainSegment(longestIncreasingChain(runAnchors));
-    if (!segment) {
-      return undefined;
-    }
-    const [leftStart, rightStart] = segment[0] ?? [0, 0];
-    const [leftLast, rightLast] = segment.at(-1) ?? [0, 0];
-    const leftEnd = leftLast + ngramSize;
-    const rightEnd = rightLast + ngramSize;
-    const leftLength = leftEnd - leftStart;
-    const rightLength = rightEnd - rightStart;
-    const shorter = Math.min(leftLength, rightLength);
-    const required = minSimilarityPercent * Math.max(leftLength, rightLength);
-    if (
-      shorter < minTokens ||
-      shorter * 100 < required ||
-      anchoredTokenCount(segment) * 100 < minAnchorCoveragePercent * shorter ||
-      !sharesContent(
-        weigh(countContent(left.symbols, left.isContent, leftStart, leftEnd)),
-        weigh(countContent(right.symbols, right.isContent, rightStart, rightEnd))
-      ) ||
-      lcsLength(
-        anonymize(left.symbols.subarray(leftStart, leftEnd)),
-        anonymize(right.symbols.subarray(rightStart, rightEnd))
-      ) *
-        100 <
-        required
-    ) {
-      return undefined;
-    }
     const leftOffset = left.range.startTokenIndex;
     const rightOffset = right.range.startTokenIndex;
-    return {
-      kind: 'local',
-      left: [leftOffset + leftStart, leftOffset + leftEnd],
-      right: [rightOffset + rightStart, rightOffset + rightEnd],
-    };
+    const cores: CorePair[] = [];
+    for (const segment of chainSegments(longestIncreasingChain(runAnchors))) {
+      const [leftStart, rightStart] = segment[0] ?? [0, 0];
+      const [leftLast, rightLast] = segment.at(-1) ?? [0, 0];
+      const leftEnd = leftLast + ngramSize;
+      const rightEnd = rightLast + ngramSize;
+      const leftLength = leftEnd - leftStart;
+      const rightLength = rightEnd - rightStart;
+      const shorter = Math.min(leftLength, rightLength);
+      const required = minSimilarityPercent * Math.max(leftLength, rightLength);
+      if (
+        shorter >= minTokens &&
+        shorter * 100 >= required &&
+        anchoredTokenCount(segment) * 100 >= minAnchorCoveragePercent * shorter &&
+        sharesContent(
+          weigh(countContent(left.symbols, left.isContent, leftStart, leftEnd)),
+          weigh(countContent(right.symbols, right.isContent, rightStart, rightEnd))
+        ) &&
+        lcsLength(
+          anonymize(left.symbols.subarray(leftStart, leftEnd)),
+          anonymize(right.symbols.subarray(rightStart, rightEnd))
+        ) *
+          100 >=
+          required
+      ) {
+        cores.push([
+          [leftOffset + leftStart, leftOffset + leftEnd],
+          [rightOffset + rightStart, rightOffset + rightEnd],
+        ]);
+      }
+    }
+    return cores.length > 0 ? { kind: 'local', cores } : undefined;
   };
 
   /** Cheapest bounds first: the LCS cannot exceed the shorter block's length nor the bag overlap. */
@@ -618,33 +627,22 @@ function longestIncreasingChain(anchors: [number, number][]): [number, number][]
   return chain.toReversed();
 }
 
-/**
- * The chain segment (split where consecutive anchors lie more than `maxAnchorGapTokens` apart in
- * either block) spanning the most left-block tokens; the earliest such segment wins ties.
- */
-function densestChainSegment(chain: [number, number][]): [number, number][] | undefined {
-  let best: [number, number][] | undefined;
-  let segmentStart = 0;
+/** The chain's segments, split where consecutive anchors lie more than `maxAnchorGapTokens` apart in either block. */
+function chainSegments(chain: [number, number][]): [number, number][][] {
+  const segments: [number, number][][] = [];
   for (const [index, anchor] of chain.entries()) {
-    const next = chain[index + 1];
-    const breaksAfter =
-      !next ||
-      next[0] - (anchor[0] + ngramSize) > maxAnchorGapTokens ||
-      next[1] - (anchor[1] + ngramSize) > maxAnchorGapTokens;
-    if (!breaksAfter) {
-      continue;
+    const previous = chain[index - 1];
+    const continues =
+      previous !== undefined &&
+      anchor[0] - (previous[0] + ngramSize) <= maxAnchorGapTokens &&
+      anchor[1] - (previous[1] + ngramSize) <= maxAnchorGapTokens;
+    if (continues) {
+      segments.at(-1)?.push(anchor);
+    } else {
+      segments.push([anchor]);
     }
-    const segment = chain.slice(segmentStart, index + 1);
-    if (!best || segmentSpan(segment) > segmentSpan(best)) {
-      best = segment;
-    }
-    segmentStart = index + 1;
   }
-  return best;
-}
-
-function segmentSpan(segment: [number, number][]): number {
-  return (segment.at(-1)?.[0] ?? 0) - (segment[0]?.[0] ?? 0);
+  return segments;
 }
 
 /** Left-block tokens the segment's anchors cover (overlapping anchors count once). */

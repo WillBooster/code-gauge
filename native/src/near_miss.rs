@@ -114,11 +114,14 @@ impl Block {
     }
 }
 
-/// How a verified pair matched: whole blocks, or the anchored sub-ranges (absolute token indexes)
-/// where one block's copy is embedded in added code.
+/// A verified core in each block of a pair, as absolute token ranges.
+pub(crate) type CorePair = ((usize, usize), (usize, usize));
+
+/// How a verified pair matched: whole blocks, or every anchored core pair (one per gap-split
+/// chain segment) where the blocks share a copy embedded in different code.
 pub(crate) enum PairMatch {
     Whole,
-    Local((usize, usize), (usize, usize)),
+    Local(Vec<CorePair>),
 }
 
 /// Verifies near-miss block pairs: token-level LCS against the larger side (NiCad's per-fragment
@@ -201,7 +204,8 @@ impl Matcher {
     /// (CCAligner's large-gap and LVMapper's large-variance clones). N-grams unique to each block
     /// anchor the alignment; their longest chain increasing in both blocks (a run filter keeps only
     /// anchors continuing a diagonal, but the chain may shift diagonals at small insertions), split
-    /// at gaps, delimits the cores, which must then be near-miss clones of each other.
+    /// at gaps, delimits the cores, and every core pair that is a near-miss clone in its own right
+    /// is returned.
     fn match_locally(&self, left: &Block, right: &Block) -> Option<PairMatch> {
         let mut anchors: Vec<(usize, usize)> = Vec::new();
         let (mut left_index, mut right_index) = (0, 0);
@@ -238,34 +242,35 @@ impl Matcher {
             .map(|index| anchors[index])
             .collect();
         let chain = longest_increasing_chain(&run_anchors);
-        let segment = densest_chain_segment(&chain)?;
-        let (first, last) = (segment[0], segment[segment.len() - 1]);
-        let (left_start, left_end) = (first.0, last.0 + NGRAM_SIZE);
-        let (right_start, right_end) = (first.1, last.1 + NGRAM_SIZE);
-        let (left_length, right_length) = (left_end - left_start, right_end - right_start);
-        let shorter = left_length.min(right_length);
-        let required = self.min_similarity_percent * left_length.max(right_length);
-        if shorter < self.min_tokens
-            || shorter * 100 < required
-            || anchored_token_count(segment) * 100 < MIN_ANCHOR_COVERAGE_PERCENT * shorter
-            || !self.spans_share_content(
-                left,
-                (left_start, left_end),
-                right,
-                (right_start, right_end),
-            )
-            || lcs_length(
-                &anonymize(&left.symbols[left_start..left_end]),
-                &anonymize(&right.symbols[right_start..right_end]),
-            ) * 100
-                < required
-        {
-            return None;
-        }
-        Some(PairMatch::Local(
-            (left.start + left_start, left.start + left_end),
-            (right.start + right_start, right.start + right_end),
-        ))
+        let cores: Vec<CorePair> = chain_segments(&chain)
+            .filter_map(|segment| {
+                let (first, last) = (segment[0], segment[segment.len() - 1]);
+                let (left_start, left_end) = (first.0, last.0 + NGRAM_SIZE);
+                let (right_start, right_end) = (first.1, last.1 + NGRAM_SIZE);
+                let (left_length, right_length) = (left_end - left_start, right_end - right_start);
+                let shorter = left_length.min(right_length);
+                let required = self.min_similarity_percent * left_length.max(right_length);
+                let verified = shorter >= self.min_tokens
+                    && shorter * 100 >= required
+                    && anchored_token_count(segment) * 100 >= MIN_ANCHOR_COVERAGE_PERCENT * shorter
+                    && self.spans_share_content(
+                        left,
+                        (left_start, left_end),
+                        right,
+                        (right_start, right_end),
+                    )
+                    && lcs_length(
+                        &anonymize(&left.symbols[left_start..left_end]),
+                        &anonymize(&right.symbols[right_start..right_end]),
+                    ) * 100
+                        >= required;
+                verified.then_some((
+                    (left.start + left_start, left.start + left_end),
+                    (right.start + right_start, right.start + right_end),
+                ))
+            })
+            .collect();
+        (!cores.is_empty()).then_some(PairMatch::Local(cores))
     }
 
     fn spans_share_content(
@@ -405,27 +410,13 @@ fn longest_increasing_chain(anchors: &[(usize, usize)]) -> Vec<(usize, usize)> {
     chain
 }
 
-/// The chain segment (split where consecutive anchors lie more than MAX_ANCHOR_GAP_TOKENS apart in
-/// either block) spanning the most left-block tokens; the earliest such segment wins ties.
-fn densest_chain_segment(chain: &[(usize, usize)]) -> Option<&[(usize, usize)]> {
-    let span = |segment: &[(usize, usize)]| segment[segment.len() - 1].0 - segment[0].0;
-    let mut best: Option<&[(usize, usize)]> = None;
-    let mut segment_start = 0;
-    for index in 0..chain.len() {
-        let breaks_after = chain.get(index + 1).is_none_or(|next| {
-            next.0.saturating_sub(chain[index].0 + NGRAM_SIZE) > MAX_ANCHOR_GAP_TOKENS
-                || next.1.saturating_sub(chain[index].1 + NGRAM_SIZE) > MAX_ANCHOR_GAP_TOKENS
-        });
-        if !breaks_after {
-            continue;
-        }
-        let segment = &chain[segment_start..=index];
-        if best.is_none_or(|best| span(segment) > span(best)) {
-            best = Some(segment);
-        }
-        segment_start = index + 1;
-    }
-    best
+/// The chain's segments, split where consecutive anchors lie more than MAX_ANCHOR_GAP_TOKENS apart
+/// in either block.
+fn chain_segments(chain: &[(usize, usize)]) -> impl Iterator<Item = &[(usize, usize)]> {
+    chain.chunk_by(|anchor, next| {
+        next.0.saturating_sub(anchor.0 + NGRAM_SIZE) <= MAX_ANCHOR_GAP_TOKENS
+            && next.1.saturating_sub(anchor.1 + NGRAM_SIZE) <= MAX_ANCHOR_GAP_TOKENS
+    })
 }
 
 /// Longest-common-subsequence LENGTH via the Allison–Dix bit-parallel recurrence. Only the length
