@@ -1,4 +1,3 @@
-import { createRequire } from 'node:module';
 import type { CrossFileDuplicateCandidate, Token, TokenRange } from './duplication.js';
 import type { CodeMetrics, DuplicationOptions, FunctionMetrics } from './types.js';
 
@@ -36,7 +35,7 @@ export interface NativeCrossFileDataPayload {
   codeLineNumbers: number[];
 }
 
-interface NativeBinding {
+export interface NativeBinding {
   measureCodeNative(
     code: string,
     language: string,
@@ -56,7 +55,7 @@ interface NativeBinding {
  * `git pull` untouched, so without this handshake it would silently return payloads missing
  * newer fields instead of failing with a clear rebuild message.
  */
-const expectedPayloadVersion = 7;
+export const expectedPayloadVersion = 7;
 
 /**
  * Measures one file via the native addon, returning the raw payload for assembly in metrics.ts;
@@ -134,6 +133,11 @@ export class NativeAddonError extends Error {}
 let cachedBinding: NativeBinding | undefined;
 let cachedFailure: NativeAddonError | undefined;
 
+/** Replaces the N-API addon, e.g. with the WebAssembly build on runtimes without N-API. */
+export function setNativeBinding(binding: NativeBinding): void {
+  cachedBinding = binding;
+}
+
 function loadBinding(): NativeBinding {
   if (cachedBinding) {
     return cachedBinding;
@@ -144,7 +148,8 @@ function loadBinding(): NativeBinding {
     throw cachedFailure;
   }
   // Resolved relative to this file, so both src/ (tests) and dist/ (build) find the addon.
-  const requireNative = createRequire(import.meta.url);
+  // node:module is loaded lazily so that runtimes without it can bundle this module.
+  const requireNative = process.getBuiltinModule('node:module').createRequire(import.meta.url);
   const specifiers = [
     // A prebuilt platform package, when published for this platform.
     `code-gauge-${platformTriplet()}`,

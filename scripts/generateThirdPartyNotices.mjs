@@ -1,16 +1,18 @@
 #!/usr/bin/env node
-// Generates .tmp/THIRD-PARTY-NOTICES.txt for the prebuilt platform packages (#52): the addon
-// statically links its Rust dependencies, so the binary distribution must carry their license
+// Generates .tmp/THIRD-PARTY-NOTICES.txt for the prebuilt platform packages (#52) and the main
+// package's native/code-gauge.wasm: the binaries statically link their Rust dependencies (and the
+// WebAssembly build also wasi-libc), so the binary distributions must carry their license
 // TEXTS and copyright notices (a license identifier plus a repository link would not satisfy
 // MIT's notice-inclusion requirement or Apache-2.0 §4). The crates' bundled LICENSE/COPYING/
 // NOTICE files are read from a `cargo vendor` tree, which downloads and extracts every resolved
 // crate. Run by build-native.yml, which uploads the file as an artifact the release pipeline
-// bundles into every platform package.
+// bundles into every platform package and the main package.
 
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { wasiLibcCommit } from './wasiSdk.mjs';
 
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const nativeDirPath = path.join(packageRoot, 'native');
@@ -66,6 +68,14 @@ execFileSync('cargo', ['vendor', '--versioned-dirs', vendorDirPath], {
   stdio: ['ignore', 'ignore', 'inherit'],
 });
 
+const wasiLibcLicenseFiles = [
+  'LICENSE',
+  'LICENSE-MIT',
+  'libc-top-half/musl/COPYRIGHT',
+  'libc-bottom-half/cloudlibc/LICENSE',
+  'fts/musl-fts/COPYING',
+];
+
 const separator = '='.repeat(100);
 const sections = crates.map((crate) => {
   const header =
@@ -107,16 +117,32 @@ const sections = crates.map((crate) => {
   return `${header}\n${[fallbackBlock, ...texts].filter(Boolean).join('\n')}`;
 });
 
+const wasiLibcTexts = await Promise.all(
+  wasiLibcLicenseFiles.map(async (filePath) => {
+    const url = `https://raw.githubusercontent.com/WebAssembly/wasi-libc/${wasiLibcCommit}/${filePath}`;
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(`GET ${url} responded ${response.status}`);
+    const text = await response.text();
+    return `----- ${filePath} -----\n${text.trim()}\n`;
+  })
+);
+sections.push(
+  `${separator}\nwasi-libc ${wasiLibcCommit} (linked into code-gauge.wasm only) — ` +
+    `https://github.com/WebAssembly/wasi-libc\n${separator}\n${wasiLibcTexts.join('\n')}`
+);
+
 const output =
-  'Third-party notices for the code-gauge native addon\n\n' +
-  'The prebuilt code-gauge native addon statically links Rust crates from the dependency graph\n' +
-  'below (the list is a superset that also covers build-time and other-platform crates). Each\n' +
-  "entry reproduces the license and notice files bundled in the crate's published sources.\n\n" +
+  'Third-party notices for the code-gauge native addon and WebAssembly module\n\n' +
+  'The prebuilt code-gauge native addon and WebAssembly module statically link Rust crates from\n' +
+  'the dependency graph below (the list is a superset that also covers build-time and\n' +
+  "other-platform crates); each entry reproduces the license and notice files bundled in the crate's\n" +
+  'published sources. The WebAssembly module also links wasi-libc, whose license files follow the\n' +
+  'crates.\n\n' +
   `${sections.join('\n')}\n${separator}\nAppendix: canonical MIT license text (for crates whose published sources bundle no license file)\n${separator}\n\n${mitLicenseText()}\n`;
 mkdirSync(path.join(packageRoot, '.tmp'), { recursive: true });
 writeFileSync(path.join(packageRoot, '.tmp', 'THIRD-PARTY-NOTICES.txt'), output);
 rmSync(vendorDirPath, { recursive: true, force: true });
-console.info(`Wrote .tmp/THIRD-PARTY-NOTICES.txt (${crates.length} crates).`);
+console.info(`Wrote .tmp/THIRD-PARTY-NOTICES.txt (${crates.length} crates and wasi-libc).`);
 
 function mitLicenseText() {
   return `MIT License

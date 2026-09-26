@@ -93,8 +93,22 @@ jobs:
           name: code-gauge-${{ matrix.target }}
           path: native/target/release/${{ matrix.library }}
           if-no-files-found: error
-  # The release pipeline bundles these attributions into every platform package (the addon
-  # statically links its Rust dependencies, so the binary distribution must carry them).
+  # The WebAssembly build for Cloudflare Workers, which the release pipeline bundles into the main
+  # package as native/code-gauge.wasm.
+  build-wasm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7.0.1
+        with:
+          persist-credentials: false
+      - run: node scripts/buildWasm.mjs
+      - uses: actions/upload-artifact@v7.0.1
+        with:
+          name: code-gauge-wasm32-wasip1
+          path: native/code-gauge.wasm
+          if-no-files-found: error
+  # The release pipeline bundles these attributions into every platform package and the main
+  # package (the binaries statically link their dependencies, so the distributions must carry them).
   third-party-notices:
     runs-on: ubuntu-latest
     steps:
