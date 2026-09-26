@@ -96,7 +96,7 @@ interface ScanContext {
    */
   outcomes: (ScanOutcome | Promise<ScanOutcome>)[];
   /** Measurements in flight, bounded so file contents and payloads do not pile up during the walk. */
-  inFlight: Promise<ScanOutcome>[];
+  inFlight: Set<Promise<ScanOutcome>>;
   /** Set once a measurement fails fatally; the walk then starts no further work. */
   fatalSeen: boolean;
   visitedDirectories: Set<string>;
@@ -210,7 +210,7 @@ function makeScanContext(options: ScanOptions, rootDirectory: string): ScanConte
   return {
     options,
     outcomes: [],
-    inFlight: [],
+    inFlight: new Set(),
     fatalSeen: false,
     visitedDirectories: new Set(),
     visitedFiles: new Set(),
@@ -343,11 +343,14 @@ async function measureFile(
   }
   context.visitedFiles.add(resolvedFile);
 
-  if (context.inFlight.length >= maxMeasurementsInFlight) {
-    await context.inFlight.shift();
+  // Any settled measurement frees its slot (removed by the callback below, which runs before the
+  // race resumes), so one slow file never idles the pool.
+  while (context.inFlight.size >= maxMeasurementsInFlight) {
+    await Promise.race(context.inFlight);
   }
   const outcome = readAndMeasureFile(file, language, mode, context);
-  context.inFlight.push(outcome);
+  context.inFlight.add(outcome);
+  void outcome.then(() => context.inFlight.delete(outcome));
   context.outcomes.push(outcome);
 }
 
