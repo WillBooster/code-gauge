@@ -97,6 +97,8 @@ interface ScanContext {
   outcomes: (ScanOutcome | Promise<ScanOutcome>)[];
   /** Measurements in flight, bounded so file contents and payloads do not pile up during the walk. */
   inFlight: Promise<ScanOutcome>[];
+  /** Set once a measurement fails fatally; the walk then starts no further work. */
+  fatalSeen: boolean;
   visitedDirectories: Set<string>;
   visitedFiles: Set<string>;
   /** Scan root: paths are displayed relative to it, and symbolic links may not escape it. */
@@ -161,6 +163,9 @@ export async function scanListedFiles(
 ): Promise<ScanResult> {
   const context = makeScanContext(options, rootDirectory);
   for (const relativePath of relativePaths) {
+    if (context.fatalSeen) {
+      break;
+    }
     const language = isScannedPath(relativePath, options) ? getLanguage(relativePath, options) : undefined;
     if (!language) {
       continue;
@@ -206,6 +211,7 @@ function makeScanContext(options: ScanOptions, rootDirectory: string): ScanConte
     options,
     outcomes: [],
     inFlight: [],
+    fatalSeen: false,
     visitedDirectories: new Set(),
     visitedFiles: new Set(),
     rootDirectory,
@@ -249,6 +255,9 @@ async function scanDirectory(directory: string, context: ScanContext): Promise<v
   }
 
   for (const entry of entries) {
+    if (context.fatalSeen) {
+      return;
+    }
     const entryPath = path.join(directory, entry.name);
     if (entry.isSymbolicLink()) {
       await scanSymbolicLink(entry.name, entryPath, context);
@@ -319,6 +328,9 @@ async function measureFile(
   context: ScanContext,
   realFile?: string
 ): Promise<void> {
+  if (context.fatalSeen) {
+    return;
+  }
   let resolvedFile;
   try {
     resolvedFile = realFile ?? (await realpath(file));
@@ -364,6 +376,7 @@ async function readAndMeasureFile(
     };
   } catch (error) {
     if (error instanceof NativeAddonError) {
+      context.fatalSeen = true;
       return { fatal: error };
     }
     return { error: `${formatPath(file, context.rootDirectory)}: ${formatError(error)}` };
