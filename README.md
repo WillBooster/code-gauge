@@ -161,11 +161,12 @@ The `duplication` section tunes how clones are detected:
   (names and literal values, weighted by rarity so ubiquitous names count less, after ECScan). Two
   refinements apply the same threshold: blocks whose top-level statements were reordered are also
   compared in a canonical statement order, and a copy embedded in added code (on one side or both)
-  is matched on its core, delimited by the longest chain of n-grams unique to both blocks, and
-  reported as that core rather than the whole block. `100` disables near-miss detection. Applies to
-  within-file detection and to cross-file matching alike; across files, n-grams shared by more than
-  1000 blocks (syntax boilerplate) are left out of the filtration index so boilerplate cannot make
-  candidate counting quadratic in the block count.
+  is matched on its cores: the chain of n-grams unique to both blocks (only those continuing a
+  diagonal run) is split at gaps of more than 30 tokens, each segment must pass the same threshold
+  on its own, and the verified cores, not the whole blocks, are reported. `100` disables near-miss
+  detection. Applies to within-file detection and to cross-file matching alike; across files,
+  n-grams shared by more than 1000 blocks (syntax boilerplate) are left out of the filtration index
+  so boilerplate cannot make candidate counting quadratic in the block count.
 
 ## Metrics
 
