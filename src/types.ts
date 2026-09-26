@@ -40,9 +40,8 @@ export interface DuplicationOptions {
    * token-level longest common subsequence relative to the larger block (NiCad-style per-fragment
    * similarity), also after putting both blocks' top-level statements in a canonical order (so
    * reordered copies match), or relative to the larger matched core when a copy is embedded in
-   * added code. 100
-   * disables near-miss detection and reports exact (Type-1/2) matches plus gapped merges only
-   * (default 70). Applies to within-file and cross-file detection.
+   * added code. 100 disables near-miss detection and reports exact (Type-1/2) matches plus gapped
+   * merges only (default 70). Applies to within-file and cross-file detection.
    */
   minSimilarityPercent?: number;
 }
