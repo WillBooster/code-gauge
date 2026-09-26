@@ -199,8 +199,9 @@ impl Matcher {
     /// Matches the cores two blocks share inside different surroundings (a copy wrapped in added
     /// code, or two copies embedded in different code), which whole-block similarity misses
     /// (CCAligner's large-gap and LVMapper's large-variance clones). N-grams unique to each block
-    /// anchor the alignment; their longest collinear chain, split at gaps, delimits the cores,
-    /// which must then be near-miss clones of each other in their own right.
+    /// anchor the alignment; their longest chain increasing in both blocks (a run filter keeps only
+    /// anchors continuing a diagonal, but the chain may shift diagonals at small insertions), split
+    /// at gaps, delimits the cores, which must then be near-miss clones of each other.
     fn match_locally(&self, left: &Block, right: &Block) -> Option<PairMatch> {
         let mut anchors: Vec<(usize, usize)> = Vec::new();
         let (mut left_index, mut right_index) = (0, 0);
@@ -236,7 +237,7 @@ impl Matcher {
             })
             .map(|index| anchors[index])
             .collect();
-        let chain = longest_collinear_chain(&run_anchors);
+        let chain = longest_increasing_chain(&run_anchors);
         let segment = densest_chain_segment(&chain)?;
         let (first, last) = (segment[0], segment[segment.len() - 1]);
         let (left_start, left_end) = (first.0, last.0 + NGRAM_SIZE);
@@ -378,7 +379,7 @@ fn canonical_sequence(
 
 /// The longest chain of anchors increasing in both blocks (anchors arrive sorted by left offset),
 /// via patience sorting over right offsets.
-fn longest_collinear_chain(anchors: &[(usize, usize)]) -> Vec<(usize, usize)> {
+fn longest_increasing_chain(anchors: &[(usize, usize)]) -> Vec<(usize, usize)> {
     let mut tail_indexes: Vec<usize> = Vec::new();
     let mut predecessors: Vec<Option<usize>> = Vec::with_capacity(anchors.len());
     for (index, &(_, right_offset)) in anchors.iter().enumerate() {

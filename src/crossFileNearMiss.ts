@@ -408,8 +408,9 @@ function createMatcher(
    * Matches the cores two blocks share inside different surroundings (a copy wrapped in added
    * code, or two copies embedded in different code), which whole-block similarity misses
    * (CCAligner's large-gap and LVMapper's large-variance clones). N-grams unique to each block
-   * anchor the alignment; their longest collinear chain, split at gaps, delimits the cores, which
-   * must then be near-miss clones of each other in their own right.
+   * anchor the alignment; their longest chain increasing in both blocks (a run filter keeps only
+   * anchors continuing a diagonal, but the chain may shift diagonals at small insertions), split at
+   * gaps, delimits the cores, which must then be near-miss clones of each other.
    */
   const matchLocally = (left: NormalizedBlock, right: NormalizedBlock): PairMatch | undefined => {
     const anchors: [number, number][] = [];
@@ -440,7 +441,7 @@ function createMatcher(
         (next?.[0] === leftOffset + 1 && next[1] === rightOffset + 1)
       );
     });
-    const segment = densestChainSegment(longestCollinearChain(runAnchors));
+    const segment = densestChainSegment(longestIncreasingChain(runAnchors));
     if (!segment) {
       return undefined;
     }
@@ -590,7 +591,7 @@ function compareSequences(left: Int32Array, right: Int32Array): number {
  * The longest chain of anchors increasing in both blocks (anchors arrive sorted by left offset),
  * via patience sorting over right offsets.
  */
-function longestCollinearChain(anchors: [number, number][]): [number, number][] {
+function longestIncreasingChain(anchors: [number, number][]): [number, number][] {
   const tailIndexes: number[] = [];
   const predecessors: number[] = [];
   for (const [index, [, rightOffset]] of anchors.entries()) {
