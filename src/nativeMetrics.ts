@@ -36,25 +36,19 @@ export interface NativeCrossFileDataPayload {
   codeLineNumbers: number[];
 }
 
+type NativeMeasureArguments = [
+  code: string,
+  language: string,
+  includeSyntaxTree: boolean,
+  minTokens: number | undefined,
+  maxGapTokens: number | undefined,
+  minSimilarityPercent: number | undefined,
+  includeCrossFileData: boolean,
+];
+
 interface NativeBinding {
-  measureCodeNative(
-    code: string,
-    language: string,
-    includeSyntaxTree: boolean,
-    minTokens?: number,
-    maxGapTokens?: number,
-    minSimilarityPercent?: number,
-    includeCrossFileData?: boolean
-  ): string;
-  measureCodeNativeAsync(
-    code: string,
-    language: string,
-    includeSyntaxTree: boolean,
-    minTokens?: number,
-    maxGapTokens?: number,
-    minSimilarityPercent?: number,
-    includeCrossFileData?: boolean
-  ): Promise<string>;
+  measureCodeNative(...args: NativeMeasureArguments): string;
+  measureCodeNativeAsync(...args: NativeMeasureArguments): Promise<string>;
   collectCrossFileDataNative(code: string, language: string, minTokens?: number): string;
   collectFunctionTokenSequencesNative(code: string, language: string): string;
   payloadVersion?(): number;
@@ -80,13 +74,7 @@ export function measureCodeNative(
 ): NativeMetricsPayload {
   return JSON.parse(
     loadBinding().measureCodeNative(
-      toWellFormed(code),
-      language,
-      includeSyntaxTree,
-      clampToU32(duplication?.minTokens),
-      clampToU32(duplication?.maxGapTokens),
-      clampToU32(duplication?.minSimilarityPercent),
-      includeCrossFileData
+      ...toNativeMeasureArguments(code, language, includeSyntaxTree, duplication, includeCrossFileData)
     )
   ) as NativeMetricsPayload;
 }
@@ -104,15 +92,28 @@ export function measureCodeNativeAsync(
 ): Promise<NativeMetricsPayload> {
   return loadBinding()
     .measureCodeNativeAsync(
-      toWellFormed(code),
-      language,
-      includeSyntaxTree,
-      clampToU32(duplication?.minTokens),
-      clampToU32(duplication?.maxGapTokens),
-      clampToU32(duplication?.minSimilarityPercent),
-      includeCrossFileData
+      ...toNativeMeasureArguments(code, language, includeSyntaxTree, duplication, includeCrossFileData)
     )
     .then((json) => JSON.parse(json) as NativeMetricsPayload);
+}
+
+/** The binding arguments shared by the sync and async measurements, so both measure alike. */
+function toNativeMeasureArguments(
+  code: string,
+  language: string,
+  includeSyntaxTree: boolean,
+  duplication: DuplicationOptions | undefined,
+  includeCrossFileData: boolean
+): NativeMeasureArguments {
+  return [
+    toWellFormed(code),
+    language,
+    includeSyntaxTree,
+    clampToU32(duplication?.minTokens),
+    clampToU32(duplication?.maxGapTokens),
+    clampToU32(duplication?.minSimilarityPercent),
+    includeCrossFileData,
+  ];
 }
 
 /** Collects one file's cross-file clone-detection contribution via the native addon. */
