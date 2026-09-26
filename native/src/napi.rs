@@ -18,14 +18,14 @@ pub fn measure_code_native(
     min_similarity_percent: Option<u32>,
     include_cross_file_data: Option<bool>,
 ) -> Result<String> {
-    crate::measure_code(
+    measure_code(
         &code,
         &language,
-        include_syntax_tree.unwrap_or(false),
+        include_syntax_tree,
         min_tokens,
         max_gap_tokens,
         min_similarity_percent,
-        include_cross_file_data.unwrap_or(false),
+        include_cross_file_data,
     )
     .map_err(Error::from_reason)
 }
@@ -49,14 +49,14 @@ pub fn measure_code_native_async(
         // A panic must reject the promise: otherwise it would stay pending and keep the event
         // loop alive forever.
         let result = std::panic::catch_unwind(|| {
-            crate::measure_code(
+            measure_code(
                 &code,
                 &language,
-                include_syntax_tree.unwrap_or(false),
+                include_syntax_tree,
                 min_tokens,
                 max_gap_tokens,
                 min_similarity_percent,
-                include_cross_file_data.unwrap_or(false),
+                include_cross_file_data,
             )
         })
         .unwrap_or_else(|_| Err("measurement panicked".to_string()));
@@ -66,6 +66,27 @@ pub fn measure_code_native_async(
         }
     });
     Ok(promise)
+}
+
+/// The arguments' defaults, applied in one place so the sync and async bindings measure alike.
+fn measure_code(
+    code: &str,
+    language: &str,
+    include_syntax_tree: Option<bool>,
+    min_tokens: Option<u32>,
+    max_gap_tokens: Option<u32>,
+    min_similarity_percent: Option<u32>,
+    include_cross_file_data: Option<bool>,
+) -> std::result::Result<String, String> {
+    crate::measure_code(
+        code,
+        language,
+        include_syntax_tree.unwrap_or(false),
+        min_tokens,
+        max_gap_tokens,
+        min_similarity_percent,
+        include_cross_file_data.unwrap_or(false),
+    )
 }
 
 #[napi]
