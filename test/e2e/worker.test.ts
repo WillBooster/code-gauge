@@ -2,6 +2,7 @@ import path from 'node:path';
 import { createTestHarness, type TestHarness } from 'wrangler';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import * as codeGauge from '../../src/index.js';
+import { run } from '../helpers/globalSetup.js';
 import { loadFixtureCorpus } from './fixtureCorpus.js';
 
 // Runs the package's `workerd` export (the WebAssembly build) inside workerd through a Worker that
@@ -16,12 +17,14 @@ let server: TestHarness;
 let worker: WorkerApi;
 
 beforeAll(async () => {
+  // Built here rather than in the global setup, so that other tests need no WASI toolchain.
+  run(path.join(import.meta.dirname, '..', '..'), 'bun', ['run', 'build-wasm'], 1_200_000);
   server = createTestHarness({
     workers: [{ configPath: path.join(import.meta.dirname, 'worker', 'wrangler.jsonc') }],
   });
   await server.listen();
   worker = (await server.getWorker().getExport()) as unknown as WorkerApi;
-}, 120_000);
+}, 1_320_000);
 
 afterAll(async () => {
   await server.close();

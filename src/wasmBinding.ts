@@ -40,12 +40,25 @@ const decoder = new TextDecoder();
  * Wraps the WebAssembly build of the native addon (native/src/wasm.rs) as a NativeBinding. The
  * module is instantiated synchronously on first use and again after a trap (a panic or stack
  * overflow), because a trap leaves the instance's memory and stack pointer in an undefined state.
+ * An instantiation failure (e.g., a payload version mismatch) is memoized like the N-API loader's,
+ * since instantiating the same module again would fail again.
  */
 export function createWasmBinding(module: WebAssembly.Module): NativeBinding {
   let instance: { exports: WasmExports; stderr: string[] } | undefined;
+  let instantiationFailure: unknown;
 
   const call = (invoke: (exports: WasmExports) => number): string => {
-    instance ??= instantiate(module);
+    if (!instance) {
+      if (instantiationFailure) {
+        throw instantiationFailure;
+      }
+      try {
+        instance = instantiate(module);
+      } catch (error) {
+        instantiationFailure = error;
+        throw error;
+      }
+    }
     const { exports, stderr } = instance;
     stderr.length = 0;
     let status: number;
@@ -65,10 +78,6 @@ export function createWasmBinding(module: WebAssembly.Module): NativeBinding {
   };
 
   return {
-    payloadVersion: () => {
-      instance ??= instantiate(module);
-      return instance.exports.payload_version();
-    },
     measureCodeNative: (
       code,
       language,
