@@ -174,8 +174,8 @@ export function measureCode(code: string, options: MeasureOptions): CodeMetrics 
   return defaultMeasurer.measure(code, options);
 }
 
-/** Standalone helper mirroring measureCode for the default measurer. */
-export function measureCodeWithCrossFileData(
+/** Standalone helper mirroring TreeMeasurer.measureWithCrossFileDataAsync for the default measurer. */
+export function measureCodeWithCrossFileDataAsync(
   code: string,
   options: MeasureOptions
 ): Promise<{ metrics: CodeMetrics; crossFileData: CrossFileDuplicationFileData }> {

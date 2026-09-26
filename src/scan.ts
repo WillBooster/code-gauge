@@ -4,7 +4,7 @@ import path from 'node:path';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
 import { detectLanguage } from './languages.js';
-import { measureCode, measureCodeWithCrossFileData } from './metrics.js';
+import { measureCode, measureCodeWithCrossFileDataAsync } from './metrics.js';
 import { NativeAddonError } from './nativeMetrics.js';
 import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } from './types.js';
 
@@ -397,7 +397,7 @@ export async function measureWithCrossFileData(
   measureOptions: MeasureOptions
 ): Promise<{ metrics: CodeMetrics; crossFileData?: CrossFileDuplicationFileData; crossFileError?: string }> {
   try {
-    return await measureCodeWithCrossFileData(code, measureOptions);
+    return await measureCodeWithCrossFileDataAsync(code, measureOptions);
   } catch (error) {
     if (error instanceof NativeAddonError) {
       throw error;
