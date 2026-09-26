@@ -157,10 +157,17 @@ The `duplication` section tunes how clones are detected:
 - `minSimilarityPercent` (default 70): blocks the exact pipeline misses are additionally compared by
   similarity (n-gram filtration, then token-level longest-common-subsequence verification, following
   NIL and NiCad), so a near-miss (Type-3) clone with scattered small edits is still reported when
-  both blocks are at least this similar and share more than half of their content-bearing tokens.
-  `100` disables near-miss detection. Applies to within-file detection and to cross-file matching
-  alike; across files, n-grams shared by more than 1000 blocks (syntax boilerplate) are left out of
-  the filtration index so boilerplate cannot make candidate counting quadratic in the block count.
+  both blocks are at least this similar and share more than half of their content-bearing tokens
+  (names and literal values, weighted by rarity so ubiquitous names count less, after ECScan). Two
+  refinements apply the same threshold: blocks whose top-level statements were reordered are also
+  compared in a canonical statement order, and a copy embedded in added code (on one side or both)
+  is matched on its cores, provided the two blocks are within 3 times each other's length (a
+  threshold below 34% widens this to whatever the threshold allows): the chain of n-grams unique to
+  both blocks (only those continuing a diagonal run) is split at gaps of more than 30 tokens, each
+  segment must pass the same threshold on its own, and the verified cores, not the whole blocks,
+  are reported. `100` disables near-miss detection. Applies to within-file detection and to cross-file matching alike; across files,
+  n-grams shared by more than 1000 blocks (syntax boilerplate) are left out of the filtration index
+  so boilerplate cannot make candidate counting quadratic in the block count.
 
 ## Metrics
 
@@ -184,7 +191,8 @@ The `duplication` section tunes how clones are detected:
 - Within-file duplication: copy-pasted blocks matched on normalized tokens (identifiers anonymized
   consistently, literals by kind, and literal-dense data tables excluded unless their values also
   match), with adjacent matches around a small edit merged into gapped (Type-3) clone groups and
-  near-miss (Type-3) clones matched by token-LCS similarity, plus duplicated line count and ratio
+  near-miss (Type-3) clones matched by token-LCS similarity (tolerating reordered statements and
+  copies embedded in added code), plus duplicated line count and ratio
 - Cross-file duplication (via `measureCrossFileDuplication`): copy-pasted blocks shared between
   files, matched with the same normalization (exact, gapped, and near-miss clones) and reported as
   groups with their file locations

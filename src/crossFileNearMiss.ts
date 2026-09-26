@@ -1,33 +1,66 @@
-import { createLcsLengthCounter, type CountedOccurrence, type Token, type TokenRange } from './duplication.js';
+import {
+  createLcsLengthCounter,
+  lcsLength,
+  type CountedOccurrence,
+  type Token,
+  type TokenRange,
+} from './duplication.js';
 
 /**
- * Cross-file near-miss (Type-3) clone detection, following the within-file detector's model (the
- * native collect_near_miss_groups): candidate block pairs are filtered through an n-gram inverted
- * index (NIL, Nakagawa et al. 2021), then verified by token-level longest common subsequence against
- * the larger block (NiCad's per-fragment similarity). Only pairs of blocks in different files are
- * compared: a same-file pair is the within-file detector's concern.
+ * Cross-file near-miss (Type-3) clone detection, following the within-file detector's model
+ * (native/src/near_miss.rs): candidate block pairs are filtered through an n-gram inverted index
+ * (NIL, Nakagawa et al. 2021), then verified by token-level longest common subsequence against the
+ * larger block (NiCad's per-fragment similarity), backed by an information-weighted content gate,
+ * with a statement-order-insensitive fallback and a local match over the anchored cores of two
+ * blocks. Only pairs of blocks in different files are compared: a same-file pair is the
+ * within-file detector's concern.
  */
 
 export interface NearMissSourceFile {
   tokens?: Token[];
+  containerStatements?: TokenRange[][];
   nearMissBlocks?: TokenRange[];
 }
 
-/** A block the exact cross-file pipeline did not report, or one it did (an anchor). */
+/** One copy (a block or its matched cores) in a near-miss group; anchors carry `spanCountedElsewhere` (see collectCrossFileNearMissGroups). */
 export interface NearMissOccurrence extends CountedOccurrence {
   fileIndex: number;
 }
 
-/** N-gram size of the candidate index (NIL's default). */
+/** N-gram size of the candidate index and local-match anchors (NIL's default). */
 const ngramSize = 5;
 /** Filtration threshold: shared distinct n-grams over the smaller block's (NIL's default). */
 const filtrationPercent = 10;
 /**
- * A structural match must also share content: more than this percent of the larger block's
- * content-bearing tokens (names and literal values), so blocks of the same shape that call
- * different APIs on different data are not clones.
+ * Pairs whose longer block exceeds this multiple of the shorter are compared only when whole-block
+ * similarity still allows their ratio (below a minSimilarityPercent of 34). The candidate scan
+ * stops at this floor while walking length-ordered postings, so pairs of very different lengths are
+ * neither counted nor verified; `maxNgramBlockFrequency` is what bounds the scan's total cost.
+ */
+const maxLengthRatio = 3;
+/**
+ * A structural match must also share content: more than this percent of the larger side's
+ * information-weighted content-bearing tokens (names and literal values), so blocks of the same
+ * shape that call different APIs on different data are not clones.
  */
 const minContentSimilarityPercent = 50;
+/**
+ * Caps content weights so only names and values spread over more than a quarter of the blocks are
+ * discounted: a family of copies shares its content across several blocks, and uncapped rarity
+ * weighting would let each copy's few unique edits outweigh everything the family shares.
+ */
+const maxContentWeight = 3;
+/**
+ * Anchors must cover at least this percent of the shorter core: sparser chains are coincidental
+ * runs of common n-grams in merely similar-looking code, and the cheap bound spares their content
+ * and LCS checks. Not the similarity threshold itself, since n-grams repeated within a block
+ * (repetitive statements) never anchor.
+ */
+const minAnchorCoveragePercent = 50;
+/** Anchors farther apart than this (in either block) split a local match into separate chains. */
+const maxAnchorGapTokens = 30;
+/** Statement-order-insensitive comparison needs this many top-level statements per block. */
+const minReorderStatementCount = 2;
 /**
  * N-grams occurring in more blocks than this are stop n-grams (syntax boilerplate such as a chain
  * of closing braces), left out of the index and of each block's n-gram count. Counting shared
@@ -39,35 +72,124 @@ const maxNgramBlockFrequency = 1000;
 interface NormalizedBlock {
   fileIndex: number;
   range: TokenRange;
-  /** Identifiers as -(first-occurrence index + 1); other tokens as interned symbols (>= 0). */
+  /** Interned non-identifier symbols (>= 0) and identifiers as -(file-level id + 1). */
+  symbols: Int32Array;
+  isContent: Uint8Array;
+  /** Identifiers anonymized by first occurrence within the block. */
   sequence: Int32Array;
   /** The sequence sorted, for the token-bag upper bound on the LCS. */
   sortedSequence: Int32Array;
-  /** Content-bearing symbols (names and literal values) sorted, for the content gate. */
-  sortedContent: Int32Array;
   /** Distinct non-stop n-gram hashes. */
   ngrams: Int32Array;
+  /**
+   * The n-grams occurring exactly once in the block, sorted, with their offsets in the parallel
+   * array: two blocks' local-match anchors intersect by merging.
+   */
+  uniqueNgrams: Int32Array;
+  uniqueNgramOffsets: Int32Array;
+  contentCounts: Map<number, number>;
+  /**
+   * The sequence with its top-level statements in canonical order, when it has enough of them for
+   * statement-order-insensitive comparison.
+   */
+  canonicalSequence: Int32Array | undefined;
 }
 
+/** A verified core in each block of a pair, as file token ranges. */
+type CorePair = [[number, number], [number, number]];
+
+/** How a verified pair matched: whole blocks, or every anchored core pair (one per gap-split chain segment). */
+type PairMatch = { kind: 'whole' } | { kind: 'local'; cores: CorePair[] };
+
 /**
- * Clusters verified cross-file near-miss pairs into groups. A block overlapping an occurrence of
- * `reportedSpansByFile` (the exact cross-file groups) is an anchor: it links near-miss copies to
- * the content an exact group already reports, and appears in the near-miss group marked
- * `spanCountedElsewhere` so block counting does not count its span twice. Pairs of two anchors are
- * skipped, and a group needs at least one non-anchor block.
+ * Clusters verified cross-file near-miss pairs into groups. A node (a whole block or a matched
+ * core) overlapping an occurrence of `reportedSpansByFile` (the exact cross-file groups) is an
+ * anchor: it links near-miss copies to the content an exact group already reports, and appears in
+ * the near-miss group marked `spanCountedElsewhere` so block counting does not count its span
+ * twice. Pairs of two anchors are skipped (blocks wholly covered by reported spans are not even
+ * compared), and a group needs at least one non-anchor node. A block that matched only locally is
+ * reported as its matched cores (overlapping cores merged), each clustered with its own partners,
+ * so code no verified pair matched never counts as duplicated.
  */
 export function collectCrossFileNearMissGroups(
   files: NearMissSourceFile[],
   reportedSpansByFile: { startTokenIndex: number; endTokenIndex: number }[][],
+  minTokens: number,
   minSimilarityPercent: number
 ): NearMissOccurrence[][] {
   if (minSimilarityPercent >= 100) {
     return [];
   }
   const blocks = normalizeBlocks(files);
+  const matcher = createMatcher(blocks, minTokens, minSimilarityPercent);
   const overlapsReportedSpan = reportedSpansByFile.map(createOverlapTest);
-  const anchored = blocks.map(({ fileIndex, range }) => overlapsReportedSpan[fileIndex]?.(range) ?? false);
-  const parent = blocks.map((_, index) => index);
+  const coveredByReportedSpans = reportedSpansByFile.map(createCoverageTest);
+  const fullyReported = blocks.map(({ fileIndex, range }) => coveredByReportedSpans[fileIndex]?.(range) ?? false);
+  const touchesReported = blocks.map(({ fileIndex, range }) => overlapsReportedSpan[fileIndex]?.(range) ?? false);
+  const edges: [number, [number, number] | undefined, number, [number, number] | undefined][] = [];
+  forEachCandidatePair(blocks, fullyReported, minSimilarityPercent, (left, right) => {
+    const leftBlock = blocks[left];
+    const rightBlock = blocks[right];
+    const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
+    if (match) {
+      if (match.kind === 'whole') {
+        // A whole match between two blocks that both overlap reported spans could never join a
+        // group, and recording it would collapse the blocks' core nodes.
+        if (!(touchesReported[left] && touchesReported[right])) {
+          edges.push([left, undefined, right, undefined]);
+        }
+      } else {
+        for (const [leftCore, rightCore] of match.cores) {
+          edges.push([left, leftCore, right, rightCore]);
+        }
+      }
+    }
+  });
+
+  // Clustering runs over (block, core) nodes: a block with a recorded whole match is one node,
+  // and otherwise each union of its overlapping local cores is its own node, so disjoint cores
+  // matched with different partners fall into separate groups.
+  const matchedWhole = blocks.map(() => false);
+  const localCores = blocks.map((): [number, number][] => []);
+  for (const [left, leftCore, right, rightCore] of edges) {
+    for (const [index, core] of [
+      [left, leftCore],
+      [right, rightCore],
+    ] as const) {
+      if (core) {
+        localCores[index]?.push(core);
+      } else {
+        matchedWhole[index] = true;
+      }
+    }
+  }
+  const nodes: { blockIndex: number; core: [number, number] | undefined }[] = [];
+  const firstNodeByBlock: number[] = [];
+  for (const blockIndex of blocks.keys()) {
+    firstNodeByBlock.push(nodes.length);
+    const cores = matchedWhole[blockIndex] ? [] : mergeOverlappingCores(localCores[blockIndex] ?? []);
+    if (cores.length === 0) {
+      nodes.push({ blockIndex, core: undefined });
+    }
+    for (const core of cores) {
+      nodes.push({ blockIndex, core });
+    }
+  }
+  const nodeOf = (blockIndex: number, core: [number, number] | undefined): number => {
+    const first = firstNodeByBlock[blockIndex] ?? 0;
+    if (!core || matchedWhole[blockIndex]) {
+      return first;
+    }
+    for (let node = first; nodes[node]?.blockIndex === blockIndex; node += 1) {
+      const span = nodes[node]?.core;
+      if (span && span[0] <= core[0] && core[1] <= span[1]) {
+        return node;
+      }
+    }
+    throw new Error("every local core lies in one of its block's merged cores");
+  };
+
+  const parent = nodes.map((_, index) => index);
   const find = (index: number): number => {
     let root = index;
     while (parent[root] !== root) {
@@ -80,50 +202,103 @@ export function collectCrossFileNearMissGroups(
     }
     return root;
   };
-  // Every candidate pair of one `right` block is visited consecutively, so one LCS counter (its
-  // position masks built once) serves them all.
-  let counterBlock = -1;
-  let counter: ((sequence: Int32Array) => number) | undefined;
-  const lcsLengthWithRight = (right: number, sequence: Int32Array): number => {
-    if (counterBlock !== right || !counter) {
-      counterBlock = right;
-      counter = createLcsLengthCounter(blocks[right]?.sequence ?? new Int32Array());
-    }
-    return counter(sequence);
-  };
-  forEachCandidatePair(blocks, anchored, minSimilarityPercent, (left, right) => {
-    if (
-      isNearMissPair(blocks[left], blocks[right], minSimilarityPercent, (sequence) =>
-        lcsLengthWithRight(right, sequence)
-      )
-    ) {
-      const leftRoot = find(left);
-      const rightRoot = find(right);
-      parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
-    }
+  // Anchoring is judged per node: a core is an anchor only when a reported span overlaps the core
+  // itself, not merely elsewhere in its block.
+  const anchored = nodes.map(({ blockIndex, core }) => {
+    const block = blocks[blockIndex];
+    const [startTokenIndex, endTokenIndex] = core ?? [
+      block?.range.startTokenIndex ?? 0,
+      block?.range.endTokenIndex ?? 0,
+    ];
+    return overlapsReportedSpan[block?.fileIndex ?? 0]?.({ startTokenIndex, endTokenIndex }) ?? false;
   });
+  for (const [left, leftCore, right, rightCore] of edges) {
+    const leftNode = nodeOf(left, leftCore);
+    const rightNode = nodeOf(right, rightCore);
+    if (anchored[leftNode] && anchored[rightNode]) {
+      continue;
+    }
+    const leftRoot = find(leftNode);
+    const rightRoot = find(rightNode);
+    parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
+  }
 
   const membersByRoot = new Map<number, number[]>();
-  for (const index of blocks.keys()) {
-    const root = find(index);
+  for (const node of nodes.keys()) {
+    const root = find(node);
     const members = membersByRoot.get(root) ?? [];
-    members.push(index);
+    members.push(node);
     membersByRoot.set(root, members);
   }
   const groups: NearMissOccurrence[][] = [];
   for (const members of membersByRoot.values()) {
     // Components form only through cross-file pairs, so two members always span two files.
-    if (members.length < 2 || members.every((index) => anchored[index])) {
+    if (members.length < 2 || members.every((node) => anchored[node])) {
       continue;
     }
+    // A group's nodes from one block become ONE occurrence whose segments are its cores, so the
+    // fragment-weighted count charges the block as one copy (as for gapped clones), not once per core.
+    const coresByBlock = new Map<number, { cores: ([number, number] | undefined)[]; anchor: boolean }>();
+    for (const node of members) {
+      const { blockIndex = 0, core } = nodes[node] ?? {};
+      const entry = coresByBlock.get(blockIndex) ?? { cores: [], anchor: false };
+      entry.cores.push(core);
+      entry.anchor ||= anchored[node] ?? false;
+      coresByBlock.set(blockIndex, entry);
+    }
     groups.push(
-      members.flatMap((index) => {
-        const block = blocks[index];
-        return block ? [toOccurrence(block, anchored[index] ?? false)] : [];
+      [...coresByBlock].flatMap(([blockIndex, { cores, anchor }]) => {
+        const block = blocks[blockIndex];
+        return block ? [toOccurrence(block, files, cores, anchor)] : [];
       })
     );
   }
   return groups;
+}
+
+/** The unions of overlapping cores, in position order. */
+function mergeOverlappingCores(cores: [number, number][]): [number, number][] {
+  const merged: [number, number][] = [];
+  for (const [start, end] of cores.toSorted((left, right) => left[0] - right[0])) {
+    const last = merged.at(-1);
+    if (last && start < last[1]) {
+      last[1] = Math.max(last[1], end);
+    } else {
+      merged.push([start, end]);
+    }
+  }
+  return merged;
+}
+
+/** Whether the spans, merged, cover every token of a range. */
+function createCoverageTest(
+  spans: { startTokenIndex: number; endTokenIndex: number }[]
+): (range: { startTokenIndex: number; endTokenIndex: number }) => boolean {
+  // Touching spans merge too: together they cover a range across their boundary.
+  const merged: [number, number][] = [];
+  for (const { startTokenIndex, endTokenIndex } of spans.toSorted(
+    (left, right) => left.startTokenIndex - right.startTokenIndex
+  )) {
+    const last = merged.at(-1);
+    if (last && startTokenIndex <= last[1]) {
+      last[1] = Math.max(last[1], endTokenIndex);
+    } else {
+      merged.push([startTokenIndex, endTokenIndex]);
+    }
+  }
+  return (range) => {
+    let low = 0;
+    let high = merged.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((merged[middle]?.[0] ?? 0) <= range.startTokenIndex) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return (merged[low - 1]?.[1] ?? -1) >= range.endTokenIndex;
+  };
 }
 
 /**
@@ -155,31 +330,50 @@ function createOverlapTest(
   };
 }
 
-function toOccurrence({ fileIndex, range }: NormalizedBlock, anchor: boolean): NearMissOccurrence {
+/**
+ * The block's occurrence with one segment per entry of `cores` (the whole block for `undefined`,
+ * a whole match). Source offsets stay the block's: tokens carry none, and near-miss occurrences
+ * report lines only.
+ */
+function toOccurrence(
+  { fileIndex, range }: NormalizedBlock,
+  files: NearMissSourceFile[],
+  cores: ([number, number] | undefined)[],
+  anchor: boolean
+): NearMissOccurrence {
+  const whole = cores.includes(undefined);
+  const segments = cores
+    .map((core): [number, number] => core ?? [range.startTokenIndex, range.endTokenIndex])
+    .toSorted((left, right) => left[0] - right[0])
+    .map(([startTokenIndex, endTokenIndex]) => ({ startTokenIndex, endTokenIndex }));
+  const start = segments[0]?.startTokenIndex ?? range.startTokenIndex;
+  const end = segments.at(-1)?.endTokenIndex ?? range.endTokenIndex;
+  const tokens = files[fileIndex]?.tokens;
   return {
     fileIndex,
     spanCountedElsewhere: anchor || undefined,
-    segments: [{ startTokenIndex: range.startTokenIndex, endTokenIndex: range.endTokenIndex }],
-    tokenCount: range.endTokenIndex - range.startTokenIndex,
-    startTokenIndex: range.startTokenIndex,
-    endTokenIndex: range.endTokenIndex,
+    segments,
+    tokenCount: segments.reduce((sum, segment) => sum + segment.endTokenIndex - segment.startTokenIndex, 0),
+    startTokenIndex: start,
+    endTokenIndex: end,
     startIndex: range.startIndex,
     endIndex: range.endIndex,
-    startLine: range.startLine,
-    endLine: range.endLine,
+    startLine: whole ? range.startLine : (tokens?.[start]?.startRow ?? 0) + 1,
+    endLine: whole ? range.endLine : (tokens?.[end - 1]?.endRow ?? 0) + 1,
   };
 }
 
 /**
  * Visits every cross-file block pair sharing at least `filtrationPercent` of the smaller block's
- * non-stop n-grams, except pairs of two anchors and pairs whose length ratio alone rules out the
- * similarity requirement (the LCS cannot exceed the shorter block). Blocks are indexed in ascending
- * length, so each posting list is scanned backwards only while its blocks are long enough; shared
- * counts accumulate in a dense counter, so no pair map is materialized.
+ * non-stop n-grams, except pairs of two blocks wholly covered by reported spans and pairs whose
+ * length ratio rules out both
+ * whole-block similarity and `maxLengthRatio`. Blocks are
+ * indexed in ascending length, so each posting list is scanned backwards only while its blocks
+ * are long enough; shared counts accumulate in a dense counter, so no pair map is materialized.
  */
 function forEachCandidatePair(
   blocks: NormalizedBlock[],
-  anchored: boolean[],
+  fullyReported: boolean[],
   minSimilarityPercent: number,
   visit: (left: number, right: number) => void
 ): void {
@@ -195,7 +389,7 @@ function forEachCandidatePair(
 
   // Typed copies keep the posting loop, which dominates this phase, free of object dereferences.
   const fileIndexes = Int32Array.from(blocks, (block) => block.fileIndex);
-  const anchorFlags = Uint8Array.from(anchored, Number);
+  const reportedFlags = Uint8Array.from(fullyReported, Number);
   const lengths = Int32Array.from(blocks, (block) => block.sequence.length);
   const ngramCounts = Int32Array.from(blocks, (block) => block.ngrams.length);
   const order = [...blocks.keys()].toSorted((left, right) => (lengths[left] ?? 0) - (lengths[right] ?? 0));
@@ -204,8 +398,11 @@ function forEachCandidatePair(
   const touched: number[] = [];
   for (const right of order) {
     const fileIndex = fileIndexes[right];
-    const rightAnchored = anchorFlags[right] === 1;
-    const minLeftLength = Math.ceil((minSimilarityPercent * (lengths[right] ?? 0)) / 100);
+    const rightReported = reportedFlags[right] === 1;
+    const minLeftLength = Math.min(
+      Math.ceil((lengths[right] ?? 0) / maxLengthRatio),
+      Math.ceil((minSimilarityPercent * (lengths[right] ?? 0)) / 100)
+    );
     const ngrams = blocks[right]?.ngrams ?? [];
     for (const ngram of ngrams) {
       const posting = postings.get(ngram);
@@ -218,7 +415,7 @@ function forEachCandidatePair(
         if ((lengths[left] ?? 0) < minLeftLength) {
           break;
         }
-        if (fileIndexes[left] === fileIndex || (rightAnchored && anchorFlags[left] === 1)) {
+        if (fileIndexes[left] === fileIndex || (rightReported && reportedFlags[left] === 1)) {
           continue;
         }
         if (sharedCounts[left] === 0) {
@@ -240,33 +437,290 @@ function forEachCandidatePair(
 }
 
 /**
- * Verifies a filtered pair, cheapest bounds first. The LCS cannot exceed the shorter block's
- * length nor the token-bag overlap, so either bound falling below the similarity requirement
- * rejects the pair exactly without running the LCS.
+ * Returns the pair verifier. Content symbols are weighted by integer self-information,
+ * 1 + floor(log2((N + 1) / df)) over N blocks capped at `maxContentWeight`, so rare names and
+ * values (the logic a copy preserves) outweigh ubiquitous ones, following the
+ * information-theoretic weighting of ECScan's essence-clone detection (2025).
  */
-function isNearMissPair(
-  left: NormalizedBlock | undefined,
-  right: NormalizedBlock | undefined,
-  minSimilarityPercent: number,
-  lcsLengthWithRight: (sequence: Int32Array) => number
-): boolean {
+function createMatcher(
+  blocks: NormalizedBlock[],
+  minTokens: number,
+  minSimilarityPercent: number
+): (left: NormalizedBlock, right: NormalizedBlock, rightIndex: number) => PairMatch | undefined {
+  const documentFrequencies = new Map<number, number>();
+  for (const block of blocks) {
+    for (const symbol of block.contentCounts.keys()) {
+      documentFrequencies.set(symbol, (documentFrequencies.get(symbol) ?? 0) + 1);
+    }
+  }
+  const selfInformation = (documentFrequency: number): number =>
+    Math.min(31 - Math.clz32(Math.floor((blocks.length + 1) / documentFrequency)) + 1, maxContentWeight);
+  const weights = new Map<number, number>();
+  for (const [symbol, frequency] of documentFrequencies) {
+    weights.set(symbol, selfInformation(frequency));
+  }
+  const weigh = (counts: Map<number, number>): WeightedContent => {
+    const symbols = Int32Array.from(counts.keys()).toSorted();
+    // Span content comes from blocks, so every symbol has a weight.
+    const weightedCounts = Int32Array.from(symbols, (symbol) => (counts.get(symbol) ?? 0) * (weights.get(symbol) ?? 0));
+    let total = 0;
+    for (const count of weightedCounts) {
+      total += count;
+    }
+    return { symbols, weightedCounts, total };
+  };
+  const blockContents = new Map(blocks.map((block) => [block, weigh(block.contentCounts)]));
+
+  // Every candidate pair of one `right` block is visited consecutively, so one LCS counter (its
+  // position masks built once) serves them all.
+  let counterBlock = -1;
+  let counter: ((sequence: Int32Array) => number) | undefined;
+  const lcsLengthWithRight = (right: NormalizedBlock, rightIndex: number, sequence: Int32Array): number => {
+    if (counterBlock !== rightIndex || !counter) {
+      counterBlock = rightIndex;
+      counter = createLcsLengthCounter(right.sequence);
+    }
+    return counter(sequence);
+  };
+
+  /**
+   * Matches the cores two blocks share inside different surroundings (a copy wrapped in added
+   * code, or two copies embedded in different code), which whole-block similarity misses
+   * (CCAligner's large-gap and LVMapper's large-variance clones). N-grams unique to each block
+   * anchor the alignment; their longest chain increasing in both blocks (a run filter keeps only
+   * anchors continuing a diagonal, but the chain may shift diagonals at small insertions), split at
+   * gaps, delimits the cores, and every core pair that is a near-miss clone in its own right is
+   * returned.
+   */
+  const matchLocally = (left: NormalizedBlock, right: NormalizedBlock): PairMatch | undefined => {
+    const anchors: [number, number][] = [];
+    for (
+      let leftIndex = 0, rightIndex = 0;
+      leftIndex < left.uniqueNgrams.length && rightIndex < right.uniqueNgrams.length;
+    ) {
+      const leftHash = left.uniqueNgrams[leftIndex] ?? 0;
+      const rightHash = right.uniqueNgrams[rightIndex] ?? 0;
+      if (leftHash === rightHash) {
+        anchors.push([left.uniqueNgramOffsets[leftIndex] ?? 0, right.uniqueNgramOffsets[rightIndex] ?? 0]);
+      }
+      if (leftHash <= rightHash) {
+        leftIndex += 1;
+      }
+      if (rightHash <= leftHash) {
+        rightIndex += 1;
+      }
+    }
+    anchors.sort((first, second) => first[0] - second[0]);
+    // An isolated 5-gram match is often coincidental (n-grams are identifier-blind); a copied core
+    // yields runs of consecutive anchors, so only anchors continuing a diagonal run are chained.
+    const runAnchors = anchors.filter(([leftOffset, rightOffset], index) => {
+      const previous = anchors[index - 1];
+      const next = anchors[index + 1];
+      return (
+        (previous?.[0] === leftOffset - 1 && previous[1] === rightOffset - 1) ||
+        (next?.[0] === leftOffset + 1 && next[1] === rightOffset + 1)
+      );
+    });
+    const leftOffset = left.range.startTokenIndex;
+    const rightOffset = right.range.startTokenIndex;
+    const cores: CorePair[] = [];
+    for (const segment of chainSegments(longestIncreasingChain(runAnchors))) {
+      const [leftStart, rightStart] = segment[0] ?? [0, 0];
+      const [leftLast, rightLast] = segment.at(-1) ?? [0, 0];
+      const leftEnd = leftLast + ngramSize;
+      const rightEnd = rightLast + ngramSize;
+      const leftLength = leftEnd - leftStart;
+      const rightLength = rightEnd - rightStart;
+      const shorter = Math.min(leftLength, rightLength);
+      const required = minSimilarityPercent * Math.max(leftLength, rightLength);
+      if (
+        shorter >= minTokens &&
+        shorter * 100 >= required &&
+        anchoredTokenCount(segment) * 100 >= minAnchorCoveragePercent * shorter &&
+        sharesContent(
+          weigh(countContent(left.symbols, left.isContent, leftStart, leftEnd)),
+          weigh(countContent(right.symbols, right.isContent, rightStart, rightEnd))
+        ) &&
+        lcsLength(
+          anonymize(left.symbols.subarray(leftStart, leftEnd)),
+          anonymize(right.symbols.subarray(rightStart, rightEnd))
+        ) *
+          100 >=
+          required
+      ) {
+        cores.push([
+          [leftOffset + leftStart, leftOffset + leftEnd],
+          [rightOffset + rightStart, rightOffset + rightEnd],
+        ]);
+      }
+    }
+    return cores.length > 0 ? { kind: 'local', cores } : undefined;
+  };
+
+  /** Cheapest bounds first: the LCS cannot exceed the shorter block's length nor the bag overlap. */
+  return (left, right, rightIndex) => {
+    const required = minSimilarityPercent * Math.max(left.sequence.length, right.sequence.length);
+    if (
+      Math.min(left.sequence.length, right.sequence.length) * 100 >= required &&
+      sharesContent(blockContents.get(left), blockContents.get(right)) &&
+      ((sortedOverlap(left.sortedSequence, right.sortedSequence) * 100 >= required &&
+        lcsLengthWithRight(right, rightIndex, left.sequence) * 100 >= required) ||
+        matchesReordered(left, right, required))
+    ) {
+      return { kind: 'whole' };
+    }
+    return matchLocally(left, right);
+  };
+}
+
+/** Content-bearing symbols, sorted, with their information-weighted counts. */
+interface WeightedContent {
+  symbols: Int32Array;
+  weightedCounts: Int32Array;
+  total: number;
+}
+
+/**
+ * A structural match must be backed by shared content: more than `minContentSimilarityPercent` of
+ * the larger side's information-weighted names and literal values. Two sides without content never
+ * pass.
+ */
+function sharesContent(left: WeightedContent | undefined, right: WeightedContent | undefined): boolean {
   if (!left || !right) {
     return false;
   }
-  const required = minSimilarityPercent * Math.max(left.sequence.length, right.sequence.length);
-  if (Math.min(left.sequence.length, right.sequence.length) * 100 < required) {
-    return false;
+  let overlap = 0;
+  for (let leftIndex = 0, rightIndex = 0; leftIndex < left.symbols.length && rightIndex < right.symbols.length;) {
+    const leftSymbol = left.symbols[leftIndex] ?? 0;
+    const rightSymbol = right.symbols[rightIndex] ?? 0;
+    if (leftSymbol === rightSymbol) {
+      overlap += Math.min(left.weightedCounts[leftIndex] ?? 0, right.weightedCounts[rightIndex] ?? 0);
+    }
+    if (leftSymbol <= rightSymbol) {
+      leftIndex += 1;
+    }
+    if (rightSymbol <= leftSymbol) {
+      rightIndex += 1;
+    }
   }
-  if (
-    sortedOverlap(left.sortedContent, right.sortedContent) * 100 <=
-    minContentSimilarityPercent * Math.max(left.sortedContent.length, right.sortedContent.length)
-  ) {
-    return false;
+  return overlap * 100 > minContentSimilarityPercent * Math.max(left.total, right.total);
+}
+
+/**
+ * Compares the blocks with their top-level statements (each anonymized on its own) in a canonical
+ * order, so a copy whose independent statements were swapped still matches.
+ */
+function matchesReordered(left: NormalizedBlock, right: NormalizedBlock, required: number): boolean {
+  return (
+    left.canonicalSequence !== undefined &&
+    right.canonicalSequence !== undefined &&
+    lcsLength(left.canonicalSequence, right.canonicalSequence) * 100 >= required
+  );
+}
+
+/**
+ * The block's units (its top-level statements, given in file token indexes, and the token runs
+ * between them), each anonymized on its own and sorted, concatenated; undefined with too few
+ * statements.
+ */
+function canonicalSequenceOf(
+  symbols: Int32Array,
+  statements: [number, number][],
+  blockStart: number
+): Int32Array | undefined {
+  if (statements.length < minReorderStatementCount) {
+    return undefined;
   }
-  if (sortedOverlap(left.sortedSequence, right.sortedSequence) * 100 < required) {
-    return false;
+  const units: Int32Array[] = [];
+  let cursor = 0;
+  for (const [statementStart, statementEnd] of statements) {
+    const start = statementStart - blockStart;
+    if (cursor < start) {
+      units.push(anonymize(symbols.subarray(cursor, start)));
+    }
+    units.push(anonymize(symbols.subarray(start, statementEnd - blockStart)));
+    cursor = statementEnd - blockStart;
   }
-  return lcsLengthWithRight(left.sequence) * 100 >= required;
+  if (cursor < symbols.length) {
+    units.push(anonymize(symbols.subarray(cursor)));
+  }
+  units.sort(compareSequences);
+  const canonical = new Int32Array(symbols.length);
+  let offset = 0;
+  for (const unit of units) {
+    canonical.set(unit, offset);
+    offset += unit.length;
+  }
+  return canonical;
+}
+
+/** Lexicographic order, matching Rust's Vec<i32> ordering. */
+function compareSequences(left: Int32Array, right: Int32Array): number {
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) {
+      return difference;
+    }
+  }
+  return left.length - right.length;
+}
+
+/**
+ * The longest chain of anchors increasing in both blocks (anchors arrive sorted by left offset),
+ * via patience sorting over right offsets.
+ */
+function longestIncreasingChain(anchors: [number, number][]): [number, number][] {
+  const tailIndexes: number[] = [];
+  const predecessors: number[] = [];
+  for (const [index, [, rightOffset]] of anchors.entries()) {
+    let low = 0;
+    let high = tailIndexes.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((anchors[tailIndexes[middle] ?? 0]?.[1] ?? 0) < rightOffset) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    predecessors.push(low > 0 ? (tailIndexes[low - 1] ?? -1) : -1);
+    tailIndexes[low] = index;
+  }
+  const chain: [number, number][] = [];
+  for (let cursor = tailIndexes.at(-1) ?? -1; cursor >= 0; cursor = predecessors[cursor] ?? -1) {
+    const anchor = anchors[cursor];
+    if (anchor) {
+      chain.push(anchor);
+    }
+  }
+  return chain.toReversed();
+}
+
+/** The chain's segments, split where consecutive anchors lie more than `maxAnchorGapTokens` apart in either block. */
+function chainSegments(chain: [number, number][]): [number, number][][] {
+  const segments: [number, number][][] = [];
+  for (const [index, anchor] of chain.entries()) {
+    const previous = chain[index - 1];
+    const continues =
+      previous !== undefined &&
+      anchor[0] - (previous[0] + ngramSize) <= maxAnchorGapTokens &&
+      anchor[1] - (previous[1] + ngramSize) <= maxAnchorGapTokens;
+    if (continues) {
+      segments.at(-1)?.push(anchor);
+    } else {
+      segments.push([anchor]);
+    }
+  }
+  return segments;
+}
+
+/** Left-block tokens the segment's anchors cover (overlapping anchors count once). */
+function anchoredTokenCount(segment: [number, number][]): number {
+  let count = ngramSize;
+  for (let index = 1; index < segment.length; index += 1) {
+    count += Math.min((segment[index]?.[0] ?? 0) - (segment[index - 1]?.[0] ?? 0), ngramSize);
+  }
+  return count;
 }
 
 /** Multiset intersection size of two ascending arrays. */
@@ -291,57 +745,137 @@ function sortedOverlap(left: Int32Array, right: Int32Array): number {
 }
 
 /**
- * Normalizes every block like the within-file detector: identifiers are anonymized by first
- * occurrence within the block, and every other token keeps its text and literal value. Symbols are
- * interned project-wide from the tokens' hash pairs, so equal tokens compare equal across files.
+ * Normalizes every block like the within-file detector. Non-identifier symbols are interned
+ * project-wide from the tokens' hash pairs, so equal tokens compare equal across files, while
+ * identifiers are interned per file and re-anonymized per compared range.
  */
 function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
   const symbolByTokenKey = new Map<number, number>();
   const blocks: NormalizedBlock[] = [];
-  for (const [fileIndex, { tokens, nearMissBlocks }] of files.entries()) {
-    if (!tokens) {
+  for (const [fileIndex, { tokens, containerStatements, nearMissBlocks }] of files.entries()) {
+    if (!tokens || !nearMissBlocks?.length) {
       continue;
     }
-    for (const range of nearMissBlocks ?? []) {
-      const sequence = new Int32Array(range.endTokenIndex - range.startTokenIndex);
-      const content: number[] = [];
-      const indexByIdentifier = new Map<string, number>();
-      for (let index = range.startTokenIndex; index < range.endTokenIndex; index += 1) {
-        const token = tokens[index];
-        if (!token) {
-          continue;
+    const symbols = new Int32Array(tokens.length);
+    const isContent = new Uint8Array(tokens.length);
+    const idByIdentifier = new Map<string, number>();
+    for (const [index, token] of tokens.entries()) {
+      if (token.kind === 'id') {
+        let id = idByIdentifier.get(token.text);
+        if (id === undefined) {
+          id = idByIdentifier.size;
+          idByIdentifier.set(token.text, id);
         }
-        if (token.kind === 'id') {
-          let identifierIndex = indexByIdentifier.get(token.text);
-          if (identifierIndex === undefined) {
-            identifierIndex = indexByIdentifier.size;
-            indexByIdentifier.set(token.text, identifierIndex);
-          }
-          sequence[index - range.startTokenIndex] = -(identifierIndex + 1);
-          continue;
-        }
-        const key = tokenKey(token);
-        let symbol = symbolByTokenKey.get(key);
-        if (symbol === undefined) {
-          symbol = symbolByTokenKey.size;
-          symbolByTokenKey.set(key, symbol);
-        }
-        sequence[index - range.startTokenIndex] = symbol;
-        if (token.isName || token.literalHash !== undefined) {
-          content.push(symbol);
-        }
+        symbols[index] = -(id + 1);
+        continue;
       }
+      const key = tokenKey(token);
+      let symbol = symbolByTokenKey.get(key);
+      if (symbol === undefined) {
+        symbol = symbolByTokenKey.size;
+        symbolByTokenKey.set(key, symbol);
+      }
+      symbols[index] = symbol;
+      isContent[index] = token.isName || token.literalHash !== undefined ? 1 : 0;
+    }
+    const findStatements = createTopLevelStatementFinder(containerStatements ?? []);
+    for (const range of nearMissBlocks) {
+      const { startTokenIndex: start, endTokenIndex: end } = range;
+      const blockSymbols = symbols.subarray(start, end);
+      const blockIsContent = isContent.subarray(start, end);
+      const sequence = anonymize(blockSymbols);
+      const ngramHashes = collectNgramHashes(blockSymbols);
+      const occurrenceCounts = new Map<number, number>();
+      for (const hash of ngramHashes) {
+        occurrenceCounts.set(hash, (occurrenceCounts.get(hash) ?? 0) + 1);
+      }
+      const uniqueOffsets = ngramHashes
+        .keys()
+        .filter((offset) => occurrenceCounts.get(ngramHashes[offset] ?? 0) === 1)
+        .toArray()
+        .toSorted((first, second) => (ngramHashes[first] ?? 0) - (ngramHashes[second] ?? 0));
       blocks.push({
         fileIndex,
         range,
+        symbols: blockSymbols,
+        isContent: blockIsContent,
         sequence,
         sortedSequence: sequence.toSorted(),
-        sortedContent: Int32Array.from(content).toSorted(),
-        ngrams: collectNgrams(sequence),
+        ngrams: Int32Array.from(occurrenceCounts.keys()),
+        uniqueNgrams: Int32Array.from(uniqueOffsets, (offset) => ngramHashes[offset] ?? 0),
+        uniqueNgramOffsets: Int32Array.from(uniqueOffsets),
+        contentCounts: countContent(blockSymbols, blockIsContent, 0, blockSymbols.length),
+        canonicalSequence: canonicalSequenceOf(blockSymbols, findStatements(start, end), start),
       });
     }
   }
   return blocks;
+}
+
+/**
+ * Returns a lookup of the outermost container statements inside a token range, excluding a
+ * statement spanning the whole range (the block itself).
+ */
+function createTopLevelStatementFinder(
+  containerStatements: TokenRange[][]
+): (start: number, end: number) => [number, number][] {
+  const statements = containerStatements
+    .flat()
+    .filter((statement) => statement.startTokenIndex < statement.endTokenIndex)
+    .map((statement): [number, number] => [statement.startTokenIndex, statement.endTokenIndex])
+    .toSorted((left, right) => left[0] - right[0] || right[1] - left[1]);
+  return (start, end) => {
+    let low = 0;
+    let high = statements.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((statements[middle]?.[0] ?? 0) < start) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    const topLevel: [number, number][] = [];
+    for (let index = low; index < statements.length; index += 1) {
+      const statement = statements[index];
+      if (!statement || statement[0] >= end) {
+        break;
+      }
+      const last = topLevel.at(-1);
+      const nested = last !== undefined && statement[0] < last[1];
+      if (statement[1] <= end && !(statement[0] === start && statement[1] === end) && !nested) {
+        topLevel.push(statement);
+      }
+    }
+    return topLevel;
+  };
+}
+
+function countContent(symbols: Int32Array, isContent: Uint8Array, start: number, end: number): Map<number, number> {
+  const counts = new Map<number, number>();
+  for (let offset = start; offset < end; offset += 1) {
+    if (isContent[offset] === 1) {
+      const symbol = symbols[offset] ?? 0;
+      counts.set(symbol, (counts.get(symbol) ?? 0) + 1);
+    }
+  }
+  return counts;
+}
+
+/** Identifiers renumbered by first occurrence within `symbols`, so a range compares the same wherever it sits in its file. */
+function anonymize(symbols: Int32Array): Int32Array {
+  const indexByIdentifier = new Map<number, number>();
+  return symbols.map((symbol) => {
+    if (symbol >= 0) {
+      return symbol;
+    }
+    let index = indexByIdentifier.get(symbol);
+    if (index === undefined) {
+      index = indexByIdentifier.size;
+      indexByIdentifier.set(symbol, index);
+    }
+    return -(index + 1);
+  });
 }
 
 /**
@@ -355,15 +889,21 @@ function tokenKey(token: Token): number {
   return (primary >>> 0) * 0x20_00_00 + (secondary >>> 11);
 }
 
-function collectNgrams(sequence: Int32Array): Int32Array {
-  const ngrams = new Set<number>();
-  for (let start = 0; start + ngramSize <= sequence.length; start += 1) {
+/**
+ * N-gram hash per start offset, identifier-blind (every identifier hashes as -1) so a block copied
+ * into different surroundings (renumbering its identifiers) or with reordered statements still
+ * shares its n-grams.
+ */
+function collectNgramHashes(symbols: Int32Array): Int32Array {
+  const hashes = new Int32Array(Math.max(symbols.length - ngramSize + 1, 0));
+  for (let start = 0; start < hashes.length; start += 1) {
     let hash = 5381;
     for (let offset = 0; offset < ngramSize; offset += 1) {
+      const symbol = symbols[start + offset] ?? 0;
       // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 like the native n-gram hash.
-      hash = (Math.imul(hash, 31) + (sequence[start + offset] ?? 0)) | 0;
+      hash = (Math.imul(hash, 31) + (symbol < 0 ? -1 : symbol)) | 0;
     }
-    ngrams.add(hash);
+    hashes[start] = hash;
   }
-  return Int32Array.from(ngrams);
+  return hashes;
 }

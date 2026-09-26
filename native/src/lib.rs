@@ -12,6 +12,7 @@ mod functions;
 mod languages;
 mod measure;
 mod ncss;
+mod near_miss;
 mod types;
 mod util;
 
