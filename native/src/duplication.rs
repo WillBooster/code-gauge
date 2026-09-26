@@ -1656,6 +1656,9 @@ fn merge_groups(
     })
 }
 
+/// A verified near-miss pair as (block, core, block, core); a `None` core is a whole-block match.
+type MatchEdge = (usize, Option<(usize, usize)>, usize, Option<(usize, usize)>);
+
 /// Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
 /// unreported: NIL-style n-gram filtration, then pair verification (near_miss::Matcher), then
 /// transitive clustering of verified pairs (crossFileNearMiss.ts applies the same model across
@@ -1715,7 +1718,7 @@ fn collect_near_miss_groups(
         .iter()
         .map(|range| !touched_groups_in(range.start_token_index, range.end_token_index).is_empty())
         .collect();
-    let mut edges: Vec<(usize, Option<(usize, usize)>, usize, Option<(usize, usize)>)> = Vec::new();
+    let mut edges: Vec<MatchEdge> = Vec::new();
     for_each_candidate_pair(
         &blocks,
         settings.min_similarity_percent,
