@@ -77,27 +77,31 @@ export function createWasmBinding(module: WebAssembly.Module): NativeBinding {
     return result;
   };
 
+  const measureCodeNative: NativeBinding['measureCodeNative'] = (
+    code,
+    language,
+    includeSyntaxTree,
+    minTokens,
+    maxGapTokens,
+    minSimilarityPercent,
+    includeCrossFileData
+  ) =>
+    call((exports) =>
+      exports.measure_code(
+        ...passString(exports, code),
+        ...passString(exports, language),
+        Number(includeSyntaxTree),
+        toOptionalU32(minTokens),
+        toOptionalU32(maxGapTokens),
+        toOptionalU32(minSimilarityPercent),
+        Number(includeCrossFileData)
+      )
+    );
+
   return {
-    measureCodeNative: (
-      code,
-      language,
-      includeSyntaxTree,
-      minTokens,
-      maxGapTokens,
-      minSimilarityPercent,
-      includeCrossFileData
-    ) =>
-      call((exports) =>
-        exports.measure_code(
-          ...passString(exports, code),
-          ...passString(exports, language),
-          Number(includeSyntaxTree),
-          toOptionalU32(minTokens),
-          toOptionalU32(maxGapTokens),
-          toOptionalU32(minSimilarityPercent),
-          Number(includeCrossFileData ?? false)
-        )
-      ),
+    measureCodeNative,
+    // The WebAssembly build has no threads, so the asynchronous form measures in place.
+    measureCodeNativeAsync: async (...args) => measureCodeNative(...args),
     collectCrossFileDataNative: (code, language, minTokens) =>
       call((exports) =>
         exports.collect_cross_file_data(

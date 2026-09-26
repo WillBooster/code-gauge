@@ -4,6 +4,7 @@ import {
   collectCrossFileDataNative,
   collectFunctionTokenSequencesNative,
   measureCodeNative,
+  measureCodeNativeAsync,
   type NativeCrossFileDataPayload,
   type NativeHalsteadCounts,
   type NativeMetricsPayload,
@@ -37,13 +38,18 @@ export class TreeMeasurer {
     const language = this.resolveLanguage(options.language);
     const includeSyntaxTree = options.includeSyntaxTree ?? false;
     const payload = measureCodeNative(code, language.name, includeSyntaxTree, options.duplication, true);
-    if (!payload.crossFileData) {
-      throw new Error('The native addon returned no cross-file duplication data');
-    }
-    return {
-      metrics: assembleNativeMetrics(payload, includeSyntaxTree),
-      crossFileData: toCrossFileDuplicationFileData(payload.crossFileData),
-    };
+    return assembleMetricsWithCrossFileData(payload, includeSyntaxTree);
+  }
+
+  /** measureWithCrossFileData on the native addon's worker threads, for measuring files in parallel. */
+  async measureWithCrossFileDataAsync(
+    code: string,
+    options: MeasureOptions
+  ): Promise<{ metrics: CodeMetrics; crossFileData: CrossFileDuplicationFileData }> {
+    const language = this.resolveLanguage(options.language);
+    const includeSyntaxTree = options.includeSyntaxTree ?? false;
+    const payload = await measureCodeNativeAsync(code, language.name, includeSyntaxTree, options.duplication, true);
+    return assembleMetricsWithCrossFileData(payload, includeSyntaxTree);
   }
 
   /** Collects one file's duplicate candidates for cross-file clone detection. */
@@ -80,6 +86,19 @@ export class TreeMeasurer {
     }
     return language;
   }
+}
+
+function assembleMetricsWithCrossFileData(
+  payload: NativeMetricsPayload,
+  includeSyntaxTree: boolean
+): { metrics: CodeMetrics; crossFileData: CrossFileDuplicationFileData } {
+  if (!payload.crossFileData) {
+    throw new Error('The native addon returned no cross-file duplication data');
+  }
+  return {
+    metrics: assembleNativeMetrics(payload, includeSyntaxTree),
+    crossFileData: toCrossFileDuplicationFileData(payload.crossFileData),
+  };
 }
 
 function toCrossFileDuplicationFileData(payload: NativeCrossFileDataPayload): CrossFileDuplicationFileData {
@@ -155,12 +174,12 @@ export function measureCode(code: string, options: MeasureOptions): CodeMetrics 
   return defaultMeasurer.measure(code, options);
 }
 
-/** Standalone helper mirroring measureCode for the default measurer. */
-export function measureCodeWithCrossFileData(
+/** Standalone helper mirroring TreeMeasurer.measureWithCrossFileDataAsync for the default measurer. */
+export function measureCodeWithCrossFileDataAsync(
   code: string,
   options: MeasureOptions
-): { metrics: CodeMetrics; crossFileData: CrossFileDuplicationFileData } {
-  return defaultMeasurer.measureWithCrossFileData(code, options);
+): Promise<{ metrics: CodeMetrics; crossFileData: CrossFileDuplicationFileData }> {
+  return defaultMeasurer.measureWithCrossFileDataAsync(code, options);
 }
 
 /** Standalone helper mirroring measureCode for the default measurer. */

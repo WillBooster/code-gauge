@@ -1,20 +1,16 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use tree_sitter::Node;
 
+use crate::tree_index::NodeExt;
 use crate::util::{all_children, node_text, Source};
-
-pub struct ComplexityResult {
-    pub cognitive_complexity: u64,
-    pub nesting_depth: u64,
-}
 
 /// Node-type lookup sets built once per measurement from the language definition.
 pub struct LanguageSets {
-    pub function_nodes: HashSet<&'static str>,
-    pub decision_nodes: HashSet<&'static str>,
-    pub nesting_nodes: HashSet<&'static str>,
-    pub ncss_nodes: HashSet<&'static str>,
-    pub ncss_containers: HashSet<&'static str>,
+    pub function_nodes: FxHashSet<&'static str>,
+    pub decision_nodes: FxHashSet<&'static str>,
+    pub nesting_nodes: FxHashSet<&'static str>,
+    pub ncss_nodes: FxHashSet<&'static str>,
+    pub ncss_containers: FxHashSet<&'static str>,
 }
 
 impl LanguageSets {
@@ -44,17 +40,17 @@ const BOOLEAN_OPERATOR_PARENT_TYPES: &[&str] = &[
 
 /// A Ruby stabby lambda's body block is part of the lambda, not a separate function.
 pub fn is_lambda_body_block(node: Node<'_>) -> bool {
-    (node.kind() == "block" || node.kind() == "do_block")
+    (node.kind_name() == "block" || node.kind_name() == "do_block")
         && node
-            .parent()
-            .is_some_and(|parent| parent.kind() == "lambda")
+            .parent_node()
+            .is_some_and(|parent| parent.kind_name() == "lambda")
 }
 
 /// A function node with a body of its own: bodyless declarations (abstract methods, auto-property
 /// accessors, accessor-list properties) open no nesting frame, so members inside them are not
 /// charged as nested functions.
-pub fn is_function_boundary(node: Node<'_>, function_nodes: &HashSet<&'static str>) -> bool {
-    function_nodes.contains(node.kind())
+pub fn is_function_boundary(node: Node<'_>, function_nodes: &FxHashSet<&'static str>) -> bool {
+    function_nodes.contains(node.kind_name())
         && !is_lambda_body_block(node)
         && crate::functions::is_implemented_function(node)
 }
@@ -135,17 +131,25 @@ struct FunctionBodyPass<'sets, 'code, 'source> {
     sets: &'sets LanguageSets,
     code: &'code Source<'source>,
     frames: Vec<FunctionBodyFrame>,
-    results: HashMap<usize, FunctionBodyMetrics>,
+    results: FxHashMap<usize, FunctionBodyMetrics>,
     /// Cyclomatic decisions inside class bodies nested in functions, which no function owns.
     nested_class_decisions: u64,
+    /// Deepest structural nesting anywhere in the file.
+    max_nesting: u64,
 }
 
-/// Per-function body metrics, plus the cyclomatic decisions no function body owns.
+/// Per-function body metrics, plus the file-level totals and the cyclomatic decisions no function
+/// body owns.
 pub struct BodyMetrics {
-    pub by_function: HashMap<usize, FunctionBodyMetrics>,
+    pub by_function: FxHashMap<usize, FunctionBodyMetrics>,
     /// Cyclomatic decisions outside every function body (top-level statements, field initializers,
     /// including those of classes nested in functions).
     pub top_level_decisions: u64,
+    /// File-level cognitive complexity: nested function/lambda content is charged one nesting
+    /// level deeper per function boundary crossed (Sonar spec).
+    pub cognitive_complexity: u64,
+    pub nesting_depth: u64,
+    pub ncss: u64,
 }
 
 /// Per-function complexity and NCSS for every function boundary, in one post-order pass so each
@@ -164,15 +168,22 @@ pub fn measure_function_body_metrics(
     let mut pass = FunctionBodyPass {
         sets,
         code,
-        // frames[0] is a sentinel for top-level code; only its cyclomatic decisions are kept.
+        // frames[0] is a sentinel for top-level code, which ends up holding the file's totals.
         frames: vec![FunctionBodyFrame::new(0, 0)],
-        results: HashMap::new(),
+        results: FxHashMap::default(),
         nested_class_decisions: 0,
+        max_nesting: 0,
     };
     pass.visit(root, 0, 0, false, false, false);
+    // Every closed frame hoists into its parent, so the sentinel's cognitive increments are re-based
+    // to absolute nesting (its entry nesting is 0).
+    let file_frame = &pass.frames[0];
     BodyMetrics {
+        top_level_decisions: file_frame.cyclomatic_complexity - 1 + pass.nested_class_decisions,
+        cognitive_complexity: file_frame.cognitive_complexity,
+        nesting_depth: pass.max_nesting,
+        ncss: file_frame.ncss,
         by_function: pass.results,
-        top_level_decisions: pass.frames[0].cyclomatic_complexity - 1 + pass.nested_class_decisions,
     }
 }
 
@@ -189,7 +200,8 @@ impl FunctionBodyPass<'_, '_, '_> {
         // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
         // level once for everything inside it — PMD charges the class body, not the methods it
         // holds, so methods directly inside a charged class body skip the function-boundary bonus.
-        let is_charged_class_body = current.kind() == "class_body" && inside_function;
+        let parent = current.parent_node();
+        let is_charged_class_body = current.kind_name() == "class_body" && inside_function;
         if is_charged_class_body {
             inside_nested_region = true;
             function_nesting_bonus += 1;
@@ -212,25 +224,25 @@ impl FunctionBodyPass<'_, '_, '_> {
         // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
         // `if` keyword token), so only named nodes count as decisions.
         let is_decision = current.is_named()
-            && self.sets.decision_nodes.contains(current.kind())
+            && self.sets.decision_nodes.contains(current.kind_name())
             && !is_pathless_switch_branch(current, self.code);
-        let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
+        let is_case_clause =
+            current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind_name());
         // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
         // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
         // `if`/`begin` else branches would then double-nest under their already-nesting parent).
         let is_nesting = current.is_named()
-            && (self.sets.nesting_nodes.contains(current.kind())
-                || (current.kind() == "else"
-                    && current.parent().is_some_and(|parent| {
-                        parent.kind() == "case" || parent.kind() == "case_match"
-                    })));
+            && (self.sets.nesting_nodes.contains(current.kind_name())
+                || (current.kind_name() == "else" && is_case_else_parent(parent)));
         // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
         // surcharge (Sonar cognitive-complexity semantics).
-        let is_continuation = is_decision && is_flat_chain_continuation(current);
+        let is_continuation = is_decision && is_flat_chain_continuation(current, parent);
+        let is_boolean_operator = is_boolean_operator(current, parent, self.code);
+        let is_pattern_guard = is_pattern_guard(current, parent);
 
         // Each branch, short-circuit operator, and pattern guard adds one path (McCabe; NIST SP
         // 500-235 §4); `else` adds none.
-        if is_decision || is_boolean_operator(current, self.code) || is_pattern_guard(current) {
+        if is_decision || is_boolean_operator || is_pattern_guard {
             if counts_for_own_body {
                 self.top_frame().cyclomatic_complexity += 1;
             } else if !opens_frame {
@@ -245,13 +257,13 @@ impl FunctionBodyPass<'_, '_, '_> {
                 self.top_frame().nesting_sensitive_count += 1;
             }
         }
-        if current.is_named() && SWITCH_LIKE_NODE_TYPES.contains(&current.kind()) {
+        if current.is_named() && SWITCH_LIKE_NODE_TYPES.contains(&current.kind_name()) {
             self.top_frame().cognitive_complexity += 1 + relative_nesting;
             self.top_frame().nesting_sensitive_count += 1;
         }
         // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
         // nested if instead.
-        self.top_frame().cognitive_complexity += count_plain_else_branches(current);
+        self.top_frame().cognitive_complexity += count_plain_else_branches(current, parent);
         // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
         if is_flow_breaking_jump(current) {
             self.top_frame().cognitive_complexity += 1;
@@ -259,14 +271,12 @@ impl FunctionBodyPass<'_, '_, '_> {
 
         // A sequence of identical boolean operators reads as one condition, so only the operator
         // starting a sequence adds a cognitive point (Sonar spec).
-        if is_boolean_operator(current, self.code)
-            && starts_boolean_operator_sequence(current, self.code)
-        {
+        if is_boolean_operator && starts_boolean_operator_sequence(parent, self.code, current) {
             self.top_frame().cognitive_complexity += 1;
         }
 
         // Pattern guards add one independent execution path without nesting.
-        if is_pattern_guard(current) {
+        if is_pattern_guard {
             self.top_frame().cognitive_complexity += 1;
         }
 
@@ -275,6 +285,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         } else {
             current_nesting
         };
+        self.max_nesting = self.max_nesting.max(child_nesting);
         if counts_for_own_body {
             let frame = self.top_frame();
             frame.nesting_depth = frame
@@ -292,6 +303,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         // frame the node opens, if any (per-function NCSS includes the declaration node itself).
         let own_ncss = crate::ncss::ncss_contribution(
             current,
+            parent,
             &self.sets.ncss_nodes,
             &self.sets.ncss_containers,
         );
@@ -345,145 +357,23 @@ impl FunctionBodyPass<'_, '_, '_> {
     }
 }
 
-/// File-level complexity over the whole tree. Cognitive complexity charges nested function/lambda
-/// content one nesting level deeper per function boundary crossed (Sonar spec); nesting depth
-/// counts every node once.
-pub fn measure_complexity(
-    node: Node<'_>,
-    sets: &LanguageSets,
-    code: &Source<'_>,
-) -> ComplexityResult {
-    let mut result = ComplexityResult {
-        cognitive_complexity: 0,
-        nesting_depth: 0,
-    };
-
-    #[allow(clippy::too_many_arguments)]
-    fn visit(
-        current: Node<'_>,
-        current_nesting: u64,
-        mut function_nesting_bonus: u64,
-        mut inside_function: bool,
-        inside_charged_class_body: bool,
-        sets: &LanguageSets,
-        code: &Source<'_>,
-        result: &mut ComplexityResult,
-    ) {
-        // A class body nested in a function (anonymous/local classes) raises the cognitive nesting
-        // level once for everything inside it — PMD charges the class body, not the methods it
-        // holds, so methods directly inside a charged class body skip the function-boundary bonus.
-        let is_charged_class_body = current.kind() == "class_body" && inside_function;
-        if is_charged_class_body {
-            function_nesting_bonus += 1;
-        }
-        if is_function_boundary(current, &sets.function_nodes) {
-            if inside_function && !inside_charged_class_body {
-                function_nesting_bonus += 1;
-            }
-            inside_function = true;
-        }
-        let cognitive_nesting = current_nesting + function_nesting_bonus;
-
-        // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
-        // `if` keyword token), so only named nodes count as decisions.
-        let is_decision = current.is_named()
-            && sets.decision_nodes.contains(current.kind())
-            && !is_pathless_switch_branch(current, code);
-        let is_case_clause = current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind());
-        // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
-        // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
-        // `if`/`begin` else branches would then double-nest under their already-nesting parent).
-        let is_nesting = current.is_named()
-            && (sets.nesting_nodes.contains(current.kind())
-                || (current.kind() == "else"
-                    && current.parent().is_some_and(|parent| {
-                        parent.kind() == "case" || parent.kind() == "case_match"
-                    })));
-        // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
-        // surcharge (Sonar cognitive-complexity semantics).
-        let is_continuation = is_decision && is_flat_chain_continuation(current);
-
-        if is_decision && !is_case_clause {
-            result.cognitive_complexity += if is_continuation {
-                1
-            } else {
-                1 + cognitive_nesting
-            };
-        }
-        if current.is_named() && SWITCH_LIKE_NODE_TYPES.contains(&current.kind()) {
-            result.cognitive_complexity += 1 + cognitive_nesting;
-        }
-        // A plain `else` branch adds one flat cognitive point; `else if` chains are charged on the
-        // nested if instead.
-        result.cognitive_complexity += count_plain_else_branches(current);
-        // Sonar charges flow-breaking jumps: goto and labeled break/continue add one flat point.
-        if is_flow_breaking_jump(current) {
-            result.cognitive_complexity += 1;
-        }
-
-        // A sequence of identical boolean operators reads as one condition, so only the operator
-        // starting a sequence adds a cognitive point (Sonar spec).
-        if is_boolean_operator(current, code) && starts_boolean_operator_sequence(current, code) {
-            result.cognitive_complexity += 1;
-        }
-
-        // Pattern guards add one independent execution path without nesting.
-        if is_pattern_guard(current) {
-            result.cognitive_complexity += 1;
-        }
-
-        let child_nesting = if is_nesting && !is_continuation {
-            current_nesting + 1
-        } else {
-            current_nesting
-        };
-        result.nesting_depth = result.nesting_depth.max(child_nesting);
-
-        for child in all_children(current) {
-            visit(
-                child,
-                child_nesting,
-                function_nesting_bonus,
-                inside_function,
-                is_charged_class_body,
-                sets,
-                code,
-                result,
-            );
-        }
-    }
-
-    for child in all_children(node) {
-        visit(child, 0, 0, false, false, sets, code, &mut result);
-    }
-
-    result
-}
-
 /// Plain else branches attached to `current`: an `else_clause`/Ruby `else` whose branch is not an
 /// `else if` continuation, or a bare Java/Go `alternative:` statement without a clause wrapper.
-fn count_plain_else_branches(current: Node<'_>) -> u64 {
+fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64 {
     if !current.is_named() {
         return 0;
     }
-    let kind = current.kind();
+    let kind = current.kind_name();
     if kind == "else" {
         // A Ruby `case ... else` is the default arm of a switch, which already counts as a whole
         // (sonar-ruby models it as a match case, not an else branch); `if`/`unless`/`begin` else
         // branches count one point each.
-        return if current
-            .parent()
-            .is_some_and(|parent| parent.kind() == "case" || parent.kind() == "case_match")
-        {
-            0
-        } else {
-            1
-        };
+        return u64::from(!is_case_else_parent(parent));
     }
     if kind == "else_clause" {
         let has_if_like_child = crate::util::named_children(current)
             .iter()
-            .any(|child| IF_LIKE_NODE_TYPES.contains(&child.kind()));
+            .any(|child| IF_LIKE_NODE_TYPES.contains(&child.kind_name()));
         return if has_if_like_child { 0 } else { 1 };
     }
     if kind != "if_statement" && kind != "if_expression" {
@@ -500,9 +390,9 @@ fn count_plain_else_branches(current: Node<'_>) -> u64 {
         .iter()
         .filter(|child| {
             !child.is_extra()
-                && child.kind() != "else_clause"
-                && child.kind() != "elif_clause"
-                && !IF_LIKE_NODE_TYPES.contains(&child.kind())
+                && child.kind_name() != "else_clause"
+                && child.kind_name() != "elif_clause"
+                && !IF_LIKE_NODE_TYPES.contains(&child.kind_name())
         })
         .count() as u64
 }
@@ -512,29 +402,29 @@ fn is_flow_breaking_jump(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;
     }
-    if node.kind() == "goto_statement" {
+    if node.kind_name() == "goto_statement" {
         return true;
     }
     // Rust jumps are expressions; `break value` carries a named expression child, so only an
     // explicit `label` child marks a labeled jump.
-    if node.kind() == "break_expression" || node.kind() == "continue_expression" {
+    if node.kind_name() == "break_expression" || node.kind_name() == "continue_expression" {
         return crate::util::named_children(node)
             .iter()
-            .any(|child| child.kind() == "label" || child.kind() == "loop_label");
+            .any(|child| child.kind_name() == "label" || child.kind_name() == "loop_label");
     }
     // Kotlin folds every jump into `jump_expression`; the grammar tokenizes a labeled break or
     // continue as `break@`/`continue@` followed by the label (`return@label` is a plain return).
-    if node.kind() == "jump_expression" {
-        return node
-            .child(0)
-            .is_some_and(|keyword| keyword.kind() == "break@" || keyword.kind() == "continue@");
+    if node.kind_name() == "jump_expression" {
+        return node.child(0).is_some_and(|keyword| {
+            keyword.kind_name() == "break@" || keyword.kind_name() == "continue@"
+        });
     }
     // Comments are named children too (`break /* done */;`), so only non-comment children mark a
     // label.
-    (node.kind() == "break_statement" || node.kind() == "continue_statement")
+    (node.kind_name() == "break_statement" || node.kind_name() == "continue_statement")
         && crate::util::named_children(node)
             .iter()
-            .any(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+            .any(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind_name()))
 }
 
 /// Wrappers that are transparent when locating the enclosing boolean operation: PMD/Sonar keep a
@@ -549,21 +439,25 @@ const PARENTHESIZED_NODE_TYPES: &[&str] = &[
 /// run of same-operator binaries (possibly through parentheses). Only the root operator counts one
 /// cognitive point: `a && b && c` and `a && (b && c)` cost one, `a && b || c` costs two, matching
 /// the Sonar specification and PMD 7.26.0.
-fn starts_boolean_operator_sequence(token: Node<'_>, code: &Source<'_>) -> bool {
-    let Some(binary) = token.parent() else {
+fn starts_boolean_operator_sequence(
+    binary: Option<Node<'_>>,
+    code: &Source<'_>,
+    token: Node<'_>,
+) -> bool {
+    let Some(binary) = binary else {
         return true;
     };
-    let mut ancestor = binary.parent();
+    let mut ancestor = binary.parent_node();
     while let Some(node) = ancestor {
-        if !PARENTHESIZED_NODE_TYPES.contains(&node.kind()) {
+        if !PARENTHESIZED_NODE_TYPES.contains(&node.kind_name()) {
             break;
         }
-        ancestor = node.parent();
+        ancestor = node.parent_node();
     }
     let Some(ancestor) = ancestor else {
         return true;
     };
-    if ancestor.kind() != binary.kind() {
+    if ancestor.kind_name() != binary.kind_name() {
         return true;
     }
     find_boolean_operator_text(ancestor, code).map(normalize_boolean_operator)
@@ -596,46 +490,44 @@ fn find_boolean_operator_text<'a>(binary_node: Node<'_>, code: &Source<'a>) -> O
 /// ternaries and conditions, which are charged. A C# exception filter (`catch (E e) when (...)`, a `catch_filter_clause`) is
 /// deliberately not charged: the catch itself already counts, and the filter is part of the same
 /// handler condition rather than an extra path (SonarC# does not charge it either).
-fn is_pattern_guard(node: Node<'_>) -> bool {
+fn is_pattern_guard(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     if !node.is_named() {
         return false;
     }
-    let kind = node.kind();
+    let kind = node.kind_name();
     if kind == "guard" || kind == "when_clause" || kind == "if_guard" || kind == "unless_guard" {
         return true;
     }
     if kind == "if_clause" {
-        return node
-            .parent()
-            .is_some_and(|parent| parent.kind() == "case_clause");
+        return parent.is_some_and(|parent| parent.kind_name() == "case_clause");
     }
     kind == "match_pattern"
         && all_children(node)
             .iter()
-            .any(|child| !child.is_named() && child.kind() == "if")
+            .any(|child| !child.is_named() && child.kind_name() == "if")
 }
 
 /// Ruby `elsif`, Python `elif`, and `else if` (an if node in an else/alternative position).
-fn is_flat_chain_continuation(node: Node<'_>) -> bool {
-    let kind = node.kind();
+fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
+    let kind = node.kind_name();
     if kind == "elsif" || kind == "elif_clause" {
         return true;
     }
     if kind != "if_statement" && kind != "if_expression" && kind != "if" {
         return false;
     }
-    let Some(parent) = node.parent() else {
+    let Some(parent) = parent else {
         return false;
     };
     // Kotlin puts a braceless `else if` directly in the else branch's control_structure_body.
-    if parent.kind() == "control_structure_body" {
+    if parent.kind_name() == "control_structure_body" {
         return parent
-            .parent()
+            .parent_node()
             .and_then(crate::util::kotlin_else_body)
             .is_some_and(|else_body| else_body.id() == parent.id());
     }
     // JS/C/C++/Rust/C# wrap `else if` in an else clause or put it directly in `alternative`.
-    parent.kind() == "else_clause"
+    parent.kind_name() == "else_clause"
         || parent
             .child_by_field_name("alternative")
             .is_some_and(|alternative| alternative.id() == node.id())
@@ -653,7 +545,7 @@ fn is_pathless_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     let mut stacked = vec![node];
     let mut previous = node.prev_named_sibling();
     while let Some(sibling) = previous {
-        if !crate::ncss::COMMENT_NODE_TYPES.contains(&sibling.kind()) {
+        if !crate::ncss::COMMENT_NODE_TYPES.contains(&sibling.kind_name()) {
             if !is_label_only_case(sibling) {
                 break;
             }
@@ -673,10 +565,10 @@ fn is_pathless_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
 /// pattern (Java `when`, Rust `if`).
 fn has_pattern_guard(node: Node<'_>) -> bool {
     crate::util::named_children(node).into_iter().any(|child| {
-        is_pattern_guard(child)
+        is_pattern_guard(child, Some(node))
             || crate::util::named_children(child)
                 .into_iter()
-                .any(is_pattern_guard)
+                .any(|grandchild| is_pattern_guard(grandchild, Some(child)))
     })
 }
 
@@ -684,28 +576,28 @@ fn has_pattern_guard(node: Node<'_>) -> bool {
 /// stacked label as its own case node.
 fn is_label_only_case(node: Node<'_>) -> bool {
     let children = non_comment_children(node);
-    match node.kind() {
+    match node.kind_name() {
         "case_statement" => {
             let value = node.child_by_field_name("value").map(|value| value.id());
             children.iter().all(|child| Some(child.id()) == value)
         }
         "switch_case" | "switch_default" => node.child_by_field_name("body").is_none(),
-        "switch_block_statement_group" => {
-            children.iter().all(|child| child.kind() == "switch_label")
-        }
+        "switch_block_statement_group" => children
+            .iter()
+            .all(|child| child.kind_name() == "switch_label"),
         // A C# label is a pattern (`case 1:` parses as a constant pattern) plus an optional `when`
         // guard; anything else, a `#if` block included, is the section's body.
         "switch_section" => children.iter().all(|child| {
-            child.kind().ends_with("pattern")
-                || child.kind() == "discard"
-                || child.kind() == "when_clause"
+            child.kind_name().ends_with("pattern")
+                || child.kind_name() == "discard"
+                || child.kind_name() == "when_clause"
         }),
         _ => false,
     }
 }
 
 fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
-    let kind = node.kind();
+    let kind = node.kind_name();
     if kind == "switch_default" {
         return true;
     }
@@ -718,12 +610,12 @@ fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     if kind == "switch_block_statement_group" || kind == "switch_rule" {
         return non_comment_children(node)
             .into_iter()
-            .filter(|child| child.kind() == "switch_label")
+            .filter(|child| child.kind_name() == "switch_label")
             .any(|label| {
                 let parts = non_comment_children(label);
                 parts.is_empty()
                     || parts.iter().any(|part| {
-                        part.kind() == "identifier" && node_text(*part, code) == "default"
+                        part.kind_name() == "identifier" && node_text(*part, code) == "default"
                     })
             });
     }
@@ -733,7 +625,9 @@ fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     // branches, which is_pattern_guard charges, like Python's `case _ if cond:` and Rust's
     // `_ if cond =>`.
     if kind == "switch_section" {
-        return node.child(0).is_some_and(|first| first.kind() == "default")
+        return node
+            .child(0)
+            .is_some_and(|first| first.kind_name() == "default")
             || crate::util::named_children(node)
                 .into_iter()
                 .any(is_csharp_catch_all_pattern);
@@ -746,7 +640,7 @@ fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     if kind == "when_entry" {
         return !crate::util::named_children(node)
             .iter()
-            .any(|child| child.kind() == "when_condition");
+            .any(|child| child.kind_name() == "when_condition");
     }
 
     // Python arms with an irrefutable pattern are unconditional like `default`.
@@ -755,24 +649,26 @@ fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     if kind == "case_clause" {
         let patterns: Vec<Node<'_>> = crate::util::named_children(node)
             .into_iter()
-            .filter(|child| child.kind() == "case_pattern")
+            .filter(|child| child.kind_name() == "case_pattern")
             .collect();
-        return !all_children(node).iter().any(|child| child.kind() == ",")
+        return !all_children(node)
+            .iter()
+            .any(|child| child.kind_name() == ",")
             && matches!(patterns[..], [pattern] if is_python_irrefutable_pattern(pattern));
     }
     // Rust `_ =>` (optionally guarded) fallback arms.
     if kind == "match_arm" {
         return crate::util::named_children(node)
             .into_iter()
-            .find(|child| child.kind() == "match_pattern")
+            .find(|child| child.kind_name() == "match_pattern")
             .is_some_and(|pattern| {
                 // The guard keyword is anonymous, so filter all children, not just named ones.
                 let parts: Vec<Node<'_>> = all_children(pattern)
                     .into_iter()
-                    .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+                    .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind_name()))
                     .collect();
-                matches!(parts[..], [first, ..] if first.kind() == "_")
-                    && parts.get(1).is_none_or(|second| second.kind() == "if")
+                matches!(parts[..], [first, ..] if first.kind_name() == "_")
+                    && parts.get(1).is_none_or(|second| second.kind_name() == "if")
             });
     }
 
@@ -780,7 +676,7 @@ fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     if kind == "in_clause" {
         return node
             .named_child(0)
-            .is_some_and(|first| first.kind() == "identifier");
+            .is_some_and(|first| first.kind_name() == "identifier");
     }
 
     false
@@ -790,19 +686,23 @@ fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
 /// `p | q` when `p` (or, for `|`, any alternative) is irrefutable. A group parses as a one-element
 /// tuple pattern that differs from the real tuple `(p,)` only by the comma token.
 fn is_python_irrefutable_pattern(node: Node<'_>) -> bool {
-    match node.kind() {
+    match node.kind_name() {
         "_" => true,
         "case_pattern" => match non_comment_children(node)[..] {
-            [] => all_children(node).iter().any(|child| child.kind() == "_"),
+            [] => all_children(node)
+                .iter()
+                .any(|child| child.kind_name() == "_"),
             [inner] => is_python_irrefutable_pattern(inner),
             _ => false,
         },
         "dotted_name" => matches!(
             non_comment_children(node)[..],
-            [name] if name.kind() == "identifier"
+            [name] if name.kind_name() == "identifier"
         ),
         "tuple_pattern" => {
-            !all_children(node).iter().any(|child| child.kind() == ",")
+            !all_children(node)
+                .iter()
+                .any(|child| child.kind_name() == ",")
                 && matches!(
                     non_comment_children(node)[..],
                     [inner] if is_python_irrefutable_pattern(inner)
@@ -821,36 +721,40 @@ fn is_python_irrefutable_pattern(node: Node<'_>) -> bool {
 fn non_comment_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
     crate::util::named_children(node)
         .into_iter()
-        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind_name()))
         .collect()
 }
 
 /// C# patterns that match every value: the discard `_` and `var x`/`var _`, possibly parenthesized
 /// (but not a `var (a, b)` deconstruction, which requires a deconstructible value).
 fn is_csharp_catch_all_pattern(node: Node<'_>) -> bool {
-    if node.kind() == "parenthesized_pattern" {
+    if node.kind_name() == "parenthesized_pattern" {
         return crate::util::named_children(node)
             .into_iter()
-            .find(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+            .find(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind_name()))
             .is_some_and(is_csharp_catch_all_pattern);
     }
-    node.kind() == "discard"
-        || (node.kind() == "declaration_pattern"
+    node.kind_name() == "discard"
+        || (node.kind_name() == "declaration_pattern"
             && node
                 .child_by_field_name("type")
-                .is_some_and(|ty| ty.kind() == "implicit_type")
+                .is_some_and(|ty| ty.kind_name() == "implicit_type")
             && !crate::util::named_children(node)
                 .iter()
-                .any(|child| child.kind() == "parenthesized_variable_designation"))
+                .any(|child| child.kind_name() == "parenthesized_variable_designation"))
 }
 
 /// The parent guard is required because the same tokens appear in non-boolean syntax (C++ `int&&`,
 /// `operator&&`, Rust's empty closure parameter list `|| 5`).
-fn is_boolean_operator(node: Node<'_>, code: &Source<'_>) -> bool {
+fn is_boolean_operator(node: Node<'_>, parent: Option<Node<'_>>, code: &Source<'_>) -> bool {
     if node.is_named() || !BOOLEAN_OPERATORS.contains(&node_text(node, code)) {
         return false;
     }
 
-    node.parent()
-        .is_some_and(|parent| BOOLEAN_OPERATOR_PARENT_TYPES.contains(&parent.kind()))
+    parent.is_some_and(|parent| BOOLEAN_OPERATOR_PARENT_TYPES.contains(&parent.kind_name()))
+}
+
+/// A Ruby `case ... else` arm (see count_plain_else_branches).
+fn is_case_else_parent(parent: Option<Node<'_>>) -> bool {
+    parent.is_some_and(|parent| parent.kind_name() == "case" || parent.kind_name() == "case_match")
 }

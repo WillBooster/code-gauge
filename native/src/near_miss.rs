@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// N-gram size for the candidate index and local-match anchors (NIL's default); shared with
 /// crossFileNearMiss.ts.
@@ -40,7 +40,7 @@ pub(crate) struct Block {
     is_content: Vec<bool>,
     /// Identifiers anonymized by first occurrence within the block.
     sequence: Vec<i32>,
-    pub ngrams: HashSet<i32>,
+    pub ngrams: FxHashSet<i32>,
     /// The n-grams occurring exactly once in the block with their offsets, sorted by hash so two
     /// blocks' local-match anchors intersect by merging.
     unique_ngrams: Vec<(i32, usize)>,
@@ -77,7 +77,7 @@ impl Block {
                 })
             })
             .collect();
-        let mut occurrence_counts: HashMap<i32, usize> = HashMap::new();
+        let mut occurrence_counts: FxHashMap<i32, usize> = FxHashMap::default();
         for &hash in &ngram_hashes {
             *occurrence_counts.entry(hash).or_insert(0) += 1;
         }
@@ -134,13 +134,13 @@ pub(crate) struct Matcher {
     /// capped at MAX_CONTENT_WEIGHT.
     /// Rare names and values (the logic a copy preserves) outweigh ubiquitous ones, following
     /// the information-theoretic weighting of ECScan's essence-clone detection (2025).
-    weights: HashMap<i32, u64>,
+    weights: FxHashMap<i32, u64>,
 }
 
 impl Matcher {
     /// Weights every block's content counts, which verification requires.
     pub fn new(blocks: &mut [Block], min_tokens: usize, min_similarity_percent: usize) -> Matcher {
-        let mut document_frequencies: HashMap<i32, usize> = HashMap::new();
+        let mut document_frequencies: FxHashMap<i32, usize> = FxHashMap::default();
         for block in blocks.iter() {
             for &(symbol, _) in &block.content {
                 *document_frequencies.entry(symbol).or_insert(0) += 1;
@@ -347,7 +347,7 @@ fn anchored_token_count(segment: &[(usize, usize)]) -> usize {
 /// Identifiers renumbered by first occurrence within `symbols`, so a range compares the same
 /// wherever it sits in its file.
 fn anonymize(symbols: &[i32]) -> Vec<i32> {
-    let mut index_by_identifier: HashMap<i32, i32> = HashMap::new();
+    let mut index_by_identifier: FxHashMap<i32, i32> = FxHashMap::default();
     symbols
         .iter()
         .map(|&symbol| {
@@ -427,7 +427,7 @@ fn lcs_length(a: &[i32], b: &[i32]) -> usize {
         return 0;
     }
     let word_count = a.len().div_ceil(64);
-    let mut position_masks: HashMap<i32, Vec<u64>> = HashMap::new();
+    let mut position_masks: FxHashMap<i32, Vec<u64>> = FxHashMap::default();
     for (index, &symbol) in a.iter().enumerate() {
         position_masks
             .entry(symbol)

@@ -18,16 +18,75 @@ pub fn measure_code_native(
     min_similarity_percent: Option<u32>,
     include_cross_file_data: Option<bool>,
 ) -> Result<String> {
-    crate::measure_code(
+    measure_code(
         &code,
         &language,
+        include_syntax_tree,
+        min_tokens,
+        max_gap_tokens,
+        min_similarity_percent,
+        include_cross_file_data,
+    )
+    .map_err(Error::from_reason)
+}
+
+/// measure_code_native on the worker pool, resolving with the same JSON payload, so callers can
+/// measure several files in parallel.
+#[napi(ts_return_type = "Promise<string>")]
+#[allow(clippy::too_many_arguments)]
+pub fn measure_code_native_async(
+    env: &Env,
+    code: String,
+    language: String,
+    include_syntax_tree: Option<bool>,
+    min_tokens: Option<u32>,
+    max_gap_tokens: Option<u32>,
+    min_similarity_percent: Option<u32>,
+    include_cross_file_data: Option<bool>,
+) -> Result<Object<'_>> {
+    let (deferred, promise) = env.create_deferred()?;
+    crate::worker_pool::spawn(move || {
+        // A panic must reject the promise: otherwise it would stay pending and keep the event
+        // loop alive forever.
+        let result = std::panic::catch_unwind(|| {
+            measure_code(
+                &code,
+                &language,
+                include_syntax_tree,
+                min_tokens,
+                max_gap_tokens,
+                min_similarity_percent,
+                include_cross_file_data,
+            )
+        })
+        .unwrap_or_else(|_| Err("measurement panicked".to_string()));
+        match result {
+            Ok(json) => deferred.resolve(move |_| Ok(json)),
+            Err(reason) => deferred.reject(Error::from_reason(reason)),
+        }
+    });
+    Ok(promise)
+}
+
+/// The arguments' defaults, applied in one place so the sync and async bindings measure alike.
+fn measure_code(
+    code: &str,
+    language: &str,
+    include_syntax_tree: Option<bool>,
+    min_tokens: Option<u32>,
+    max_gap_tokens: Option<u32>,
+    min_similarity_percent: Option<u32>,
+    include_cross_file_data: Option<bool>,
+) -> std::result::Result<String, String> {
+    crate::measure_code(
+        code,
+        language,
         include_syntax_tree.unwrap_or(false),
         min_tokens,
         max_gap_tokens,
         min_similarity_percent,
         include_cross_file_data.unwrap_or(false),
     )
-    .map_err(Error::from_reason)
 }
 
 #[napi]

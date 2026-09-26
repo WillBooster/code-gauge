@@ -1,7 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use tree_sitter::Node;
 
 use crate::complexity::is_function_boundary;
+use crate::tree_index::NodeExt;
 use crate::util::{is_identifier_leaf, node_text, Source};
 
 /// Leaf node types treated as variable references by the def-use approximation.
@@ -112,7 +113,7 @@ struct DepDegreeLeaf<'t> {
 pub fn measure_dep_degree(
     function_node: Node<'_>,
     code: &Source<'_>,
-    function_nodes: &HashSet<&'static str>,
+    function_nodes: &FxHashSet<&'static str>,
 ) -> u64 {
     let mut leaves = Vec::new();
     let mut next_scope_id = 0usize;
@@ -125,7 +126,7 @@ pub fn measure_dep_degree(
         &mut leaves,
         true,
     );
-    let mut definition_scopes_by_name: HashMap<&str, Vec<String>> = HashMap::new();
+    let mut definition_scopes_by_name: FxHashMap<&str, Vec<String>> = FxHashMap::default();
     for name in implicit_accessor_definitions(function_node, code) {
         add_definition(&mut definition_scopes_by_name, name, "");
     }
@@ -162,20 +163,20 @@ pub fn measure_dep_degree(
 /// `type_identifier` under the `pointer_type_declarator` spelling `C::*`, possibly through further
 /// declarator wrappers; every other `type_identifier` names a type, not a variable.
 fn is_variable_leaf(node: Node<'_>) -> bool {
-    VARIABLE_NODE_TYPES.contains(&node.kind())
+    VARIABLE_NODE_TYPES.contains(&node.kind_name())
         || crate::util::is_kotlin_callable_receiver(node)
-        || (node.kind() == "type_identifier" && is_member_pointer_name(node))
+        || (node.kind_name() == "type_identifier" && is_member_pointer_name(node))
 }
 
 fn is_member_pointer_name(node: Node<'_>) -> bool {
     let mut current = node;
-    while let Some(parent) = current.parent() {
-        if parent.kind() == "pointer_type_declarator" {
+    while let Some(parent) = current.parent_node() {
+        if parent.kind_name() == "pointer_type_declarator" {
             return true;
         }
         // The climb follows the declared-name position only, exactly like unwrap_declarator_wrappers.
-        if !DECLARATOR_WRAPPER_TYPES.contains(&parent.kind())
-            || parent.kind() == "qualified_identifier"
+        if !DECLARATOR_WRAPPER_TYPES.contains(&parent.kind_name())
+            || parent.kind_name() == "qualified_identifier"
             || field_name_in_parent(current, parent).is_some_and(|field| field != "declarator")
         {
             return false;
@@ -189,7 +190,7 @@ fn is_member_pointer_name(node: Node<'_>) -> bool {
 /// indexer's parameters (including a `params` array, which the grammar names directly on the
 /// parameter list) and, in a setter, initializer, or event accessor, the implicit `value`.
 fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>) -> Vec<&'a str> {
-    if function_node.kind() != "accessor_declaration" {
+    if function_node.kind_name() != "accessor_declaration" {
         return Vec::new();
     }
     let mut names = Vec::new();
@@ -201,9 +202,11 @@ fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>)
     {
         names.push("value");
     }
-    let owner = function_node.parent().and_then(|list| list.parent());
+    let owner = function_node
+        .parent_node()
+        .and_then(|list| list.parent_node());
     if let Some(parameters) = owner
-        .filter(|owner| owner.kind() == "indexer_declaration")
+        .filter(|owner| owner.kind_name() == "indexer_declaration")
         .and_then(|owner| owner.child_by_field_name("parameters"))
     {
         let declared = crate::util::named_children(parameters)
@@ -223,12 +226,12 @@ fn collect_dep_degree_leaves<'t>(
     field_name: Option<&'static str>,
     scope: &str,
     next_scope_id: &mut usize,
-    function_nodes: &HashSet<&'static str>,
+    function_nodes: &FxHashSet<&'static str>,
     leaves: &mut Vec<DepDegreeLeaf<'t>>,
     is_measured_root: bool,
 ) {
     if matches!(
-        node.kind(),
+        node.kind_name(),
         "comment" | "line_comment" | "block_comment" | "multiline_comment"
     ) {
         return;
@@ -268,7 +271,7 @@ fn collect_dep_degree_leaves<'t>(
 }
 
 fn add_definition<'a>(
-    definition_scopes_by_name: &mut HashMap<&'a str, Vec<String>>,
+    definition_scopes_by_name: &mut FxHashMap<&'a str, Vec<String>>,
     name: &'a str,
     scope: &str,
 ) {
@@ -291,37 +294,37 @@ fn is_definition_visible(definition_scopes: Option<&Vec<String>>, scope: &str) -
 }
 
 fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
-    let Some(parent) = leaf.node.parent() else {
+    let Some(parent) = leaf.node.parent_node() else {
         return false;
     };
-    if leaf.node.kind() == "simple_identifier"
-        && KOTLIN_DEFINITION_PARENT_TYPES.contains(&parent.kind())
+    if leaf.node.kind_name() == "simple_identifier"
+        && KOTLIN_DEFINITION_PARENT_TYPES.contains(&parent.kind_name())
     {
         return true;
     }
-    if leaf.node.kind() == "identifier"
-        && CSHARP_QUERY_BINDING_PARENT_TYPES.contains(&parent.kind())
+    if leaf.node.kind_name() == "identifier"
+        && CSHARP_QUERY_BINDING_PARENT_TYPES.contains(&parent.kind_name())
         && crate::util::named_children(parent)
             .into_iter()
-            .find(|child| child.kind() == "identifier")
+            .find(|child| child.kind_name() == "identifier")
             .is_some_and(|first| first.id() == leaf.node.id())
     {
         return true;
     }
     let (declared, declared_field) = unwrap_declarator_wrappers(leaf);
     if declared
-        .parent()
+        .parent_node()
         .is_some_and(|holder| is_definition_field(holder, declared_field))
     {
         return true;
     }
-    if !DEFINITION_LIST_NODE_TYPES.contains(&parent.kind()) {
+    if !DEFINITION_LIST_NODE_TYPES.contains(&parent.kind_name()) {
         return false;
     }
-    let Some(holder) = parent.parent() else {
+    let Some(holder) = parent.parent_node() else {
         return false;
     };
-    DEFINITION_LIST_HOLDER_TYPES.contains(&holder.kind())
+    DEFINITION_LIST_HOLDER_TYPES.contains(&holder.kind_name())
         && field_name_in_parent(parent, holder) == Some("left")
 }
 
@@ -329,7 +332,7 @@ fn is_definition_field(holder: Node<'_>, field_name: Option<&str>) -> bool {
     DEFINITION_FIELD_BY_PARENT_TYPE
         .iter()
         .any(|(parent_type, definition_field)| {
-            *parent_type == holder.kind() && field_name == Some(definition_field)
+            *parent_type == holder.kind_name() && field_name == Some(definition_field)
         })
 }
 
@@ -342,10 +345,10 @@ fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option
     let mut current = leaf.node;
     let mut field_name = leaf.field_name;
     while let Some(parent) = current
-        .parent()
-        .filter(|parent| DECLARATOR_WRAPPER_TYPES.contains(&parent.kind()))
+        .parent_node()
+        .filter(|parent| DECLARATOR_WRAPPER_TYPES.contains(&parent.kind_name()))
     {
-        let declared_field = if parent.kind() == "qualified_identifier" {
+        let declared_field = if parent.kind_name() == "qualified_identifier" {
             "name"
         } else {
             "declarator"
@@ -354,7 +357,7 @@ fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option
             break;
         }
         field_name = parent
-            .parent()
+            .parent_node()
             .and_then(|grandparent| field_name_in_parent(parent, grandparent));
         current = parent;
     }
@@ -368,12 +371,12 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     // Kotlin has no `type`/`value` fields to veto default values: a function parameter's default
     // sits in the parameter list (`fun f(b: Int = a)`), a class parameter's inside the parameter
     // node (`class A(val y: Int = a)`), so only a parameter node's first identifier child binds.
-    if leaf.node.kind() == "simple_identifier" {
-        return leaf.node.parent().is_some_and(|parent| {
-            KOTLIN_PARAMETER_TYPES.contains(&parent.kind())
+    if leaf.node.kind_name() == "simple_identifier" {
+        return leaf.node.parent_node().is_some_and(|parent| {
+            KOTLIN_PARAMETER_TYPES.contains(&parent.kind_name())
                 && crate::util::named_children(parent)
                     .into_iter()
-                    .find(|child| child.kind() == "simple_identifier")
+                    .find(|child| child.kind_name() == "simple_identifier")
                     .is_some_and(|first| first.id() == leaf.node.id())
         });
     }
@@ -384,10 +387,10 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     let declares_member_pointer = is_member_pointer_name(leaf.node);
     let mut in_member_pointer = false;
     loop {
-        let Some(parent) = current.parent() else {
+        let Some(parent) = current.parent_node() else {
             return false;
         };
-        let parent_is_parameterish = parent.kind().contains("parameter");
+        let parent_is_parameterish = parent.kind_name().contains("parameter");
         // Beyond the grandparent, only declarator wrappers keep climbing, plus the
         // `qualified_identifier` nodes that spell a member-pointer parameter's class (`int C::* q`,
         // `int N::C::* q`) — entered from the pointer declarator and continued through the `name`
@@ -395,13 +398,13 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
         // a read. Checking this before the field lookup also keeps reads inside high-arity nodes
         // O(1).
         let continues_member_pointer = declares_member_pointer
-            && parent.kind() == "qualified_identifier"
-            && (current.kind() == "pointer_type_declarator" || in_member_pointer)
+            && parent.kind_name() == "qualified_identifier"
+            && (current.kind_name() == "pointer_type_declarator" || in_member_pointer)
             && field_name_in_parent(current, parent) == Some("name");
         in_member_pointer = continues_member_pointer;
         if depth >= 1
             && !parent_is_parameterish
-            && !parent.kind().contains("declarator")
+            && !parent.kind_name().contains("declarator")
             && !continues_member_pointer
         {
             return false;

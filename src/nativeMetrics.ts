@@ -35,16 +35,19 @@ export interface NativeCrossFileDataPayload {
   codeLineNumbers: number[];
 }
 
+type NativeMeasureArguments = [
+  code: string,
+  language: string,
+  includeSyntaxTree: boolean,
+  minTokens: number | undefined,
+  maxGapTokens: number | undefined,
+  minSimilarityPercent: number | undefined,
+  includeCrossFileData: boolean,
+];
+
 export interface NativeBinding {
-  measureCodeNative(
-    code: string,
-    language: string,
-    includeSyntaxTree: boolean,
-    minTokens?: number,
-    maxGapTokens?: number,
-    minSimilarityPercent?: number,
-    includeCrossFileData?: boolean
-  ): string;
+  measureCodeNative(...args: NativeMeasureArguments): string;
+  measureCodeNativeAsync(...args: NativeMeasureArguments): Promise<string>;
   collectCrossFileDataNative(code: string, language: string, minTokens?: number): string;
   collectFunctionTokenSequencesNative(code: string, language: string): string;
   payloadVersion?(): number;
@@ -53,9 +56,9 @@ export interface NativeBinding {
 /**
  * Must equal `payload_version` in native/src/lib.rs. A previously built addon survives a
  * `git pull` untouched, so without this handshake it would silently return payloads missing
- * newer fields instead of failing with a clear rebuild message.
+ * newer fields, or lack newer binding functions, instead of failing with a clear rebuild message.
  */
-export const expectedPayloadVersion = 7;
+export const expectedPayloadVersion = 8;
 
 /**
  * Measures one file via the native addon, returning the raw payload for assembly in metrics.ts;
@@ -70,15 +73,46 @@ export function measureCodeNative(
 ): NativeMetricsPayload {
   return JSON.parse(
     loadBinding().measureCodeNative(
-      toWellFormed(code),
-      language,
-      includeSyntaxTree,
-      clampToU32(duplication?.minTokens),
-      clampToU32(duplication?.maxGapTokens),
-      clampToU32(duplication?.minSimilarityPercent),
-      includeCrossFileData
+      ...toNativeMeasureArguments(code, language, includeSyntaxTree, duplication, includeCrossFileData)
     )
   ) as NativeMetricsPayload;
+}
+
+/**
+ * measureCodeNative on the addon's worker threads, so several files can be measured in parallel.
+ * A missing addon still throws synchronously, like measureCodeNative.
+ */
+export function measureCodeNativeAsync(
+  code: string,
+  language: string,
+  includeSyntaxTree: boolean,
+  duplication?: DuplicationOptions,
+  includeCrossFileData = false
+): Promise<NativeMetricsPayload> {
+  return loadBinding()
+    .measureCodeNativeAsync(
+      ...toNativeMeasureArguments(code, language, includeSyntaxTree, duplication, includeCrossFileData)
+    )
+    .then((json) => JSON.parse(json) as NativeMetricsPayload);
+}
+
+/** The binding arguments shared by the sync and async measurements, so both measure alike. */
+function toNativeMeasureArguments(
+  code: string,
+  language: string,
+  includeSyntaxTree: boolean,
+  duplication: DuplicationOptions | undefined,
+  includeCrossFileData: boolean
+): NativeMeasureArguments {
+  return [
+    toWellFormed(code),
+    language,
+    includeSyntaxTree,
+    clampToU32(duplication?.minTokens),
+    clampToU32(duplication?.maxGapTokens),
+    clampToU32(duplication?.minSimilarityPercent),
+    includeCrossFileData,
+  ];
 }
 
 /** Collects one file's cross-file clone-detection contribution via the native addon. */

@@ -12,18 +12,23 @@ mod measure;
 mod napi;
 mod ncss;
 mod near_miss;
+mod tree_index;
 mod types;
 mod util;
 #[cfg(target_family = "wasm")]
 mod wasm;
+#[cfg(not(target_family = "wasm"))]
+mod worker_pool;
 
-/// Version of the native payload schema. The TypeScript wrapper refuses a binding whose version
-/// differs from the one it expects, so a stale prebuilt addon fails with a clear rebuild message
-/// instead of silently returning an incompatible payload. Bump on every payload-shape change,
-/// together with `expectedPayloadVersion` in src/nativeMetrics.ts.
+/// Version of the native payload schema and binding functions. The TypeScript wrapper refuses a
+/// binding whose version differs from the one it expects, so a stale prebuilt addon fails with a
+/// clear rebuild message instead of silently returning an incompatible payload or lacking a
+/// function (a failure the scan would only report per file). Bump on every payload-shape change
+/// and every change to the exported binding functions, together with `expectedPayloadVersion` in
+/// src/nativeMetrics.ts.
 /// scripts/installNative.mjs parses the literal from this function's source.
 pub fn payload_version() -> u32 {
-    7
+    8
 }
 
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON; with
