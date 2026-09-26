@@ -1676,24 +1676,20 @@ fn collect_near_miss_groups(
         return Vec::new();
     }
 
-    // Reported-group indices whose occurrences overlap each comparable block: such blocks anchor
-    // near-miss comparisons but are never re-reported.
-    let touched_groups_by_block: Vec<Vec<usize>> = comparable
-        .iter()
-        .map(|range| {
-            reported_groups
-                .iter()
-                .enumerate()
-                .filter(|(_, group)| {
-                    group.iter().any(|occurrence| {
-                        occurrence.start_token_index < range.end_token_index
-                            && range.start_token_index < occurrence.end_token_index
-                    })
+    // Reported-group indices whose occurrences overlap a token range: near-miss nodes covering
+    // such content anchor comparisons but are never re-reported.
+    let touched_groups_in = |start: usize, end: usize| -> Vec<usize> {
+        reported_groups
+            .iter()
+            .enumerate()
+            .filter(|(_, group)| {
+                group.iter().any(|occurrence| {
+                    occurrence.start_token_index < end && start < occurrence.end_token_index
                 })
-                .map(|(group_index, _)| group_index)
-                .collect()
-        })
-        .collect();
+            })
+            .map(|(group_index, _)| group_index)
+            .collect()
+    };
 
     let (symbols, is_content) = to_symbol_stream(tokens);
     let statements = top_level_statement_finder(&source.container_statement_ranges);
@@ -1719,20 +1715,12 @@ fn collect_near_miss_groups(
     for_each_candidate_pair(
         &blocks,
         settings.min_similarity_percent,
-        |left_index, right_index| {
-            // Two already-reported blocks have nothing new to contribute to each other.
-            if !touched_groups_by_block[left_index].is_empty()
-                && !touched_groups_by_block[right_index].is_empty()
-            {
-                return;
-            }
-            match matcher.verify(&blocks[left_index], &blocks[right_index]) {
-                None => {}
-                Some(PairMatch::Whole) => edges.push((left_index, None, right_index, None)),
-                Some(PairMatch::Local(cores)) => {
-                    for (left_core, right_core) in cores {
-                        edges.push((left_index, Some(left_core), right_index, Some(right_core)));
-                    }
+        |left_index, right_index| match matcher.verify(&blocks[left_index], &blocks[right_index]) {
+            None => {}
+            Some(PairMatch::Whole) => edges.push((left_index, None, right_index, None)),
+            Some(PairMatch::Local(cores)) => {
+                for (left_core, right_core) in cores {
+                    edges.push((left_index, Some(left_core), right_index, Some(right_core)));
                 }
             }
         },
@@ -1796,9 +1784,33 @@ fn collect_near_miss_groups(
         }
         root
     }
+    // Coverage is judged per node: a core is covered only when a reported occurrence overlaps
+    // the core itself, not merely elsewhere in its block.
+    let node_range = |node: usize| {
+        node_spans[node].unwrap_or((
+            comparable[node_blocks[node]].start_token_index,
+            comparable[node_blocks[node]].end_token_index,
+        ))
+    };
+    let touched_groups_by_node: Vec<Vec<usize>> = (0..node_blocks.len())
+        .map(|node| {
+            let (start, end) = node_range(node);
+            touched_groups_in(start, end)
+        })
+        .collect();
     for &(left_index, left_core, right_index, right_core) in &edges {
-        let left_root = find(&mut parent, node_of(left_index, left_core));
-        let right_root = find(&mut parent, node_of(right_index, right_core));
+        let (left_node, right_node) = (
+            node_of(left_index, left_core),
+            node_of(right_index, right_core),
+        );
+        // Two already-reported nodes have nothing new to contribute to each other.
+        if !touched_groups_by_node[left_node].is_empty()
+            && !touched_groups_by_node[right_node].is_empty()
+        {
+            continue;
+        }
+        let left_root = find(&mut parent, left_node);
+        let right_root = find(&mut parent, right_node);
         parent[left_root.max(right_root)] = left_root.min(right_root);
     }
 
@@ -1849,7 +1861,7 @@ fn collect_near_miss_groups(
             })
             .collect()
     };
-    let touched_groups_of = |node: usize| &touched_groups_by_block[node_blocks[node]];
+    let touched_groups_of = |node: usize| &touched_groups_by_node[node];
     let mut groups: Vec<Vec<CountedOccurrence>> = Vec::new();
     for members in members_by_root.values() {
         if members.len() < 2 {
@@ -1876,13 +1888,12 @@ fn collect_near_miss_groups(
             continue;
         }
         // An anchored cluster extends a reported group only when every occurrence of that group
-        // overlaps one of the cluster's member blocks: an occurrence disjoint from all members
+        // overlaps one of the cluster's member nodes: an occurrence disjoint from all members
         // reports content the cluster does not share.
         let overlaps_member = |occurrence: &CountedOccurrence| {
             members.iter().any(|&index| {
-                let range = comparable[node_blocks[index]];
-                occurrence.start_token_index < range.end_token_index
-                    && range.start_token_index < occurrence.end_token_index
+                let (start, end) = node_range(index);
+                occurrence.start_token_index < end && start < occurrence.end_token_index
             })
         };
         // Ascending by construction: BTreeSet iteration is sorted and filter preserves order.
@@ -1902,7 +1913,7 @@ fn collect_near_miss_groups(
             let mut merged: Vec<CountedOccurrence> = Vec::new();
             let mut unanchored_nodes: Vec<usize> = Vec::new();
             for &member_index in members {
-                let range = comparable[node_blocks[member_index]];
+                let (range_start, range_end) = node_range(member_index);
                 // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
                 // groups belong to the same copy. Consecutive position-order slices keep the
                 // coalesced spans disjoint.
@@ -1912,8 +1923,8 @@ fn collect_near_miss_groups(
                         reported_groups[group_index].iter().enumerate()
                     {
                         if !consumed.contains(&(group_index, occurrence_index))
-                            && occurrence.start_token_index < range.end_token_index
-                            && range.start_token_index < occurrence.end_token_index
+                            && occurrence.start_token_index < range_end
+                            && range_start < occurrence.end_token_index
                         {
                             consumed.insert((group_index, occurrence_index));
                             fragments.push((occurrence.clone(), group_index));

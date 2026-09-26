@@ -209,6 +209,33 @@ describe('clone operators: recall per edit type', () => {
     expect(groups.some((group) => group.files.includes('first.js') && group.files.includes('second.js'))).toBe(false);
   });
 
+  it('reports an embedded near-miss copy beside an exact copy in the same function', () => {
+    const [first, second] = seeds;
+    if (!first || !second) {
+      throw new Error('two seeds are required');
+    }
+    const combined = renderFunction('combined', `${first.parameters}, ${second.parameters}, logger, metrics`, [
+      ...first.statements.slice(0, -1),
+      ...wrapperPrologue.slice(1),
+      ...scatterEdits(second.statements.slice(0, -1)),
+      'return { subtotal, tax, accept, language, timeout };',
+    ]);
+    const originals = [first, second].map((seed) => renderFunction(seed.name, seed.parameters, seed.statements));
+    const embeddedLine = lineOf(combined, second.statements[1]);
+
+    const { duplicateLineNumbers } = measureCode([combined, ...originals].join('\n'), {
+      language: 'javascript',
+    }).duplication;
+    expect(duplicateLineNumbers).toContain(embeddedLine);
+
+    const { duplicateLineNumbersByFile } = measureCrossFileDuplication(
+      Object.entries({ 'combined.js': combined, 'first.js': originals[0] ?? '', 'second.js': originals[1] ?? '' }).map(
+        ([file, code]) => ({ file, ...collectCrossFileDuplicationFileData(code, { language: 'javascript' }) })
+      )
+    );
+    expect(duplicateLineNumbersByFile['combined.js']).toContain(embeddedLine);
+  });
+
   it('reports both regions one pair shares around different middles', () => {
     const [first, second] = seeds;
     if (!first || !second) {

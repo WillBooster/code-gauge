@@ -102,11 +102,12 @@ type CorePair = [[number, number], [number, number]];
 type PairMatch = { kind: 'whole' } | { kind: 'local'; cores: CorePair[] };
 
 /**
- * Clusters verified cross-file near-miss pairs into groups. A block overlapping an occurrence of
- * `reportedSpansByFile` (the exact cross-file groups) is an anchor: it links near-miss copies to
- * the content an exact group already reports, and appears in the near-miss group marked
- * `spanCountedElsewhere` so block counting does not count its span twice. Pairs of two anchors are
- * skipped, and a group needs at least one non-anchor block. A block that matched only locally is
+ * Clusters verified cross-file near-miss pairs into groups. A node (a whole block or a matched
+ * core) overlapping an occurrence of `reportedSpansByFile` (the exact cross-file groups) is an
+ * anchor: it links near-miss copies to the content an exact group already reports, and appears in
+ * the near-miss group marked `spanCountedElsewhere` so block counting does not count its span
+ * twice. Pairs of two anchors are skipped (blocks wholly covered by reported spans are not even
+ * compared), and a group needs at least one non-anchor node. A block that matched only locally is
  * reported as its matched cores (overlapping cores merged), each clustered with its own partners,
  * so code no verified pair matched never counts as duplicated.
  */
@@ -122,9 +123,10 @@ export function collectCrossFileNearMissGroups(
   const blocks = normalizeBlocks(files);
   const matcher = createMatcher(blocks, minTokens, minSimilarityPercent);
   const overlapsReportedSpan = reportedSpansByFile.map(createOverlapTest);
-  const anchored = blocks.map(({ fileIndex, range }) => overlapsReportedSpan[fileIndex]?.(range) ?? false);
+  const coveredByReportedSpans = reportedSpansByFile.map(createCoverageTest);
+  const fullyReported = blocks.map(({ fileIndex, range }) => coveredByReportedSpans[fileIndex]?.(range) ?? false);
   const edges: [number, [number, number] | undefined, number, [number, number] | undefined][] = [];
-  forEachCandidatePair(blocks, anchored, minSimilarityPercent, (left, right) => {
+  forEachCandidatePair(blocks, fullyReported, minSimilarityPercent, (left, right) => {
     const leftBlock = blocks[left];
     const rightBlock = blocks[right];
     const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
@@ -195,9 +197,24 @@ export function collectCrossFileNearMissGroups(
     }
     return root;
   };
+  // Anchoring is judged per node: a core is an anchor only when a reported span overlaps the core
+  // itself, not merely elsewhere in its block.
+  const anchored = nodes.map(({ blockIndex, core }) => {
+    const block = blocks[blockIndex];
+    const [startTokenIndex, endTokenIndex] = core ?? [
+      block?.range.startTokenIndex ?? 0,
+      block?.range.endTokenIndex ?? 0,
+    ];
+    return overlapsReportedSpan[block?.fileIndex ?? 0]?.({ startTokenIndex, endTokenIndex }) ?? false;
+  });
   for (const [left, leftCore, right, rightCore] of edges) {
-    const leftRoot = find(nodeOf(left, leftCore));
-    const rightRoot = find(nodeOf(right, rightCore));
+    const leftNode = nodeOf(left, leftCore);
+    const rightNode = nodeOf(right, rightCore);
+    if (anchored[leftNode] && anchored[rightNode]) {
+      continue;
+    }
+    const leftRoot = find(leftNode);
+    const rightRoot = find(rightNode);
     parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
   }
 
@@ -211,20 +228,23 @@ export function collectCrossFileNearMissGroups(
   const groups: NearMissOccurrence[][] = [];
   for (const members of membersByRoot.values()) {
     // Components form only through cross-file pairs, so two members always span two files.
-    if (members.length < 2 || members.every((node) => anchored[nodes[node]?.blockIndex ?? 0])) {
+    if (members.length < 2 || members.every((node) => anchored[node])) {
       continue;
     }
     // A group's nodes from one block become ONE occurrence whose segments are its cores, so the
     // fragment-weighted count charges the block as one copy (as for gapped clones), not once per core.
-    const coresByBlock = new Map<number, ([number, number] | undefined)[]>();
+    const coresByBlock = new Map<number, { cores: ([number, number] | undefined)[]; anchor: boolean }>();
     for (const node of members) {
       const { blockIndex = 0, core } = nodes[node] ?? {};
-      coresByBlock.set(blockIndex, [...(coresByBlock.get(blockIndex) ?? []), core]);
+      const entry = coresByBlock.get(blockIndex) ?? { cores: [], anchor: false };
+      entry.cores.push(core);
+      entry.anchor ||= anchored[node] ?? false;
+      coresByBlock.set(blockIndex, entry);
     }
     groups.push(
-      [...coresByBlock].flatMap(([blockIndex, cores]) => {
+      [...coresByBlock].flatMap(([blockIndex, { cores, anchor }]) => {
         const block = blocks[blockIndex];
-        return block ? [toOccurrence(block, files, cores, anchored[blockIndex] ?? false)] : [];
+        return block ? [toOccurrence(block, files, cores, anchor)] : [];
       })
     );
   }
@@ -243,6 +263,37 @@ function mergeOverlappingCores(cores: [number, number][]): [number, number][] {
     }
   }
   return merged;
+}
+
+/** Whether the spans, merged, cover every token of a range. */
+function createCoverageTest(
+  spans: { startTokenIndex: number; endTokenIndex: number }[]
+): (range: { startTokenIndex: number; endTokenIndex: number }) => boolean {
+  // Touching spans merge too: together they cover a range across their boundary.
+  const merged: [number, number][] = [];
+  for (const { startTokenIndex, endTokenIndex } of spans.toSorted(
+    (left, right) => left.startTokenIndex - right.startTokenIndex
+  )) {
+    const last = merged.at(-1);
+    if (last && startTokenIndex <= last[1]) {
+      last[1] = Math.max(last[1], endTokenIndex);
+    } else {
+      merged.push([startTokenIndex, endTokenIndex]);
+    }
+  }
+  return (range) => {
+    let low = 0;
+    let high = merged.length;
+    while (low < high) {
+      const middle = (low + high) >>> 1;
+      if ((merged[middle]?.[0] ?? 0) <= range.startTokenIndex) {
+        low = middle + 1;
+      } else {
+        high = middle;
+      }
+    }
+    return (merged[low - 1]?.[1] ?? -1) >= range.endTokenIndex;
+  };
 }
 
 /**
@@ -309,14 +360,15 @@ function toOccurrence(
 
 /**
  * Visits every cross-file block pair sharing at least `filtrationPercent` of the smaller block's
- * non-stop n-grams, except pairs of two anchors and pairs whose length ratio rules out both
+ * non-stop n-grams, except pairs of two blocks wholly covered by reported spans and pairs whose
+ * length ratio rules out both
  * whole-block similarity and `maxLengthRatio`. Blocks are
  * indexed in ascending length, so each posting list is scanned backwards only while its blocks
  * are long enough; shared counts accumulate in a dense counter, so no pair map is materialized.
  */
 function forEachCandidatePair(
   blocks: NormalizedBlock[],
-  anchored: boolean[],
+  fullyReported: boolean[],
   minSimilarityPercent: number,
   visit: (left: number, right: number) => void
 ): void {
@@ -332,7 +384,7 @@ function forEachCandidatePair(
 
   // Typed copies keep the posting loop, which dominates this phase, free of object dereferences.
   const fileIndexes = Int32Array.from(blocks, (block) => block.fileIndex);
-  const anchorFlags = Uint8Array.from(anchored, Number);
+  const reportedFlags = Uint8Array.from(fullyReported, Number);
   const lengths = Int32Array.from(blocks, (block) => block.sequence.length);
   const ngramCounts = Int32Array.from(blocks, (block) => block.ngrams.length);
   const order = [...blocks.keys()].toSorted((left, right) => (lengths[left] ?? 0) - (lengths[right] ?? 0));
@@ -341,7 +393,7 @@ function forEachCandidatePair(
   const touched: number[] = [];
   for (const right of order) {
     const fileIndex = fileIndexes[right];
-    const rightAnchored = anchorFlags[right] === 1;
+    const rightReported = reportedFlags[right] === 1;
     const minLeftLength = Math.min(
       Math.ceil((lengths[right] ?? 0) / maxLengthRatio),
       Math.ceil((minSimilarityPercent * (lengths[right] ?? 0)) / 100)
@@ -358,7 +410,7 @@ function forEachCandidatePair(
         if ((lengths[left] ?? 0) < minLeftLength) {
           break;
         }
-        if (fileIndexes[left] === fileIndex || (rightAnchored && anchorFlags[left] === 1)) {
+        if (fileIndexes[left] === fileIndex || (rightReported && reportedFlags[left] === 1)) {
           continue;
         }
         if (sharedCounts[left] === 0) {
