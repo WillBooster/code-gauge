@@ -307,7 +307,7 @@ async function measureBaseRevision(
   let baseContent;
   try {
     baseContent = await readFileAtRevision(context.repoRoot, context.mergeBase, basePath);
-    const measured = measureWithCrossFileData(baseContent, measureOptions);
+    const measured = await measureWithCrossFileData(baseContent, measureOptions);
     file.baseMetrics = measured.metrics;
     file.baseCandidates = measured.crossFileData;
     if (measured.crossFileError !== undefined) {

@@ -13,8 +13,10 @@ mod languages;
 mod measure;
 mod ncss;
 mod near_miss;
+mod tree_index;
 mod types;
 mod util;
+mod worker_pool;
 
 /// Version of the native payload schema. The TypeScript wrapper refuses a binding whose version
 /// differs from the one it expects, so a stale prebuilt addon fails with a clear rebuild message
@@ -22,7 +24,7 @@ mod util;
 /// together with `expectedPayloadVersion` in src/nativeMetrics.ts.
 #[napi]
 pub fn payload_version() -> u32 {
-    7
+    8
 }
 
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON; with
@@ -43,12 +45,66 @@ pub fn measure_code_native(
 ) -> Result<String> {
     let definition = find_language(&language)?;
     let settings = to_duplication_settings(min_tokens, max_gap_tokens, min_similarity_percent);
-    let metrics = measure::measure(
+    measure_to_json(
         &code,
         definition,
         include_syntax_tree.unwrap_or(false),
         include_cross_file_data.unwrap_or(false),
         &settings,
+    )
+}
+
+/// measure_code_native on the worker pool, resolving with the same JSON payload, so callers can
+/// measure several files in parallel.
+#[napi(ts_return_type = "Promise<string>")]
+#[allow(clippy::too_many_arguments)]
+pub fn measure_code_native_async(
+    env: &Env,
+    code: String,
+    language: String,
+    include_syntax_tree: Option<bool>,
+    min_tokens: Option<u32>,
+    max_gap_tokens: Option<u32>,
+    min_similarity_percent: Option<u32>,
+    include_cross_file_data: Option<bool>,
+) -> Result<Object<'_>> {
+    let definition = find_language(&language)?;
+    let settings = to_duplication_settings(min_tokens, max_gap_tokens, min_similarity_percent);
+    let (deferred, promise) = env.create_deferred()?;
+    worker_pool::spawn(move || {
+        // A panic must reject the promise: otherwise it would stay pending and keep the event
+        // loop alive forever.
+        let result = std::panic::catch_unwind(|| {
+            measure_to_json(
+                &code,
+                definition,
+                include_syntax_tree.unwrap_or(false),
+                include_cross_file_data.unwrap_or(false),
+                &settings,
+            )
+        })
+        .unwrap_or_else(|_| Err(Error::from_reason("measurement panicked")));
+        match result {
+            Ok(json) => deferred.resolve(move |_| Ok(json)),
+            Err(error) => deferred.reject(error),
+        }
+    });
+    Ok(promise)
+}
+
+fn measure_to_json(
+    code: &str,
+    definition: &languages::LanguageDefinition,
+    include_syntax_tree: bool,
+    include_cross_file_data: bool,
+    settings: &DuplicationSettings,
+) -> Result<String> {
+    let metrics = measure::measure(
+        code,
+        definition,
+        include_syntax_tree,
+        include_cross_file_data,
+        settings,
     )
     .map_err(Error::from_reason)?;
     serde_json::to_string(&metrics).map_err(|error| Error::from_reason(error.to_string()))

@@ -1,5 +1,7 @@
 use tree_sitter::Node;
 
+use crate::tree_index::NodeExt;
+
 /// The measured source. Trees are parsed from UTF-16 (matching node-tree-sitter, which parses
 /// JavaScript strings as UTF-16 — tree-sitter's error recovery can differ between encodings), so
 /// node "byte" offsets and columns are UTF-16 code units x 2; this maps them back to UTF-8 slices
@@ -55,9 +57,9 @@ pub fn node_text<'a>(node: Node<'_>, code: &Source<'a>) -> &'a str {
 /// the same kind as an unbound type (`List::size`); the receiver position is what distinguishes
 /// it, and only a visible definition then tells a variable from a type.
 pub fn is_kotlin_callable_receiver(node: Node<'_>) -> bool {
-    node.kind() == "type_identifier"
-        && node.parent().is_some_and(|parent| {
-            parent.kind() == "callable_reference"
+    node.kind_name() == "type_identifier"
+        && node.parent_node().is_some_and(|parent| {
+            parent.kind_name() == "callable_reference"
                 && parent
                     .named_child(0)
                     .is_some_and(|first| first.id() == node.id())
@@ -72,7 +74,7 @@ pub fn is_kotlin_callable_receiver(node: Node<'_>) -> bool {
 pub fn is_identifier_leaf(node: Node<'_>) -> bool {
     node.child_count() == 0
         || matches!(
-            node.kind(),
+            node.kind_name(),
             "simple_identifier" | "interpolated_identifier" | "type_identifier"
         )
 }
@@ -167,26 +169,29 @@ pub fn to_int32(value: i64) -> i32 {
 /// The body following a Kotlin `if_expression`'s bare `else` keyword (the grammar has no else
 /// clause node and no fields), or None for other languages' if nodes and else-less ifs.
 pub fn kotlin_else_body(if_node: Node<'_>) -> Option<Node<'_>> {
-    if if_node.kind() != "if_expression" {
+    if if_node.kind_name() != "if_expression" {
         return None;
     }
     let children = all_children(if_node);
     let else_index = children
         .iter()
-        .position(|child| !child.is_named() && child.kind() == "else")?;
+        .position(|child| !child.is_named() && child.kind_name() == "else")?;
     children[else_index + 1..]
         .iter()
         .copied()
-        .find(|child| child.kind() == "control_structure_body")
+        .find(|child| child.kind_name() == "control_structure_body")
 }
 
 /// Kotlin's `try { } catch { }` shares its node kind with Rust's `?` operator; only the Kotlin form
 /// holds a body or clause child.
 pub fn is_kotlin_try_expression(node: Node<'_>) -> bool {
-    node.kind() == "try_expression"
-        && named_children(node)
-            .iter()
-            .any(|child| matches!(child.kind(), "statements" | "catch_block" | "finally_block"))
+    node.kind_name() == "try_expression"
+        && named_children(node).iter().any(|child| {
+            matches!(
+                child.kind_name(),
+                "statements" | "catch_block" | "finally_block"
+            )
+        })
 }
 
 /// Whether a Kotlin else body is a braceless `else if`: the nested if sits directly in the
@@ -194,5 +199,5 @@ pub fn is_kotlin_try_expression(node: Node<'_>) -> bool {
 pub fn is_kotlin_else_if_body(else_body: Node<'_>) -> bool {
     named_children(else_body)
         .iter()
-        .any(|child| child.kind() == "if_expression")
+        .any(|child| child.kind_name() == "if_expression")
 }
