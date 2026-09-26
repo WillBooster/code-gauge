@@ -31,7 +31,7 @@ export interface CrossFileDuplicateBlockGroup {
   /**
    * Token count of the smallest occurrence. For exact and gapped groups it is the matched token
    * count every occurrence shares (gaps are not counted); for near-miss (Type-3) groups it is the
-   * smallest whole block's length, edited tokens included.
+   * length of the smallest whole block or matched core, edited tokens included.
    */
   tokenCount: number;
 }
@@ -44,7 +44,7 @@ export interface CrossFileDuplicationMetrics {
   /**
    * Per file, the 1-based code lines covered by the tokens of its cross-file occurrences, sorted
    * ascending: the matched tokens of exact and gapped occurrences, and every token of a near-miss
-   * block, edited ones included (like within-file near-miss coverage). The unmatched gap of a merged
+   * block or matched core, edited ones included (like within-file near-miss coverage). The unmatched gap of a merged
    * clone and comment/blank lines inside an occurrence's bounding range are excluded (blank rows
    * inside multi-row tokens only when the file supplied codeLineNumbers). A file that supplied
    * only candidates (no `tokens`) has no entry — without its token stream the covered lines are
@@ -101,7 +101,7 @@ export function measureCrossFileDuplication(
   );
   const tokenOffsets = computeTokenOffsets(files, maxGapTokens);
   const groups = mergeGapAdjacentGroups([...counted.values()], tokenOffsets, maxGapTokens);
-  for (const group of collectNearMissGroups(files, groups, tokenOffsets, minSimilarityPercent)) {
+  for (const group of collectNearMissGroups(files, groups, tokenOffsets, minTokens, minSimilarityPercent)) {
     groups.push(group);
   }
   return summarize(groups, files, tokenOffsets);
@@ -112,6 +112,7 @@ function collectNearMissGroups(
   files: CrossFileDuplicationSourceFile[],
   exactGroups: CrossFileOccurrence[][],
   tokenOffsets: number[],
+  minTokens: number,
   minSimilarityPercent: number
 ): CrossFileOccurrence[][] {
   const reportedSpansByFile: { startTokenIndex: number; endTokenIndex: number }[][] = files.map(() => []);
@@ -122,7 +123,7 @@ function collectNearMissGroups(
       endTokenIndex: endTokenIndex - offset,
     });
   }
-  return collectCrossFileNearMissGroups(files, reportedSpansByFile, minSimilarityPercent).map((group) =>
+  return collectCrossFileNearMissGroups(files, reportedSpansByFile, minTokens, minSimilarityPercent).map((group) =>
     group.map((occurrence) => {
       const offset = tokenOffsets[occurrence.fileIndex] ?? 0;
       return {
@@ -276,7 +277,7 @@ function summarize(
 
 /**
  * Adds the code lines an occurrence's segment tokens cover (matched tokens of an exact or gapped
- * occurrence, the whole block of a near-miss one) to its file's line set, mapping the
+ * occurrence, the whole block or matched core of a near-miss one) to its file's line set, mapping the
  * project-wide token segments back into the file's own token stream. A file that supplied only
  * candidates (no token stream) is skipped rather than approximated from the bounding line range,
  * which would include gap and comment/blank lines and break the field's exactness contract.
