@@ -21,7 +21,10 @@ mod wasm;
 /// differs from the one it expects, so a stale prebuilt addon fails with a clear rebuild message
 /// instead of silently returning an incompatible payload. Bump on every payload-shape change,
 /// together with `expectedPayloadVersion` in src/nativeMetrics.ts.
-const PAYLOAD_VERSION: u32 = 7;
+/// scripts/installNative.mjs parses the literal from this function's source.
+pub fn payload_version() -> u32 {
+    7
+}
 
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON; with
 /// `include_cross_file_data`, the payload also carries the file's cross-file clone-detection

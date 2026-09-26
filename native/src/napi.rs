@@ -5,7 +5,7 @@ use napi_derive::napi;
 
 #[napi]
 pub fn payload_version() -> u32 {
-    crate::PAYLOAD_VERSION
+    crate::payload_version()
 }
 
 #[napi]

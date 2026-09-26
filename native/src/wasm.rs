@@ -11,7 +11,7 @@ thread_local! {
 
 #[no_mangle]
 pub extern "C" fn payload_version() -> u32 {
-    crate::PAYLOAD_VERSION
+    crate::payload_version()
 }
 
 #[no_mangle]
