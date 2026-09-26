@@ -277,8 +277,8 @@ describe('clone operators: recall per edit type', () => {
       }))
     );
     expect(duplicateLineNumbersByFile['checked.js']).toEqual(expect.arrayContaining(sharedLines(checked)));
-    // Each shared region is one redundant copy: two regions count 2 whether reported as separate
-    // groups or as one copy's two segments.
+    // Each shared region is one redundant copy. The two regions form separate groups here, so this
+    // pins per-region counting, not how one block's cores within a single group are coalesced.
     expect(duplicateBlockCount).toBe(2);
 
     const { duplicateBlockCount: withinFileCount, duplicateLineNumbers } = measureCode(`${traced}\n${checked}`, {
