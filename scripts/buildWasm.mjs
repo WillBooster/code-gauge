@@ -6,7 +6,7 @@
 // Requires a Rust toolchain.
 
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { wasiLibcCommit, wasiSdkVersion } from './wasiSdk.mjs';
@@ -50,11 +50,18 @@ function downloadWasiSdk() {
   const downloadDir = path.join(nativeDir, 'target');
   const sdkPath = path.join(downloadDir, name);
   if (!existsSync(sdkPath)) {
-    mkdirSync(downloadDir, { recursive: true });
+    // Extracted into a scratch directory and moved into place only when complete, so an
+    // interrupted download or extraction is retried instead of reused.
+    const scratchPath = `${sdkPath}.partial`;
+    rmSync(scratchPath, { recursive: true, force: true });
+    mkdirSync(scratchPath, { recursive: true });
+    const archivePath = path.join(scratchPath, `${name}.tar.gz`);
     const url = `https://github.com/WebAssembly/wasi-sdk/releases/download/wasi-sdk-${wasiSdkVersion.split('.')[0]}/${name}.tar.gz`;
     console.log(`Downloading ${url}`);
-    execFileSync('curl', ['-fsSL', '-o', `${sdkPath}.tar.gz`, url], { stdio: 'inherit' });
-    execFileSync('tar', ['-xzf', `${sdkPath}.tar.gz`, '-C', downloadDir], { stdio: 'inherit' });
+    execFileSync('curl', ['-fsSL', '-o', archivePath, url], { stdio: 'inherit' });
+    execFileSync('tar', ['-xzf', archivePath, '-C', scratchPath], { stdio: 'inherit' });
+    renameSync(path.join(scratchPath, name), sdkPath);
+    rmSync(scratchPath, { recursive: true, force: true });
   }
   return sdkPath;
 }
