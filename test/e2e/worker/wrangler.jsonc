@@ -1,0 +1,6 @@
+{
+  // No nodejs_compat flag: the package must run on the bare Workers runtime.
+  "name": "code-gauge-test",
+  "main": "index.js",
+  "compatibility_date": "2026-09-01",
+}

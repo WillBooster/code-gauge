@@ -257,3 +257,28 @@ console.log(metrics.maxCognitiveComplexity);
 `detectLanguage(filePath)` maps a file extension to a supported language (or `undefined`) with the
 same table as the CLI, so `measureCode` can be fed arbitrary source files. Unlike the CLI scan, it
 does not skip generated files (e.g. `.d.ts`, `.min.js`) or test files.
+
+### Cloudflare Workers
+
+Workers cannot load native addons, so the package's `workerd` export runs the same API on a
+WebAssembly build of the Rust engine (about 2.3 MB gzipped). Wrangler resolves that export
+automatically, and no `nodejs_compat` flag is needed:
+
+```ts
+import { measureCode } from 'code-gauge';
+
+export default {
+  async fetch(request: Request): Promise<Response> {
+    const code = await request.text();
+    return Response.json(measureCode(code, { language: 'typescript' }));
+  },
+};
+```
+
+Only the programmatic API is available; the CLI needs a file system and `git`. The Workers
+runtime's stack limits nesting to a few thousand syntax-tree levels (the native addon allows
+5,000); deeper sources fail with an error instead of being measured.
+
+In this repository, build the WebAssembly module with `bun run build-wasm`. It downloads a
+[wasi-sdk](https://github.com/WebAssembly/wasi-sdk) release for the grammars' C sources unless
+`WASI_SDK_PATH` points to one.

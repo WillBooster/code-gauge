@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { LanguageDefinition, LanguageName, SupportedLanguage } from './types.js';
 
 /**
@@ -72,10 +71,17 @@ const languageByExtension = new Map<string, SupportedLanguage>([
 
 /** Detects the language of a source file from its extension, or `undefined` when unsupported. */
 export function detectLanguage(filePath: string): SupportedLanguage | undefined {
-  const extension = path.extname(filePath);
+  const extension = extname(filePath);
   // GCC treats an uppercase `.C` as C++; lowercasing first would misparse it with the C grammar.
   if (extension === '.C') {
     return 'cpp';
   }
   return languageByExtension.get(extension.toLowerCase());
+}
+
+/** path.extname() for both POSIX and Windows separators, without depending on node:path. */
+function extname(filePath: string): string {
+  const baseName = filePath.slice(Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\')) + 1);
+  const dotIndex = baseName.lastIndexOf('.');
+  return dotIndex > 0 ? baseName.slice(dotIndex) : '';
 }

@@ -1,6 +1,9 @@
 # Project-specific settings (head)
 
 native/code-gauge.node
+native/code-gauge.wasm
+THIRD-PARTY-NOTICES.txt
+.wrangler/
 native/target/
 
 

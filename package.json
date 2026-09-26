@@ -24,6 +24,7 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "workerd": "./dist/worker.js",
       "require": "./dist/index.cjs",
       "import": "./dist/index.js"
     }
@@ -37,14 +38,17 @@
     "native/build.rs",
     "native/Cargo.lock",
     "native/Cargo.toml",
+    "native/code-gauge.wasm",
     "native/src/",
     "scripts/buildNative.mjs",
-    "scripts/installNative.mjs"
+    "scripts/installNative.mjs",
+    "THIRD-PARTY-NOTICES.txt"
   ],
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
-    "build": "build-ts lib -i src/index.ts -i src/cli.ts",
+    "build": "build-ts lib -i src/index.ts -i src/cli.ts -i src/worker.ts --external ../native/code-gauge.wasm",
     "build-native": "node scripts/buildNative.mjs",
+    "build-wasm": "node scripts/buildWasm.mjs",
     "cleanup": "bun wb lint --fix --format",
     "format": "bun wb lint --format",
     "postinstall": "node scripts/installNative.mjs",
@@ -79,7 +83,8 @@
     "semantic-release": "25.0.5",
     "sort-package-json": "4.0.0",
     "typescript": "7.0.2",
-    "vitest": "4.1.9"
+    "vitest": "4.1.9",
+    "wrangler": "4.135.0"
   },
   "engines": {
     "node": ">=24"
