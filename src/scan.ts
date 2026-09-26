@@ -90,19 +90,31 @@ export async function configSearchDirectory(target: string): Promise<string> {
 /** Shared state of one scan, threaded through the directory walk instead of positional plumbing. */
 interface ScanContext {
   options: ScanOptions;
-  files: FileMetrics[];
-  errors: string[];
-  warnings: string[];
+  /**
+   * Outcomes in walk order. Files are measured concurrently, so a measurement is recorded as a
+   * promise here and applied in this order once the walk ends, keeping results deterministic.
+   */
+  outcomes: (ScanOutcome | Promise<ScanOutcome>)[];
+  /** Measurements in flight, bounded so file contents and payloads do not pile up during the walk. */
+  inFlight: Set<Promise<ScanOutcome>>;
+  /** Set once a measurement fails fatally; the walk then starts no further work. */
+  fatalSeen: boolean;
   visitedDirectories: Set<string>;
   visitedFiles: Set<string>;
   /** Scan root: paths are displayed relative to it, and symbolic links may not escape it. */
   rootDirectory: string;
 }
 
+/**
+ * A missing native addon fails every file identically, so it ends the scan as one fatal error
+ * instead of one "skipped" entry per file behind a successful exit code.
+ */
+type ScanOutcome = { file: FileMetrics; warning?: string } | { error: string } | { fatal: NativeAddonError };
+
+// Twice the addon's worker count keeps its pool busy while finished payloads are parsed.
+const maxMeasurementsInFlight = os.availableParallelism() * 2;
+
 export async function scanTarget(target: string, options: ScanOptions): Promise<ScanResult> {
-  const files: FileMetrics[] = [];
-  const errors: string[] = [];
-  const warnings: string[] = [];
   let canonicalTarget = target;
   try {
     canonicalTarget = await realpath(target);
@@ -117,7 +129,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
     targetStat = await stat(canonicalTarget);
   } catch (error) {
     const fatalError = `${formatPath(canonicalTarget, fallbackDisplayRoot)}: ${formatError(error)}`;
-    return { displayRoot: fallbackDisplayRoot, files, errors: [fatalError], warnings, fatalError };
+    return { displayRoot: fallbackDisplayRoot, files: [], errors: [fatalError], warnings: [], fatalError };
   }
 
   if (targetStat.isFile()) {
@@ -125,24 +137,17 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
     const language = getLanguage(canonicalTarget, options, true);
     if (!language) {
       const fatalError = `${formatPath(canonicalTarget, displayRoot)}: unsupported file type`;
-      return { displayRoot, files, errors: [fatalError], warnings, fatalError };
+      return { displayRoot, files: [], errors: [fatalError], warnings: [], fatalError };
     }
 
-    const context = makeScanContext(options, files, errors, warnings, displayRoot);
-    try {
-      await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
-    } catch (error) {
-      return toFatalResult(error, displayRoot, files, errors, warnings);
-    }
-    return { displayRoot, files, errors, warnings };
+    const context = makeScanContext(options, displayRoot);
+    await measureFile(canonicalTarget, language, 'single-file', context, canonicalTarget);
+    return settleScan(context, displayRoot);
   }
 
-  try {
-    await scanDirectory(canonicalTarget, makeScanContext(options, files, errors, warnings, canonicalTarget));
-  } catch (error) {
-    return toFatalResult(error, canonicalTarget, files, errors, warnings);
-  }
-  return { displayRoot: canonicalTarget, files, errors, warnings };
+  const context = makeScanContext(options, canonicalTarget);
+  await scanDirectory(canonicalTarget, context);
+  return settleScan(context, canonicalTarget);
 }
 
 /**
@@ -156,11 +161,11 @@ export async function scanListedFiles(
   relativePaths: Iterable<string>,
   options: ScanOptions
 ): Promise<ScanResult> {
-  const files: FileMetrics[] = [];
-  const errors: string[] = [];
-  const warnings: string[] = [];
-  const context = makeScanContext(options, files, errors, warnings, rootDirectory);
+  const context = makeScanContext(options, rootDirectory);
   for (const relativePath of relativePaths) {
+    if (context.fatalSeen) {
+      break;
+    }
     const language = isScannedPath(relativePath, options) ? getLanguage(relativePath, options) : undefined;
     if (!language) {
       continue;
@@ -172,39 +177,49 @@ export async function scanListedFiles(
     if (stats?.isSymbolicLink()) {
       continue;
     }
-    try {
-      await measureFile(absolutePath, language, 'directory', context);
-    } catch (error) {
-      return toFatalResult(error, rootDirectory, files, errors, warnings);
+    await measureFile(absolutePath, language, 'directory', context);
+  }
+  return settleScan(context, rootDirectory);
+}
+
+/** Applies the scan's outcomes in walk order once every measurement has settled. */
+async function settleScan(context: ScanContext, displayRoot: string): Promise<ScanResult> {
+  const files: FileMetrics[] = [];
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  for (const pending of context.outcomes) {
+    const outcome = await pending;
+    if ('fatal' in outcome) {
+      const fatalError = formatError(outcome.fatal);
+      // Errors the walk recorded before the fatal failure stay reported alongside it.
+      return { displayRoot, files, errors: [...errors, fatalError], warnings, fatalError };
+    }
+    if ('error' in outcome) {
+      errors.push(outcome.error);
+      continue;
+    }
+    files.push(outcome.file);
+    if (outcome.warning !== undefined) {
+      warnings.push(outcome.warning);
     }
   }
-  return { displayRoot: rootDirectory, files, errors, warnings };
+  return { displayRoot, files, errors, warnings };
 }
 
-/** A run-wide failure (a missing native addon) as a fatal result; anything else keeps throwing. */
-function toFatalResult(
-  error: unknown,
-  displayRoot: string,
-  files: FileMetrics[],
-  errors: string[],
-  warnings: string[]
-): ScanResult {
-  if (!(error instanceof NativeAddonError)) {
-    throw error;
-  }
-  const fatalError = formatError(error);
-  // Errors the walk accumulated before the fatal failure stay reported alongside it.
-  return { displayRoot, files, errors: [...errors, fatalError], warnings, fatalError };
+function makeScanContext(options: ScanOptions, rootDirectory: string): ScanContext {
+  return {
+    options,
+    outcomes: [],
+    inFlight: new Set(),
+    fatalSeen: false,
+    visitedDirectories: new Set(),
+    visitedFiles: new Set(),
+    rootDirectory,
+  };
 }
 
-function makeScanContext(
-  options: ScanOptions,
-  files: FileMetrics[],
-  errors: string[],
-  warnings: string[],
-  rootDirectory: string
-): ScanContext {
-  return { options, files, errors, warnings, visitedDirectories: new Set(), visitedFiles: new Set(), rootDirectory };
+function recordError(context: ScanContext, target: string, error: unknown): void {
+  context.outcomes.push({ error: `${formatPath(target, context.rootDirectory)}: ${formatError(error)}` });
 }
 
 /** Runs a filesystem operation, recording a scan error and returning undefined when it fails. */
@@ -216,7 +231,7 @@ async function tryFileSystem<T>(
   try {
     return await operation();
   } catch (error) {
-    context.errors.push(`${formatPath(target, context.rootDirectory)}: ${formatError(error)}`);
+    recordError(context, target, error);
     return undefined;
   }
 }
@@ -240,6 +255,9 @@ async function scanDirectory(directory: string, context: ScanContext): Promise<v
   }
 
   for (const entry of entries) {
+    if (context.fatalSeen) {
+      return;
+    }
     const entryPath = path.join(directory, entry.name);
     if (entry.isSymbolicLink()) {
       await scanSymbolicLink(entry.name, entryPath, context);
@@ -299,6 +317,10 @@ async function measureScannableFile(
   }
 }
 
+/**
+ * Resolves and deduplicates the file in walk order, then starts measuring it concurrently; its
+ * outcome is recorded in walk order (see ScanContext.outcomes).
+ */
 async function measureFile(
   file: string,
   language: LanguageName,
@@ -306,36 +328,61 @@ async function measureFile(
   context: ScanContext,
   realFile?: string
 ): Promise<void> {
+  if (context.fatalSeen) {
+    return;
+  }
+  let resolvedFile;
   try {
-    const resolvedFile = realFile ?? (await realpath(file));
-    if (context.visitedFiles.has(resolvedFile)) {
-      return;
-    }
-    context.visitedFiles.add(resolvedFile);
+    resolvedFile = realFile ?? (await realpath(file));
+  } catch (error) {
+    recordError(context, file, error);
+    return;
+  }
+  if (context.visitedFiles.has(resolvedFile)) {
+    return;
+  }
+  context.visitedFiles.add(resolvedFile);
 
+  // Any settled measurement frees its slot (removed by the callback below, which runs before the
+  // race resumes), so one slow file never idles the pool.
+  while (context.inFlight.size >= maxMeasurementsInFlight) {
+    await Promise.race(context.inFlight);
+  }
+  const outcome = readAndMeasureFile(file, language, mode, context);
+  context.inFlight.add(outcome);
+  void outcome.then(() => context.inFlight.delete(outcome));
+  context.outcomes.push(outcome);
+}
+
+async function readAndMeasureFile(
+  file: string,
+  language: LanguageName,
+  mode: 'single-file' | 'directory',
+  context: ScanContext
+): Promise<ScanOutcome> {
+  try {
     const code = await readFile(file, 'utf8');
     const measureOptions = { language, duplication: context.options.duplication };
     // Only directory scans compare files against each other; a single-file target has no peers.
     if (mode === 'single-file') {
-      context.files.push({ file, metrics: measureCode(code, measureOptions) });
-      return;
+      return { file: { file, metrics: measureCode(code, measureOptions) } };
     }
-    const { metrics, crossFileData, crossFileError } = measureWithCrossFileData(code, measureOptions);
-    if (crossFileError !== undefined) {
+    const { metrics, crossFileData, crossFileError } = await measureWithCrossFileData(code, measureOptions);
+    return {
+      file: { file, metrics, duplicationCandidates: crossFileData },
       // A warning, not an error: the file's metrics are complete, only its participation in
       // cross-file matching is lost, so it is not "skipped" and must not fail --fail-on-error.
-      context.warnings.push(
-        `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates unavailable: ${crossFileError}`
-      );
-    }
-    context.files.push({ file, metrics, duplicationCandidates: crossFileData });
+      warning:
+        crossFileError === undefined
+          ? undefined
+          : `${formatPath(file, context.rootDirectory)}: cross-file duplication candidates unavailable: ${crossFileError}`,
+    };
   } catch (error) {
-    // A missing native addon fails every file identically: propagate it once as a fatal scan
-    // error instead of recording one "skipped" entry per file behind a successful exit code.
     if (error instanceof NativeAddonError) {
-      throw error;
+      context.fatalSeen = true;
+      return { fatal: error };
     }
-    context.errors.push(`${formatPath(file, context.rootDirectory)}: ${formatError(error)}`);
+    return { error: `${formatPath(file, context.rootDirectory)}: ${formatError(error)}` };
   }
 }
 
@@ -345,12 +392,12 @@ async function measureFile(
  * cross the addon boundary), the metrics are still returned with the failure message, which
  * callers report as a warning rather than an error.
  */
-export function measureWithCrossFileData(
+export async function measureWithCrossFileData(
   code: string,
   measureOptions: MeasureOptions
-): { metrics: CodeMetrics; crossFileData?: CrossFileDuplicationFileData; crossFileError?: string } {
+): Promise<{ metrics: CodeMetrics; crossFileData?: CrossFileDuplicationFileData; crossFileError?: string }> {
   try {
-    return measureCodeWithCrossFileData(code, measureOptions);
+    return await measureCodeWithCrossFileData(code, measureOptions);
   } catch (error) {
     if (error instanceof NativeAddonError) {
       throw error;

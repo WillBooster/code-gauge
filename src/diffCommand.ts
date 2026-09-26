@@ -1,4 +1,5 @@
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, resolveGateOptions, resolveOptions, type ResolvedOptions } from './cliConfig.js';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
@@ -138,7 +139,7 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
   const prepared = await prepareChangedFiles(
     changedFiles,
-    { repoRoot, mergeBase, canonicalTarget, options, scannedFiles, baseSymlinkPaths },
+    { repoRoot, mergeBase, canonicalTarget, options, scannedFiles, baseSymlinkPaths, scanErrors: [...errors] },
     errors,
     warnings
   );
@@ -184,6 +185,8 @@ interface GateContext {
   scannedFiles: ScannedFile[];
   /** Paths that are symbolic links at the merge-base; like head symlinks, they are not gated. */
   baseSymlinkPaths: Set<string>;
+  /** Errors the head scan recorded against changed files. */
+  scanErrors: readonly string[];
 }
 
 async function prepareChangedFiles(
@@ -193,14 +196,38 @@ async function prepareChangedFiles(
   warnings: string[]
 ): Promise<PreparedFile[]> {
   const headByPath = new Map(context.scannedFiles.map(({ relativePath, file }) => [relativePath, file]));
+  // Files are prepared concurrently (git reads and base measurements); each records its diagnostics
+  // on its own, and they are appended in changed-file order so the report stays deterministic.
+  const results = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
+    const fileErrors: string[] = [];
+    const fileWarnings: string[] = [];
+    const file = await prepareChangedFile(changed, context, headByPath, fileErrors, fileWarnings);
+    return { file, fileErrors, fileWarnings };
+  });
   const prepared: PreparedFile[] = [];
-  for (const changed of changedFiles) {
-    const file = await prepareChangedFile(changed, context, headByPath, errors, warnings);
+  for (const { file, fileErrors, fileWarnings } of results) {
+    errors.push(...fileErrors);
+    warnings.push(...fileWarnings);
     if (file) {
       prepared.push(file);
     }
   }
   return prepared;
+}
+
+/** `Promise.all(items.map(map))` with at most `limit` calls pending at once, results in input order. */
+async function mapConcurrently<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  let nextIndex = 0;
+  const work = async (): Promise<void> => {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await map(items[index] as T);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, work));
+  return results;
 }
 
 async function prepareChangedFile(
@@ -230,7 +257,7 @@ async function prepareChangedFile(
   const displayFile = changed.status === 'deleted' ? (changed.basePath as string) : changed.headPath;
   const headFile = headScannable ? headByPath.get(changed.headPath) : undefined;
   if (headScannable && !headFile) {
-    reportUnmeasuredChangedFile(changed.headPath, errors);
+    reportUnmeasuredChangedFile(changed.headPath, context.scanErrors, errors);
     return undefined;
   }
 
@@ -263,8 +290,8 @@ async function prepareChangedFile(
  * an already-visited file, or absence from the git list). Failing loudly keeps the gate from
  * passing with the file unchecked.
  */
-function reportUnmeasuredChangedFile(headPath: string, errors: string[]): void {
-  if (!errors.some((error) => error.startsWith(`${headPath}:`))) {
+function reportUnmeasuredChangedFile(headPath: string, scanErrors: readonly string[], errors: string[]): void {
+  if (!scanErrors.some((error) => error.startsWith(`${headPath}:`))) {
     errors.push(`${headPath}: changed file was not measured`);
   }
 }
@@ -307,7 +334,7 @@ async function measureBaseRevision(
   let baseContent;
   try {
     baseContent = await readFileAtRevision(context.repoRoot, context.mergeBase, basePath);
-    const measured = measureWithCrossFileData(baseContent, measureOptions);
+    const measured = await measureWithCrossFileData(baseContent, measureOptions);
     file.baseMetrics = measured.metrics;
     file.baseCandidates = measured.crossFileData;
     if (measured.crossFileError !== undefined) {

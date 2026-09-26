@@ -1,10 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::sync::OnceLock;
 use tree_sitter::Node;
 
-use crate::complexity::{
-    is_lambda_body_block, measure_complexity, measure_function_body_metrics, LanguageSets,
-};
+use crate::complexity::{is_lambda_body_block, measure_function_body_metrics, LanguageSets};
 use crate::dep_degree::measure_dep_degree;
 use crate::duplication::{
     collect_cross_file_file_data, hash_text, measure_duplication, tokenize, DuplicationSettings,
@@ -14,6 +12,7 @@ use crate::functions::{
     collect_nodes, count_parameters, find_function_name, is_implemented_function,
 };
 use crate::languages::LanguageDefinition;
+use crate::tree_index::{NodeExt, TreeIndex};
 use crate::types::{
     CrossFileFileData, FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics,
 };
@@ -31,13 +30,23 @@ pub fn measure(
 ) -> Result<NativeMetrics, String> {
     let source = Source::new(code);
     let tree = parse_source(&source, language)?;
+    let _index = TreeIndex::new(&tree, language)?;
     let root = tree.root_node();
     let code = &source;
     let sets = LanguageSets::new(language);
 
-    let functions: Vec<Node<'_>> = collect_nodes(root, &sets.function_nodes)
+    // One walk collects both function and initializer-block candidates (Ruby's `block` is both).
+    let candidates = collect_nodes(root, |kind| {
+        sets.function_nodes.contains(kind) || INITIALIZER_NODE_TYPES.contains(&kind)
+    });
+    let initializer_block_count = count_initializer_blocks(&candidates);
+    let functions: Vec<Node<'_>> = candidates
         .into_iter()
-        .filter(|node| !is_lambda_body_block(*node) && is_implemented_function(*node))
+        .filter(|node| {
+            sets.function_nodes.contains(node.kind_name())
+                && !is_lambda_body_block(*node)
+                && is_implemented_function(*node)
+        })
         .collect();
 
     let body_metrics = measure_function_body_metrics(root, &sets, code);
@@ -50,7 +59,7 @@ pub fn measure(
                 .expect("every collected function node opens a frame in the body-metrics pass");
             FunctionMetrics {
                 name: find_function_name(*node, code),
-                node_type: node.kind().to_string(),
+                node_type: node.kind_name().to_string(),
                 start_line: node.start_position().row + 1,
                 // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving
                 // yields the JavaScript string (UTF-16 code unit) column.
@@ -71,7 +80,6 @@ pub fn measure(
         })
         .collect();
 
-    let global_complexity = measure_complexity(root, &sets, code);
     let (lines, code_line_numbers) = classify_lines(code, root);
     let halstead_counts = measure_halstead(root, code);
     let tokenized = tokenize(root, code);
@@ -89,15 +97,15 @@ pub fn measure(
             .sum::<u64>()
             + body_metrics.top_level_decisions
             + u64::from(language.executes_top_level || has_top_level_statements(root, language))
-            + count_initializer_blocks(root),
-        cognitive_complexity: global_complexity.cognitive_complexity,
+            + initializer_block_count,
+        cognitive_complexity: body_metrics.cognitive_complexity,
         max_cognitive_complexity: function_metrics
             .iter()
             .map(|function| function.cognitive_complexity)
             .max()
             .unwrap_or(0),
-        nesting_depth: global_complexity.nesting_depth,
-        ncss_count: crate::ncss::count_ncss(root, &sets.ncss_nodes, &sets.ncss_containers),
+        nesting_depth: body_metrics.nesting_depth,
+        ncss_count: body_metrics.ncss,
         duplication: measure_duplication(&tokenized, &code_line_numbers, duplication_settings),
         cross_file_data: include_cross_file_data.then(|| {
             to_cross_file_data(
@@ -119,22 +127,22 @@ pub fn measure(
 /// Initializer blocks run code of their own, so each is a component like a function: Java static
 /// and instance initializers, Kotlin `init` blocks, and JavaScript/TypeScript class `static`
 /// blocks. Their decisions already count as decisions outside functions.
-fn count_initializer_blocks(root: Node<'_>) -> u64 {
-    let initializer_types: HashSet<&'static str> = [
-        "static_initializer",
-        "anonymous_initializer",
-        "class_static_block",
-        "block",
-    ]
-    .into_iter()
-    .collect();
-    collect_nodes(root, &initializer_types)
-        .into_iter()
+const INITIALIZER_NODE_TYPES: &[&str] = &[
+    "static_initializer",
+    "anonymous_initializer",
+    "class_static_block",
+    "block",
+];
+
+fn count_initializer_blocks(candidates: &[Node<'_>]) -> u64 {
+    candidates
+        .iter()
+        .filter(|node| INITIALIZER_NODE_TYPES.contains(&node.kind_name()))
         .filter(|node| {
             // A bare block is an initializer only as a direct member of a Java class or enum body.
-            node.kind() != "block"
-                || node.parent().is_some_and(|parent| {
-                    matches!(parent.kind(), "class_body" | "enum_body_declarations")
+            node.kind_name() != "block"
+                || node.parent_node().is_some_and(|parent| {
+                    matches!(parent.kind_name(), "class_body" | "enum_body_declarations")
                 })
         })
         .count() as u64
@@ -143,14 +151,14 @@ fn count_initializer_blocks(root: Node<'_>) -> u64 {
 /// A C# top-level statement: a `global_statement`, or a statement inside a top-level `#if` block,
 /// which the grammar does not wrap in `global_statement`; preprocessor blocks are transparent.
 fn is_csharp_top_level_statement(node: Node<'_>) -> bool {
-    if node.kind().starts_with("preproc_") {
+    if node.kind_name().starts_with("preproc_") {
         return named_children(node)
             .into_iter()
             .any(is_csharp_top_level_statement);
     }
-    node.kind() == "global_statement"
-        || node.kind() == "block"
-        || node.kind().ends_with("_statement")
+    node.kind_name() == "global_statement"
+        || node.kind_name() == "block"
+        || node.kind_name().ends_with("_statement")
 }
 
 /// Whether a C# or Kotlin file runs top-level code: C# top-level statements, or a Kotlin script's
@@ -178,8 +186,8 @@ fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bo
         "kotlin" => {
             !root.has_error()
                 && children.iter().any(|child| {
-                    !KOTLIN_DECLARATIONS.contains(&child.kind())
-                        && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
+                    !KOTLIN_DECLARATIONS.contains(&child.kind_name())
+                        && !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind_name())
                 })
         }
         _ => false,
@@ -194,6 +202,7 @@ pub fn collect_cross_file_data(
 ) -> Result<CrossFileFileData, String> {
     let source = Source::new(code);
     let tree = parse_source(&source, language)?;
+    let _index = TreeIndex::new(&tree, language)?;
     let root = tree.root_node();
     let (_, code_line_numbers) = classify_lines(&source, root);
     Ok(to_cross_file_data(
@@ -205,7 +214,7 @@ pub fn collect_cross_file_data(
 
 fn to_cross_file_data(
     tokenized: &TokenizedSource<'_>,
-    code_line_numbers: &HashSet<usize>,
+    code_line_numbers: &FxHashSet<usize>,
     min_tokens: usize,
 ) -> CrossFileFileData {
     let (candidates, tokens, container_statements, near_miss_blocks) =
@@ -244,34 +253,37 @@ pub fn collect_function_token_sequences(
 ) -> Result<Vec<Vec<i32>>, String> {
     let source = Source::new(code);
     let tree = parse_source(&source, language)?;
+    let _index = TreeIndex::new(&tree, language)?;
     let root = tree.root_node();
     let sets = LanguageSets::new(language);
-    Ok(collect_nodes(root, &sets.function_nodes)
-        .into_iter()
-        .filter(|node| !is_lambda_body_block(*node) && is_implemented_function(*node))
-        .map(|node| {
-            let mut symbols = Vec::new();
-            let mut id_index_by_name: HashMap<String, usize> = HashMap::new();
-            collect_token_symbols(node, &source, &mut symbols, &mut id_index_by_name);
-            symbols
-        })
-        .collect())
+    Ok(
+        collect_nodes(root, |kind| sets.function_nodes.contains(kind))
+            .into_iter()
+            .filter(|node| !is_lambda_body_block(*node) && is_implemented_function(*node))
+            .map(|node| {
+                let mut symbols = Vec::new();
+                let mut id_index_by_name: FxHashMap<String, usize> = FxHashMap::default();
+                collect_token_symbols(node, &source, &mut symbols, &mut id_index_by_name);
+                symbols
+            })
+            .collect(),
+    )
 }
 
 fn collect_token_symbols(
     node: Node<'_>,
     code: &Source<'_>,
     symbols: &mut Vec<i32>,
-    id_index_by_name: &mut HashMap<String, usize>,
+    id_index_by_name: &mut FxHashMap<String, usize>,
 ) {
     if matches!(
-        node.kind(),
+        node.kind_name(),
         "comment" | "line_comment" | "block_comment" | "multiline_comment"
     ) {
         return;
     }
-    if atomic_operand_node_types().contains(node.kind()) {
-        symbols.push(hash_text(node.kind()));
+    if atomic_operand_node_types().contains(node.kind_name()) {
+        symbols.push(hash_text(node.kind_name()));
         return;
     }
     if !is_identifier_leaf(node) {
@@ -280,7 +292,7 @@ fn collect_token_symbols(
         }
         return;
     }
-    if IDENTIFIER_LEAF_NODE_TYPES.contains(&node.kind()) {
+    if IDENTIFIER_LEAF_NODE_TYPES.contains(&node.kind_name()) {
         let next_index = id_index_by_name.len();
         let index = *id_index_by_name
             .entry(node_text(node, code).to_string())
@@ -290,17 +302,17 @@ fn collect_token_symbols(
     }
     // Remaining operand leaves are literals, normalized by kind; everything else (keywords,
     // operators, punctuation) is kept verbatim.
-    symbols.push(hash_text(if operand_node_types().contains(node.kind()) {
-        node.kind()
-    } else {
-        node_text(node, code)
-    }));
+    symbols.push(hash_text(
+        if operand_node_types().contains(node.kind_name()) {
+            node.kind_name()
+        } else {
+            node_text(node, code)
+        },
+    ));
 }
 
-/// Parses the source from UTF-16 (matching node-tree-sitter's JavaScript string semantics:
-/// tree-sitter's error recovery differs between input encodings for malformed non-ASCII source)
-/// and refuses pathologically deep trees: the metric passes recurse per tree level and would
-/// overflow the native stack (a process-killing SIGSEGV, not a catchable error) around depth ~20k.
+/// Parses the source from UTF-16, matching node-tree-sitter's JavaScript string semantics:
+/// tree-sitter's error recovery differs between input encodings for malformed non-ASCII source.
 fn parse_source(
     source: &Source<'_>,
     language: &LanguageDefinition,
@@ -309,38 +321,9 @@ fn parse_source(
     parser
         .set_language(&language.grammar())
         .map_err(|error| error.to_string())?;
-    let tree = parser
+    parser
         .parse_utf16(source.to_utf16(), None)
-        .ok_or_else(|| "parse failed".to_string())?;
-    if tree_depth(tree.root_node()) > MAX_TREE_DEPTH {
-        return Err(format!("tree depth exceeds {MAX_TREE_DEPTH}"));
-    }
-    Ok(tree)
-}
-
-/// See the depth check in parse_source(); computed iteratively so the check itself cannot overflow.
-const MAX_TREE_DEPTH: usize = 5_000;
-
-fn tree_depth(root: Node<'_>) -> usize {
-    let mut cursor = root.walk();
-    let mut depth = 0;
-    let mut max_depth = 0;
-    loop {
-        if cursor.goto_first_child() {
-            depth += 1;
-            max_depth = max_depth.max(depth);
-            continue;
-        }
-        loop {
-            if cursor.goto_next_sibling() {
-                break;
-            }
-            if !cursor.goto_parent() {
-                return max_depth;
-            }
-            depth -= 1;
-        }
-    }
+        .ok_or_else(|| "parse failed".to_string())
 }
 
 struct CommentSpan {
@@ -352,10 +335,10 @@ struct CommentSpan {
 /// Line metrics plus the 1-based numbers of lines that are neither blank nor comment-only, shared
 /// by the line counts and duplication line coverage so the coverage and its code-line denominator
 /// agree.
-fn classify_lines(code: &Source<'_>, root: Node<'_>) -> (LineMetrics, HashSet<usize>) {
+fn classify_lines(code: &Source<'_>, root: Node<'_>) -> (LineMetrics, FxHashSet<usize>) {
     let source_lines = split_lines(code.code);
     // Spans are bucketed by line so classification stays linear.
-    let mut comment_spans_by_line: HashMap<usize, Vec<CommentSpan>> = HashMap::new();
+    let mut comment_spans_by_line: FxHashMap<usize, Vec<CommentSpan>> = FxHashMap::default();
     for span in collect_comment_spans(root) {
         comment_spans_by_line
             .entry(span.line)
@@ -364,7 +347,7 @@ fn classify_lines(code: &Source<'_>, root: Node<'_>) -> (LineMetrics, HashSet<us
     }
     let mut blank = 0;
     let mut comment = 0;
-    let mut code_line_numbers = HashSet::new();
+    let mut code_line_numbers = FxHashSet::default();
 
     for (index, line) in source_lines.iter().enumerate() {
         if line.chars().all(is_js_whitespace) {
@@ -396,7 +379,7 @@ fn collect_comment_spans(root: Node<'_>) -> Vec<CommentSpan> {
 
     fn visit(node: Node<'_>, spans: &mut Vec<CommentSpan>) {
         if matches!(
-            node.kind(),
+            node.kind_name(),
             "comment" | "line_comment" | "block_comment" | "multiline_comment"
         ) {
             for row in node.start_position().row..=node.end_position().row {
@@ -646,42 +629,40 @@ const ATOMIC_OPERAND_NODE_TYPES: &[&str] = &[
     "placeholder_type_specifier",
 ];
 
-fn operator_texts() -> &'static HashSet<&'static str> {
-    static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn operator_texts() -> &'static FxHashSet<&'static str> {
+    static SET: OnceLock<FxHashSet<&'static str>> = OnceLock::new();
     SET.get_or_init(|| OPERATOR_TEXTS.iter().copied().collect())
 }
 
-fn operand_node_types() -> &'static HashSet<&'static str> {
-    static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn operand_node_types() -> &'static FxHashSet<&'static str> {
+    static SET: OnceLock<FxHashSet<&'static str>> = OnceLock::new();
     SET.get_or_init(|| OPERAND_NODE_TYPES.iter().copied().collect())
 }
 
-fn atomic_operand_node_types() -> &'static HashSet<&'static str> {
-    static SET: OnceLock<HashSet<&'static str>> = OnceLock::new();
+fn atomic_operand_node_types() -> &'static FxHashSet<&'static str> {
+    static SET: OnceLock<FxHashSet<&'static str>> = OnceLock::new();
     SET.get_or_init(|| ATOMIC_OPERAND_NODE_TYPES.iter().copied().collect())
 }
 
 fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
-    let mut operators: HashMap<String, u64> = HashMap::new();
-    let mut operands: HashMap<String, u64> = HashMap::new();
+    let mut operators: FxHashMap<&str, u64> = FxHashMap::default();
+    let mut operands: FxHashMap<&str, u64> = FxHashMap::default();
 
-    fn visit(
+    fn visit<'a>(
         node: Node<'_>,
-        code: &Source<'_>,
-        operators: &mut HashMap<String, u64>,
-        operands: &mut HashMap<String, u64>,
+        code: &Source<'a>,
+        operators: &mut FxHashMap<&'a str, u64>,
+        operands: &mut FxHashMap<&'a str, u64>,
     ) {
         if matches!(
-            node.kind(),
+            node.kind_name(),
             "comment" | "line_comment" | "block_comment" | "multiline_comment"
         ) {
             return;
         }
 
-        if atomic_operand_node_types().contains(node.kind()) {
-            *operands
-                .entry(node_text(node, code).to_string())
-                .or_insert(0) += 1;
+        if atomic_operand_node_types().contains(node.kind_name()) {
+            *operands.entry(node_text(node, code)).or_insert(0) += 1;
             return;
         }
 
@@ -692,14 +673,19 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
             // Operands win over text matches so identifiers spelled like word operators stay operands;
             // C# `nameof(x)` is the one keyword operator the grammar parses as a plain callee.
             if is_csharp_nameof_callee(node, text) {
-                *operators.entry(text.to_string()).or_insert(0) += 1;
-            } else if operand_node_types().contains(node.kind()) {
-                *operands.entry(text.to_string()).or_insert(0) += 1;
-            } else if (operator_texts().contains(text) || operator_texts().contains(node.kind()))
+                *operators.entry(text).or_insert(0) += 1;
+            } else if operand_node_types().contains(node.kind_name()) {
+                *operands.entry(text).or_insert(0) += 1;
+            } else if (operator_texts().contains(text)
+                || operator_texts().contains(node.kind_name()))
                 && is_countable_contextual_token(node, text)
             {
-                let key = if text.is_empty() { node.kind() } else { text };
-                *operators.entry(key.to_string()).or_insert(0) += 1;
+                let key = if text.is_empty() {
+                    node.kind_name()
+                } else {
+                    text
+                };
+                *operators.entry(key).or_insert(0) += 1;
             }
             return;
         }
@@ -722,9 +708,9 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
 /// tree-sitter-c-sharp parses `nameof(x)` as an invocation of an identifier named `nameof`.
 fn is_csharp_nameof_callee(node: Node<'_>, text: &str) -> bool {
     text == "nameof"
-        && node.kind() == "identifier"
-        && node.parent().is_some_and(|parent| {
-            parent.kind() == "invocation_expression"
+        && node.kind_name() == "identifier"
+        && node.parent_node().is_some_and(|parent| {
+            parent.kind_name() == "invocation_expression"
                 && parent
                     .child_by_field_name("function")
                     .is_some_and(|callee| callee.id() == node.id())
@@ -746,18 +732,18 @@ const QUESTION_OPERATOR_PARENT_TYPES: &[&str] = &[
 fn is_countable_contextual_token(node: Node<'_>, text: &str) -> bool {
     if text == "@" {
         // Python matrix multiplication only; decorator/annotation `@` marks are not operators.
-        let parent_type = node.parent().map(|parent| parent.kind());
+        let parent_type = node.parent_node().map(|parent| parent.kind_name());
         return parent_type == Some("binary_operator")
             || parent_type == Some("augmented_assignment");
     }
     if text == "default" {
         return node
-            .parent()
-            .is_some_and(|parent| parent.kind() == "default_expression");
+            .parent_node()
+            .is_some_and(|parent| parent.kind_name() == "default_expression");
     }
     if text != "?" {
         return true;
     }
-    node.parent()
-        .is_some_and(|parent| QUESTION_OPERATOR_PARENT_TYPES.contains(&parent.kind()))
+    node.parent_node()
+        .is_some_and(|parent| QUESTION_OPERATOR_PARENT_TYPES.contains(&parent.kind_name()))
 }

@@ -1,6 +1,7 @@
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
+use crate::tree_index::NodeExt;
 use crate::util::{all_children, find_children_by_field_name, named_children, node_text, Source};
 
 /// Declarations without a body have no control flow, so they are signatures, not functions: C++
@@ -24,31 +25,34 @@ const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
 ];
 
 pub fn is_implemented_function(node: Node<'_>) -> bool {
-    if !BODY_REQUIRED_FUNCTION_TYPES.contains(&node.kind())
+    if !BODY_REQUIRED_FUNCTION_TYPES.contains(&node.kind_name())
         || node.child_by_field_name("body").is_some()
     {
         return true;
     }
 
-    if node.kind() == "property_declaration" || node.kind() == "indexer_declaration" {
+    if node.kind_name() == "property_declaration" || node.kind_name() == "indexer_declaration" {
         return node
             .child_by_field_name("value")
-            .is_some_and(|value| value.kind() == "arrow_expression_clause");
+            .is_some_and(|value| value.kind_name() == "arrow_expression_clause");
     }
 
     // The Kotlin grammar has no fields; an implemented function or accessor holds a
     // `function_body` child.
-    if node.kind() == "getter" || node.kind() == "setter" || node.kind() == "function_declaration" {
+    if node.kind_name() == "getter"
+        || node.kind_name() == "setter"
+        || node.kind_name() == "function_declaration"
+    {
         return named_children(node)
             .iter()
-            .any(|child| child.kind() == "function_body");
+            .any(|child| child.kind_name() == "function_body");
     }
 
     // C++ constructor/destructor function-try-blocks carry their `try_statement` outside the
     // `body` field; they are implementations, unlike `= 0`/`= default`/`= delete` members.
     named_children(node)
         .iter()
-        .any(|child| child.kind() == "try_statement")
+        .any(|child| child.kind_name() == "try_statement")
 }
 
 /// Counts declared parameters of a function/method, ignoring punctuation and comments.
@@ -64,29 +68,31 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
 
     // A Java bare lambda parameter (`x -> x + 1`) puts a lone identifier in the `parameters` field;
     // a C# one (`x => x + 1`) is an `implicit_parameter` leaf.
-    if parameters_node.kind() == "identifier" || parameters_node.kind() == "implicit_parameter" {
+    if parameters_node.kind_name() == "identifier"
+        || parameters_node.kind_name() == "implicit_parameter"
+    {
         return 1;
     }
     // Kotlin default values (`x: Int = 0`) are siblings of their `parameter`, not children.
-    if parameters_node.kind() == "function_value_parameters" {
+    if parameters_node.kind_name() == "function_value_parameters" {
         return named_children(parameters_node)
             .iter()
-            .filter(|child| child.kind() == "parameter")
+            .filter(|child| child.kind_name() == "parameter")
             .count();
     }
     // A Kotlin setter declares its single parameter directly (`set(value) { ... }`).
-    if parameters_node.kind() == "setter" {
+    if parameters_node.kind_name() == "setter" {
         return 1;
     }
     // A C# `params` array is spelled out as `type`/`name` fields of the parameter list itself.
-    let csharp_params_array_ids: HashSet<usize> = ["type", "name"]
+    let csharp_params_array_ids: FxHashSet<usize> = ["type", "name"]
         .iter()
         .flat_map(|field| find_children_by_field_name(parameters_node, field))
         .map(|child| child.id())
         .collect();
 
     // Ruby block-locals after `;` (`{ |x; memo| ... }`) occupy `locals` fields and receive no arguments.
-    let block_local_ids: HashSet<usize> = find_children_by_field_name(parameters_node, "locals")
+    let block_local_ids: FxHashSet<usize> = find_children_by_field_name(parameters_node, "locals")
         .iter()
         .map(|child| child.id())
         .collect();
@@ -95,22 +101,22 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
     // C/C++ `f(void)` declares none, and a Ruby block parameter (`&blk`) binds the block, which
     // call sites pass outside the argument list.
     for child in named_children(parameters_node) {
-        if crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind())
-            || child.kind() == "attribute_list"
+        if crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind_name())
+            || child.kind_name() == "attribute_list"
             || csharp_params_array_ids.contains(&child.id())
-            || child.kind() == "self_parameter"
-            || child.kind() == "receiver_parameter"
-            || child.kind() == "block_parameter"
+            || child.kind_name() == "self_parameter"
+            || child.kind_name() == "receiver_parameter"
+            || child.kind_name() == "block_parameter"
             // Python's PEP 570/3102 markers (`/`, `*`) separate parameter kinds but bind nothing.
-            || child.kind() == "positional_separator"
-            || child.kind() == "keyword_separator"
+            || child.kind_name() == "positional_separator"
+            || child.kind_name() == "keyword_separator"
             || block_local_ids.contains(&child.id())
             || is_void_parameter(child, code)
         {
             continue;
         }
         // Go declares several names per declaration (`a, b int`); each name is a parameter.
-        count += if child.kind() == "parameter_declaration" {
+        count += if child.kind_name() == "parameter_declaration" {
             find_children_by_field_name(child, "name").len().max(1)
         } else {
             1
@@ -126,7 +132,7 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
 
 /// C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator.
 fn is_void_parameter(node: Node<'_>, code: &Source<'_>) -> bool {
-    node.kind() == "parameter_declaration"
+    node.kind_name() == "parameter_declaration"
         && node.child_by_field_name("declarator").is_none()
         && node
             .child_by_field_name("type")
@@ -139,20 +145,20 @@ fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
     }
 
     // A C# indexer accessor (`this[int i] { get { ... } }`) takes the indexer's parameters.
-    if node.kind() == "accessor_declaration" {
+    if node.kind_name() == "accessor_declaration" {
         return node
-            .parent()
-            .and_then(|list| list.parent())
-            .filter(|owner| owner.kind() == "indexer_declaration")
+            .parent_node()
+            .and_then(|list| list.parent_node())
+            .filter(|owner| owner.kind_name() == "indexer_declaration")
             .and_then(|owner| owner.child_by_field_name("parameters"));
     }
 
     // A Java compact constructor implicitly takes the record's components, declared on the
     // `record_declaration` two levels up (via `class_body`).
-    if node.kind() == "compact_constructor_declaration" {
+    if node.kind_name() == "compact_constructor_declaration" {
         return node
-            .parent()
-            .and_then(|parent| parent.parent())
+            .parent_node()
+            .and_then(|parent| parent.parent_node())
             .and_then(|grandparent| grandparent.child_by_field_name("parameters"));
     }
 
@@ -166,17 +172,17 @@ fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
     }
 
     // A Kotlin setter's parameter (`set(value)`) sits directly under the setter node.
-    if node.kind() == "setter"
+    if node.kind_name() == "setter"
         && named_children(node)
             .iter()
-            .any(|child| child.kind() == "parameter_with_optional_type")
+            .any(|child| child.kind_name() == "parameter_with_optional_type")
     {
         return Some(node);
     }
 
     named_children(node).into_iter().find(|child| {
         matches!(
-            child.kind(),
+            child.kind_name(),
             "formal_parameters"
                 | "parameter_list"
                 | "function_value_parameters"
@@ -185,20 +191,20 @@ fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
     })
 }
 
-pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> Vec<Node<'t>> {
+pub fn collect_nodes<'t>(root: Node<'t>, matches: impl Fn(&str) -> bool) -> Vec<Node<'t>> {
     let mut nodes = Vec::new();
 
-    fn visit<'t>(node: Node<'t>, node_types: &HashSet<&'static str>, nodes: &mut Vec<Node<'t>>) {
-        if node_types.contains(node.kind()) {
+    fn visit<'t>(node: Node<'t>, matches: &impl Fn(&str) -> bool, nodes: &mut Vec<Node<'t>>) {
+        if matches(node.kind_name()) {
             nodes.push(node);
         }
 
         for child in named_children(node) {
-            visit(child, node_types, nodes);
+            visit(child, matches, nodes);
         }
     }
 
-    visit(root, node_types, &mut nodes);
+    visit(root, &matches, &mut nodes);
     nodes
 }
 
@@ -209,11 +215,11 @@ pub fn collect_nodes<'t>(root: Node<'t>, node_types: &HashSet<&'static str>) -> 
 /// `parenthesized_statements` wraps a lone value only when it holds exactly one statement.
 fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
     // A C-style cast (Java, C#, C/C++) names its type first, so its value comes from the field.
-    if wrapper.kind() == "cast_expression" {
+    if wrapper.kind_name() == "cast_expression" {
         return wrapper.child_by_field_name("value");
     }
     if !matches!(
-        wrapper.kind(),
+        wrapper.kind_name(),
         "type_assertion"
             | "parenthesized_statements"
             | "parenthesized_expression"
@@ -230,8 +236,8 @@ fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
     let children = named_children(wrapper);
     let mut values = children
         .into_iter()
-        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()));
-    match wrapper.kind() {
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind_name()));
+    match wrapper.kind_name() {
         "type_assertion" => values.next_back(),
         "parenthesized_statements" => {
             let value = values.next()?;
@@ -246,7 +252,7 @@ fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
 /// names the value.
 fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     let mut bound = node;
-    while let Some(wrapper) = bound.parent().filter(|wrapper| {
+    while let Some(wrapper) = bound.parent_node().filter(|wrapper| {
         wrapped_transparent_value(*wrapper).is_some_and(|value| value.id() == bound.id())
     }) {
         bound = wrapper;
@@ -279,13 +285,13 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 
     let bound = unwrap_transparent_value_wrappers(node);
-    let parent = bound.parent()?;
+    let parent = bound.parent_node()?;
 
     // A Rust closure bound to a simple `let` identifier takes that identifier as its name.
-    if node.kind() == "closure_expression" && parent.kind() == "let_declaration" {
+    if node.kind_name() == "closure_expression" && parent.kind_name() == "let_declaration" {
         let pattern_node = parent.child_by_field_name("pattern");
         return match pattern_node {
-            Some(pattern) if pattern.kind() == "identifier" => {
+            Some(pattern) if pattern.kind_name() == "identifier" => {
                 Some(node_text(pattern, code).to_string())
             }
             _ => None,
@@ -296,17 +302,17 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // as does one that direct-initializes a deduced variable (`auto f{[] {}}`), whose type is the
     // closure itself. With a written type (`std::thread worker([] {})`) the lambda is a constructor
     // argument, and the constructor stores whatever it likes, so it names nothing.
-    if node.kind() == "lambda_expression" {
-        let declaration = match parent.kind() {
+    if node.kind_name() == "lambda_expression" {
+        let declaration = match parent.kind_name() {
             "init_declarator" => Some(parent),
             "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
-                .parent()
-                .filter(|holder| holder.kind() == "init_declarator")
+                .parent_node()
+                .filter(|holder| holder.kind_name() == "init_declarator")
                 .filter(|holder| declares_deduced_type(*holder))
                 // `auto f = {[] {}}` deduces a list holding the closure, not the closure itself;
                 // only the direct form `auto f{[] {}}` makes the variable the closure.
                 .filter(|holder| {
-                    parent.kind() == "argument_list"
+                    parent.kind_name() == "argument_list"
                         || !all_children(*holder)
                             .iter()
                             .any(|child| !child.is_named() && node_text(*child, code) == "=")
@@ -320,41 +326,43 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
 
     // A Go func literal bound via `add := func...`, `var add = func...`, or `add = func...` takes
     // the identifier (or selector field) at the same list position.
-    if node.kind() == "func_literal" && parent.kind() == "expression_list" {
+    if node.kind_name() == "func_literal" && parent.kind_name() == "expression_list" {
         return find_go_func_literal_name(bound, parent, code);
     }
 
     // Ruby and Python lambdas assigned to a name take that name.
-    if node.kind() == "lambda" && parent.kind() == "assignment" {
+    if node.kind_name() == "lambda" && parent.kind_name() == "assignment" {
         return find_ruby_assignment_name(parent, code);
     }
-    if node.kind() == "lambda" && is_value_group(parent) {
+    if node.kind_name() == "lambda" && is_value_group(parent) {
         return find_parallel_assignment_name(bound, code);
     }
 
     // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`, also through
     // a label or annotation prefix) takes the property name; one assigned to a variable or member
     // (`run = { ... }`, `obj.run = { ... }`) takes the assigned name.
-    if node.kind() == "lambda_literal" || node.kind() == "anonymous_function" {
+    if node.kind_name() == "lambda_literal" || node.kind_name() == "anonymous_function" {
         let mut holder = parent;
-        while holder.kind() == "prefix_expression" {
-            holder = holder.parent()?;
+        while holder.kind_name() == "prefix_expression" {
+            holder = holder.parent_node()?;
         }
-        if holder.kind() == "property_declaration" {
+        if holder.kind_name() == "property_declaration" {
             return find_kotlin_property_name(holder, code);
         }
-        if holder.kind() == "assignment" {
+        if holder.kind_name() == "assignment" {
             return find_kotlin_assignment_name(holder, code);
         }
     }
     // A `lambda { }` / `proc { }` block is measured, but the call around it is what gets bound.
-    if (node.kind() == "block" || node.kind() == "do_block") && is_ruby_lambda_call(parent, code) {
+    if (node.kind_name() == "block" || node.kind_name() == "do_block")
+        && is_ruby_lambda_call(parent, code)
+    {
         let call = unwrap_transparent_value_wrappers(parent);
-        return match call.parent() {
-            Some(holder) if holder.kind() == "assignment" => {
+        return match call.parent_node() {
+            Some(holder) if holder.kind_name() == "assignment" => {
                 find_ruby_assignment_name(holder, code)
             }
-            Some(holder) if holder.kind() == "pair" => find_pair_key_name(holder, code),
+            Some(holder) if holder.kind_name() == "pair" => find_pair_key_name(holder, code),
             Some(holder) if is_value_group(holder) => find_parallel_assignment_name(call, code),
             _ => None,
         };
@@ -364,36 +372,36 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // after the key; an assignment
     // (`obj.run = () => {}`, `run = () => {}`, Rust/C++ `self.cb = |x| x`, C++ `N::run = [] {}`,
     // C# `this.Run = () => 1`) after its target.
-    if parent.kind() == "pair" {
+    if parent.kind_name() == "pair" {
         return find_pair_key_name(parent, code);
     }
     // A Go keyed composite-literal element (`S{run: func() {}}`) names its value after the key.
-    if parent.kind() == "literal_element" {
+    if parent.kind_name() == "literal_element" {
         return find_go_keyed_element_name(parent, code);
     }
     // A Rust struct-literal field (`S { cb: || 1 }`) names its closure after the field.
-    if parent.kind() == "field_initializer" {
+    if parent.kind_name() == "field_initializer" {
         return parent
             .child_by_field_name("field")
             .map(|field| node_text(field, code).to_string());
     }
     // A C++20 designated initializer (`S s{.run = []{}}`) likewise names its value after the field;
     // an array designator (`{[0] = ...}`) names nothing, like a subscript assignment target.
-    if parent.kind() == "initializer_pair" {
+    if parent.kind_name() == "initializer_pair" {
         return find_children_by_field_name(parent, "designator")
             .last()
-            .filter(|designator| designator.kind() == "field_designator")
+            .filter(|designator| designator.kind_name() == "field_designator")
             .and_then(|designator| designator.named_child(0))
             .map(|field| node_text(field, code).to_string());
     }
-    if parent.kind() == "assignment_expression" {
+    if parent.kind_name() == "assignment_expression" {
         return find_assignment_target_name(parent, code);
     }
 
     // A JavaScript class field (`handle = () => {}`) names its property through the `property`
     // field; TypeScript's `public_field_definition` exposes the same thing as `name`. A computed
     // key is as unstable here as in an object literal, and a string key is read the same way.
-    let field_name = if parent.kind() == "field_definition" {
+    let field_name = if parent.kind_name() == "field_definition" {
         "property"
     } else {
         "name"
@@ -405,7 +413,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     if !is_value_of_parent(bound, parent) {
         return None;
     }
-    match name.kind() {
+    match name.kind_name() {
         "computed_property_name" => None,
         "string" => find_string_literal_content(name, code),
         _ => Some(node_text(name, code).to_string()),
@@ -416,7 +424,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
 /// computed key (`[k]: ...`), an interpolated string or symbol, or an empty string names nothing.
 fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     let key = pair.child_by_field_name("key")?;
-    match key.kind() {
+    match key.kind_name() {
         // A numeric key (`{ 1: () => {} }`) is as stable a property name as an identifier, signed
         // (`{ -1: ... }`) or not; any other expression is computed and names nothing.
         "property_identifier" | "hash_key_symbol" => Some(node_text(key, code).to_string()),
@@ -432,7 +440,7 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
             for part in binding_children(key) {
                 if named_children(part)
                     .iter()
-                    .any(|child| child.kind() == "interpolation")
+                    .any(|child| child.kind_name() == "interpolation")
                 {
                     return None;
                 }
@@ -450,7 +458,7 @@ fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
 fn core_constraint_type(constraint: Node<'_>) -> Node<'_> {
     let mut current = constraint;
     while matches!(
-        current.kind(),
+        current.kind_name(),
         "type_constraint" | "negated_type" | "type_elem" | "interface_type"
     ) {
         match named_children(current).as_slice() {
@@ -474,7 +482,7 @@ fn signed_number_name(key: Node<'_>, code: &Source<'_>) -> Option<String> {
         .find(|child| !child.is_named())
         .map(|child| node_text(child, code))
         .unwrap_or_default();
-    let text = match operand.kind() {
+    let text = match operand.kind_name() {
         "rune_literal" => find_string_literal_content(operand, code)?,
         _ => node_text(operand, code).to_string(),
     };
@@ -490,7 +498,7 @@ fn is_signed_number(key: Node<'_>, code: &Source<'_>) -> bool {
     signed
         && named_children(key).first().is_some_and(|operand| {
             matches!(
-                operand.kind(),
+                operand.kind_name(),
                 "number"
                     | "integer"
                     | "float"
@@ -506,14 +514,14 @@ fn is_signed_number(key: Node<'_>, code: &Source<'_>) -> bool {
 /// value the last. An unkeyed element sits under a `literal_value` instead and names nothing.
 fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Option<String> {
     let keyed = value_element
-        .parent()
-        .filter(|parent| parent.kind() == "keyed_element")?;
+        .parent_node()
+        .filter(|parent| parent.kind_name() == "keyed_element")?;
     let elements = named_children(keyed);
     if elements.len() < 2 || elements.last()?.id() != value_element.id() {
         return None;
     }
     let key = named_children(*elements.first()?).into_iter().next()?;
-    match key.kind() {
+    match key.kind_name() {
         "identifier" | "field_identifier" if !has_value_keys(keyed, code) => {
             Some(node_text(key, code).to_string())
         }
@@ -536,7 +544,7 @@ fn find_go_keyed_element_name(value_element: Node<'_>, code: &Source<'_>) -> Opt
 /// `key` holds, so it names nothing, exactly like a computed property key.
 fn has_value_keys(keyed: Node<'_>, code: &Source<'_>) -> bool {
     keyed
-        .parent()
+        .parent_node()
         .and_then(|body| key_type_of_literal_body(body, code))
         .is_some_and(|declared| is_value_keyed_type(declared, code))
 }
@@ -557,7 +565,7 @@ fn value_keyed_type(declared: Node<'_>, code: &Source<'_>, depth: usize) -> bool
         return false;
     }
     let resolved = resolve_named_type(declared, code);
-    match resolved.kind() {
+    match resolved.kind_name() {
         "map_type" | "slice_type" | "array_type" | "implicit_length_array_type" => true,
         "type_constraint" | "interface_type" | "type_elem" | "negated_type" => {
             // Method requirements restrict what a type does, not what it is, so only the type terms
@@ -575,14 +583,14 @@ fn value_keyed_type(declared: Node<'_>, code: &Source<'_>, depth: usize) -> bool
 /// Whether a constraint element only requires methods, directly or through an embedded interface
 /// that does; such an element leaves the underlying type free.
 fn requires_methods_only(declared: Node<'_>, code: &Source<'_>, depth: usize) -> bool {
-    if matches!(declared.kind(), "method_elem" | "method_spec") {
+    if matches!(declared.kind_name(), "method_elem" | "method_spec") {
         return true;
     }
     if depth >= MAX_CONSTRAINT_DEPTH {
         return false;
     }
     let resolved = resolve_named_type(declared, code);
-    match resolved.kind() {
+    match resolved.kind_name() {
         "interface_type" | "type_constraint" | "type_elem" => {
             let terms = binding_children(resolved);
             !terms.is_empty()
@@ -605,7 +613,7 @@ fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
     let mut visited = Vec::new();
     while !visited.contains(&current.id()) {
         visited.push(current.id());
-        let next = match current.kind() {
+        let next = match current.kind_name() {
             "generic_type" => current.child_by_field_name("type"),
             // Go allows parentheses around a type; they name the type they hold.
             // Parentheses name the type they hold, and a nested literal of a pointer element type
@@ -623,7 +631,7 @@ fn resolve_named_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Node<'t> {
 
 /// The type a name stands for, resolved through the scopes enclosing it, innermost first.
 fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Node<'t>> {
-    if declared.kind() != "type_identifier" {
+    if declared.kind_name() != "type_identifier" {
         return None;
     }
     let name = node_text(declared, code);
@@ -636,7 +644,7 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
         // what the literal is written against.
         if let Some(constraint) = named_children(current)
             .into_iter()
-            .filter(|child| child.kind() == "type_parameter_list")
+            .filter(|child| child.kind_name() == "type_parameter_list")
             .flat_map(|list| declared_type_parameters(list))
             .find(|(parameter_name, _)| node_text(*parameter_name, code) == name)
             .and_then(|(_, constraint)| constraint)
@@ -645,7 +653,7 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
         }
         // A method's receiver carries the parameters of the type it is declared on
         // (`func (r R[T]) ...`), so the name resolves through that type's declaration.
-        if current.kind() == "method_declaration" {
+        if current.kind_name() == "method_declaration" {
             if let Some(constraint) = receiver_parameter_constraint(current, name, code) {
                 return Some(core_constraint_type(constraint));
             }
@@ -653,7 +661,7 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
         if let Some(found) = find_type_spec(current, name, code) {
             return found.child_by_field_name("type");
         }
-        scope = current.parent();
+        scope = current.parent_node();
     }
     None
 }
@@ -662,9 +670,9 @@ fn lookup_declared_type<'t>(declared: Node<'t>, code: &Source<'t>) -> Option<Nod
 fn find_type_spec<'t>(scope: Node<'t>, name: &str, code: &Source<'t>) -> Option<Node<'t>> {
     named_children(scope)
         .into_iter()
-        .filter(|child| child.kind() == "type_declaration")
+        .filter(|child| child.kind_name() == "type_declaration")
         .flat_map(named_children)
-        .filter(|spec| spec.kind() == "type_spec" || spec.kind() == "type_alias")
+        .filter(|spec| spec.kind_name() == "type_spec" || spec.kind_name() == "type_alias")
         .find(|spec| {
             spec.child_by_field_name("name")
                 .is_some_and(|declared_name| node_text(declared_name, code) == name)
@@ -685,7 +693,7 @@ fn receiver_parameter_constraint<'t>(
         // A pointer or parenthesized receiver (`func (r *R[T])`, `func (r (R[T]))`) wraps the
         // instantiation, in either order.
         .map(unwrap_receiver_type)
-        .find(|declared| declared.kind() == "generic_type")?;
+        .find(|declared| declared.kind_name() == "generic_type")?;
     let arguments = binding_children(instantiation.child_by_field_name("type_arguments")?);
     let position = arguments.iter().position(|argument| {
         let argument = named_children(*argument)
@@ -704,7 +712,7 @@ fn receiver_parameter_constraint<'t>(
 /// The type a receiver names, past the pointer and parenthesis wrappers it may carry.
 fn unwrap_receiver_type(declared: Node<'_>) -> Node<'_> {
     let mut current = declared;
-    while matches!(current.kind(), "pointer_type" | "parenthesized_type") {
+    while matches!(current.kind_name(), "pointer_type" | "parenthesized_type") {
         match named_children(current).into_iter().next() {
             Some(inner) => current = inner,
             None => break,
@@ -718,7 +726,7 @@ fn unwrap_receiver_type(declared: Node<'_>) -> Node<'_> {
 fn declared_type_parameters<'t>(list: Node<'t>) -> Vec<(Node<'t>, Option<Node<'t>>)> {
     binding_children(list)
         .into_iter()
-        .filter(|declaration| declaration.kind() == "type_parameter_declaration")
+        .filter(|declaration| declaration.kind_name() == "type_parameter_declaration")
         .flat_map(|declaration| {
             let constraint = declaration.child_by_field_name("type");
             find_children_by_field_name(declaration, "name")
@@ -734,24 +742,24 @@ fn declared_type_parameters<'t>(list: Node<'t>) -> Vec<(Node<'t>, Option<Node<'t
 /// {k: f}}` nests a map, `[]S{{run: f}}` a struct). A literal nested in a struct field keeps the
 /// struct reading, since the field's type is not written at the literal.
 fn key_type_of_literal_body<'t>(body: Node<'t>, code: &Source<'t>) -> Option<Node<'t>> {
-    let parent = body.parent()?;
-    if parent.kind() == "composite_literal" {
+    let parent = body.parent_node()?;
+    if parent.kind_name() == "composite_literal" {
         return parent.child_by_field_name("type");
     }
-    if parent.kind() != "literal_element" {
+    if parent.kind_name() != "literal_element" {
         return None;
     }
-    let mut container = parent.parent()?;
-    if container.kind() == "keyed_element" {
-        container = container.parent()?;
+    let mut container = parent.parent_node()?;
+    if container.kind_name() == "keyed_element" {
+        container = container.parent_node()?;
     }
-    if container.kind() != "literal_value" {
+    if container.kind_name() != "literal_value" {
         return None;
     }
     // The container's own type may be a name, which the element type is read through.
     let declared = key_type_of_literal_body(container, code)?;
     let holder = resolve_named_type(declared, code);
-    let element = match holder.kind() {
+    let element = match holder.kind_name() {
         "map_type" => holder.child_by_field_name("value"),
         "slice_type" | "array_type" | "implicit_length_array_type" => {
             holder.child_by_field_name("element")
@@ -768,7 +776,7 @@ fn instantiated_type_argument<'t>(
     declared: Node<'t>,
     code: &Source<'t>,
 ) -> Option<Node<'t>> {
-    if element.kind() != "type_identifier" || declared.kind() != "generic_type" {
+    if element.kind_name() != "type_identifier" || declared.kind_name() != "generic_type" {
         return None;
     }
     let base = declared.child_by_field_name("type")?;
@@ -793,7 +801,7 @@ fn find_declared_type_spec<'t>(from: Node<'t>, name: &str, code: &Source<'t>) ->
         if let Some(spec) = find_type_spec(current, name, code) {
             return Some(spec);
         }
-        scope = current.parent();
+        scope = current.parent_node();
     }
     None
 }
@@ -804,7 +812,10 @@ fn find_declared_type_spec<'t>(from: Node<'t>, name: &str, code: &Source<'t>) ->
 /// `string_content` (Python nests escapes inside it). Interpolation makes the key unstable.
 fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<String> {
     let children = named_children(literal);
-    if children.iter().any(|child| child.kind() == "interpolation") {
+    if children
+        .iter()
+        .any(|child| child.kind_name() == "interpolation")
+    {
         return None;
     }
     // Go exposes no content node at all: it names only the escapes, so the concatenation is
@@ -812,7 +823,7 @@ fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<S
     let mut content = String::new();
     let mut has_content_node = false;
     for child in &children {
-        match child.kind() {
+        match child.kind_name() {
             "string_content" | "string_fragment" => {
                 has_content_node = true;
                 content.push_str(node_text(*child, code));
@@ -860,7 +871,7 @@ fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
         return None;
     }
     let target = assignment.child_by_field_name("left")?;
-    let name = match target.kind() {
+    let name = match target.kind_name() {
         "identifier" => target,
         "member_expression" => target.child_by_field_name("property")?,
         "field_expression" => target.child_by_field_name("field")?,
@@ -882,8 +893,8 @@ fn find_kotlin_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
     let target = first_named_child_of_kind(assignment, "directly_assignable_expression")?;
     let children = named_children(target);
     let holder = match children.last()? {
-        last if last.kind() == "navigation_suffix" => *last,
-        last if last.kind() == "simple_identifier" && children.len() == 1 => target,
+        last if last.kind_name() == "navigation_suffix" => *last,
+        last if last.kind_name() == "simple_identifier" && children.len() == 1 => target,
         _ => return None,
     };
     first_named_child_of_kind(holder, "simple_identifier")
@@ -895,17 +906,17 @@ fn find_kotlin_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
 /// Kotlin functions by their identifier child, Kotlin secondary constructors and C# destructors
 /// after their class, and C# operators like C++ ones.
 fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
-    match node.kind() {
+    match node.kind_name() {
         "accessor_declaration" => {
             let keyword = node_text(node.child_by_field_name("name")?, code);
-            let owner = node.parent()?.parent()?;
+            let owner = node.parent_node()?.parent_node()?;
             Some(format!("{}.{keyword}", csharp_property_name(owner, code)?))
         }
         "property_declaration" | "indexer_declaration" => {
             Some(format!("{}.get", csharp_property_name(node, code)?))
         }
         "getter" | "setter" => {
-            let keyword = if node.kind() == "getter" {
+            let keyword = if node.kind_name() == "getter" {
                 "get"
             } else {
                 "set"
@@ -920,13 +931,15 @@ fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String
                 .map(|name| node_text(name, code).to_string())
         }
         "secondary_constructor" => {
-            let mut ancestor = node.parent();
+            let mut ancestor = node.parent_node();
             while let Some(current) = ancestor {
-                if current.kind() == "class_declaration" || current.kind() == "object_declaration" {
+                if current.kind_name() == "class_declaration"
+                    || current.kind_name() == "object_declaration"
+                {
                     return first_named_child_of_kind(current, "type_identifier")
                         .map(|name| node_text(name, code).to_string());
                 }
-                ancestor = current.parent();
+                ancestor = current.parent_node();
             }
             None
         }
@@ -948,7 +961,7 @@ fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String
 
 /// A C# property or indexer (`this`) name.
 fn csharp_property_name(owner: Node<'_>, code: &Source<'_>) -> Option<String> {
-    match owner.kind() {
+    match owner.kind_name() {
         "indexer_declaration" => Some("this".to_string()),
         _ => Some(node_text(owner.child_by_field_name("name")?, code).to_string()),
     }
@@ -959,18 +972,18 @@ fn csharp_property_name(owner: Node<'_>, code: &Source<'_>) -> Option<String> {
 /// sibling after the property, any preceding accessor, and any comments between them.
 fn find_kotlin_accessor_owner_name(accessor: Node<'_>, code: &Source<'_>) -> Option<String> {
     if let Some(name) = accessor
-        .parent()
+        .parent_node()
         .and_then(|parent| find_kotlin_property_name(parent, code))
     {
         return Some(name);
     }
     let mut sibling = accessor.prev_named_sibling();
     while let Some(current) = sibling {
-        if current.kind() == "property_declaration" {
+        if current.kind_name() == "property_declaration" {
             return find_kotlin_property_name(current, code);
         }
-        if !matches!(current.kind(), "getter" | "setter")
-            && !crate::ncss::COMMENT_NODE_TYPES.contains(&current.kind())
+        if !matches!(current.kind_name(), "getter" | "setter")
+            && !crate::ncss::COMMENT_NODE_TYPES.contains(&current.kind_name())
         {
             return None;
         }
@@ -981,7 +994,7 @@ fn find_kotlin_accessor_owner_name(accessor: Node<'_>, code: &Source<'_>) -> Opt
 
 /// The declared name of a Kotlin `property_declaration` (`val name: T`), if it declares one.
 fn find_kotlin_property_name(property: Node<'_>, code: &Source<'_>) -> Option<String> {
-    if property.kind() != "property_declaration" {
+    if property.kind_name() != "property_declaration" {
         return None;
     }
     let declaration = first_named_child_of_kind(property, "variable_declaration")?;
@@ -992,7 +1005,7 @@ fn find_kotlin_property_name(property: Node<'_>, code: &Source<'_>) -> Option<St
 fn first_named_child_of_kind<'t>(node: Node<'t>, kind: &str) -> Option<Node<'t>> {
     named_children(node)
         .into_iter()
-        .find(|child| child.kind() == kind)
+        .find(|child| child.kind_name() == kind)
 }
 
 /// Whether the node occupies its parent's value position: the `value` field, or no field at all
@@ -1017,7 +1030,7 @@ fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
 /// or a mapping is unordered, so it groups nothing positionally.
 fn is_value_group(node: Node<'_>) -> bool {
     matches!(
-        node.kind(),
+        node.kind_name(),
         "expression_list" | "right_assignment_list" | "tuple" | "list" | "array"
     )
 }
@@ -1025,7 +1038,7 @@ fn is_value_group(node: Node<'_>) -> bool {
 /// The matching target groups, which a nested value group is aligned against level by level.
 fn is_target_group(node: Node<'_>) -> bool {
     matches!(
-        node.kind(),
+        node.kind_name(),
         "pattern_list"
             | "left_assignment_list"
             | "tuple_pattern"
@@ -1041,13 +1054,13 @@ fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<S
     let mut positions = Vec::new();
     let mut current = value;
     let assignment = loop {
-        let parent = current.parent()?;
+        let parent = current.parent_node()?;
         if is_value_group(parent) {
             positions.push((parent, current));
             current = parent;
             continue;
         }
-        if parent.kind() == "assignment"
+        if parent.kind_name() == "assignment"
             && parent.child_by_field_name("right")?.id() == current.id()
         {
             break parent;
@@ -1059,9 +1072,9 @@ fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<S
         // Ruby spells a fully parenthesized target list as a `left_assignment_list` holding one
         // destructured group (`(a, b) = f, g`), which aligns against that inner one. A Python
         // singleton tuple is a real destructuring level instead, so it is left alone.
-        while target.kind() == "left_assignment_list" {
+        while target.kind_name() == "left_assignment_list" {
             match binding_children(target).as_slice() {
-                [only] if only.kind() == "destructured_left_assignment" => target = *only,
+                [only] if only.kind_name() == "destructured_left_assignment" => target = *only,
                 _ => break,
             }
         }
@@ -1086,7 +1099,7 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
     let splat_after = value_list[index + 1..].iter().any(is_splat);
     let trailing = value_list.len() - 1 - index;
     let unpacks = matches!(
-        targets.kind(),
+        targets.kind_name(),
         "pattern_list" | "tuple_pattern" | "list_pattern"
     );
     let targets = binding_children(targets);
@@ -1123,10 +1136,12 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
             // it, by failing the assignment, while Ruby fills the trailing targets from the left
             // when it underflows.
             let reaches_trailing_targets = written_values + 1 >= targets.len()
-                || value_list.iter().any(|child| child.kind() == "list_splat");
+                || value_list
+                    .iter()
+                    .any(|child| child.kind_name() == "list_splat");
             if reaches_trailing_targets {
                 targets.get(targets.len() - 1 - trailing).copied()
-            } else if !splat_before && targets[splat].kind() == "rest_assignment" {
+            } else if !splat_before && targets[splat].kind_name() == "rest_assignment" {
                 // Ruby empties the star and fills the trailing targets from the left when the
                 // values run out, so each one binds the next target (`a, *r, c, d = x, f` binds
                 // `f` to `c`); Python fails such an assignment instead.
@@ -1142,7 +1157,7 @@ fn aligned_target<'t>(values: Node<'_>, value: Node<'_>, targets: Node<'t>) -> O
 /// A splat on either side of a parallel assignment (`*xs`, `*rest`).
 fn is_splat(node: &Node<'_>) -> bool {
     matches!(
-        node.kind(),
+        node.kind_name(),
         "splat_argument" | "rest_assignment" | "list_splat" | "list_splat_pattern"
     )
 }
@@ -1150,7 +1165,7 @@ fn is_splat(node: &Node<'_>) -> bool {
 fn binding_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
     named_children(node)
         .into_iter()
-        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind()))
+        .filter(|child| !crate::ncss::COMMENT_NODE_TYPES.contains(&child.kind_name()))
         .collect()
 }
 
@@ -1158,7 +1173,7 @@ fn binding_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
 /// global variable; the method of a Ruby attribute writer (`self.run = ...`); or a Python attribute
 /// (`obj.run = ...`). A subscript or a splat has no stable name and binds none.
 fn find_assignment_target_text(target: Node<'_>, code: &Source<'_>) -> Option<String> {
-    match target.kind() {
+    match target.kind_name() {
         "identifier" | "constant" | "instance_variable" | "class_variable" | "global_variable" => {
             Some(node_text(target, code).to_string())
         }
@@ -1179,7 +1194,7 @@ fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<
     let left = assignment.child_by_field_name("left")?;
     let mut target = left;
     if matches!(
-        left.kind(),
+        left.kind_name(),
         "left_assignment_list" | "destructured_left_assignment"
     ) {
         while is_target_group(target) {
@@ -1192,11 +1207,11 @@ fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<
 }
 
 fn is_ruby_lambda_call(node: Node<'_>, code: &Source<'_>) -> bool {
-    if node.kind() != "call" || node.child_by_field_name("receiver").is_some() {
+    if node.kind_name() != "call" || node.child_by_field_name("receiver").is_some() {
         return false;
     }
     node.child_by_field_name("method").is_some_and(|method| {
-        method.kind() == "identifier"
+        method.kind_name() == "identifier"
             && (node_text(method, code) == "lambda" || node_text(method, code) == "proc")
     })
 }
@@ -1206,22 +1221,23 @@ fn find_go_func_literal_name(
     expression_list: Node<'_>,
     code: &Source<'_>,
 ) -> Option<String> {
-    let holder = expression_list.parent()?;
+    let holder = expression_list.parent_node()?;
     // Comments interleave with expressions in the list but have no matching binding target.
     let values: Vec<Node<'_>> = named_children(expression_list)
         .into_iter()
-        .filter(|child| child.kind() != "comment")
+        .filter(|child| child.kind_name() != "comment")
         .collect();
     let value_index = values.iter().position(|child| child.id() == node.id())?;
 
-    if holder.kind() == "assignment_statement" && !is_plain_assignment(holder, code) {
+    if holder.kind_name() == "assignment_statement" && !is_plain_assignment(holder, code) {
         return None;
     }
-    if holder.kind() == "short_var_declaration" || holder.kind() == "assignment_statement" {
+    if holder.kind_name() == "short_var_declaration" || holder.kind_name() == "assignment_statement"
+    {
         let targets = holder.child_by_field_name("left").map(|left| {
             named_children(left)
                 .into_iter()
-                .filter(|child| child.kind() != "comment")
+                .filter(|child| child.kind_name() != "comment")
                 .collect::<Vec<_>>()
         });
         return as_go_binding_name(
@@ -1233,7 +1249,7 @@ fn find_go_func_literal_name(
         );
     }
 
-    if holder.kind() == "var_spec" {
+    if holder.kind_name() == "var_spec" {
         let target = find_children_by_field_name(holder, "name")
             .get(value_index)
             .copied();
@@ -1247,10 +1263,10 @@ fn find_go_func_literal_name(
 /// (`m.run = func...`) names its field.
 fn as_go_binding_name(target: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
     match target {
-        Some(target) if target.kind() == "identifier" && node_text(target, code) != "_" => {
+        Some(target) if target.kind_name() == "identifier" && node_text(target, code) != "_" => {
             Some(node_text(target, code).to_string())
         }
-        Some(target) if target.kind() == "selector_expression" => target
+        Some(target) if target.kind_name() == "selector_expression" => target
             .child_by_field_name("field")
             .map(|field| node_text(field, code).to_string()),
         _ => None,
@@ -1260,12 +1276,12 @@ fn as_go_binding_name(target: Option<Node<'_>>, code: &Source<'_>) -> Option<Str
 fn find_wrapped_component_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     let mut current = node;
     loop {
-        let arguments_node = current.parent();
-        let call_node = arguments_node.and_then(|arguments| arguments.parent());
+        let arguments_node = current.parent_node();
+        let call_node = arguments_node.and_then(|arguments| arguments.parent_node());
         let (Some(arguments_node), Some(call_node)) = (arguments_node, call_node) else {
             return None;
         };
-        if arguments_node.kind() != "arguments" || call_node.kind() != "call_expression" {
+        if arguments_node.kind_name() != "arguments" || call_node.kind_name() != "call_expression" {
             return None;
         }
 
@@ -1273,8 +1289,8 @@ fn find_wrapped_component_name(node: Node<'_>, code: &Source<'_>) -> Option<Stri
             return None;
         }
 
-        if let Some(declarator_node) = call_node.parent() {
-            if declarator_node.kind() == "variable_declarator" {
+        if let Some(declarator_node) = call_node.parent_node() {
+            if declarator_node.kind_name() == "variable_declarator" {
                 return declarator_node
                     .child_by_field_name("name")
                     .map(|name| node_text(name, code).to_string());
@@ -1299,16 +1315,16 @@ fn is_react_component_wrapper_call(node: Node<'_>, code: &Source<'_>) -> bool {
 /// variable the closure itself rather than something constructed from it.
 fn declares_deduced_type(declarator: Node<'_>) -> bool {
     declarator
-        .parent()
+        .parent_node()
         .and_then(|declaration| declaration.child_by_field_name("type"))
-        .is_some_and(|declared| declared.kind() == "placeholder_type_specifier")
+        .is_some_and(|declared| declared.kind_name() == "placeholder_type_specifier")
 }
 
 /// Unwraps a C/C++ declarator chain to the declared name.
 fn unwrap_declarator_name(declarator: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
     let mut current = declarator;
     while let Some(node) = current {
-        match node.kind() {
+        match node.kind_name() {
             "identifier" | "field_identifier" | "type_identifier" | "destructor_name"
             | "operator_name" => {
                 return Some(node_text(node, code).to_string());
@@ -1339,7 +1355,8 @@ fn next_declarator(node: Node<'_>) -> Option<Node<'_>> {
     if let Some(direct) = node.child_by_field_name("declarator") {
         return Some(direct);
     }
-    if node.kind() == "reference_declarator" || node.kind() == "parenthesized_declarator" {
+    if node.kind_name() == "reference_declarator" || node.kind_name() == "parenthesized_declarator"
+    {
         return node.named_child(0);
     }
     None

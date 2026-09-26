@@ -1,3 +1,4 @@
+use std::sync::OnceLock;
 use tree_sitter::Language;
 
 /// Per-language node-type configuration mirroring src/languages.ts.
@@ -32,6 +33,8 @@ enum GrammarId {
     Tsx,
 }
 
+const GRAMMAR_COUNT: usize = GrammarId::Tsx as usize + 1;
+
 impl LanguageDefinition {
     pub fn grammar(&self) -> Language {
         match self.grammar_id {
@@ -48,6 +51,23 @@ impl LanguageDefinition {
             GrammarId::TypeScript => tree_sitter_typescript::language_typescript(),
             GrammarId::Tsx => tree_sitter_typescript::language_tsx(),
         }
+    }
+
+    /// The grammar's node kind names, indexed by kind id.
+    pub fn kind_names(&self) -> &'static [&'static str] {
+        static KIND_NAMES: [OnceLock<Vec<&'static str>>; GRAMMAR_COUNT] =
+            [const { OnceLock::new() }; GRAMMAR_COUNT];
+        KIND_NAMES[self.grammar_id as usize].get_or_init(|| {
+            let grammar = self.grammar();
+            (0..grammar.node_kind_count())
+                .map(|id| {
+                    u16::try_from(id)
+                        .ok()
+                        .and_then(|id| grammar.node_kind_for_id(id))
+                        .unwrap_or_default()
+                })
+                .collect()
+        })
     }
 }
 

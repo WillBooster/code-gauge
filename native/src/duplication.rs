@@ -1,10 +1,11 @@
 use indexmap::IndexMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
-use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 use tree_sitter::Node;
 
 use crate::near_miss::{Block, Matcher, PairMatch, FILTRATION_PERCENT, MAX_LENGTH_RATIO};
+use crate::tree_index::NodeExt;
 use crate::types::{
     CrossFileCandidate, CrossFileToken, CrossFileTokenRange, DuplicateBlockOccurrence,
     DuplicationMetrics,
@@ -127,22 +128,22 @@ fn is_duplicate_block(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;
     }
-    if node.kind() == "try_expression" {
+    if node.kind_name() == "try_expression" {
         return crate::util::is_kotlin_try_expression(node);
     }
-    DUPLICATE_BLOCK_TYPES.contains(&node.kind())
+    DUPLICATE_BLOCK_TYPES.contains(&node.kind_name())
 }
 
 fn is_statement_container(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;
     }
-    if node.kind() == "declaration_list" {
-        return node
-            .parent()
-            .is_some_and(|parent| CSHARP_DECLARATION_LIST_PARENT_TYPES.contains(&parent.kind()));
+    if node.kind_name() == "declaration_list" {
+        return node.parent_node().is_some_and(|parent| {
+            CSHARP_DECLARATION_LIST_PARENT_TYPES.contains(&parent.kind_name())
+        });
     }
-    STATEMENT_CONTAINER_TYPES.contains(&node.kind())
+    STATEMENT_CONTAINER_TYPES.contains(&node.kind_name())
 }
 
 /// Identifier leaves anonymized by occurrence order so consistently renamed copies still match.
@@ -320,13 +321,13 @@ fn is_literal_dense(literal_count: usize, token_count: usize) -> bool {
     literal_count * 5 >= token_count
 }
 
-fn literal_kind_by_type() -> &'static HashMap<&'static str, &'static str> {
-    static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+fn literal_kind_by_type() -> &'static FxHashMap<&'static str, &'static str> {
+    static MAP: OnceLock<FxHashMap<&'static str, &'static str>> = OnceLock::new();
     MAP.get_or_init(|| LITERAL_KIND_BY_TYPE.iter().copied().collect())
 }
 
-fn semantic_name_field_by_parent_type() -> &'static HashMap<&'static str, &'static str> {
-    static MAP: OnceLock<HashMap<&'static str, &'static str>> = OnceLock::new();
+fn semantic_name_field_by_parent_type() -> &'static FxHashMap<&'static str, &'static str> {
+    static MAP: OnceLock<FxHashMap<&'static str, &'static str>> = OnceLock::new();
     MAP.get_or_init(|| SEMANTIC_NAME_FIELD_BY_PARENT_TYPE.iter().copied().collect())
 }
 
@@ -405,7 +406,7 @@ pub fn tokenize<'a>(root: Node<'_>, code: &Source<'a>) -> TokenizedSource<'a> {
 /// candidates cross-file matching fingerprints in TypeScript.
 pub fn measure_duplication(
     source: &TokenizedSource<'_>,
-    code_line_numbers: &HashSet<usize>,
+    code_line_numbers: &FxHashSet<usize>,
     settings: &DuplicationSettings,
 ) -> DuplicationMetrics {
     let tokens = &source.tokens;
@@ -568,7 +569,7 @@ fn collect_tokens<'a>(
                 node.start_position().row,
                 node.end_position().row,
             ));
-        } else if !COMMENT_TYPES.contains(&node.kind()) {
+        } else if !COMMENT_TYPES.contains(&node.kind_name()) {
             let mut statement_ranges: Vec<TokenRange> = Vec::new();
             let is_container = is_statement_container(node);
             for child in all_children(node) {
@@ -579,7 +580,7 @@ fn collect_tokens<'a>(
                     block_ranges,
                     container_statement_ranges,
                 );
-                if is_container && child.is_named() && !COMMENT_TYPES.contains(&child.kind()) {
+                if is_container && child.is_named() && !COMMENT_TYPES.contains(&child.kind_name()) {
                     statement_ranges.push(child_range);
                 }
             }
@@ -611,14 +612,14 @@ fn collect_tokens<'a>(
 /// The kind tag of a string-like node with no interpolation, or None to descend normally.
 fn atomic_literal_kind(node: Node<'_>) -> Option<&'static str> {
     let kind = if node.is_named() {
-        literal_kind_by_type().get(node.kind()).copied()
+        literal_kind_by_type().get(node.kind_name()).copied()
     } else {
         None
     };
     let kind = kind?;
     if named_children(node)
         .iter()
-        .all(|child| STRING_FRAGMENT_TYPES.contains(&child.kind()))
+        .all(|child| STRING_FRAGMENT_TYPES.contains(&child.kind_name()))
     {
         Some(kind)
     } else {
@@ -627,13 +628,13 @@ fn atomic_literal_kind(node: Node<'_>) -> Option<&'static str> {
 }
 
 fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Token<'a>>) {
-    if COMMENT_TYPES.contains(&node.kind()) {
+    if COMMENT_TYPES.contains(&node.kind_name()) {
         return;
     }
 
     let start_row = node.start_position().row;
     let end_row = node.end_position().row;
-    if node.is_named() && SHORTHAND_PROPERTY_TYPES.contains(&node.kind()) {
+    if node.is_named() && SHORTHAND_PROPERTY_TYPES.contains(&node.kind_name()) {
         let text = node_text(node, code);
         tokens.push(make_text_token(
             Cow::Borrowed(text),
@@ -669,7 +670,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         && !pascal_case_regex().is_match(node_text(node, code));
     if node.is_named()
         && (is_variable_receiver
-            || (ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind())
+            || (ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind_name())
                 && !is_semantic_name_leaf(node, code)))
     {
         tokens.push(Token {
@@ -688,7 +689,7 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
 
     // Anything else keeps its text: keywords, operators, punctuation, and semantic names.
     let literal_kind = if node.is_named() {
-        literal_kind_by_type().get(node.kind()).copied()
+        literal_kind_by_type().get(node.kind_name()).copied()
     } else {
         None
     };
@@ -745,12 +746,12 @@ fn literal_value_text<'a>(node: Node<'_>, kind: &str, code: &Source<'a>) -> Cow<
         return Cow::Borrowed(node_text(node, code));
     }
     // Fragment leaves already carry bare content; a quote appearing there is content.
-    if STRING_CONTENT_FRAGMENT_TYPES.contains(&node.kind()) {
+    if STRING_CONTENT_FRAGMENT_TYPES.contains(&node.kind_name()) {
         return Cow::Borrowed(node_text(node, code));
     }
     let fragments: Vec<&str> = named_children(node)
         .iter()
-        .filter(|child| STRING_CONTENT_FRAGMENT_TYPES.contains(&child.kind()))
+        .filter(|child| STRING_CONTENT_FRAGMENT_TYPES.contains(&child.kind_name()))
         .map(|child| node_text(*child, code))
         .collect();
     if !fragments.is_empty() {
@@ -758,7 +759,7 @@ fn literal_value_text<'a>(node: Node<'_>, kind: &str, code: &Source<'a>) -> Cow<
     }
     // A C# verbatim string (`@"..."`) carries the same value as its ordinary spelling.
     let text = node_text(node, code);
-    let text = if node.kind() == "verbatim_string_literal" {
+    let text = if node.kind_name() == "verbatim_string_literal" {
         text.strip_prefix('@').unwrap_or(text)
     } else {
         text
@@ -789,13 +790,13 @@ fn build_literal_count_prefix(tokens: &[Token<'_>]) -> Vec<usize> {
 }
 
 fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
-    let Some(parent) = node.parent() else {
+    let Some(parent) = node.parent_node() else {
         return false;
     };
 
     // Java method references (`Foo::bar`) and Kotlin callable references (`::bar`) name their
     // identifiers without grammar fields.
-    if parent.kind() == "method_reference" || parent.kind() == "callable_reference" {
+    if parent.kind_name() == "method_reference" || parent.kind_name() == "callable_reference" {
         return true;
     }
 
@@ -803,18 +804,19 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     // `new Foo()`) and attribute names (`[Obsolete]`, an `attribute` inside an `attribute_list`, or
     // `[assembly: Foo]` inside a `global_attribute`; C/C++ attributes hang off other parents and
     // Python's `attribute` has no `name` field).
-    if node.kind() == "identifier" {
+    if node.kind_name() == "identifier" {
         let occupies = |field: &str| {
             parent
                 .child_by_field_name(field)
                 .is_some_and(|field_node| field_node.id() == node.id())
         };
-        let is_csharp_attribute = parent.kind() == "attribute"
-            && parent
-                .parent()
-                .is_some_and(|list| matches!(list.kind(), "attribute_list" | "global_attribute"));
-        if CSHARP_TYPE_PARENT_TYPES.contains(&parent.kind())
-            || (occupies("type") && !NON_CSHARP_TYPE_FIELD_PARENT_TYPES.contains(&parent.kind()))
+        let is_csharp_attribute = parent.kind_name() == "attribute"
+            && parent.parent_node().is_some_and(|list| {
+                matches!(list.kind_name(), "attribute_list" | "global_attribute")
+            });
+        if CSHARP_TYPE_PARENT_TYPES.contains(&parent.kind_name())
+            || (occupies("type")
+                && !NON_CSHARP_TYPE_FIELD_PARENT_TYPES.contains(&parent.kind_name()))
             || (is_csharp_attribute && occupies("name"))
         {
             return true;
@@ -823,35 +825,35 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
 
     // Kotlin (no grammar fields): a callee (`foo(...)`), a member name (`a.foo`), an infix function
     // (`a shl b`), and a named argument (`foo(name = x)`) are API names.
-    if node.kind() == "simple_identifier" {
-        if parent.kind() == "navigation_suffix" {
+    if node.kind_name() == "simple_identifier" {
+        if parent.kind_name() == "navigation_suffix" {
             return true;
         }
         let is_first_named = parent
             .named_child(0)
             .is_some_and(|first| first.id() == node.id());
-        if parent.kind() == "call_expression" && is_first_named {
+        if parent.kind_name() == "call_expression" && is_first_named {
             return true;
         }
-        if parent.kind() == "infix_expression"
+        if parent.kind_name() == "infix_expression"
             && parent
                 .named_child(1)
                 .is_some_and(|operator| operator.id() == node.id())
         {
             return true;
         }
-        if parent.kind() == "value_argument"
+        if parent.kind_name() == "value_argument"
             && is_first_named
             && node
                 .next_sibling()
-                .is_some_and(|next| !next.is_named() && next.kind() == "=")
+                .is_some_and(|next| !next.is_named() && next.kind_name() == "=")
         {
             return true;
         }
     }
 
     // `call` names its callee `method` in Ruby but `function` in Python; accept both fields.
-    if parent.kind() == "call"
+    if parent.kind_name() == "call"
         && parent
             .child_by_field_name("function")
             .is_some_and(|function| function.id() == node.id())
@@ -860,8 +862,8 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     }
 
     // A Ruby constant receiving a call (`Alpha.new(...)`) names the invoked API.
-    if node.kind() == "constant"
-        && parent.kind() == "call"
+    if node.kind_name() == "constant"
+        && parent.kind_name() == "call"
         && parent
             .child_by_field_name("receiver")
             .is_some_and(|receiver| receiver.id() == node.id())
@@ -871,7 +873,7 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
 
     // Java/C# static receivers (`Alpha.run(...)`, `Console.WriteLine(...)`) name the invoked type;
     // PascalCase is the discriminator because the tokenizer has no symbol table.
-    let is_static_receiver = match parent.kind() {
+    let is_static_receiver = match parent.kind_name() {
         "method_invocation" => parent
             .child_by_field_name("object")
             .is_some_and(|object| object.id() == node.id()),
@@ -889,7 +891,7 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     }
 
     // Qualified/generic callees are semantic in call position only.
-    if (parent.kind() == "scoped_identifier" || parent.kind() == "qualified_identifier")
+    if (parent.kind_name() == "scoped_identifier" || parent.kind_name() == "qualified_identifier")
         && (parent
             .child_by_field_name("name")
             .is_some_and(|name| name.id() == node.id())
@@ -898,9 +900,9 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
                 .is_some_and(|path| path.id() == node.id()))
     {
         let mut outer = parent;
-        while let Some(outer_parent) = outer.parent() {
+        while let Some(outer_parent) = outer.parent_node() {
             if matches!(
-                outer_parent.kind(),
+                outer_parent.kind_name(),
                 "scoped_identifier"
                     | "qualified_identifier"
                     | "generic_function"
@@ -911,8 +913,8 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
                 break;
             }
         }
-        if outer.parent().is_some_and(|call| {
-            call.kind() == "call_expression"
+        if outer.parent_node().is_some_and(|call| {
+            call.kind_name() == "call_expression"
                 && call
                     .child_by_field_name("function")
                     .is_some_and(|function| function.id() == outer.id())
@@ -922,9 +924,9 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     }
 
     // Go struct-literal keys (`Config{Timeout: ...}`) have no `key` field in the grammar.
-    if parent.kind() == "literal_element"
-        && parent.parent().is_some_and(|grandparent| {
-            grandparent.kind() == "keyed_element"
+    if parent.kind_name() == "literal_element"
+        && parent.parent_node().is_some_and(|grandparent| {
+            grandparent.kind_name() == "keyed_element"
                 && grandparent
                     .named_child(0)
                     .is_some_and(|first| first.id() == parent.id())
@@ -934,7 +936,7 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     }
 
     semantic_name_field_by_parent_type()
-        .get(parent.kind())
+        .get(parent.kind_name())
         .is_some_and(|field| {
             parent
                 .child_by_field_name(*field)
@@ -1005,7 +1007,7 @@ fn collect_sequence_candidates(
     min_tokens: usize,
 ) -> Vec<DuplicateCandidate> {
     let mut candidates = Vec::new();
-    let mut occurrences_by_window_key: HashMap<i64, WindowOccurrences> = HashMap::new();
+    let mut occurrences_by_window_key: FxHashMap<i64, WindowOccurrences> = FxHashMap::default();
     let container_windows: Vec<ContainerWindows> = containers
         .iter()
         .map(|statements| enumerate_container_windows(tokens, statements, min_tokens))
@@ -1111,7 +1113,7 @@ fn collect_sequence_candidates(
 
     // Every emitted window exposes its repeating, unvisited sub-windows; lengths strictly
     // decrease, so the worklist terminates.
-    let mut visited: HashSet<SequenceWindow> = maximal_windows.iter().copied().collect();
+    let mut visited: FxHashSet<SequenceWindow> = maximal_windows.iter().copied().collect();
     let mut frontier = maximal_windows;
     while !frontier.is_empty() {
         let mut emitted: Vec<SequenceWindow> = Vec::new();
@@ -1269,7 +1271,7 @@ fn fingerprint_hash_pair(
     fold_literal_values: bool,
 ) -> (i32, i32) {
     let clamped_end = end_token_index.min(tokens.len());
-    let mut index_by_identifier: HashMap<&str, usize> = HashMap::new();
+    let mut index_by_identifier: FxHashMap<&str, usize> = FxHashMap::default();
     let mut index_hashes: Vec<(i32, i32)> = Vec::new();
     let mut primary: i32 = 5381;
     let mut secondary: i32 = 52_711;
@@ -1344,7 +1346,7 @@ fn select_maximal_duplicates(
         .filter(|group| group.len() >= 2)
         .collect();
     // Greedy order ranks by total coverage (region size × copies).
-    let group_size_by_fingerprint: HashMap<std::rc::Rc<str>, usize> = groups
+    let group_size_by_fingerprint: FxHashMap<std::rc::Rc<str>, usize> = groups
         .iter()
         .map(|group| {
             (
@@ -1925,7 +1927,7 @@ fn collect_near_miss_groups(
             // Rebuild the component as ONE group with one coalesced occurrence per member block:
             // the fragments every node of a block overlaps are collected together, since a block's
             // cores are parts of one copy.
-            let mut consumed: HashSet<(usize, usize)> = HashSet::new();
+            let mut consumed: FxHashSet<(usize, usize)> = FxHashSet::default();
             let mut merged: Vec<CountedOccurrence> = Vec::new();
             let mut unanchored_nodes: Vec<usize> = Vec::new();
             let mut nodes_by_block: IndexMap<usize, Vec<usize>> = IndexMap::new();
@@ -1974,7 +1976,7 @@ fn collect_near_miss_groups(
                     (occurrence.start_token_index, occurrence.end_token_index)
                 });
                 let mut copy_parts: Vec<CountedOccurrence> = Vec::new();
-                let mut copy_groups: HashSet<usize> = HashSet::new();
+                let mut copy_groups: FxHashSet<usize> = FxHashSet::default();
                 for (occurrence, group_index) in fragments {
                     if copy_groups.contains(&group_index) {
                         merged.push(coalesce_occurrences(std::mem::take(&mut copy_parts)));
@@ -2156,8 +2158,8 @@ fn merge_overlapping_cores(cores: &[(usize, usize)]) -> Vec<(usize, usize)> {
 /// Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
 /// other files the process measured before it.
 fn to_symbol_stream(tokens: &[Token<'_>]) -> (Vec<i32>, Vec<bool>) {
-    let mut symbol_by_token_hashes: HashMap<(i32, i32, i32, i32), i32> = HashMap::new();
-    let mut id_by_identifier: HashMap<&str, i32> = HashMap::new();
+    let mut symbol_by_token_hashes: FxHashMap<(i32, i32, i32, i32), i32> = FxHashMap::default();
+    let mut id_by_identifier: FxHashMap<&str, i32> = FxHashMap::default();
     tokens
         .iter()
         .map(|token| {
@@ -2222,7 +2224,7 @@ fn for_each_candidate_pair(
 ) {
     let mut order: Vec<usize> = (0..blocks.len()).collect();
     order.sort_by_key(|&index| blocks[index].len());
-    let mut postings: HashMap<i32, Vec<usize>> = HashMap::new();
+    let mut postings: FxHashMap<i32, Vec<usize>> = FxHashMap::default();
     let mut shared_counts = vec![0usize; blocks.len()];
     let mut touched: Vec<usize> = Vec::new();
     for right in order {
@@ -2284,13 +2286,13 @@ fn count_redundant_fragments(group: &[CountedOccurrence]) -> usize {
 
 fn summarize_duplicates(
     groups: &[Vec<CountedOccurrence>],
-    code_line_numbers: &HashSet<usize>,
+    code_line_numbers: &FxHashSet<usize>,
     tokens: &[Token<'_>],
 ) -> DuplicationMetrics {
     let mut duplicate_block_count = 0;
     let mut max_duplicate_block_size = 0;
     let mut duplicate_block_groups: Vec<Vec<DuplicateBlockOccurrence>> = Vec::new();
-    let mut duplicated_lines: HashSet<usize> = HashSet::new();
+    let mut duplicated_lines: FxHashSet<usize> = FxHashSet::default();
     for group in groups {
         duplicate_block_count += count_redundant_fragments(group);
         for occurrence in group {

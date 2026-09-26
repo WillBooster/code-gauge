@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
-use crate::util::{all_children, find_children_by_field_name};
+use crate::tree_index::NodeExt;
+use crate::util::find_children_by_field_name;
 
 pub const COMMENT_NODE_TYPES: &[&str] = &[
     "comment",
@@ -56,54 +57,39 @@ const BODYLESS_NCSS_SPECIFIER_TYPES: &[&str] = &[
     "class_specifier",
 ];
 
-/// Counts non-commenting source statements (NCSS) in the subtree, PMD-style: one per declaration,
+/// A node's own non-commenting source statement (NCSS) count, PMD-style: one per declaration,
 /// statement, and clause (`else`, `case`/`default` label, `catch`, `finally`, try-with-resources
-/// resource); `try` itself, braces, blank lines, and comments count 0.
-pub fn count_ncss(
-    node: Node<'_>,
-    countable: &HashSet<&'static str>,
-    containers: &HashSet<&'static str>,
-) -> u64 {
-    fn visit(
-        current: Node<'_>,
-        countable: &HashSet<&'static str>,
-        containers: &HashSet<&'static str>,
-        count: &mut u64,
-    ) {
-        *count += ncss_contribution(current, countable, containers);
-        for child in all_children(current) {
-            visit(child, countable, containers, count);
-        }
-    }
-
-    let mut count = 0;
-    visit(node, countable, containers, &mut count);
-    count
-}
-
+/// resource); `try` itself, braces, blank lines, and comments count 0. `parent` is the node's
+/// `parent_node()`, looked up once by the caller and shared by every check.
 pub fn ncss_contribution(
     node: Node<'_>,
-    countable: &HashSet<&'static str>,
-    containers: &HashSet<&'static str>,
+    parent: Option<Node<'_>>,
+    countable: &FxHashSet<&'static str>,
+    containers: &FxHashSet<&'static str>,
 ) -> u64 {
-    if !node.is_named() || COMMENT_NODE_TYPES.contains(&node.kind()) || is_for_header_node(node) {
+    if !node.is_named()
+        || COMMENT_NODE_TYPES.contains(&node.kind_name())
+        || is_for_header_node(node, parent)
+    {
         return 0;
     }
     // A Kotlin accessor without a body (`private set`) only changes visibility and declares
     // nothing of its own; it parses as a sibling of its property and must not count positionally.
-    if (node.kind() == "getter" || node.kind() == "setter")
+    if (node.kind_name() == "getter" || node.kind_name() == "setter")
         && !crate::functions::is_implemented_function(node)
     {
         return 0;
     }
 
     let mut contribution = 0;
-    let positional = is_in_container_position(node, containers)
-        && !containers.contains(node.kind())
-        && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind())
+    let positional = is_in_container_position(parent, containers)
+        && !containers.contains(node.kind_name())
+        && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind_name())
         && !crate::util::is_kotlin_try_expression(node)
-        && !(node.kind() == "label" && node.child_count() == 0);
-    if (counts_through_node_type(node, countable) || positional || counts_contextually(node))
+        && !(node.kind_name() == "label" && node.child_count() == 0);
+    if (counts_through_node_type(node, countable)
+        || positional
+        || counts_contextually(node, parent))
         && !is_declaration_wrapper(node, countable)
     {
         contribution += 1;
@@ -112,7 +98,7 @@ pub fn ncss_contribution(
     // A bare else branch (Java/Go `alternative:` without an else-clause wrapper, or Kotlin's bare
     // `else` keyword) counts 1 like the `else` keyword does in PMD; an `else if` chain charges the
     // nested if separately on top.
-    if IF_NODE_TYPES.contains(&node.kind()) {
+    if IF_NODE_TYPES.contains(&node.kind_name()) {
         contribution += count_bare_alternatives(node)
             + u64::from(crate::util::kotlin_else_body(node).is_some());
     }
@@ -120,16 +106,16 @@ pub fn ncss_contribution(
     contribution
 }
 
-fn counts_through_node_type(node: Node<'_>, countable: &HashSet<&'static str>) -> bool {
-    if !countable.contains(node.kind()) {
+fn counts_through_node_type(node: Node<'_>, countable: &FxHashSet<&'static str>) -> bool {
+    if !countable.contains(node.kind_name()) {
         return false;
     }
-    if BODYLESS_NCSS_SPECIFIER_TYPES.contains(&node.kind()) {
+    if BODYLESS_NCSS_SPECIFIER_TYPES.contains(&node.kind_name()) {
         return node.child_by_field_name("body").is_some();
     }
     // A try-with-resources `resource` counts only when it declares a variable; `try (r)` reuses an
     // existing one and adds no statement (matching PMD).
-    if node.kind() == "resource" {
+    if node.kind_name() == "resource" {
         return node.child_by_field_name("name").is_some();
     }
     true
@@ -137,28 +123,31 @@ fn counts_through_node_type(node: Node<'_>, countable: &HashSet<&'static str>) -
 
 /// Direct container children count positionally; Ruby's `(foo; bar)` statement parentheses are
 /// transparent, so their children count when the parentheses themselves sit in a container.
-fn is_in_container_position(node: Node<'_>, containers: &HashSet<&'static str>) -> bool {
-    let mut ancestor = node.parent();
+fn is_in_container_position(
+    parent: Option<Node<'_>>,
+    containers: &FxHashSet<&'static str>,
+) -> bool {
+    let mut ancestor = parent;
     while let Some(current) = ancestor {
-        if current.kind() != "parenthesized_statements" {
-            return containers.contains(current.kind());
+        if current.kind_name() != "parenthesized_statements" {
+            return containers.contains(current.kind_name());
         }
-        ancestor = current.parent();
+        ancestor = current.parent_node();
     }
     false
 }
 
 /// `export const x = 1` nests a countable declaration inside `export_statement`; only the inner
 /// declaration counts, mirroring how PMD counts one statement per declared entity.
-fn is_declaration_wrapper(node: Node<'_>, countable: &HashSet<&'static str>) -> bool {
-    if node.kind() != "export_statement" {
+fn is_declaration_wrapper(node: Node<'_>, countable: &FxHashSet<&'static str>) -> bool {
+    if node.kind_name() != "export_statement" {
         return false;
     }
     node.child_by_field_name("declaration")
         .is_some_and(|declaration| {
-            countable.contains(declaration.kind())
-                || declaration.kind() == "internal_module"
-                || declaration.kind() == "ambient_declaration"
+            countable.contains(declaration.kind_name())
+                || declaration.kind_name() == "internal_module"
+                || declaration.kind_name() == "ambient_declaration"
         })
 }
 
@@ -169,21 +158,21 @@ const FOR_HEADER_FIELD_NAMES: &[&str] =
 /// statement, which already counts; PMD does not count them separately. JavaScript parses the
 /// condition as an `expression_statement` and Go parses the update as an `inc_statement`, so all
 /// header fields must be excluded, not just the initializer.
-fn is_for_header_node(node: Node<'_>) -> bool {
-    let Some(parent) = node.parent() else {
+fn is_for_header_node(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
+    let Some(parent) = parent else {
         return false;
     };
     // C++20 range-for initializers nest one level deeper: for_range_loop > init_statement > node.
-    if parent.kind() == "init_statement"
+    if parent.kind_name() == "init_statement"
         && parent
-            .parent()
-            .is_some_and(|grandparent| grandparent.kind() == "for_range_loop")
+            .parent_node()
+            .is_some_and(|grandparent| grandparent.kind_name() == "for_range_loop")
     {
         return true;
     }
-    if parent.kind() != "for_statement"
-        && parent.kind() != "for_clause"
-        && parent.kind() != "for_range_loop"
+    if parent.kind_name() != "for_statement"
+        && parent.kind_name() != "for_clause"
+        && parent.kind_name() != "for_range_loop"
     {
         return false;
     }
@@ -195,52 +184,54 @@ fn is_for_header_node(node: Node<'_>) -> bool {
 }
 
 /// Statements only countable by their position: constructs without a dedicated statement node.
-fn counts_contextually(node: Node<'_>) -> bool {
-    let parent_kind = node.parent().map(|parent| parent.kind());
+fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
+    let parent_kind = parent.map(|parent| parent.kind_name());
     // A Java instance initializer is a bare `block` in the class body; PMD counts it like the
     // `static_initializer` declaration it parallels.
-    if node.kind() == "block" && parent_kind == Some("class_body") {
+    if node.kind_name() == "block" && parent_kind == Some("class_body") {
         return true;
     }
     // TypeScript interface members (see INTERFACE_MEMBER_NODE_TYPES).
-    if INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind()) && parent_kind == Some("interface_body") {
+    if INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind_name())
+        && parent_kind == Some("interface_body")
+    {
         return true;
     }
     // A braceless Rust match-arm body (`1 => foo()`) has no expression_statement wrapper; count the
     // value expression so braced and unbraced arms measure alike.
     if parent_kind == Some("match_arm")
-        && node.kind() != "block"
-        && is_field_of_parent(node, "value")
+        && node.kind_name() != "block"
+        && is_field_of_parent(node, parent, "value")
     {
         return true;
     }
     // A TypeScript class-body method overload signature declares a member like its interface twin.
-    if node.kind() == "method_signature" && parent_kind == Some("class_body") {
+    if node.kind_name() == "method_signature" && parent_kind == Some("class_body") {
         return true;
     }
     // An ambient `declare namespace M { ... }` is a bare `internal_module`; the non-ambient
     // `namespace N { ... }` is wrapped in an `expression_statement`, which already counts.
-    if node.kind() == "internal_module" && parent_kind != Some("expression_statement") {
+    if node.kind_name() == "internal_module" && parent_kind != Some("expression_statement") {
         return true;
     }
     // A Ruby endless method (`def f(x) = expr`) stores its single-statement body directly in the
     // `body` field instead of a positional `body_statement` container.
     if (parent_kind == Some("method") || parent_kind == Some("singleton_method"))
-        && node.kind() != "body_statement"
-        && is_field_of_parent(node, "body")
+        && node.kind_name() != "body_statement"
+        && is_field_of_parent(node, parent, "body")
     {
         return true;
     }
     // C++ `friend class X;` declares on its own; `friend void g() { ... }` merely wraps a counted
     // definition.
-    if node.kind() == "friend_declaration" {
-        return !crate::util::named_children(node)
-            .iter()
-            .any(|child| child.kind() == "declaration" || child.kind() == "function_definition");
+    if node.kind_name() == "friend_declaration" {
+        return !crate::util::named_children(node).iter().any(|child| {
+            child.kind_name() == "declaration" || child.kind_name() == "function_definition"
+        });
     }
     // A Rust item-position macro invocation (`foo! {}` at module level) has no expression_statement
     // wrapper; the semicolon form does and already counts through it.
-    if node.kind() == "macro_invocation"
+    if node.kind_name() == "macro_invocation"
         && (parent_kind == Some("source_file") || parent_kind == Some("declaration_list"))
     {
         return true;
@@ -248,29 +239,33 @@ fn counts_contextually(node: Node<'_>) -> bool {
     // Go struct fields and interface members count like other languages' member declarations, but
     // only inside a named type declaration; inline anonymous types (`var x struct{ ... }`,
     // `func f(h interface{ ... })`) are part of one declaration.
-    if node.kind() == "field_declaration" && parent_kind == Some("field_declaration_list") {
+    if node.kind_name() == "field_declaration" && parent_kind == Some("field_declaration_list") {
         return is_go_declared_type_body(
-            node.parent().and_then(|parent| parent.parent()),
+            parent.and_then(|parent| parent.parent_node()),
             "struct_type",
         );
     }
-    if node.kind() == "method_elem" || node.kind() == "method_spec" || node.kind() == "type_elem" {
-        return is_go_declared_type_body(node.parent(), "interface_type");
+    if node.kind_name() == "method_elem"
+        || node.kind_name() == "method_spec"
+        || node.kind_name() == "type_elem"
+    {
+        return is_go_declared_type_body(parent, "interface_type");
     }
     false
 }
 
 fn is_go_declared_type_body(type_node: Option<Node<'_>>, expected_kind: &str) -> bool {
-    let Some(type_node) = type_node.filter(|type_node| type_node.kind() == expected_kind) else {
+    let Some(type_node) = type_node.filter(|type_node| type_node.kind_name() == expected_kind)
+    else {
         return false;
     };
-    type_node
-        .parent()
-        .is_some_and(|parent| parent.kind() == "type_spec" || parent.kind() == "type_alias")
+    type_node.parent_node().is_some_and(|parent| {
+        parent.kind_name() == "type_spec" || parent.kind_name() == "type_alias"
+    })
 }
 
-fn is_field_of_parent(node: Node<'_>, field_name: &str) -> bool {
-    let Some(parent) = node.parent() else {
+fn is_field_of_parent(node: Node<'_>, parent: Option<Node<'_>>, field_name: &str) -> bool {
+    let Some(parent) = parent else {
         return false;
     };
     find_children_by_field_name(parent, field_name)
@@ -283,6 +278,6 @@ fn count_bare_alternatives(node: Node<'_>) -> u64 {
     // comment between an `elif_clause` and `else_clause` must not be miscounted as a bare branch.
     find_children_by_field_name(node, "alternative")
         .iter()
-        .filter(|child| !child.is_extra() && !ELSE_CLAUSE_NODE_TYPES.contains(&child.kind()))
+        .filter(|child| !child.is_extra() && !ELSE_CLAUSE_NODE_TYPES.contains(&child.kind_name()))
         .count() as u64
 }
