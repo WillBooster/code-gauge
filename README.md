@@ -281,4 +281,4 @@ runtime's stack limits nesting to a few thousand syntax-tree levels (the native 
 
 In this repository, build the WebAssembly module with `bun run build-wasm`. It downloads a
 [wasi-sdk](https://github.com/WebAssembly/wasi-sdk) release for the grammars' C sources unless
-`WASI_SDK_PATH` points to one.
+`WASI_SDK_PATH` points to an installation of the same release.
