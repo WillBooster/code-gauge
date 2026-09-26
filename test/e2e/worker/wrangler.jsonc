@@ -1,0 +1,7 @@
+{
+  "name": "code-gauge-test",
+  "main": "index.js",
+  "compatibility_date": "2026-09-01",
+  // Node.js compatibility is on by default for this date; the package must run without it.
+  "compatibility_flags": ["no_nodejs_compat", "no_nodejs_compat_v2"],
+}

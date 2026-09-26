@@ -1,4 +1,3 @@
-import path from 'node:path';
 import type { LanguageDefinition, LanguageName, SupportedLanguage } from './types.js';
 
 /**
@@ -72,10 +71,24 @@ const languageByExtension = new Map<string, SupportedLanguage>([
 
 /** Detects the language of a source file from its extension, or `undefined` when unsupported. */
 export function detectLanguage(filePath: string): SupportedLanguage | undefined {
-  const extension = path.extname(filePath);
+  const extension = extname(filePath);
   // GCC treats an uppercase `.C` as C++; lowercasing first would misparse it with the C grammar.
   if (extension === '.C') {
     return 'cpp';
   }
   return languageByExtension.get(extension.toLowerCase());
+}
+
+/**
+ * path.extname() without node:path, which runtimes such as Cloudflare Workers lack. Like Node.js,
+ * backslashes separate paths only on Windows; elsewhere they are ordinary file-name characters.
+ */
+function extname(filePath: string): string {
+  const separatorIndex = Math.max(
+    filePath.lastIndexOf('/'),
+    globalThis.process?.platform === 'win32' ? filePath.lastIndexOf('\\') : -1
+  );
+  const baseName = filePath.slice(separatorIndex + 1);
+  const dotIndex = baseName.lastIndexOf('.');
+  return dotIndex > 0 ? baseName.slice(dotIndex) : '';
 }
