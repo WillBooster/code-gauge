@@ -1919,33 +1919,57 @@ fn collect_near_miss_groups(
             })
             .collect();
         if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
-            // Rebuild the component as ONE group with one coalesced occurrence per member block.
+            // Rebuild the component as ONE group with one coalesced occurrence per member block:
+            // the fragments every node of a block overlaps are collected together, since a block's
+            // cores are parts of one copy.
             let mut consumed: HashSet<(usize, usize)> = HashSet::new();
             let mut merged: Vec<CountedOccurrence> = Vec::new();
             let mut unanchored_nodes: Vec<usize> = Vec::new();
+            let mut nodes_by_block: IndexMap<usize, Vec<usize>> = IndexMap::new();
             for &member_index in members {
-                let (range_start, range_end) = node_range(member_index);
+                nodes_by_block
+                    .entry(node_blocks[member_index])
+                    .or_default()
+                    .push(member_index);
+            }
+            for block_nodes in nodes_by_block.values() {
                 // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
                 // groups belong to the same copy. Consecutive position-order slices keep the
                 // coalesced spans disjoint.
                 let mut fragments: Vec<(CountedOccurrence, usize)> = Vec::new();
-                for &group_index in &fully_clustered {
-                    for (occurrence_index, occurrence) in
-                        reported_groups[group_index].iter().enumerate()
-                    {
-                        if !consumed.contains(&(group_index, occurrence_index))
-                            && occurrence.start_token_index < range_end
-                            && range_start < occurrence.end_token_index
+                let mut plain_nodes: Vec<usize> = Vec::new();
+                for &node in block_nodes {
+                    let (range_start, range_end) = node_range(node);
+                    let fragment_count = fragments.len();
+                    for &group_index in &fully_clustered {
+                        for (occurrence_index, occurrence) in
+                            reported_groups[group_index].iter().enumerate()
                         {
-                            consumed.insert((group_index, occurrence_index));
-                            fragments.push((occurrence.clone(), group_index));
+                            if !consumed.contains(&(group_index, occurrence_index))
+                                && occurrence.start_token_index < range_end
+                                && range_start < occurrence.end_token_index
+                            {
+                                consumed.insert((group_index, occurrence_index));
+                                fragments.push((occurrence.clone(), group_index));
+                            }
                         }
+                    }
+                    if fragments.len() == fragment_count && touched_groups_of(node).is_empty() {
+                        plain_nodes.push(node);
+                    }
+                }
+                if fragments.is_empty() {
+                    unanchored_nodes.extend(plain_nodes);
+                } else {
+                    // An untouched core of a block that also holds fragments is part of the same
+                    // copy; a group index no reported group uses keeps it in that copy.
+                    for occurrence in to_occurrences(&plain_nodes) {
+                        fragments.push((occurrence, usize::MAX));
                     }
                 }
                 fragments.sort_by_key(|(occurrence, _)| {
                     (occurrence.start_token_index, occurrence.end_token_index)
                 });
-                let had_fragments = !fragments.is_empty();
                 let mut copy_parts: Vec<CountedOccurrence> = Vec::new();
                 let mut copy_groups: HashSet<usize> = HashSet::new();
                 for (occurrence, group_index) in fragments {
@@ -1958,9 +1982,6 @@ fn collect_near_miss_groups(
                 }
                 if !copy_parts.is_empty() {
                     merged.push(coalesce_occurrences(copy_parts));
-                }
-                if !had_fragments && touched_groups_of(member_index).is_empty() {
-                    unanchored_nodes.push(member_index);
                 }
             }
             merged.extend(to_occurrences(&unanchored_nodes));
