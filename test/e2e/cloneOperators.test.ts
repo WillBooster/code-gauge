@@ -174,6 +174,34 @@ describe('clone operators: recall per edit type', () => {
     }
   }
 
+  it('groups each embedded copy with its own seed when one function embeds two seeds', () => {
+    const [first, second] = seeds;
+    if (!first || !second) {
+      throw new Error('two seeds are required');
+    }
+    const combined = renderFunction('combined', `${first.parameters}, ${second.parameters}, logger`, [
+      ...scatterEdits(first.statements.slice(0, -1)),
+      ...wrapperPrologue.slice(1),
+      ...scatterEdits(second.statements.slice(0, -1)),
+      'return { subtotal, tax, accept, language, timeout };',
+    ]);
+    const { groups } = measureCrossFileDuplication(
+      Object.entries({
+        'combined.js': combined,
+        'first.js': renderFunction(first.name, first.parameters, first.statements),
+        'second.js': renderFunction(second.name, second.parameters, second.statements),
+      }).map(([file, code]) => ({ file, ...collectCrossFileDuplicationFileData(code, { language: 'javascript' }) }))
+    );
+
+    expect(groups.map((group) => group.files.toSorted())).toEqual(
+      expect.arrayContaining([
+        ['combined.js', 'first.js'],
+        ['combined.js', 'second.js'],
+      ])
+    );
+    expect(groups.some((group) => group.files.includes('first.js') && group.files.includes('second.js'))).toBe(false);
+  });
+
   it('does not pair a same-shape function over different APIs and data', () => {
     const original = renderFunction(seeds[0]?.name ?? '', seeds[0]?.parameters ?? '', seeds[0]?.statements ?? []);
 

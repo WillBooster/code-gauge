@@ -1659,9 +1659,9 @@ fn merge_groups(
 /// Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
 /// unreported: NIL-style n-gram filtration, then pair verification (near_miss::Matcher), then
 /// transitive clustering of verified pairs (crossFileNearMiss.ts applies the same model across
-/// files). A block that matched only locally is reported as its largest core (overlapping cores
-/// merged), so code no verified pair matched, such as the gap between cores matching different
-/// partners, never counts as duplicated.
+/// files). A block that matched only locally is reported as its matched cores (overlapping cores
+/// merged), each clustered with its own partners, so code no verified pair matched never counts
+/// as duplicated.
 fn collect_near_miss_groups(
     source: &TokenizedSource<'_>,
     settings: &DuplicationSettings,
@@ -1715,7 +1715,73 @@ fn collect_near_miss_groups(
         settings.min_similarity_percent,
     );
 
-    let mut parent: Vec<usize> = (0..comparable.len()).collect();
+    let mut edges: Vec<(usize, Option<(usize, usize)>, usize, Option<(usize, usize)>)> = Vec::new();
+    for_each_candidate_pair(
+        &blocks,
+        settings.min_similarity_percent,
+        |left_index, right_index| {
+            // Two already-reported blocks have nothing new to contribute to each other.
+            if !touched_groups_by_block[left_index].is_empty()
+                && !touched_groups_by_block[right_index].is_empty()
+            {
+                return;
+            }
+            match matcher.verify(&blocks[left_index], &blocks[right_index]) {
+                None => {}
+                Some(PairMatch::Whole) => edges.push((left_index, None, right_index, None)),
+                Some(PairMatch::Local(left_core, right_core)) => {
+                    edges.push((left_index, Some(left_core), right_index, Some(right_core)))
+                }
+            }
+        },
+    );
+
+    // Clustering runs over (block, core) nodes: a block that matched some partner whole is one
+    // node, and otherwise each union of its overlapping local cores is its own node, so disjoint
+    // cores matched with different partners fall into separate groups.
+    let mut matched_whole = vec![false; comparable.len()];
+    let mut local_cores: Vec<Vec<(usize, usize)>> = vec![Vec::new(); comparable.len()];
+    for &(left_index, left_core, right_index, right_core) in &edges {
+        for (index, core) in [(left_index, left_core), (right_index, right_core)] {
+            match core {
+                Some(core) => local_cores[index].push(core),
+                None => matched_whole[index] = true,
+            }
+        }
+    }
+    let mut node_blocks: Vec<usize> = Vec::new();
+    let mut node_spans: Vec<Option<(usize, usize)>> = Vec::new();
+    let mut first_node_by_block: Vec<usize> = Vec::with_capacity(comparable.len());
+    for index in 0..comparable.len() {
+        first_node_by_block.push(node_blocks.len());
+        let cores = if matched_whole[index] {
+            Vec::new()
+        } else {
+            merge_overlapping_cores(&local_cores[index])
+        };
+        if cores.is_empty() {
+            node_blocks.push(index);
+            node_spans.push(None);
+        }
+        for core in cores {
+            node_blocks.push(index);
+            node_spans.push(Some(core));
+        }
+    }
+    let node_of = |index: usize, core: Option<(usize, usize)>| {
+        let first = first_node_by_block[index];
+        match core {
+            Some(core) if !matched_whole[index] => (first..node_blocks.len())
+                .take_while(|&node| node_blocks[node] == index)
+                .find(|&node| {
+                    node_spans[node].is_some_and(|span| span.0 <= core.0 && core.1 <= span.1)
+                })
+                .expect("every local core lies in one of its block's merged cores"),
+            _ => first,
+        }
+    };
+
+    let mut parent: Vec<usize> = (0..node_blocks.len()).collect();
     fn find(parent: &mut [usize], mut index: usize) -> usize {
         let mut root = index;
         while parent[root] != root {
@@ -1728,59 +1794,27 @@ fn collect_near_miss_groups(
         }
         root
     }
-    let mut matched_whole = vec![false; comparable.len()];
-    let mut local_cores: Vec<Vec<(usize, usize)>> = vec![Vec::new(); comparable.len()];
-    for ((left_index, right_index), shared) in count_shared_ngrams(&blocks) {
-        let left = &blocks[left_index];
-        let right = &blocks[right_index];
-        // Two already-reported blocks have nothing new to contribute to each other.
-        if !touched_groups_by_block[left_index].is_empty()
-            && !touched_groups_by_block[right_index].is_empty()
-        {
-            continue;
-        }
-        if shared * 100 < FILTRATION_PERCENT * left.ngrams.len().min(right.ngrams.len())
-            || (left.len().max(right.len()) > MAX_LENGTH_RATIO * left.len().min(right.len())
-                && left.len().min(right.len()) * 100
-                    < settings.min_similarity_percent * left.len().max(right.len()))
-        {
-            continue;
-        }
-        match matcher.verify(left, right) {
-            None => continue,
-            Some(PairMatch::Whole) => {
-                matched_whole[left_index] = true;
-                matched_whole[right_index] = true;
-            }
-            Some(PairMatch::Local(left_core, right_core)) => {
-                for (index, core) in [(left_index, left_core), (right_index, right_core)] {
-                    local_cores[index].push(core);
-                }
-            }
-        }
-        let left_root = find(&mut parent, left_index);
-        let right_root = find(&mut parent, right_index);
+    for &(left_index, left_core, right_index, right_core) in &edges {
+        let left_root = find(&mut parent, node_of(left_index, left_core));
+        let right_root = find(&mut parent, node_of(right_index, right_core));
         parent[left_root.max(right_root)] = left_root.min(right_root);
     }
 
     let mut members_by_root: IndexMap<usize, Vec<usize>> = IndexMap::new();
-    for index in 0..comparable.len() {
-        let root = find(&mut parent, index);
-        members_by_root.entry(root).or_default().push(index);
+    for node in 0..node_blocks.len() {
+        let root = find(&mut parent, node);
+        members_by_root.entry(root).or_default().push(node);
     }
-    let to_occurrence = |index: usize| {
-        let range = comparable[index];
-        let core = (!matched_whole[index])
-            .then(|| largest_merged_core(&local_cores[index]))
-            .flatten();
-        let (start, end, start_line, end_line) = match core {
+    let to_occurrence = |node: usize| {
+        let range = comparable[node_blocks[node]];
+        let (start, end, start_line, end_line) = match node_spans[node] {
             Some((start, end)) => (
                 start,
                 end,
                 tokens[start].start_row + 1,
                 tokens[end - 1].end_row + 1,
             ),
-            _ => (
+            None => (
                 range.start_token_index,
                 range.end_token_index,
                 range.start_line,
@@ -1797,6 +1831,7 @@ fn collect_near_miss_groups(
             end_line,
         }
     };
+    let touched_groups_of = |node: usize| &touched_groups_by_block[node_blocks[node]];
     let mut groups: Vec<Vec<CountedOccurrence>> = Vec::new();
     for members in members_by_root.values() {
         if members.len() < 2 {
@@ -1805,12 +1840,12 @@ fn collect_near_miss_groups(
         let uncovered: Vec<usize> = members
             .iter()
             .copied()
-            .filter(|&index| touched_groups_by_block[index].is_empty())
+            .filter(|&index| touched_groups_of(index).is_empty())
             .collect();
         let covered: Vec<usize> = members
             .iter()
             .copied()
-            .filter(|&index| !touched_groups_by_block[index].is_empty())
+            .filter(|&index| !touched_groups_of(index).is_empty())
             .collect();
         if covered.is_empty() {
             groups.push(members.iter().map(|&index| to_occurrence(index)).collect());
@@ -1824,7 +1859,7 @@ fn collect_near_miss_groups(
         // reports content the cluster does not share.
         let overlaps_member = |occurrence: &CountedOccurrence| {
             members.iter().any(|&index| {
-                let range = comparable[index];
+                let range = comparable[node_blocks[index]];
                 occurrence.start_token_index < range.end_token_index
                     && range.start_token_index < occurrence.end_token_index
             })
@@ -1832,7 +1867,7 @@ fn collect_near_miss_groups(
         // Ascending by construction: BTreeSet iteration is sorted and filter preserves order.
         let fully_clustered: Vec<usize> = covered
             .iter()
-            .flat_map(|&index| touched_groups_by_block[index].iter().copied())
+            .flat_map(|&index| touched_groups_of(index).iter().copied())
             .collect::<std::collections::BTreeSet<usize>>()
             .into_iter()
             .filter(|&group_index| {
@@ -1845,7 +1880,7 @@ fn collect_near_miss_groups(
             let mut consumed: HashSet<(usize, usize)> = HashSet::new();
             let mut merged: Vec<CountedOccurrence> = Vec::new();
             for &member_index in members {
-                let range = comparable[member_index];
+                let range = comparable[node_blocks[member_index]];
                 // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
                 // groups belong to the same copy. Consecutive position-order slices keep the
                 // coalesced spans disjoint.
@@ -1880,7 +1915,7 @@ fn collect_near_miss_groups(
                 if !copy_parts.is_empty() {
                     merged.push(coalesce_occurrences(copy_parts));
                 }
-                if !had_fragments && touched_groups_by_block[member_index].is_empty() {
+                if !had_fragments && touched_groups_of(member_index).is_empty() {
                     merged.push(to_occurrence(member_index));
                 }
             }
@@ -2034,8 +2069,8 @@ fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrenc
     }
 }
 
-/// The longest union of overlapping cores; the earliest wins ties.
-fn largest_merged_core(cores: &[(usize, usize)]) -> Option<(usize, usize)> {
+/// The unions of overlapping cores, in position order.
+fn merge_overlapping_cores(cores: &[(usize, usize)]) -> Vec<(usize, usize)> {
     let mut sorted = cores.to_vec();
     sorted.sort_unstable();
     let mut merged: Vec<(usize, usize)> = Vec::new();
@@ -2045,13 +2080,7 @@ fn largest_merged_core(cores: &[(usize, usize)]) -> Option<(usize, usize)> {
             _ => merged.push((start, end)),
         }
     }
-    merged.into_iter().reduce(|largest, core| {
-        if core.1 - core.0 > largest.1 - largest.0 {
-            core
-        } else {
-            largest
-        }
-    })
+    merged
 }
 
 /// The file's tokens as a near-miss symbol stream: identifiers as -(file-level id + 1), every
@@ -2114,24 +2143,51 @@ fn top_level_statement_finder(
     }
 }
 
-/// Shared distinct-n-gram counts per block pair (left < right).
-fn count_shared_ngrams(blocks: &[Block]) -> HashMap<(usize, usize), usize> {
-    let mut blocks_by_ngram: HashMap<i32, Vec<usize>> = HashMap::new();
-    for (block_index, block) in blocks.iter().enumerate() {
-        for &ngram in &block.ngrams {
-            blocks_by_ngram.entry(ngram).or_default().push(block_index);
+/// Visits every block pair sharing at least FILTRATION_PERCENT of the smaller block's distinct
+/// n-grams, except pairs whose length ratio rules out both whole-block similarity and
+/// MAX_LENGTH_RATIO; the same scan as forEachCandidatePair in crossFileNearMiss.ts. Blocks are
+/// visited in ascending length, so each posting list is scanned backwards only while its blocks are
+/// long enough, and shared counts accumulate in a dense counter instead of a pair map.
+fn for_each_candidate_pair(
+    blocks: &[Block],
+    min_similarity_percent: usize,
+    mut visit: impl FnMut(usize, usize),
+) {
+    let mut order: Vec<usize> = (0..blocks.len()).collect();
+    order.sort_by_key(|&index| blocks[index].len());
+    let mut postings: HashMap<i32, Vec<usize>> = HashMap::new();
+    let mut shared_counts = vec![0usize; blocks.len()];
+    let mut touched: Vec<usize> = Vec::new();
+    for right in order {
+        let length = blocks[right].len();
+        let min_left_length = length
+            .div_ceil(MAX_LENGTH_RATIO)
+            .min((min_similarity_percent * length).div_ceil(100));
+        for &ngram in &blocks[right].ngrams {
+            let posting = postings.entry(ngram).or_default();
+            for &left in posting.iter().rev() {
+                if blocks[left].len() < min_left_length {
+                    break;
+                }
+                if shared_counts[left] == 0 {
+                    touched.push(left);
+                }
+                shared_counts[left] += 1;
+            }
+            posting.push(right);
         }
-    }
-    let mut shared_counts: HashMap<(usize, usize), usize> = HashMap::new();
-    for indexes in blocks_by_ngram.values() {
-        for (position, &left_index) in indexes.iter().enumerate() {
-            // Bucket indices are appended in ascending block order, so left < right already.
-            for &right_index in &indexes[position + 1..] {
-                *shared_counts.entry((left_index, right_index)).or_insert(0) += 1;
+        // Ascending so the visit order does not depend on the n-gram set's iteration order.
+        touched.sort_unstable();
+        for &left in &touched {
+            let shared = std::mem::take(&mut shared_counts[left]);
+            if shared * 100
+                >= FILTRATION_PERCENT * blocks[left].ngrams.len().min(blocks[right].ngrams.len())
+            {
+                visit(left, right);
             }
         }
+        touched.clear();
     }
-    shared_counts
 }
 
 /// Redundant copies one group adds to duplicate_block_count; a faithful port of

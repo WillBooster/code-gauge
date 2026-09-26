@@ -7,8 +7,9 @@ const NGRAM_SIZE: usize = 5;
 /// crossFileNearMiss.ts.
 pub(crate) const FILTRATION_PERCENT: usize = 10;
 /// Pairs whose longer block exceeds this multiple of the shorter are compared only when whole-block
-/// similarity still allows their ratio (below a minSimilarityPercent of 34): the bound keeps
-/// local-match candidate counting near-linear. Shared with crossFileNearMiss.ts.
+/// similarity still allows their ratio (below a minSimilarityPercent of 34). The candidate scan stops
+/// at this floor while walking length-ordered postings, so pairs of very different lengths are
+/// neither counted nor verified. Shared with crossFileNearMiss.ts.
 pub(crate) const MAX_LENGTH_RATIO: usize = 3;
 /// Exclusive bound on the information-weighted share of content-bearing tokens (names and literal
 /// values); shared with crossFileNearMiss.ts.
@@ -242,10 +243,8 @@ impl Matcher {
         let (right_start, right_end) = (first.1, last.1 + NGRAM_SIZE);
         let (left_length, right_length) = (left_end - left_start, right_end - right_start);
         let shorter = left_length.min(right_length);
-        let whole = left_length == left.len() && right_length == right.len();
         let required = self.min_similarity_percent * left_length.max(right_length);
-        if whole
-            || shorter < self.min_tokens
+        if shorter < self.min_tokens
             || shorter * 100 < required
             || anchored_token_count(segment) * 100 < MIN_ANCHOR_COVERAGE_PERCENT * shorter
             || !self.spans_share_content(

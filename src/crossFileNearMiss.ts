@@ -33,8 +33,9 @@ const ngramSize = 5;
 const filtrationPercent = 10;
 /**
  * Pairs whose longer block exceeds this multiple of the shorter are compared only when whole-block
- * similarity still allows their ratio (below a minSimilarityPercent of 34): the bound keeps
- * local-match candidate counting near-linear.
+ * similarity still allows their ratio (below a minSimilarityPercent of 34). The candidate scan
+ * stops at this floor while walking length-ordered postings, so pairs of very different lengths are
+ * neither counted nor verified; `maxNgramBlockFrequency` is what bounds the scan's total cost.
  */
 const maxLengthRatio = 3;
 /**
@@ -103,8 +104,8 @@ type PairMatch = { kind: 'whole' } | { kind: 'local'; left: [number, number]; ri
  * the content an exact group already reports, and appears in the near-miss group marked
  * `spanCountedElsewhere` so block counting does not count its span twice. Pairs of two anchors are
  * skipped, and a group needs at least one non-anchor block. A block that matched only locally is
- * reported as its largest core (overlapping cores merged), so code no verified pair matched, such
- * as the gap between cores matching different partners, never counts as duplicated.
+ * reported as its matched cores (overlapping cores merged), each clustered with its own partners,
+ * so code no verified pair matched never counts as duplicated.
  */
 export function collectCrossFileNearMissGroups(
   files: NearMissSourceFile[],
@@ -119,7 +120,60 @@ export function collectCrossFileNearMissGroups(
   const matcher = createMatcher(blocks, minTokens, minSimilarityPercent);
   const overlapsReportedSpan = reportedSpansByFile.map(createOverlapTest);
   const anchored = blocks.map(({ fileIndex, range }) => overlapsReportedSpan[fileIndex]?.(range) ?? false);
-  const parent = blocks.map((_, index) => index);
+  const edges: [number, [number, number] | undefined, number, [number, number] | undefined][] = [];
+  forEachCandidatePair(blocks, anchored, minSimilarityPercent, (left, right) => {
+    const leftBlock = blocks[left];
+    const rightBlock = blocks[right];
+    const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
+    if (match) {
+      edges.push(match.kind === 'whole' ? [left, undefined, right, undefined] : [left, match.left, right, match.right]);
+    }
+  });
+
+  // Clustering runs over (block, core) nodes: a block that matched some partner whole is one node,
+  // and otherwise each union of its overlapping local cores is its own node, so disjoint cores
+  // matched with different partners fall into separate groups.
+  const matchedWhole = blocks.map(() => false);
+  const localCores = blocks.map((): [number, number][] => []);
+  for (const [left, leftCore, right, rightCore] of edges) {
+    for (const [index, core] of [
+      [left, leftCore],
+      [right, rightCore],
+    ] as const) {
+      if (core) {
+        localCores[index]?.push(core);
+      } else {
+        matchedWhole[index] = true;
+      }
+    }
+  }
+  const nodes: { blockIndex: number; core: [number, number] | undefined }[] = [];
+  const firstNodeByBlock: number[] = [];
+  for (const blockIndex of blocks.keys()) {
+    firstNodeByBlock.push(nodes.length);
+    const cores = matchedWhole[blockIndex] ? [] : mergeOverlappingCores(localCores[blockIndex] ?? []);
+    if (cores.length === 0) {
+      nodes.push({ blockIndex, core: undefined });
+    }
+    for (const core of cores) {
+      nodes.push({ blockIndex, core });
+    }
+  }
+  const nodeOf = (blockIndex: number, core: [number, number] | undefined): number => {
+    const first = firstNodeByBlock[blockIndex] ?? 0;
+    if (!core || matchedWhole[blockIndex]) {
+      return first;
+    }
+    for (let node = first; nodes[node]?.blockIndex === blockIndex; node += 1) {
+      const span = nodes[node]?.core;
+      if (span && span[0] <= core[0] && core[1] <= span[1]) {
+        return node;
+      }
+    }
+    throw new Error("every local core lies in one of its block's merged cores");
+  };
+
+  const parent = nodes.map((_, index) => index);
   const find = (index: number): number => {
     let root = index;
     while (parent[root] !== root) {
@@ -132,62 +186,38 @@ export function collectCrossFileNearMissGroups(
     }
     return root;
   };
-  const matchedWhole = blocks.map(() => false);
-  const localCores = new Map<number, [number, number][]>();
-  const addCore = (index: number, core: [number, number]): void => {
-    const cores = localCores.get(index);
-    if (cores) {
-      cores.push(core);
-    } else {
-      localCores.set(index, [core]);
-    }
-  };
-  forEachCandidatePair(blocks, anchored, minSimilarityPercent, (left, right) => {
-    const leftBlock = blocks[left];
-    const rightBlock = blocks[right];
-    const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
-    if (!match) {
-      return;
-    }
-    if (match.kind === 'whole') {
-      matchedWhole[left] = true;
-      matchedWhole[right] = true;
-    } else {
-      addCore(left, match.left);
-      addCore(right, match.right);
-    }
-    const leftRoot = find(left);
-    const rightRoot = find(right);
+  for (const [left, leftCore, right, rightCore] of edges) {
+    const leftRoot = find(nodeOf(left, leftCore));
+    const rightRoot = find(nodeOf(right, rightCore));
     parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
-  });
+  }
 
   const membersByRoot = new Map<number, number[]>();
-  for (const index of blocks.keys()) {
-    const root = find(index);
+  for (const node of nodes.keys()) {
+    const root = find(node);
     const members = membersByRoot.get(root) ?? [];
-    members.push(index);
+    members.push(node);
     membersByRoot.set(root, members);
   }
   const groups: NearMissOccurrence[][] = [];
   for (const members of membersByRoot.values()) {
     // Components form only through cross-file pairs, so two members always span two files.
-    if (members.length < 2 || members.every((index) => anchored[index])) {
+    if (members.length < 2 || members.every((node) => anchored[nodes[node]?.blockIndex ?? 0])) {
       continue;
     }
     groups.push(
-      members.flatMap((index) => {
-        const block = blocks[index];
-        const cores = matchedWhole[index] ? undefined : localCores.get(index);
-        const core = cores && largestMergedCore(cores);
-        return block ? [toOccurrence(block, files, core, anchored[index] ?? false)] : [];
+      members.flatMap((node) => {
+        const { blockIndex = 0, core } = nodes[node] ?? {};
+        const block = blocks[blockIndex];
+        return block ? [toOccurrence(block, files, core, anchored[blockIndex] ?? false)] : [];
       })
     );
   }
   return groups;
 }
 
-/** The longest union of overlapping cores; the earliest wins ties. */
-function largestMergedCore(cores: [number, number][]): [number, number] | undefined {
+/** The unions of overlapping cores, in position order. */
+function mergeOverlappingCores(cores: [number, number][]): [number, number][] {
   const merged: [number, number][] = [];
   for (const [start, end] of cores.toSorted((left, right) => left[0] - right[0])) {
     const last = merged.at(-1);
@@ -197,13 +227,7 @@ function largestMergedCore(cores: [number, number][]): [number, number] | undefi
       merged.push([start, end]);
     }
   }
-  let largest: [number, number] | undefined;
-  for (const core of merged) {
-    if (!largest || core[1] - core[0] > largest[1] - largest[0]) {
-      largest = core;
-    }
-  }
-  return largest;
+  return merged;
 }
 
 /**
@@ -429,7 +453,6 @@ function createMatcher(
     const shorter = Math.min(leftLength, rightLength);
     const required = minSimilarityPercent * Math.max(leftLength, rightLength);
     if (
-      (leftLength === left.symbols.length && rightLength === right.symbols.length) ||
       shorter < minTokens ||
       shorter * 100 < required ||
       anchoredTokenCount(segment) * 100 < minAnchorCoveragePercent * shorter ||
