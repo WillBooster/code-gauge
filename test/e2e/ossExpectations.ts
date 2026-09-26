@@ -952,7 +952,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             },
             {
               startLine: 571,
-              endLine: 581,
+              endLine: 574,
             },
             {
               startLine: 587,
@@ -970,9 +970,9 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             },
           ],
         ],
-        duplicateLineCount: 53,
-        duplicationRatio: 0.0943,
-        maxDuplicateBlockSize: 145,
+        duplicateLineCount: 46,
+        duplicationRatio: 0.0819,
+        maxDuplicateBlockSize: 73,
       },
       halstead: {
         distinctOperators: 23,

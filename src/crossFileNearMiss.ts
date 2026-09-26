@@ -87,8 +87,11 @@ interface NormalizedBlock {
   uniqueNgrams: Int32Array;
   uniqueNgramOffsets: Int32Array;
   contentCounts: Map<number, number>;
-  /** Top-level statements as block-relative [start, end) offsets. */
-  statements: [number, number][];
+  /**
+   * The sequence with its top-level statements in canonical order, when it has enough of them for
+   * statement-order-insensitive comparison.
+   */
+  canonicalSequence: Int32Array | undefined;
 }
 
 /** How a verified pair matched: whole blocks, or the anchored file-relative token cores. */
@@ -100,7 +103,8 @@ type PairMatch = { kind: 'whole' } | { kind: 'local'; left: [number, number]; ri
  * the content an exact group already reports, and appears in the near-miss group marked
  * `spanCountedElsewhere` so block counting does not count its span twice. Pairs of two anchors are
  * skipped, and a group needs at least one non-anchor block. A block that matched only locally is
- * reported as the hull of its matched cores.
+ * reported as its largest core (overlapping cores merged), so code no verified pair matched, such
+ * as the gap between cores matching different partners, never counts as duplicated.
  */
 export function collectCrossFileNearMissGroups(
   files: NearMissSourceFile[],
@@ -129,10 +133,14 @@ export function collectCrossFileNearMissGroups(
     return root;
   };
   const matchedWhole = blocks.map(() => false);
-  const localHulls = new Map<number, [number, number]>();
-  const extendHull = (index: number, core: [number, number]): void => {
-    const hull = localHulls.get(index);
-    localHulls.set(index, hull ? [Math.min(hull[0], core[0]), Math.max(hull[1], core[1])] : core);
+  const localCores = new Map<number, [number, number][]>();
+  const addCore = (index: number, core: [number, number]): void => {
+    const cores = localCores.get(index);
+    if (cores) {
+      cores.push(core);
+    } else {
+      localCores.set(index, [core]);
+    }
   };
   forEachCandidatePair(blocks, anchored, minSimilarityPercent, (left, right) => {
     const leftBlock = blocks[left];
@@ -145,8 +153,8 @@ export function collectCrossFileNearMissGroups(
       matchedWhole[left] = true;
       matchedWhole[right] = true;
     } else {
-      extendHull(left, match.left);
-      extendHull(right, match.right);
+      addCore(left, match.left);
+      addCore(right, match.right);
     }
     const leftRoot = find(left);
     const rightRoot = find(right);
@@ -169,12 +177,33 @@ export function collectCrossFileNearMissGroups(
     groups.push(
       members.flatMap((index) => {
         const block = blocks[index];
-        const hull = matchedWhole[index] ? undefined : localHulls.get(index);
-        return block ? [toOccurrence(block, files, hull, anchored[index] ?? false)] : [];
+        const cores = matchedWhole[index] ? undefined : localCores.get(index);
+        const core = cores && largestMergedCore(cores);
+        return block ? [toOccurrence(block, files, core, anchored[index] ?? false)] : [];
       })
     );
   }
   return groups;
+}
+
+/** The longest union of overlapping cores; the earliest wins ties. */
+function largestMergedCore(cores: [number, number][]): [number, number] | undefined {
+  const merged: [number, number][] = [];
+  for (const [start, end] of cores.toSorted((left, right) => left[0] - right[0])) {
+    const last = merged.at(-1);
+    if (last && start < last[1]) {
+      last[1] = Math.max(last[1], end);
+    } else {
+      merged.push([start, end]);
+    }
+  }
+  let largest: [number, number] | undefined;
+  for (const core of merged) {
+    if (!largest || core[1] - core[0] > largest[1] - largest[0]) {
+      largest = core;
+    }
+  }
+  return largest;
 }
 
 /**
@@ -207,16 +236,16 @@ function createOverlapTest(
 }
 
 /**
- * The block's occurrence, narrowed to `hull` when it matched only locally. Source offsets stay the
+ * The block's occurrence, narrowed to `core` when it matched only locally. Source offsets stay the
  * block's: tokens carry none, and near-miss occurrences report lines only.
  */
 function toOccurrence(
   { fileIndex, range }: NormalizedBlock,
   files: NearMissSourceFile[],
-  hull: [number, number] | undefined,
+  core: [number, number] | undefined,
   anchor: boolean
 ): NearMissOccurrence {
-  const [start, end] = hull ?? [range.startTokenIndex, range.endTokenIndex];
+  const [start, end] = core ?? [range.startTokenIndex, range.endTokenIndex];
   const tokens = files[fileIndex]?.tokens;
   return {
     fileIndex,
@@ -227,8 +256,8 @@ function toOccurrence(
     endTokenIndex: end,
     startIndex: range.startIndex,
     endIndex: range.endIndex,
-    startLine: hull ? (tokens?.[start]?.startRow ?? 0) + 1 : range.startLine,
-    endLine: hull ? (tokens?.[end - 1]?.endRow ?? 0) + 1 : range.endLine,
+    startLine: core ? (tokens?.[start]?.startRow ?? 0) + 1 : range.startLine,
+    endLine: core ? (tokens?.[end - 1]?.endRow ?? 0) + 1 : range.endLine,
   };
 }
 
@@ -452,28 +481,40 @@ function createMatcher(
  */
 function matchesReordered(left: NormalizedBlock, right: NormalizedBlock, required: number): boolean {
   return (
-    left.statements.length >= minReorderStatementCount &&
-    right.statements.length >= minReorderStatementCount &&
-    lcsLength(canonicalSequence(left), canonicalSequence(right)) * 100 >= required
+    left.canonicalSequence !== undefined &&
+    right.canonicalSequence !== undefined &&
+    lcsLength(left.canonicalSequence, right.canonicalSequence) * 100 >= required
   );
 }
 
-/** The block's units (top-level statements and the token runs between them), each anonymized on its own and sorted, concatenated. */
-function canonicalSequence(block: NormalizedBlock): Int32Array {
+/**
+ * The block's units (its top-level statements, given in file token indexes, and the token runs
+ * between them), each anonymized on its own and sorted, concatenated; undefined with too few
+ * statements.
+ */
+function canonicalSequenceOf(
+  symbols: Int32Array,
+  statements: [number, number][],
+  blockStart: number
+): Int32Array | undefined {
+  if (statements.length < minReorderStatementCount) {
+    return undefined;
+  }
   const units: Int32Array[] = [];
   let cursor = 0;
-  for (const [start, end] of block.statements) {
+  for (const [statementStart, statementEnd] of statements) {
+    const start = statementStart - blockStart;
     if (cursor < start) {
-      units.push(anonymize(block.symbols.subarray(cursor, start)));
+      units.push(anonymize(symbols.subarray(cursor, start)));
     }
-    units.push(anonymize(block.symbols.subarray(start, end)));
-    cursor = end;
+    units.push(anonymize(symbols.subarray(start, statementEnd - blockStart)));
+    cursor = statementEnd - blockStart;
   }
-  if (cursor < block.symbols.length) {
-    units.push(anonymize(block.symbols.subarray(cursor)));
+  if (cursor < symbols.length) {
+    units.push(anonymize(symbols.subarray(cursor)));
   }
   units.sort(compareSequences);
-  const canonical = new Int32Array(block.symbols.length);
+  const canonical = new Int32Array(symbols.length);
   let offset = 0;
   for (const unit of units) {
     canonical.set(unit, offset);
@@ -644,10 +685,7 @@ function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
         uniqueNgrams: Int32Array.from(uniqueOffsets, (offset) => ngramHashes[offset] ?? 0),
         uniqueNgramOffsets: Int32Array.from(uniqueOffsets),
         contentCounts: countContent(blockSymbols, blockIsContent, 0, blockSymbols.length),
-        statements: findStatements(start, end).map(([statementStart, statementEnd]) => [
-          statementStart - start,
-          statementEnd - start,
-        ]),
+        canonicalSequence: canonicalSequenceOf(blockSymbols, findStatements(start, end), start),
       });
     }
   }

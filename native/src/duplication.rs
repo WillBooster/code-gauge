@@ -1659,7 +1659,9 @@ fn merge_groups(
 /// Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
 /// unreported: NIL-style n-gram filtration, then pair verification (near_miss::Matcher), then
 /// transitive clustering of verified pairs (crossFileNearMiss.ts applies the same model across
-/// files). A block that matched only locally is reported as the hull of its matched cores.
+/// files). A block that matched only locally is reported as its largest core (overlapping cores
+/// merged), so code no verified pair matched, such as the gap between cores matching different
+/// partners, never counts as duplicated.
 fn collect_near_miss_groups(
     source: &TokenizedSource<'_>,
     settings: &DuplicationSettings,
@@ -1727,7 +1729,7 @@ fn collect_near_miss_groups(
         root
     }
     let mut matched_whole = vec![false; comparable.len()];
-    let mut local_hulls: Vec<Option<(usize, usize)>> = vec![None; comparable.len()];
+    let mut local_cores: Vec<Vec<(usize, usize)>> = vec![Vec::new(); comparable.len()];
     for ((left_index, right_index), shared) in count_shared_ngrams(&blocks) {
         let left = &blocks[left_index];
         let right = &blocks[right_index];
@@ -1752,10 +1754,7 @@ fn collect_near_miss_groups(
             }
             Some(PairMatch::Local(left_core, right_core)) => {
                 for (index, core) in [(left_index, left_core), (right_index, right_core)] {
-                    local_hulls[index] = Some(
-                        local_hulls[index]
-                            .map_or(core, |hull| (hull.0.min(core.0), hull.1.max(core.1))),
-                    );
+                    local_cores[index].push(core);
                 }
             }
         }
@@ -1771,8 +1770,11 @@ fn collect_near_miss_groups(
     }
     let to_occurrence = |index: usize| {
         let range = comparable[index];
-        let (start, end, start_line, end_line) = match local_hulls[index] {
-            Some((start, end)) if !matched_whole[index] => (
+        let core = (!matched_whole[index])
+            .then(|| largest_merged_core(&local_cores[index]))
+            .flatten();
+        let (start, end, start_line, end_line) = match core {
+            Some((start, end)) => (
                 start,
                 end,
                 tokens[start].start_row + 1,
@@ -2030,6 +2032,26 @@ fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrenc
         end_line: occurrences.iter().map(|o| o.end_line).max().unwrap_or(0),
         segments,
     }
+}
+
+/// The longest union of overlapping cores; the earliest wins ties.
+fn largest_merged_core(cores: &[(usize, usize)]) -> Option<(usize, usize)> {
+    let mut sorted = cores.to_vec();
+    sorted.sort_unstable();
+    let mut merged: Vec<(usize, usize)> = Vec::new();
+    for (start, end) in sorted {
+        match merged.last_mut() {
+            Some(last) if start < last.1 => last.1 = last.1.max(end),
+            _ => merged.push((start, end)),
+        }
+    }
+    merged.into_iter().reduce(|largest, core| {
+        if core.1 - core.0 > largest.1 - largest.0 {
+            core
+        } else {
+            largest
+        }
+    })
 }
 
 /// The file's tokens as a near-miss symbol stream: identifiers as -(file-level id + 1), every
