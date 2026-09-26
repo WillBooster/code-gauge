@@ -121,6 +121,13 @@ const operators: Record<string, Operator> = {
   }),
 };
 
+const declareWithLet = (statements: string[]): string[] =>
+  statements.map((statement) => statement.replace('const ', 'let '));
+
+/** The 1-based line holding the statement, ignoring its leading `const `/`let ` keyword. */
+const lineOf = (code: string, statement: string | undefined): number =>
+  code.split('\n').findIndex((line) => statement !== undefined && line.includes(statement.slice(6))) + 1;
+
 /** Same statement shapes as the first seed, but different APIs and data throughout. */
 const unrelated = renderFunction('scheduleJobs', 'queue, clock', [
   'const backlog = queue.entries((acc, job) => acc - job.weight / job.priority, 1);',
@@ -200,6 +207,53 @@ describe('clone operators: recall per edit type', () => {
       ])
     );
     expect(groups.some((group) => group.files.includes('first.js') && group.files.includes('second.js'))).toBe(false);
+  });
+
+  it('reports both regions one pair shares around different middles', () => {
+    const [first, second] = seeds;
+    if (!first || !second) {
+      throw new Error('two seeds are required');
+    }
+    const sandwich = (name: string, shared: (statements: string[]) => string[], middle: string[]): string =>
+      renderFunction(name, `${first.parameters}, ${second.parameters}, logger, metrics, tracer`, [
+        ...shared(first.statements.slice(0, -1)),
+        ...middle,
+        ...shared(second.statements.slice(0, -1)),
+        'return { subtotal, tax, accept, language, timeout };',
+      ]);
+    const traced = sandwich('traced', (statements) => statements, [
+      "const span = tracer.startSpan('summary', { attributes: { kind: 'internal', version: 3 } });",
+      "span.addEvent('begin', { queued: tracer.queueLength(), sampled: tracer.isSampled() });",
+      'const sampler = tracer.sampler || new RatioSampler(tracer.config.ratio);',
+      "span.end({ status: 'ok', durationMs: tracer.elapsed(span) });",
+      "const baggage = tracer.baggage.getEntries().filter(([key]) => key.startsWith('tenant.'));",
+      'for (const [key, value] of baggage) span.setAttribute(key, value.value);',
+      "const links = tracer.linksFor(request.headers.get('traceparent')).slice(0, 8);",
+      "span.addLinks(links.map((link) => ({ context: link, attributes: { source: 'header' } })));",
+    ]);
+    const checked = sandwich('checked', declareWithLet, [
+      ...wrapperPrologue,
+      "const quota = await metrics.quota('summaries', { window: '1m', burst: 20 });",
+      "if (quota.remaining <= 0) logger.warn('quota exhausted', { resetAt: quota.resetAt });",
+      'const cache = await metrics.cache.lookup(`summary:${orders.length}`, { staleMs: 60000 });',
+      "if (cache.hit) logger.debug('cache hit', { key: cache.key, age: Date.now() - cache.storedAt });",
+    ]);
+    const sharedLines = (code: string): number[] => [
+      lineOf(code, first.statements[1]),
+      lineOf(code, second.statements[1]),
+    ];
+
+    const { duplicateLineNumbersByFile } = measureCrossFileDuplication(
+      Object.entries({ 'traced.js': traced, 'checked.js': checked }).map(([file, code]) => ({
+        file,
+        ...collectCrossFileDuplicationFileData(code, { language: 'javascript' }),
+      }))
+    );
+    expect(duplicateLineNumbersByFile['checked.js']).toEqual(expect.arrayContaining(sharedLines(checked)));
+
+    const { duplicateLineNumbers } = measureCode(`${traced}\n${checked}`, { language: 'javascript' }).duplication;
+    const offset = traced.split('\n').length;
+    expect(duplicateLineNumbers).toEqual(expect.arrayContaining(sharedLines(checked).map((line) => line + offset)));
   });
 
   it('does not pair a same-shape function over different APIs and data', () => {

@@ -95,7 +95,6 @@ interface NormalizedBlock {
   canonicalSequence: Int32Array | undefined;
 }
 
-/** How a verified pair matched: whole blocks, or the anchored file-relative token cores. */
 /** A verified core in each block of a pair, as file token ranges. */
 type CorePair = [[number, number], [number, number]];
 
