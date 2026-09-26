@@ -56,7 +56,7 @@ export interface NativeBinding {
 /**
  * Must equal `payload_version` in native/src/lib.rs. A previously built addon survives a
  * `git pull` untouched, so without this handshake it would silently return payloads missing
- * newer fields instead of failing with a clear rebuild message.
+ * newer fields, or lack newer binding functions, instead of failing with a clear rebuild message.
  */
 export const expectedPayloadVersion = 8;
 
