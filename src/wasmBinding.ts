@@ -125,7 +125,7 @@ function instantiate(module: WebAssembly.Module): { exports: WasmExports; stderr
   if (version !== expectedPayloadVersion) {
     throw new NativeAddonError(
       `The code-gauge WebAssembly module has payload version ${version}, but ${expectedPayloadVersion} is ` +
-        'expected; rebuild it with `bun run build-wasm`'
+        'expected; reinstall code-gauge, or in a code-gauge repository checkout, rebuild it with `bun run build-wasm`'
     );
   }
   return { exports, stderr };
