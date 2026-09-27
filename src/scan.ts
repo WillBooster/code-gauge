@@ -343,6 +343,9 @@ async function scanDirectory(directory: string, context: ScanContext): Promise<v
   if (entries === undefined) {
     return;
   }
+  // readdir order differs between file systems; sorting keeps which path reaches a file first,
+  // and so the scan's result, the same everywhere.
+  entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
 
   for (const entry of entries) {
     const entryPath = path.join(directory, entry.name);

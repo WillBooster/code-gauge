@@ -611,7 +611,8 @@ describe('cli: file discovery', () => {
       'src/a.ts': trivialSource.ts as string,
       // An explicit -linguist-generated overrides the header marker.
       'src/handwritten.ts': `// @generated\n${trivialSource.ts}`,
-      // Measured through its own path although an alias sorting first has no override.
+      // Measured through its own path although the alias src/a-link.ts, walked first (entries are
+      // walked in name order), has no override.
       'src/z-real.ts': `// @generated\n${trivialSource.ts}`,
     };
     const skipped = {
@@ -688,11 +689,12 @@ describe('cli: file discovery', () => {
       const { status, stdout, stderr } = runCli([dir, '--json']);
       const report = JSON.parse(stdout) as { files: { file: string }[]; errors: string[] };
       expect(status).toBe(0);
-      // real.ts is measured once (under whichever of its names is visited first), sub/ once.
+      // real.ts is measured once, under its own name although the alias is visited first; sub/ once.
       expect(report.files).toHaveLength(2);
       const names = report.files.map((file) => path.basename(file.file));
       expect(names).toContain('inner.ts');
-      expect(names.filter((name) => name === 'alias.ts' || name === 'real.ts')).toHaveLength(1);
+      expect(names).toContain('real.ts');
+      expect(names).not.toContain('alias.ts');
       expect(report.errors).toHaveLength(1);
       expect(report.errors[0]).toContain('broken.ts');
       expect(stderr).toBe('');
