@@ -16,10 +16,7 @@ use crate::tree_index::{NodeExt, TreeIndex};
 use crate::types::{
     CrossFileFileData, FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics,
 };
-use crate::util::{
-    all_children, is_identifier_leaf, is_js_whitespace, named_children, node_text, split_lines,
-    Source,
-};
+use crate::util::{all_children, is_js_whitespace, named_children, node_text, split_lines, Source};
 
 pub fn measure(
     code: &str,
@@ -166,23 +163,20 @@ fn is_csharp_top_level_statement(node: Node<'_>) -> bool {
 fn has_top_level_statements(root: Node<'_>, language: &LanguageDefinition) -> bool {
     const KOTLIN_DECLARATIONS: &[&str] = &[
         "package_header",
-        "import_list",
+        "import",
         "class_declaration",
         "object_declaration",
         "function_declaration",
         "property_declaration",
         "type_alias",
-        "shebang_line",
+        "shebang",
         "file_annotation",
-        "getter",
-        "setter",
     ];
     let children = named_children(root);
     match language.name {
         "csharp" => children.into_iter().any(is_csharp_top_level_statement),
-        // The grammar mis-parses some valid declarations (non-empty companion objects, `fun
-        // interface`) and leaves recovery residue at the top level, so a file with parse errors is
-        // never taken for a script.
+        // Error recovery leaves residue at the top level, so a file with parse errors is never taken
+        // for a script.
         "kotlin" => {
             !root.has_error()
                 && children.iter().any(|child| {
@@ -233,8 +227,6 @@ fn to_cross_file_data(
 /// Name-carrying leaf types anonymized by tokenize_function so consistent renames still match.
 const IDENTIFIER_LEAF_NODE_TYPES: &[&str] = &[
     "identifier",
-    "simple_identifier",
-    "interpolated_identifier",
     "implicit_parameter",
     "property_identifier",
     "field_identifier",
@@ -278,7 +270,7 @@ fn collect_token_symbols(
 ) {
     if matches!(
         node.kind_name(),
-        "comment" | "line_comment" | "block_comment" | "multiline_comment"
+        "comment" | "line_comment" | "block_comment"
     ) {
         return;
     }
@@ -286,7 +278,7 @@ fn collect_token_symbols(
         symbols.push(hash_text(node.kind_name()));
         return;
     }
-    if !is_identifier_leaf(node) {
+    if node.child_count() != 0 {
         for child in all_children(node) {
             collect_token_symbols(child, code, symbols, id_index_by_name);
         }
@@ -322,7 +314,7 @@ fn parse_source(
         .set_language(&language.grammar())
         .map_err(|error| error.to_string())?;
     parser
-        .parse_utf16(source.to_utf16(), None)
+        .parse_utf16_le(source.to_utf16(), None)
         .ok_or_else(|| "parse failed".to_string())
 }
 
@@ -380,7 +372,7 @@ fn collect_comment_spans(root: Node<'_>) -> Vec<CommentSpan> {
     fn visit(node: Node<'_>, spans: &mut Vec<CommentSpan>) {
         if matches!(
             node.kind_name(),
-            "comment" | "line_comment" | "block_comment" | "multiline_comment"
+            "comment" | "line_comment" | "block_comment"
         ) {
             for row in node.start_position().row..=node.end_position().row {
                 // Node columns are UTF-16 code units x 2 (the tree is parsed from UTF-16);
@@ -549,8 +541,6 @@ const OPERATOR_TEXTS: &[&str] = &[
 
 const OPERAND_NODE_TYPES: &[&str] = &[
     "identifier",
-    "simple_identifier",
-    "interpolated_identifier",
     "implicit_parameter",
     "property_identifier",
     "field_identifier",
@@ -578,8 +568,6 @@ const OPERAND_NODE_TYPES: &[&str] = &[
     "integer_literal",
     "float_literal",
     "real_literal",
-    "hex_literal",
-    "bin_literal",
     "int_literal",
     "rune_literal",
     "imaginary_literal",
@@ -614,13 +602,10 @@ const OPERAND_NODE_TYPES: &[&str] = &[
 ];
 
 /// Non-leaf literals counted as one Halstead operand without descending.
-/// `character_literal` is a leaf in Java and Kotlin but wraps a content node in C#; Kotlin's
-/// suffixed numbers (`1L`, `1u`) wrap the bare literal, so `1` and `1L` stay distinct.
+/// `character_literal` is a leaf in Java but wraps its content in C# and Kotlin.
 const ATOMIC_OPERAND_NODE_TYPES: &[&str] = &[
     "interpreted_string_literal",
     "character_literal",
-    "long_literal",
-    "unsigned_literal",
     "regex",
     "user_defined_literal",
     "integral_type",
@@ -656,7 +641,7 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
     ) {
         if matches!(
             node.kind_name(),
-            "comment" | "line_comment" | "block_comment" | "multiline_comment"
+            "comment" | "line_comment" | "block_comment"
         ) {
             return;
         }
@@ -668,7 +653,7 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
 
         // Operators are counted from leaf tokens only: keyword-named nodes always contain a
         // same-text anonymous keyword leaf, so counting the named node as well would double-count.
-        if is_identifier_leaf(node) {
+        if node.child_count() == 0 {
             let text = node_text(node, code);
             // Operands win over text matches so identifiers spelled like word operators stay operands;
             // C# `nameof(x)` is the one keyword operator the grammar parses as a plain callee.
