@@ -155,7 +155,7 @@ rejected so stale configuration fails loudly.
 Directory scans and the regression gate skip, besides the built-in directories and file names:
 
 - files matching an `exclude` glob pattern (e.g. `"exclude": ["src/legacy/**", "**/*.pb.ts"]`),
-  relative to the config file's directory and matched with Node's `path.matchesGlob`;
+  relative to the config file's directory and matched with Node's `path.posix.matchesGlob` (forward slashes on every platform);
 - files git attributes mark `linguist-generated` or `linguist-vendored` (the attributes GitHub
   uses to collapse generated diffs, e.g. `src/api/** linguist-generated` in `.gitattributes`);
 - files with a generated-code marker in their first 5 lines: an `@generated` tag or a line
