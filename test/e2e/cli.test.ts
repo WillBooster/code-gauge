@@ -625,7 +625,7 @@ describe('cli: file discovery', () => {
       ...scanned,
       ...skipped,
       '.gitattributes':
-        'src/schema/** linguist-generated\nsrc/third_party/** linguist-vendored\nsrc/ignored/** linguist-generated\nvendor/lib/** linguist-generated\nsrc/handwritten.ts -linguist-generated\n',
+        'src/schema/** linguist-generated\nsrc/third_party/** linguist-vendored\nsrc/ignored/** linguist-generated\nvendor/lib/** linguist-generated\nsrc/gen-link.ts -linguist-generated\nsrc/handwritten.ts -linguist-generated\n',
       '.gitignore': 'src/ignored/\n',
       'code-gauge.config.json': JSON.stringify({ exclude: ['src/legacy/**'] }),
     });
@@ -639,6 +639,11 @@ describe('cli: file discovery', () => {
     mkdirSync(path.join(dir, 'vendor', 'lib'), { recursive: true });
     writeFileSync(path.join(dir, 'vendor', 'lib', 'linked.ts'), trivialSource.ts as string);
     symlinkSync('../vendor/lib', path.join(dir, 'src', 'linked'));
+    // Generated-code markers are judged by either path too: the link's own -linguist-generated
+    // does not keep a target whose path carries no override.
+    mkdirSync(path.join(dir, 'vendor', 'other'));
+    writeFileSync(path.join(dir, 'vendor', 'other', 'gen.ts'), `// @generated\n${trivialSource.ts}`);
+    symlinkSync('../vendor/other/gen.ts', path.join(dir, 'src', 'gen-link.ts'));
     try {
       const init = spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf8' });
       expect(init.status).toBe(0);

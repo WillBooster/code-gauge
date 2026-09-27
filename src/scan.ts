@@ -397,7 +397,7 @@ async function measureFile(
   while (context.inFlight.size >= maxMeasurementsInFlight) {
     await Promise.race(context.inFlight);
   }
-  const outcome = readAndMeasureFile(file, language, mode, context);
+  const outcome = readAndMeasureFile(file, resolvedFile, language, mode, context);
   context.inFlight.add(outcome);
   void outcome.then(() => context.inFlight.delete(outcome));
   context.outcomes.push(outcome);
@@ -405,6 +405,7 @@ async function measureFile(
 
 async function readAndMeasureFile(
   file: string,
+  resolvedFile: string,
   language: LanguageName,
   mode: 'single-file' | 'directory',
   context: ScanContext
@@ -416,7 +417,9 @@ async function readAndMeasureFile(
     if (mode === 'single-file') {
       return { file: { file, metrics: measureCode(code, measureOptions) } };
     }
-    if (context.exclusion?.isGeneratedCode(file, code)) {
+    // Like path exclusion, either the scanned path or the real one can judge the code generated.
+    const exclusion = context.exclusion;
+    if (exclusion && (exclusion.isGeneratedCode(file, code) || exclusion.isGeneratedCode(resolvedFile, code))) {
       return { generatedFile: file };
     }
     const { metrics, crossFileData, crossFileError } = await measureWithCrossFileData(code, measureOptions);
