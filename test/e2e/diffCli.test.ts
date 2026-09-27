@@ -743,6 +743,16 @@ describe('code-gauge diff --base: generated and excluded code', () => {
     expect(result.stdout).toContain('tests/complex.ts:1-');
   });
 
+  it('gates an edit of an explicitly targeted, already committed test-named file', () => {
+    withBaseCommit({ 'src/check.test.ts': baseCalc }, () => {
+      writeFileSync(path.join(repoDir, 'src', 'check.test.ts'), worsenedCalc);
+      const result = runCli(['diff', '--base', 'HEAD', 'src/check.test.ts'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('src/check.test.ts:1-');
+      expect(result.stdout).toContain('cognitive complexity worsened');
+    });
+  });
+
   it('skips files matching the configured exclude patterns', () => {
     mkdirSync(path.join(repoDir, 'src', 'legacy'));
     writeFileSync(path.join(repoDir, 'src', 'legacy', 'old.ts'), violatingFile);

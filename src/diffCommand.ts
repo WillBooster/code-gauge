@@ -416,7 +416,7 @@ function collectHeadFunctionTokens(
 ): void {
   try {
     file.headFunctionTokens = collectFunctionTokenSequences(headContent, {
-      language: getLanguage(file.changed.headPath, context.options) as LanguageName,
+      language: languageOf(file.changed.headPath, context),
       duplication: context.options.duplication,
     });
   } catch (error) {
@@ -440,7 +440,7 @@ async function measureBaseRevision(
   warnings: string[]
 ): Promise<'measured' | 'generated' | 'failed'> {
   const measureOptions = {
-    language: getLanguage(basePath, context.options) as LanguageName,
+    language: languageOf(basePath, context),
     duplication: context.options.duplication,
   };
   let baseContent;
@@ -466,6 +466,12 @@ async function measureBaseRevision(
     warnings.push(`${basePath} (at merge-base): function token sequences unavailable: ${formatError(error)}`);
   }
   return 'measured';
+}
+
+/** The language of a scannable path; an explicitly targeted file skips the test-file name rules. */
+function languageOf(relativePath: string, context: GateContext): LanguageName {
+  const explicitTarget = context.explicitFiles.has(path.join(context.repoRoot, relativePath));
+  return getLanguage(relativePath, context.options, explicitTarget) as LanguageName;
 }
 
 async function isSymbolicLink(absolutePath: string): Promise<boolean> {
