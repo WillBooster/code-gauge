@@ -35,10 +35,13 @@ export function createExclusion(
       if (attributes?.generated === true || attributes?.vendored === true) {
         return true;
       }
-      const relativePath = path.relative(excludePatterns.root, absolutePath).split(path.sep).join('/');
+      const nativeRelativePath = path.relative(excludePatterns.root, absolutePath);
+      const relativePath = nativeRelativePath.split(path.sep).join('/');
       // Only a pattern spelling out `..` reaches outside the root: whether `*` and `**` match `..`
-      // segments differs between runtimes (Node's matchesGlob says no, Bun's says yes).
-      const outsideRoot = relativePath === '..' || relativePath.startsWith('../');
+      // segments differs between runtimes (Node's matchesGlob says no, Bun's says yes). A path on
+      // another Windows drive has no relative form, so path.relative returns it absolute.
+      const outsideRoot =
+        relativePath === '..' || relativePath.startsWith('../') || path.isAbsolute(nativeRelativePath);
       return excludePatterns.patterns.some(
         (pattern) => (!outsideRoot || pattern.startsWith('..')) && path.posix.matchesGlob(relativePath, pattern)
       );
