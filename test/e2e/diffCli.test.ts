@@ -803,6 +803,16 @@ describe('code-gauge diff --base: generated and excluded code', () => {
     });
   });
 
+  it('keeps skipping a symbolic link that a .gitattributes edit marks -linguist-generated', () => {
+    symlinkSync('/nonexistent-code-gauge-target', path.join(repoDir, 'src', 'alias.ts'));
+    withBaseCommit({}, () => {
+      writeFileSync(path.join(repoDir, '.gitattributes'), 'src/alias.ts -linguist-generated\n');
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(/^Regression gate passed/u);
+    });
+  });
+
   it('gates the code of a file that stopped being generated as new code', () => {
     withBaseCommit({ 'src/parser.ts': `/* @generated */\n${complexNewFile}` }, () => {
       writeFileSync(path.join(repoDir, 'src', 'parser.ts'), complexNewFile);
