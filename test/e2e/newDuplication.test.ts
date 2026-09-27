@@ -14,6 +14,7 @@ function makeChange(change: Partial<DuplicationChange> & Pick<DuplicationChange,
     headLines: Array.from({ length: 20 }, (_, index) => `head ${index + 1}`),
     baseDuplicatedLines: new Set(),
     headDuplicatedLines: new Set(),
+    baseOccurrences: [],
     headOccurrences: [],
     ...change,
   };
@@ -24,7 +25,7 @@ describe('findNewlyDuplicatedLines', () => {
     const change = makeChange({
       hunks: [{ baseStart: 10, baseCount: 0, headStart: 11, headCount: 5 }],
       headDuplicatedLines: new Set(lines(11, 15)),
-      headOccurrences: [{ startLine: 11, endLine: 15 }],
+      headOccurrences: [{ startLine: 11, endLine: 15, partners: ['src/other.ts'] }],
     });
     expect(findNewlyDuplicatedLines([change])).toStrictEqual([lines(11, 15)]);
   });
@@ -35,7 +36,8 @@ describe('findNewlyDuplicatedLines', () => {
       hunks: [{ baseStart: 3, baseCount: 0, headStart: 4, headCount: 1 }],
       baseDuplicatedLines: new Set(lines(1, 6)),
       headDuplicatedLines: new Set(lines(1, 7)),
-      headOccurrences: [{ startLine: 1, endLine: 7 }],
+      baseOccurrences: [{ startLine: 1, endLine: 6, partners: ['src/other.ts'] }],
+      headOccurrences: [{ startLine: 1, endLine: 7, partners: ['src/other.ts'] }],
     });
     expect(findNewlyDuplicatedLines([change])).toStrictEqual([[]]);
   });
@@ -45,7 +47,8 @@ describe('findNewlyDuplicatedLines', () => {
       hunks: [{ baseStart: 1, baseCount: 3, headStart: 1, headCount: 3 }],
       baseDuplicatedLines: new Set(lines(1, 3)),
       headDuplicatedLines: new Set(lines(1, 3)),
-      headOccurrences: [{ startLine: 1, endLine: 3 }],
+      baseOccurrences: [{ startLine: 1, endLine: 3, partners: ['src/other.ts'] }],
+      headOccurrences: [{ startLine: 1, endLine: 3, partners: ['src/other.ts'] }],
     });
     const source = makeChange({
       headLines: undefined,
@@ -58,7 +61,7 @@ describe('findNewlyDuplicatedLines', () => {
       headLines: ['shared();', 'moved();'],
       hunks: [{ baseStart: 0, baseCount: 0, headStart: 1, headCount: 2 }],
       headDuplicatedLines: new Set([1, 2]),
-      headOccurrences: [{ startLine: 1, endLine: 2 }],
+      headOccurrences: [{ startLine: 1, endLine: 2, partners: ['src/other.ts'] }],
     });
     expect(findNewlyDuplicatedLines([rewritten, source, destination])).toStrictEqual([[], [], []]);
   });
@@ -70,16 +73,28 @@ describe('findNewlyDuplicatedLines', () => {
       hunks: [{ baseStart: 1, baseCount: 2, headStart: 1, headCount: 2 }],
       baseDuplicatedLines: new Set([1, 2]),
       headDuplicatedLines: new Set([1, 2]),
-      headOccurrences: [{ startLine: 1, endLine: 2 }],
+      baseOccurrences: [{ startLine: 1, endLine: 2, partners: ['src/other.ts'] }],
+      headOccurrences: [{ startLine: 1, endLine: 2, partners: ['src/other.ts'] }],
     });
     const pasted = makeChange({
       baseLines: undefined,
       headLines: ['first();', 'second();'],
       hunks: [{ baseStart: 0, baseCount: 0, headStart: 1, headCount: 2 }],
       headDuplicatedLines: new Set([1, 2]),
-      headOccurrences: [{ startLine: 1, endLine: 2 }],
+      headOccurrences: [{ startLine: 1, endLine: 2, partners: ['src/other.ts'] }],
     });
     expect(findNewlyDuplicatedLines([rewritten, pasted])).toStrictEqual([[], [1, 2]]);
     expect(findNewlyDuplicatedLines([pasted, rewritten])).toStrictEqual([[1, 2], []]);
+  });
+
+  it('does not credit replacing a clone with a copy of unrelated code', () => {
+    const replaced = makeChange({
+      hunks: [{ baseStart: 1, baseCount: 3, headStart: 1, headCount: 3 }],
+      baseDuplicatedLines: new Set(lines(1, 3)),
+      headDuplicatedLines: new Set(lines(1, 3)),
+      baseOccurrences: [{ startLine: 1, endLine: 3, partners: ['src/a.ts'] }],
+      headOccurrences: [{ startLine: 1, endLine: 3, partners: ['src/b.ts'] }],
+    });
+    expect(findNewlyDuplicatedLines([replaced])).toStrictEqual([lines(1, 3)]);
   });
 });

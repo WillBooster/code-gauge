@@ -16,7 +16,7 @@ export {
   measureCode,
 } from './metrics.js';
 export { findNewlyDuplicatedLines } from './newDuplication.js';
-export type { DuplicationChange, LineHunk } from './newDuplication.js';
+export type { CloneOccurrence, DuplicationChange, LineHunk } from './newDuplication.js';
 export { defaultGateOptions, evaluateRegressionGate } from './regressionGate.js';
 export type {
   GateFileInput,

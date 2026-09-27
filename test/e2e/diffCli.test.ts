@@ -601,6 +601,9 @@ function withBaseCommit(files: Record<string, string>, action: () => void): void
 
 const copiedReport = reportSource.replaceAll('reportTotal', 'copiedTotal');
 
+const productSource = (name: string): string =>
+  `export function ${name}(items: number[]): number {\n  let product = 1;\n  for (const item of items) {\n    product *= item + 1;\n  }\n  const result = product / 2;\n  const rounded = Math.floor(result) + Math.ceil(result);\n  return rounded - product;\n}\n`;
+
 describe('code-gauge diff --base: newly duplicated lines', () => {
   it('flags only the pasted copy, not the copied code in a file changed elsewhere', () => {
     writeFileSync(path.join(repoDir, 'src', 'report.ts'), reportSource + 'export const extra = 1;\n');
@@ -670,6 +673,16 @@ describe('code-gauge diff --base: newly duplicated lines', () => {
       const result = runCli(['diff', '--base', 'HEAD'], repoDir);
       expect(result.stdout).toContain('src/i.ts:2-10: 9 changed lines duplicate existing code');
       expect(result.stdout).not.toContain('src/[id].ts:');
+    });
+  });
+
+  it('flags a clone replaced in place by a copy of unrelated code', () => {
+    withBaseCommit({ 'src/copy.ts': copiedReport, 'src/product.ts': productSource('product') }, () => {
+      writeFileSync(path.join(repoDir, 'src', 'copy.ts'), productSource('copiedTotal'));
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('src/copy.ts:');
+      expect(result.stdout).toContain('Deduplicate against src/product.ts');
     });
   });
 

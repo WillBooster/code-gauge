@@ -7,7 +7,7 @@ import {
   type CrossFileDuplicateOccurrence,
   type CrossFileDuplicationMetrics,
 } from './crossFileDuplication.js';
-import type { CrossFileDuplicationFileData } from './duplication.js';
+import type { CrossFileDuplicationFileData, Token } from './duplication.js';
 import { keepPaths, loadRepositoryExclusion, type Exclusion } from './exclusion.js';
 import {
   listChangedFiles,
@@ -20,7 +20,13 @@ import {
   type ChangedFile,
 } from './git.js';
 import { collectFunctionTokenSequences } from './metrics.js';
-import { findNewlyDuplicatedLines, type DuplicationChange, type LineHunk } from './newDuplication.js';
+import {
+  findNewlyDuplicatedLines,
+  indexPartnersByLine,
+  type CloneOccurrence,
+  type DuplicationChange,
+  type LineHunk,
+} from './newDuplication.js';
 import {
   evaluateRegressionGate,
   type CheckedFunctionReport,
@@ -196,8 +202,17 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   // Non-gated files (outside the target, or renamed out of scan scope) still feed function
   // matching and the duplication universes; the evaluator reports nothing for them.
   const { baseCross, headCross } = measureDuplicationUniverses(prepared, scannedFiles, options);
+  const renamedPaths = new Map(
+    prepared.flatMap(({ changed }) =>
+      changed.status === 'renamed' && changed.basePath !== undefined
+        ? [[changed.basePath, changed.headPath] as const]
+        : []
+    )
+  );
+  const headPathOf = (basePath: string): string => renamedPaths.get(basePath) ?? basePath;
+  const lineSignaturesOf = createLineSignatureIndex(scannedFiles);
   const newlyDuplicatedLines = findNewlyDuplicatedLines(
-    prepared.map((file) => toDuplicationChange(file, baseCross, headCross))
+    prepared.map((file) => toDuplicationChange(file, baseCross, headCross, headPathOf, lineSignaturesOf))
   );
   const inputs = prepared.map((file, index) => toGateInput(file, newlyDuplicatedLines[index] ?? [], headCross));
   const result = evaluateRegressionGate(inputs, gateOptions);
@@ -528,8 +543,11 @@ function measureDuplicationUniverses(
 function toDuplicationChange(
   file: PreparedFile,
   baseCross: CrossFileDuplicationMetrics | undefined,
-  headCross: CrossFileDuplicationMetrics | undefined
+  headCross: CrossFileDuplicationMetrics | undefined,
+  headPathOf: (basePath: string) => string,
+  lineSignaturesOf: (file: string) => LineSignatures | undefined
 ): DuplicationChange {
+  const headOccurrences = collectOccurrences(file.headFile?.metrics, headCross, file.changed.headPath);
   return {
     baseLines: file.baseContent === undefined ? undefined : splitLines(file.baseContent),
     headLines: file.headContent === undefined ? undefined : splitLines(file.headContent),
@@ -540,15 +558,111 @@ function toDuplicationChange(
     headDuplicatedLines:
       file.headFile === undefined
         ? new Set()
-        : collectDuplicatedLineNumbers(file.headFile.metrics, headCross, file.changed.headPath),
-    headOccurrences: [
-      ...(file.headFile?.metrics.duplication.duplicateBlockGroups.flat() ?? []),
-      ...(headCross?.groups ?? []).flatMap((group) =>
-        group.occurrences.filter((occurrence) => occurrence.file === file.changed.headPath)
-      ),
-    ],
+        : keepRepeatedLines(
+            collectDuplicatedLineNumbers(file.headFile.metrics, headCross, file.changed.headPath),
+            file.changed.headPath,
+            headOccurrences,
+            lineSignaturesOf
+          ),
+    baseOccurrences: collectOccurrences(file.baseMetrics, baseCross, file.changed.basePath, headPathOf),
+    headOccurrences,
     hunks: file.hunks ?? [],
   };
+}
+
+/** A file's per-line normalized token signatures and how many lines carry each. */
+interface LineSignatures {
+  byLine: Map<number, string>;
+  lineCounts: Map<string, number>;
+}
+
+/** Line signatures of the scanned head files, computed on first use. */
+function createLineSignatureIndex(scannedFiles: ScannedFile[]): (file: string) => LineSignatures | undefined {
+  const tokensByFile = new Map(
+    scannedFiles.map(({ relativePath, file }) => [relativePath, file.duplicationCandidates?.tokens])
+  );
+  const signaturesByFile = new Map<string, LineSignatures | undefined>();
+  return (file) => {
+    if (!signaturesByFile.has(file)) {
+      const tokens = tokensByFile.get(file);
+      signaturesByFile.set(file, tokens && signLines(tokens));
+    }
+    return signaturesByFile.get(file);
+  };
+}
+
+/** Each line's tokens with identifiers anonymized, as clone detection compares them. */
+function signLines(tokens: readonly Token[]): LineSignatures {
+  const byLine = new Map<number, string>();
+  for (const token of tokens) {
+    const line = token.startRow + 1;
+    byLine.set(line, `${byLine.get(line) ?? ''}${token.kind === 'id' ? '\u0001' : token.text}\u0000`);
+  }
+  const lineCounts = new Map<string, number>();
+  for (const signature of byLine.values()) {
+    lineCounts.set(signature, (lineCounts.get(signature) ?? 0) + 1);
+  }
+  return { byLine, lineCounts };
+}
+
+/**
+ * The duplicated lines whose normalized tokens a partner file of their clones (the file itself,
+ * on another line, for `''`) repeats on some line. Near-miss coverage also marks lines the copies
+ * do not share, such as a new line inserted into an old near-miss clone, which copied nothing.
+ */
+function keepRepeatedLines(
+  lines: ReadonlySet<number>,
+  file: string,
+  occurrences: readonly CloneOccurrence[],
+  lineSignaturesOf: (file: string) => LineSignatures | undefined
+): Set<number> {
+  const own = lineSignaturesOf(file);
+  if (own === undefined) {
+    return new Set(lines);
+  }
+  const repeats = (signature: string, partner: string): boolean => {
+    if (partner === '') {
+      return (own.lineCounts.get(signature) ?? 0) > 1;
+    }
+    const partnerSignatures = lineSignaturesOf(partner);
+    return partnerSignatures === undefined || partnerSignatures.lineCounts.has(signature);
+  };
+  const partnersByLine = indexPartnersByLine(occurrences);
+  return new Set(
+    [...lines].filter((line) => {
+      const signature = own.byLine.get(line);
+      return (
+        signature === undefined || [...(partnersByLine.get(line) ?? [])].some((partner) => repeats(signature, partner))
+      );
+    })
+  );
+}
+
+/**
+ * The file's clone occurrences with their partner files (`''` for the file itself), partner paths
+ * renamed by `renamePartner` so base partners compare with head ones.
+ */
+function collectOccurrences(
+  metrics: CodeMetrics | undefined,
+  cross: CrossFileDuplicationMetrics | undefined,
+  file: string | undefined,
+  renamePartner: (partner: string) => string = (partner) => partner
+): CloneOccurrence[] {
+  if (metrics === undefined || file === undefined) {
+    return [];
+  }
+  const withinFile = metrics.duplication.duplicateBlockGroups.flatMap((group) =>
+    group.map(({ startLine, endLine }) => ({ startLine, endLine, partners: [''] }))
+  );
+  const crossFile = (cross?.groups ?? []).flatMap((group) => {
+    const own = group.occurrences.filter((occurrence) => occurrence.file === file);
+    const partners = [
+      ...group.files.filter((partner) => partner !== file).map(renamePartner),
+      ...(own.length > 1 ? [''] : []),
+    ];
+    return own.map(({ startLine, endLine }) => ({ startLine, endLine, partners }));
+  });
+  return [...withinFile, ...crossFile];
 }
 
 function toGateInput(
