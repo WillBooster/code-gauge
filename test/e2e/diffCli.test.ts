@@ -794,6 +794,15 @@ describe('code-gauge diff --base: generated and excluded code', () => {
     });
   });
 
+  it('gates unchanged marker-generated code that a new -linguist-generated override exposes', () => {
+    withBaseCommit({ 'src/parser.ts': `/* @generated */\n${complexNewFile}` }, () => {
+      writeFileSync(path.join(repoDir, '.gitattributes'), 'src/parser.ts -linguist-generated\n');
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('new function decide: cognitive complexity 24 exceeds the new-code limit 15');
+    });
+  });
+
   it('gates the code of a file that stopped being generated as new code', () => {
     withBaseCommit({ 'src/parser.ts': `/* @generated */\n${complexNewFile}` }, () => {
       writeFileSync(path.join(repoDir, 'src', 'parser.ts'), complexNewFile);

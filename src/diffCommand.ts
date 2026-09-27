@@ -148,7 +148,13 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   ]);
   if (attributesChanged) {
     changedFiles.push(
-      ...listReincludedFiles(repositoryFiles, changedFiles, repoRoot, headAttributesExclusion, baseAttributesExclusion)
+      ...(await listReincludedFiles(
+        repositoryFiles,
+        changedFiles,
+        repoRoot,
+        headAttributesExclusion,
+        baseAttributesExclusion
+      ))
     );
   }
   const headExclusion = keepPaths(headAttributesExclusion, explicitFiles);
@@ -243,28 +249,42 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   }
 }
 
+/** Content with a generated-code marker, to ask whether an exclusion honors the marker for a path. */
+const markedCode = '/* @generated */';
+
 /**
  * Unchanged files that the merge-base's git attributes excluded but the working tree's do not:
- * their code is newly measured, so it gates as a modification from an unmeasurable base.
+ * their code is newly measured, so it gates as a modification from an unmeasurable base. That
+ * covers a path exclusion lifted and a `-linguist-generated` override added to a file whose
+ * content carries a generated-code marker.
  */
-function listReincludedFiles(
+async function listReincludedFiles(
   repositoryFiles: Iterable<string>,
   changedFiles: readonly ChangedFile[],
   repoRoot: string,
   headExclusion: Exclusion,
   baseExclusion: Exclusion
-): ChangedFile[] {
+): Promise<ChangedFile[]> {
   const changedPaths = new Set(changedFiles.flatMap((changed) => [changed.headPath, changed.basePath]));
-  return [...repositoryFiles]
-    .filter((file) => {
-      const absolutePath = path.join(repoRoot, file);
-      return (
-        !changedPaths.has(file) &&
-        baseExclusion.isExcludedPath(absolutePath) &&
-        !headExclusion.isExcludedPath(absolutePath)
-      );
-    })
-    .map((file) => ({ status: 'modified', basePath: file, headPath: file }));
+  const reincluded: ChangedFile[] = [];
+  for (const file of repositoryFiles) {
+    const absolutePath = path.join(repoRoot, file);
+    if (changedPaths.has(file) || headExclusion.isExcludedPath(absolutePath)) {
+      continue;
+    }
+    // Only an attribute override can make the same content generated at one revision and not at
+    // the other, so the content is read just for files whose override changed.
+    const overrideAdded =
+      baseExclusion.isGeneratedCode(absolutePath, markedCode) &&
+      !headExclusion.isGeneratedCode(absolutePath, markedCode);
+    if (
+      baseExclusion.isExcludedPath(absolutePath) ||
+      (overrideAdded && baseExclusion.isGeneratedCode(absolutePath, await readFile(absolutePath, 'utf8')))
+    ) {
+      reincluded.push({ status: 'modified', basePath: file, headPath: file });
+    }
+  }
+  return reincluded;
 }
 
 /**
