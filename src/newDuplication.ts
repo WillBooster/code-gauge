@@ -19,13 +19,6 @@ export interface DuplicationChange {
   hunks: readonly LineHunk[];
 }
 
-interface HunkState {
-  addedLines: number[];
-  deletedCount: number;
-  /** Deleted duplicated lines already credited to a moved line. */
-  consumedCount: number;
-}
-
 /**
  * The head lines, per change, that the change newly made duplicated. Only added lines count, so a
  * copy is attributed to where it was pasted, never to the unchanged code it copies. An added line
@@ -33,72 +26,69 @@ interface HunkState {
  * - every clone occurrence covering it holds it between unchanged lines that were duplicated at
  *   base (an edit inside pre-existing duplication, which near-miss coverage reports even for
  *   tokens the copies do not share),
- * - it reappears from a deleted duplicated line anywhere in the change (the clone was moved), or
- * - it replaces a deleted duplicated line of the same hunk (a clone rewritten in place).
+ * - it replaces a deleted duplicated line of the same hunk (a clone rewritten in place), or
+ * - it reappears from a deleted duplicated line elsewhere in the change (the clone was moved).
  */
 export function findNewlyDuplicatedLines(changes: readonly DuplicationChange[]): number[][] {
-  const states = changes.map((change) => {
+  // Same-hunk replacements settle first, identical content pairing up before any other line, so
+  // only deleted lines no rewrite needed are left to back moves, whatever the order of changes.
+  const unreplaced = changes.map((change) => {
     const newCloneLines = collectNewCloneLines(change);
-    return change.hunks.map((hunk) => collectHunkState(change, hunk, newCloneLines));
+    return change.hunks.map((hunk) => settleReplacements(change, hunk, newCloneLines));
   });
 
-  // Moved lines: an added duplicated line consumes a deleted duplicated line of identical content,
-  // preferring its own hunk so a same-hunk replacement is not spent on a move elsewhere.
-  const deletedByContent = new Map<string, HunkState[]>();
-  for (const [changeIndex, change] of changes.entries()) {
-    for (const [hunkIndex, hunk] of change.hunks.entries()) {
-      const state = states[changeIndex]?.[hunkIndex] as HunkState;
-      for (let line = hunk.baseStart; line < hunk.baseStart + hunk.baseCount; line++) {
-        if (change.baseDuplicatedLines.has(line)) {
-          const key = normalizeLine(change.baseLines?.[line - 1]);
-          deletedByContent.set(key, [...(deletedByContent.get(key) ?? []), state]);
-        }
-      }
+  const movableByContent = new Map<string, number>();
+  for (const { deletedContents } of unreplaced.flat()) {
+    for (const content of deletedContents) {
+      movableByContent.set(content, (movableByContent.get(content) ?? 0) + 1);
     }
   }
 
-  // Every move is settled first: a later change's added line may consume an earlier hunk's
-  // deleted line, which then no longer backs a same-hunk replacement.
-  const unmovedByState = new Map<HunkState, number[]>();
-  for (const [changeIndex, change] of changes.entries()) {
-    for (const state of states[changeIndex] ?? []) {
-      const unmoved = state.addedLines.filter((line) => {
-        const owners = deletedByContent.get(normalizeLine(change.headLines?.[line - 1]));
-        if (owners === undefined || owners.length === 0) {
+  return changes.map((change, changeIndex) =>
+    (unreplaced[changeIndex] ?? [])
+      .flatMap(({ addedLines }) => addedLines)
+      .filter((line) => {
+        const content = normalizeLine(change.headLines?.[line - 1]);
+        const movable = movableByContent.get(content) ?? 0;
+        if (movable === 0) {
           return true;
         }
-        const ownIndex = owners.indexOf(state);
-        const [owner] = owners.splice(ownIndex === -1 ? owners.length - 1 : ownIndex, 1) as [HunkState];
-        owner.consumedCount += 1;
+        movableByContent.set(content, movable - 1);
         return false;
-      });
-      unmovedByState.set(state, unmoved);
-    }
-  }
-
-  return states.map((changeStates) =>
-    changeStates
-      .flatMap((state) =>
-        (unmovedByState.get(state) ?? []).slice(Math.max(0, state.deletedCount - state.consumedCount))
-      )
+      })
       .toSorted((left, right) => left - right)
   );
 }
 
-function collectHunkState(change: DuplicationChange, hunk: LineHunk, newCloneLines: ReadonlySet<number>): HunkState {
-  const addedLines: number[] = [];
-  for (let line = hunk.headStart; line < hunk.headStart + hunk.headCount; line++) {
-    if (change.headDuplicatedLines.has(line) && newCloneLines.has(line)) {
-      addedLines.push(line);
-    }
-  }
-  let deletedCount = 0;
+/**
+ * The hunk's added duplicated lines (of new clones) and deleted duplicated lines left once each
+ * deleted line has credited one added line of the hunk, same content first.
+ */
+function settleReplacements(
+  change: DuplicationChange,
+  hunk: LineHunk,
+  newCloneLines: ReadonlySet<number>
+): { addedLines: number[]; deletedContents: string[] } {
+  const deletedContents: string[] = [];
   for (let line = hunk.baseStart; line < hunk.baseStart + hunk.baseCount; line++) {
     if (change.baseDuplicatedLines.has(line)) {
-      deletedCount += 1;
+      deletedContents.push(normalizeLine(change.baseLines?.[line - 1]));
     }
   }
-  return { addedLines, deletedCount, consumedCount: 0 };
+  const addedLines: number[] = [];
+  for (let line = hunk.headStart; line < hunk.headStart + hunk.headCount; line++) {
+    if (!change.headDuplicatedLines.has(line) || !newCloneLines.has(line)) {
+      continue;
+    }
+    const sameContentIndex = deletedContents.indexOf(normalizeLine(change.headLines?.[line - 1]));
+    if (sameContentIndex === -1) {
+      addedLines.push(line);
+    } else {
+      deletedContents.splice(sameContentIndex, 1);
+    }
+  }
+  const replacedCount = Math.min(addedLines.length, deletedContents.length);
+  return { addedLines: addedLines.slice(replacedCount), deletedContents: deletedContents.slice(replacedCount) };
 }
 
 /**

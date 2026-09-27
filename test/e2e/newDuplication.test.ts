@@ -62,4 +62,24 @@ describe('findNewlyDuplicatedLines', () => {
     });
     expect(findNewlyDuplicatedLines([rewritten, source, destination])).toStrictEqual([[], [], []]);
   });
+
+  it('settles in-place rewrites before moves, whatever the order of changes', () => {
+    const rewritten = makeChange({
+      baseLines: ['first();', 'second();'],
+      headLines: ['second();', 'third();'],
+      hunks: [{ baseStart: 1, baseCount: 2, headStart: 1, headCount: 2 }],
+      baseDuplicatedLines: new Set([1, 2]),
+      headDuplicatedLines: new Set([1, 2]),
+      headOccurrences: [{ startLine: 1, endLine: 2 }],
+    });
+    const pasted = makeChange({
+      baseLines: undefined,
+      headLines: ['first();', 'second();'],
+      hunks: [{ baseStart: 0, baseCount: 0, headStart: 1, headCount: 2 }],
+      headDuplicatedLines: new Set([1, 2]),
+      headOccurrences: [{ startLine: 1, endLine: 2 }],
+    });
+    expect(findNewlyDuplicatedLines([rewritten, pasted])).toStrictEqual([[], [1, 2]]);
+    expect(findNewlyDuplicatedLines([pasted, rewritten])).toStrictEqual([[1, 2], []]);
+  });
 });

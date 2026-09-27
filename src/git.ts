@@ -142,6 +142,9 @@ export async function listLineHunks(
   const output = await runGit(repoRoot, [
     'diff',
     '--unified=0',
+    // diff.interHunkContext would otherwise merge nearby hunks, and the unchanged lines between
+    // them would count as added.
+    '--inter-hunk-context=0',
     // A file git would show as binary (a `-diff` attribute, a NUL byte) must still yield hunks.
     '--text',
     '--no-color',

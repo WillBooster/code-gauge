@@ -611,6 +611,22 @@ describe('code-gauge diff --base: newly duplicated lines', () => {
     expect(result.stdout).not.toContain('src/report.ts:');
   });
 
+  it('keeps unchanged lines between nearby edits out of the added lines despite diff.interHunkContext', () => {
+    runGit(['config', 'diff.interHunkContext', '10'], repoDir);
+    try {
+      const edited = reportSource
+        .replace('(items: number[])', '(items: number[], scale = 1)')
+        .replace('return shifted + scaled + sum;', 'return shifted - scaled;');
+      writeFileSync(path.join(repoDir, 'src', 'report.ts'), edited);
+      writeFileSync(path.join(repoDir, 'src', 'copy.ts'), copiedReport);
+      const result = runCli(['diff', '--base', 'main'], repoDir);
+      expect(result.stdout).toContain('src/copy.ts:');
+      expect(result.stdout).not.toContain('src/report.ts:');
+    } finally {
+      runGit(['config', '--unset', 'diff.interHunkContext'], repoDir);
+    }
+  });
+
   it('passes an in-place edit of an existing clone', () => {
     withBaseCommit({ 'src/copy.ts': copiedReport }, () => {
       writeFileSync(path.join(repoDir, 'src', 'copy.ts'), copiedReport.replace('scaled / 7', 'scaled / 9'));
