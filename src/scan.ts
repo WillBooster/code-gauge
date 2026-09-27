@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
+import type { Exclusion } from './exclusion.js';
 import { detectLanguage } from './languages.js';
 import { measureCode, measureCodeWithCrossFileDataAsync } from './metrics.js';
 import { NativeAddonError } from './nativeMetrics.js';
@@ -12,6 +13,8 @@ import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } fr
 export interface ScanOptions {
   duplication: Required<DuplicationOptions>;
   includeTests: boolean;
+  /** Applies to directory scans; an explicitly targeted file is always measured. */
+  exclusion?: Exclusion;
 }
 
 export interface FileMetrics {
@@ -27,6 +30,8 @@ export interface ScanResult {
   errors: string[];
   /** Non-fatal degradations (e.g. cross-file candidates unavailable); the file is still measured. */
   warnings: string[];
+  /** Files skipped because their content is generated code (see Exclusion.isGeneratedCode). */
+  generatedFiles: string[];
   fatalError?: string;
   files: FileMetrics[];
 }
@@ -109,7 +114,11 @@ interface ScanContext {
  * A missing native addon fails every file identically, so it ends the scan as one fatal error
  * instead of one "skipped" entry per file behind a successful exit code.
  */
-type ScanOutcome = { file: FileMetrics; warning?: string } | { error: string } | { fatal: NativeAddonError };
+type ScanOutcome =
+  | { file: FileMetrics; warning?: string }
+  | { generatedFile: string }
+  | { error: string }
+  | { fatal: NativeAddonError };
 
 // Twice the addon's worker count keeps its pool busy while finished payloads are parsed.
 const maxMeasurementsInFlight = os.availableParallelism() * 2;
@@ -129,7 +138,14 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
     targetStat = await stat(canonicalTarget);
   } catch (error) {
     const fatalError = `${formatPath(canonicalTarget, fallbackDisplayRoot)}: ${formatError(error)}`;
-    return { displayRoot: fallbackDisplayRoot, files: [], errors: [fatalError], warnings: [], fatalError };
+    return {
+      displayRoot: fallbackDisplayRoot,
+      files: [],
+      errors: [fatalError],
+      warnings: [],
+      generatedFiles: [],
+      fatalError,
+    };
   }
 
   if (targetStat.isFile()) {
@@ -137,7 +153,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
     const language = getLanguage(canonicalTarget, options, true);
     if (!language) {
       const fatalError = `${formatPath(canonicalTarget, displayRoot)}: unsupported file type`;
-      return { displayRoot, files: [], errors: [fatalError], warnings: [], fatalError };
+      return { displayRoot, files: [], errors: [fatalError], warnings: [], generatedFiles: [], fatalError };
     }
 
     const context = makeScanContext(options, displayRoot);
@@ -171,6 +187,9 @@ export async function scanListedFiles(
       continue;
     }
     const absolutePath = path.join(rootDirectory, relativePath);
+    if (options.exclusion?.isExcludedPath(absolutePath)) {
+      continue;
+    }
     // Symbolic links are not source files: git stores only their target string, so measuring
     // through them would diverge from what any revision of the repository actually contains.
     const stats = await lstat(absolutePath).catch(() => {});
@@ -187,12 +206,17 @@ async function settleScan(context: ScanContext, displayRoot: string): Promise<Sc
   const files: FileMetrics[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
+  const generatedFiles: string[] = [];
   for (const pending of context.outcomes) {
     const outcome = await pending;
     if ('fatal' in outcome) {
       const fatalError = formatError(outcome.fatal);
       // Errors the walk recorded before the fatal failure stay reported alongside it.
-      return { displayRoot, files, errors: [...errors, fatalError], warnings, fatalError };
+      return { displayRoot, files, errors: [...errors, fatalError], warnings, generatedFiles, fatalError };
+    }
+    if ('generatedFile' in outcome) {
+      generatedFiles.push(outcome.generatedFile);
+      continue;
     }
     if ('error' in outcome) {
       errors.push(outcome.error);
@@ -203,7 +227,7 @@ async function settleScan(context: ScanContext, displayRoot: string): Promise<Sc
       warnings.push(outcome.warning);
     }
   }
-  return { displayRoot, files, errors, warnings };
+  return { displayRoot, files, errors, warnings, generatedFiles };
 }
 
 function makeScanContext(options: ScanOptions, rootDirectory: string): ScanContext {
@@ -312,7 +336,7 @@ async function measureScannableFile(
   realFile?: string
 ): Promise<void> {
   const language = getLanguage(languageFile, context.options);
-  if (language) {
+  if (language && !context.options.exclusion?.isExcludedPath(realFile ?? file)) {
     await measureFile(file, language, 'directory', context, realFile);
   }
 }
@@ -366,6 +390,9 @@ async function readAndMeasureFile(
     // Only directory scans compare files against each other; a single-file target has no peers.
     if (mode === 'single-file') {
       return { file: { file, metrics: measureCode(code, measureOptions) } };
+    }
+    if (context.options.exclusion?.isGeneratedCode(file, code)) {
+      return { generatedFile: file };
     }
     const { metrics, crossFileData, crossFileError } = await measureWithCrossFileData(code, measureOptions);
     return {

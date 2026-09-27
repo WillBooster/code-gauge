@@ -1026,7 +1026,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         ],
         duplicateLineCount: 11,
         duplicationRatio: 0.0235,
-        maxDuplicateBlockSize: 53,
+        maxDuplicateBlockSize: 71,
       },
       halstead: {
         distinctOperators: 30,

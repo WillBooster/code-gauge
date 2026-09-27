@@ -2,10 +2,16 @@ import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig, resolveGateOptions, resolveOptions, type ResolvedOptions } from './cliConfig.js';
-import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
+import {
+  measureCrossFileDuplication,
+  type CrossFileDuplicateOccurrence,
+  type CrossFileDuplicationMetrics,
+} from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
+import { loadRepositoryExclusion, type Exclusion } from './exclusion.js';
 import {
   listChangedFiles,
+  listLineHunks,
   listRepositoryFiles,
   listSymlinkPathsAtRevision,
   readFileAtRevision,
@@ -14,6 +20,7 @@ import {
   type ChangedFile,
 } from './git.js';
 import { collectFunctionTokenSequences } from './metrics.js';
+import { findNewlyDuplicatedLines, type DuplicationChange, type LineHunk } from './newDuplication.js';
 import {
   evaluateRegressionGate,
   type CheckedFunctionReport,
@@ -57,7 +64,14 @@ interface PreparedFile {
   /** Whether the file is gated (under the target directory); others only feed the base universe. */
   gated: boolean;
   headFile?: FileMetrics;
+  headContent?: string;
   baseMetrics?: CodeMetrics;
+  baseContent?: string;
+  /**
+   * The line diff from the measured base to the measured head; with one side unmeasured, every
+   * line of the other counts as added or deleted.
+   */
+  hunks?: LineHunk[];
   baseCandidates?: CrossFileDuplicationFileData;
   baseFunctionTokens?: Int32Array[];
   headFunctionTokens?: Int32Array[];
@@ -106,7 +120,17 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   // with the changed files' contents swapped for their merge-base blobs.
   const repositoryFiles = await listRepositoryFiles(repoRoot);
   const baseSymlinkPaths = await listSymlinkPathsAtRevision(repoRoot, mergeBase);
-  const scan = await scanListedFiles(repoRoot, repositoryFiles, options);
+  // Base blobs are excluded by the attributes of the revision they come from.
+  const [headExclusion, baseExclusion] = await Promise.all([
+    loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude),
+    loadRepositoryExclusion(
+      repoRoot,
+      changedFiles.flatMap((changed) => (changed.basePath === undefined ? [] : [changed.basePath])),
+      options.exclude,
+      mergeBase
+    ),
+  ]);
+  const scan = await scanListedFiles(repoRoot, repositoryFiles, { ...options, exclusion: headExclusion });
   // A run-wide failure (a missing native addon) invalidates the whole gate: surface it once as
   // the fatal error (exit 2) instead of diagnosing every changed file as unmeasured.
   if (scan.fatalError) {
@@ -139,7 +163,18 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
   const prepared = await prepareChangedFiles(
     changedFiles,
-    { repoRoot, mergeBase, canonicalTarget, options, scannedFiles, baseSymlinkPaths, scanErrors: [...errors] },
+    {
+      repoRoot,
+      mergeBase,
+      canonicalTarget,
+      options,
+      scannedFiles,
+      baseSymlinkPaths,
+      scanErrors: [...errors],
+      headExclusion,
+      baseExclusion,
+      generatedHeadFiles: new Set(scan.generatedFiles),
+    },
     errors,
     warnings
   );
@@ -152,7 +187,10 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   // Non-gated files (outside the target, or renamed out of scan scope) still feed function
   // matching and the duplication universes; the evaluator reports nothing for them.
   const { baseCross, headCross } = measureDuplicationUniverses(prepared, scannedFiles, options);
-  const inputs = prepared.map((file) => toGateInput(file, baseCross, headCross));
+  const newlyDuplicatedLines = findNewlyDuplicatedLines(
+    prepared.map((file) => toDuplicationChange(file, baseCross, headCross))
+  );
+  const inputs = prepared.map((file, index) => toGateInput(file, newlyDuplicatedLines[index] ?? [], headCross));
   const result = evaluateRegressionGate(inputs, gateOptions);
 
   if (cliOptions.json) {
@@ -187,6 +225,10 @@ interface GateContext {
   baseSymlinkPaths: Set<string>;
   /** Errors the head scan recorded against changed files. */
   scanErrors: readonly string[];
+  headExclusion: Exclusion;
+  baseExclusion: Exclusion;
+  /** Absolute paths the head scan skipped as generated code. */
+  generatedHeadFiles: ReadonlySet<string>;
 }
 
 async function prepareChangedFiles(
@@ -239,16 +281,20 @@ async function prepareChangedFile(
 ): Promise<PreparedFile | undefined> {
   // Symbolic links are skipped on both sides, mirroring scanListedFiles: git stores only the
   // target string, so a symlink blob is not measurable source.
+  const absoluteHeadPath = path.join(context.repoRoot, changed.headPath);
   const headScannable =
     changed.status !== 'deleted' &&
     isScannedPath(changed.headPath, context.options) &&
-    !(await isSymbolicLink(path.join(context.repoRoot, changed.headPath)));
+    !context.headExclusion.isExcludedPath(absoluteHeadPath) &&
+    !context.generatedHeadFiles.has(absoluteHeadPath) &&
+    !(await isSymbolicLink(absoluteHeadPath));
   // A base path outside the scan scope (renamed from a test/ignored directory, or an unsupported
   // extension) was never measurable code: its content gates as new code instead of ratcheting
   // against a blob the scanner would not have measured.
   const baseScannable =
     changed.basePath !== undefined &&
     isScannedPath(changed.basePath, context.options) &&
+    !context.baseExclusion.isExcludedPath(path.join(context.repoRoot, changed.basePath)) &&
     !context.baseSymlinkPaths.has(changed.basePath);
   if (!headScannable && !baseScannable) {
     return undefined;
@@ -273,15 +319,47 @@ async function prepareChangedFile(
     headFile,
   };
 
-  if (baseScannable && !(await measureBaseRevision(file, changed.basePath as string, context, errors, warnings))) {
+  if (baseScannable) {
+    const outcome = await measureBaseRevision(file, changed.basePath as string, context, errors, warnings);
+    // A base that turns out to be generated code gates its head as new code, like any other base
+    // outside the scan scope.
+    if (outcome === 'failed' || (outcome === 'generated' && !headFile)) {
+      return undefined;
+    }
+  }
+
+  try {
+    if (headFile) {
+      // The duplication gate needs the head lines, so an unreadable head fails like an unmeasured one.
+      file.headContent = await readFile(headFile.file, 'utf8');
+      collectHeadFunctionTokens(file, file.headContent, context, warnings);
+    }
+    file.hunks = await diffMeasuredRevisions(file, context);
+  } catch (error) {
+    errors.push(`${displayFile}: ${formatError(error)}`);
     return undefined;
   }
-
-  if (headFile) {
-    await collectHeadFunctionTokens(file, headFile, context, warnings);
-  }
-
   return file;
+}
+
+async function diffMeasuredRevisions(file: PreparedFile, context: GateContext): Promise<LineHunk[]> {
+  const { changed, baseContent, headContent } = file;
+  if (baseContent !== undefined && headContent !== undefined) {
+    return await listLineHunks(context.repoRoot, context.mergeBase, changed.basePath as string, changed.headPath);
+  }
+  return [
+    {
+      baseStart: 1,
+      baseCount: baseContent === undefined ? 0 : splitLines(baseContent).length,
+      headStart: 1,
+      headCount: headContent === undefined ? 0 : splitLines(headContent).length,
+    },
+  ];
+}
+
+/** Line numbering of the measured metrics (classifyLines splits on every line terminator). */
+function splitLines(content: string): string[] {
+  return content.split(/\r\n|\n|\r/u);
 }
 
 /**
@@ -296,14 +374,13 @@ function reportUnmeasuredChangedFile(headPath: string, scanErrors: readonly stri
   }
 }
 
-async function collectHeadFunctionTokens(
+function collectHeadFunctionTokens(
   file: PreparedFile,
-  headFile: FileMetrics,
+  headContent: string,
   context: GateContext,
   warnings: string[]
-): Promise<void> {
+): void {
   try {
-    const headContent = await readFile(headFile.file, 'utf8');
     file.headFunctionTokens = collectFunctionTokenSequences(headContent, {
       language: getLanguage(file.changed.headPath, context.options) as LanguageName,
       duplication: context.options.duplication,
@@ -315,10 +392,11 @@ async function collectHeadFunctionTokens(
 }
 
 /**
- * Measures the merge-base blob into `file`; false (with an error recorded) only when the metrics
- * themselves cannot be measured. The auxiliary collections (duplication candidates, token
- * sequences) may fail independently of the metrics, so their failure only degrades duplication
- * data and rename re-matching — the function-level ratchets still run.
+ * Measures the merge-base blob into `file`; 'failed' (with an error recorded) only when the
+ * metrics themselves cannot be measured, and 'generated' (nothing measured) for generated code.
+ * The auxiliary collections (duplication candidates, token sequences) may fail independently of
+ * the metrics, so their failure only degrades duplication data and rename re-matching — the
+ * function-level ratchets still run.
  */
 async function measureBaseRevision(
   file: PreparedFile,
@@ -326,7 +404,7 @@ async function measureBaseRevision(
   context: GateContext,
   errors: string[],
   warnings: string[]
-): Promise<boolean> {
+): Promise<'measured' | 'generated' | 'failed'> {
   const measureOptions = {
     language: getLanguage(basePath, context.options) as LanguageName,
     duplication: context.options.duplication,
@@ -334,22 +412,26 @@ async function measureBaseRevision(
   let baseContent;
   try {
     baseContent = await readFileAtRevision(context.repoRoot, context.mergeBase, basePath);
+    if (context.baseExclusion.isGeneratedCode(path.join(context.repoRoot, basePath), baseContent)) {
+      return 'generated';
+    }
     const measured = await measureWithCrossFileData(baseContent, measureOptions);
     file.baseMetrics = measured.metrics;
+    file.baseContent = baseContent;
     file.baseCandidates = measured.crossFileData;
     if (measured.crossFileError !== undefined) {
       warnings.push(`${basePath} (at merge-base): duplication candidates unavailable: ${measured.crossFileError}`);
     }
   } catch (error) {
     errors.push(`${basePath} (at merge-base): ${formatError(error)}`);
-    return false;
+    return 'failed';
   }
   try {
     file.baseFunctionTokens = collectFunctionTokenSequences(baseContent, measureOptions);
   } catch (error) {
     warnings.push(`${basePath} (at merge-base): function token sequences unavailable: ${formatError(error)}`);
   }
-  return true;
+  return 'measured';
 }
 
 async function isSymbolicLink(absolutePath: string): Promise<boolean> {
@@ -403,9 +485,35 @@ function measureDuplicationUniverses(
   };
 }
 
-function toGateInput(
+function toDuplicationChange(
   file: PreparedFile,
   baseCross: CrossFileDuplicationMetrics | undefined,
+  headCross: CrossFileDuplicationMetrics | undefined
+): DuplicationChange {
+  return {
+    baseLines: file.baseContent === undefined ? undefined : splitLines(file.baseContent),
+    headLines: file.headContent === undefined ? undefined : splitLines(file.headContent),
+    baseDuplicatedLines:
+      file.baseMetrics === undefined || file.changed.basePath === undefined
+        ? new Set()
+        : collectDuplicatedLineNumbers(file.baseMetrics, baseCross, file.changed.basePath),
+    headDuplicatedLines:
+      file.headFile === undefined
+        ? new Set()
+        : collectDuplicatedLineNumbers(file.headFile.metrics, headCross, file.changed.headPath),
+    headOccurrences: [
+      ...(file.headFile?.metrics.duplication.duplicateBlockGroups.flat() ?? []),
+      ...(headCross?.groups ?? []).flatMap((group) =>
+        group.occurrences.filter((occurrence) => occurrence.file === file.changed.headPath)
+      ),
+    ],
+    hunks: file.hunks ?? [],
+  };
+}
+
+function toGateInput(
+  file: PreparedFile,
+  newlyDuplicatedLines: number[],
   headCross: CrossFileDuplicationMetrics | undefined
 ): GateFileInput {
   return {
@@ -414,36 +522,26 @@ function toGateInput(
     headMetrics: file.headFile?.metrics,
     baseFunctionTokens: file.baseFunctionTokens,
     headFunctionTokens: file.headFunctionTokens,
-    baseDuplicatedLineCount:
-      file.baseMetrics === undefined || file.changed.basePath === undefined
-        ? 0
-        : countDuplicatedLines(file.baseMetrics, baseCross, file.changed.basePath),
-    headDuplicatedLineCount:
-      file.changed.status === 'deleted'
-        ? 0
-        : countDuplicatedLines(file.headFile?.metrics, headCross, file.changed.headPath),
-    duplicationPartners: collectPartners(headCross, file.changed.headPath),
+    newlyDuplicatedLines,
+    duplicationPartners: collectPartners(file, newlyDuplicatedLines, headCross),
     gated: file.gated,
   };
 }
 
-function countDuplicatedLines(
-  metrics: CodeMetrics | undefined,
-  cross: CrossFileDuplicationMetrics | undefined,
-  file: string
-): number {
-  return collectDuplicatedLineNumbers(metrics, cross, file).size;
-}
-
-function collectPartners(cross: CrossFileDuplicationMetrics | undefined, file: string): string[] {
-  if (!cross) {
-    return [];
-  }
+/** Other files sharing a cross-file clone that covers the given lines. */
+function collectPartners(
+  file: PreparedFile,
+  lines: number[],
+  headCross: CrossFileDuplicationMetrics | undefined
+): string[] {
+  const headPath = file.changed.headPath;
+  const covers = (occurrence: CrossFileDuplicateOccurrence): boolean =>
+    occurrence.file === headPath && lines.some((line) => line >= occurrence.startLine && line <= occurrence.endLine);
   const partners = new Set<string>();
-  for (const group of cross.groups) {
-    if (group.files.includes(file)) {
+  for (const group of headCross?.groups ?? []) {
+    if (group.occurrences.some(covers)) {
       for (const partner of group.files) {
-        if (partner !== file) {
+        if (partner !== headPath) {
           partners.add(partner);
         }
       }
@@ -558,8 +656,7 @@ function printJsonReport(
         headNcss: input.headMetrics?.ncssCount ?? 0,
         baseMaxCognitiveComplexity: input.baseMetrics?.maxCognitiveComplexity ?? 0,
         headMaxCognitiveComplexity: input.headMetrics?.maxCognitiveComplexity ?? 0,
-        baseDuplicatedLineCount: input.baseDuplicatedLineCount,
-        headDuplicatedLineCount: input.headDuplicatedLineCount,
+        newlyDuplicatedLines: input.newlyDuplicatedLines,
         duplicationPartners: input.duplicationPartners,
         functions: result.checkedFunctions.filter((fn) => fn.file === input.file),
       }));

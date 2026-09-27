@@ -25,7 +25,7 @@ export interface GateTolerances {
   halsteadVolume: number;
   /** File-total NCSS growth allowed when base functions disappeared (the anti-gaming backstop). */
   fileNcss: number;
-  /** Duplicated-line growth allowed per changed file. */
+  /** Newly duplicated changed lines allowed per changed file. */
   duplicateLines: number;
 }
 
@@ -70,10 +70,12 @@ export interface GateFileInput {
   /** Token sequences index-parallel to baseMetrics.functions, for similarity re-matching. */
   baseFunctionTokens?: Int32Array[];
   headFunctionTokens?: Int32Array[];
-  /** Distinct duplicated lines of this file at the base revision (within-file and cross-file). */
-  baseDuplicatedLineCount: number;
-  headDuplicatedLineCount: number;
-  /** Other files sharing cross-file duplicates with this file at head, as remediation evidence. */
+  /**
+   * Head lines the change newly made duplicated (within-file or cross-file), ascending; the
+   * caller derives them from the line diff (see findNewlyDuplicatedLines).
+   */
+  newlyDuplicatedLines: number[];
+  /** Other files sharing the clones behind newlyDuplicatedLines, as remediation evidence. */
   duplicationPartners: string[];
   /**
    * false: the file only feeds function matching and the duplication universes (it lies outside
@@ -734,31 +736,46 @@ function findMostComplexFunction(functions: FunctionMetrics[]): FunctionMetrics 
 }
 
 /**
- * No new duplication: the distinct duplicated lines of a changed file (within-file plus
- * cross-file against the whole project, so copy-paste from existing code into new files is
- * caught) must not exceed the base revision's count.
+ * No new duplication: the changed lines of a file must not newly duplicate code (within-file, or
+ * cross-file against the whole project, so copy-paste from unchanged code is caught where it was
+ * pasted).
  */
 function checkDuplication(file: GateFileInput, tolerances: GateTolerances): GateViolation[] {
-  const allowedValue = file.baseDuplicatedLineCount + tolerances.duplicateLines;
-  if (file.headDuplicatedLineCount <= allowedValue) {
+  const lines = file.newlyDuplicatedLines;
+  const allowedValue = tolerances.duplicateLines;
+  if (lines.length <= allowedValue) {
     return [];
   }
+  const startLine = lines[0] as number;
+  const endLine = lines.at(-1) as number;
   const partners = file.duplicationPartners.slice(0, 3).join(', ');
-  const endLine = file.headMetrics?.lines.total ?? 1;
   return [
     {
       gate: 'duplication',
-      metric: 'duplicated lines',
+      metric: 'newly duplicated lines',
       file: file.file,
-      startLine: 1,
+      startLine,
       endLine,
-      baseValue: file.baseDuplicatedLineCount,
-      headValue: file.headDuplicatedLineCount,
+      headValue: lines.length,
       allowedValue,
       message:
-        `${file.file}:1-${endLine}: duplicated lines increased ${file.baseDuplicatedLineCount} -> ` +
-        `${file.headDuplicatedLineCount} (allowed <= ${allowedValue}). Deduplicate` +
+        `${file.file}:${startLine}-${endLine}: ${lines.length} changed lines duplicate existing code ` +
+        `(lines ${formatLineRanges(lines)}; allowed <= ${allowedValue}). Deduplicate` +
         `${partners ? ` against ${partners}` : ' the repeated code'} by extracting a shared helper.`,
     },
   ];
+}
+
+/** Ascending line numbers as compact ranges, e.g. `3-5, 9`. */
+function formatLineRanges(lines: number[]): string {
+  const ranges: string[] = [];
+  let start = lines[0] as number;
+  for (const [index, line] of lines.entries()) {
+    const next = lines[index + 1];
+    if (next !== line + 1) {
+      ranges.push(start === line ? String(line) : `${start}-${line}`);
+      start = next as number;
+    }
+  }
+  return ranges.join(', ');
 }

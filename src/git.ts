@@ -1,5 +1,6 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
+import type { LineHunk } from './newDuplication.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -123,9 +124,115 @@ export async function listSymlinkPathsAtRevision(repoRoot: string, revision: str
   return links;
 }
 
+/**
+ * The line hunks turning the merge-base blob at `basePath` into the working-tree file at
+ * `headPath` (equal unless renamed), as `git diff` computes them for review.
+ */
+export async function listLineHunks(
+  repoRoot: string,
+  mergeBase: string,
+  basePath: string,
+  headPath: string
+): Promise<LineHunk[]> {
+  const paths = basePath === headPath ? [headPath] : [basePath, headPath];
+  const output = await runGit(repoRoot, [
+    'diff',
+    '--unified=0',
+    '--no-color',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--find-renames',
+    mergeBase,
+    '--',
+    ...paths,
+  ]);
+  const hunks: LineHunk[] = [];
+  for (const match of output.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gmu)) {
+    const [, baseStart, baseCount, headStart, headCount] = match;
+    hunks.push({
+      baseStart: Number(baseStart),
+      baseCount: baseCount === undefined ? 1 : Number(baseCount),
+      headStart: Number(headStart),
+      headCount: headCount === undefined ? 1 : Number(headCount),
+    });
+  }
+  return hunks;
+}
+
+/** A file's `linguist-generated` / `linguist-vendored` attributes; undefined when unspecified. */
+export interface LinguistAttributes {
+  generated?: boolean;
+  vendored?: boolean;
+}
+
+/**
+ * The linguist attributes of repository-relative paths, from the working tree's `.gitattributes`
+ * or, with `source`, from that revision's. Paths with neither attribute specified are omitted.
+ */
+export async function readLinguistAttributes(
+  repoRoot: string,
+  paths: Iterable<string>,
+  source?: string
+): Promise<Map<string, LinguistAttributes>> {
+  const args = ['check-attr', '--stdin', '-z', ...(source === undefined ? [] : [`--source=${source}`])];
+  const output = await runGitWithInput(
+    repoRoot,
+    [...args, 'linguist-generated', 'linguist-vendored'],
+    [...paths].join('\0')
+  );
+  const attributesByPath = new Map<string, LinguistAttributes>();
+  const fields = output.split('\0');
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const [file, attribute, value] = fields.slice(index, index + 3) as [string, string, string];
+    const enabled = toAttributeFlag(value);
+    if (enabled === undefined) {
+      continue;
+    }
+    const attributes = attributesByPath.get(file) ?? {};
+    if (attribute === 'linguist-generated') {
+      attributes.generated = enabled;
+    } else {
+      attributes.vendored = enabled;
+    }
+    attributesByPath.set(file, attributes);
+  }
+  return attributesByPath;
+}
+
+/** Linguist reads `attr`/`attr=true` as set and `-attr`/`attr=false` as explicitly unset. */
+function toAttributeFlag(value: string): boolean | undefined {
+  if (value === 'set' || value === 'true') {
+    return true;
+  }
+  if (value === 'unset' || value === 'false') {
+    return false;
+  }
+  return undefined;
+}
+
 /** The file's content at the given commit; the path is repository-relative with forward slashes. */
 export async function readFileAtRevision(repoRoot: string, revision: string, path: string): Promise<string> {
   return await runGit(repoRoot, ['cat-file', 'blob', `${revision}:${path}`]);
+}
+
+async function runGitWithInput(cwd: string, args: string[], input: string): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn('git', args, { cwd });
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString('utf8'));
+        return;
+      }
+      const message = Buffer.concat(stderr).toString('utf8').trim();
+      reject(new Error(`git ${args.slice(0, 2).join(' ')} failed${message ? `: ${message}` : ''}`));
+    });
+    child.stdin.end(input);
+  });
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
