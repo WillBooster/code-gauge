@@ -128,16 +128,29 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const baseSymlinkPaths = await listSymlinkPathsAtRevision(repoRoot, mergeBase);
   const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
   const explicitFiles = await listExplicitlyTargetedPaths(canonicalTarget, repoRoot, changedFiles);
-  // Base blobs are excluded by the attributes of the revision they come from.
+  // Base blobs are excluded by the attributes of the revision they come from. A changed
+  // .gitattributes can re-include files whose bytes did not change, so then every file's base
+  // attributes are needed to find them.
+  const attributesChanged = changedFiles.some((changed) =>
+    [changed.headPath, changed.basePath].some(
+      (file) => file !== undefined && path.posix.basename(file) === '.gitattributes'
+    )
+  );
+  const basePaths = changedFiles.flatMap((changed) => (changed.basePath === undefined ? [] : [changed.basePath]));
   const [headAttributesExclusion, baseAttributesExclusion] = await Promise.all([
     loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude),
     loadRepositoryExclusion(
       repoRoot,
-      changedFiles.flatMap((changed) => (changed.basePath === undefined ? [] : [changed.basePath])),
+      attributesChanged ? [...new Set([...basePaths, ...repositoryFiles])] : basePaths,
       options.exclude,
       mergeBase
     ),
   ]);
+  if (attributesChanged) {
+    changedFiles.push(
+      ...listReincludedFiles(repositoryFiles, changedFiles, repoRoot, headAttributesExclusion, baseAttributesExclusion)
+    );
+  }
   const headExclusion = keepPaths(headAttributesExclusion, explicitFiles);
   const baseExclusion = keepPaths(baseAttributesExclusion, explicitFiles);
   const scan = await scanListedFiles(
@@ -228,6 +241,30 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   } else if (result.violations.length > 0) {
     process.exitCode = 1;
   }
+}
+
+/**
+ * Unchanged files that the merge-base's git attributes excluded but the working tree's do not:
+ * their code is newly measured, so it gates as a modification from an unmeasurable base.
+ */
+function listReincludedFiles(
+  repositoryFiles: Iterable<string>,
+  changedFiles: readonly ChangedFile[],
+  repoRoot: string,
+  headExclusion: Exclusion,
+  baseExclusion: Exclusion
+): ChangedFile[] {
+  const changedPaths = new Set(changedFiles.flatMap((changed) => [changed.headPath, changed.basePath]));
+  return [...repositoryFiles]
+    .filter((file) => {
+      const absolutePath = path.join(repoRoot, file);
+      return (
+        !changedPaths.has(file) &&
+        baseExclusion.isExcludedPath(absolutePath) &&
+        !headExclusion.isExcludedPath(absolutePath)
+      );
+    })
+    .map((file) => ({ status: 'modified', basePath: file, headPath: file }));
 }
 
 /**
