@@ -78,8 +78,9 @@ code-gauge diff --base main src/api  # gate only the changed files under src/api
 `code-gauge diff --base <ref>` measures every changed file at both revisions (working tree vs. the
 merge-base of `<ref>` and `HEAD`, read with `git cat-file` — no checkout, no persisted baseline, so
 it works identically in CI and locally) and reports **only violations**. When every gate passes it
-prints a single line and exits 0; violations print one line each — metric, base → head values, the
-`file:line` span, and a remediation direction — and exit 1 (2 when files cannot be measured).
+prints a single line and exits 0; violations print one line each — the `file:line` span, the metric
+with its value and allowed bound (base → head for ratchets), and a remediation direction — and exit
+1 (2 when files cannot be measured).
 
 Functions are matched across revisions by name and arity, then by name alone, and finally by
 normalized-token LCS similarity, so renames and moves don't appear as delete+add. The gates:
