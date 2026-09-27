@@ -30,9 +30,9 @@ interface HunkState {
  * The head lines, per change, that the change newly made duplicated. Only added lines count, so a
  * copy is attributed to where it was pasted, never to the unchanged code it copies. An added line
  * is not new duplication when
- * - every clone occurrence covering it already existed, i.e. also covers an unchanged line that
- *   was duplicated at base (an edit inside pre-existing duplication, which near-miss coverage
- *   reports even for tokens the copies do not share),
+ * - every clone occurrence covering it holds it between unchanged lines that were duplicated at
+ *   base (an edit inside pre-existing duplication, which near-miss coverage reports even for
+ *   tokens the copies do not share),
  * - it reappears from a deleted duplicated line anywhere in the change (the clone was moved), or
  * - it replaces a deleted duplicated line of the same hunk (a clone rewritten in place).
  */
@@ -101,22 +101,29 @@ function collectHunkState(change: DuplicationChange, hunk: LineHunk, newCloneLin
   return { addedLines, deletedCount, consumedCount: 0 };
 }
 
-/** Lines covered by a clone occurrence that did not exist at base. */
+/**
+ * Lines of clone occurrences that are not edits inside pre-existing duplication: all lines of an
+ * occurrence with no unchanged line that was duplicated at base, and otherwise the lines outside
+ * the span between its first and last such line, so code pasted next to an old clone still counts.
+ */
 function collectNewCloneLines(change: DuplicationChange): Set<number> {
   const baseLineOf = mapUnchangedLines(change);
-  const existedAtBase = (occurrence: { startLine: number; endLine: number }): boolean => {
-    for (let line = occurrence.startLine; line <= occurrence.endLine; line++) {
-      const baseLine = baseLineOf[line] ?? 0;
-      if (baseLine > 0 && change.headDuplicatedLines.has(line) && change.baseDuplicatedLines.has(baseLine)) {
-        return true;
-      }
-    }
-    return false;
+  const isPreexisting = (line: number): boolean => {
+    const baseLine = baseLineOf[line] ?? 0;
+    return baseLine > 0 && change.headDuplicatedLines.has(line) && change.baseDuplicatedLines.has(baseLine);
   };
   const lines = new Set<number>();
-  for (const occurrence of change.headOccurrences) {
-    if (!existedAtBase(occurrence)) {
-      for (let line = occurrence.startLine; line <= occurrence.endLine; line++) {
+  for (const { startLine, endLine } of change.headOccurrences) {
+    let firstPreexisting = Infinity;
+    let lastPreexisting = -Infinity;
+    for (let line = startLine; line <= endLine; line++) {
+      if (isPreexisting(line)) {
+        firstPreexisting = Math.min(firstPreexisting, line);
+        lastPreexisting = line;
+      }
+    }
+    for (let line = startLine; line <= endLine; line++) {
+      if (line < firstPreexisting || line > lastPreexisting) {
         lines.add(line);
       }
     }

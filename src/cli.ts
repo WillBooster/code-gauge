@@ -96,8 +96,11 @@ async function main(): Promise<void> {
     const resolvedTarget = resolveTarget(target);
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
-    const exclusion = await loadExclusion(await configSearchDirectory(resolvedTarget), options.exclude);
-    const result = await scanTarget(resolvedTarget, { ...options, exclusion });
+    const searchDirectory = await configSearchDirectory(resolvedTarget);
+    const result = await scanTarget(resolvedTarget, {
+      ...options,
+      loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
+    });
     addCrossFileDuplication(result, options);
     const rankedFiles = rankFiles(result, options.top);
 

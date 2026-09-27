@@ -13,8 +13,11 @@ import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } fr
 export interface ScanOptions {
   duplication: Required<DuplicationOptions>;
   includeTests: boolean;
-  /** Applies to directory scans; an explicitly targeted file is always measured. */
-  exclusion?: Exclusion;
+  /**
+   * Loads the exclusion covering the files a directory scan found (absolute paths); an explicitly
+   * targeted file is always measured.
+   */
+  loadExclusion?: (absolutePaths: readonly string[]) => Promise<Exclusion>;
 }
 
 export interface FileMetrics {
@@ -96,18 +99,28 @@ export async function configSearchDirectory(target: string): Promise<string> {
 interface ScanContext {
   options: ScanOptions;
   /**
-   * Outcomes in walk order. Files are measured concurrently, so a measurement is recorded as a
-   * promise here and applied in this order once the walk ends, keeping results deterministic.
+   * Outcomes in discovery order. Files are measured concurrently, so a measurement is recorded as
+   * a promise here and applied in this order once all have settled, keeping results deterministic.
    */
   outcomes: (ScanOutcome | Promise<ScanOutcome>)[];
-  /** Measurements in flight, bounded so file contents and payloads do not pile up during the walk. */
+  /** Measurements in flight, bounded so file contents and payloads do not pile up. */
   inFlight: Set<Promise<ScanOutcome>>;
-  /** Set once a measurement fails fatally; the walk then starts no further work. */
+  /** Set once a measurement fails fatally; no further measurement starts. */
   fatalSeen: boolean;
   visitedDirectories: Set<string>;
   visitedFiles: Set<string>;
   /** Scan root: paths are displayed relative to it, and symbolic links may not escape it. */
   rootDirectory: string;
+  /** Files the walk found, measured once the exclusion covering all of them is loaded. */
+  candidates: ScanCandidate[];
+  exclusion?: Exclusion;
+}
+
+interface ScanCandidate {
+  file: string;
+  language: LanguageName;
+  /** The resolved path when the file was reached through a symbolic link. */
+  realFile?: string;
 }
 
 /**
@@ -163,6 +176,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
 
   const context = makeScanContext(options, canonicalTarget);
   await scanDirectory(canonicalTarget, context);
+  await measureCandidates(context);
   return settleScan(context, canonicalTarget);
 }
 
@@ -179,29 +193,38 @@ export async function scanListedFiles(
 ): Promise<ScanResult> {
   const context = makeScanContext(options, rootDirectory);
   for (const relativePath of relativePaths) {
-    if (context.fatalSeen) {
-      break;
-    }
     const language = isScannedPath(relativePath, options) ? getLanguage(relativePath, options) : undefined;
     if (!language) {
       continue;
     }
     const absolutePath = path.join(rootDirectory, relativePath);
-    if (options.exclusion?.isExcludedPath(absolutePath)) {
-      continue;
-    }
     // Symbolic links are not source files: git stores only their target string, so measuring
     // through them would diverge from what any revision of the repository actually contains.
     const stats = await lstat(absolutePath).catch(() => {});
-    if (stats?.isSymbolicLink()) {
-      continue;
+    if (!stats?.isSymbolicLink()) {
+      context.candidates.push({ file: absolutePath, language });
     }
-    await measureFile(absolutePath, language, 'directory', context);
   }
+  await measureCandidates(context);
   return settleScan(context, rootDirectory);
 }
 
-/** Applies the scan's outcomes in walk order once every measurement has settled. */
+async function measureCandidates(context: ScanContext): Promise<void> {
+  const exclusion = await context.options.loadExclusion?.(
+    context.candidates.map((candidate) => candidate.realFile ?? candidate.file)
+  );
+  context.exclusion = exclusion;
+  for (const { file, language, realFile } of context.candidates) {
+    if (context.fatalSeen) {
+      return;
+    }
+    if (!exclusion?.isExcludedPath(realFile ?? file)) {
+      await measureFile(file, language, 'directory', context, realFile);
+    }
+  }
+}
+
+/** Applies the scan's outcomes in discovery order once every measurement has settled. */
 async function settleScan(context: ScanContext, displayRoot: string): Promise<ScanResult> {
   const files: FileMetrics[] = [];
   const errors: string[] = [];
@@ -239,6 +262,7 @@ function makeScanContext(options: ScanOptions, rootDirectory: string): ScanConte
     visitedDirectories: new Set(),
     visitedFiles: new Set(),
     rootDirectory,
+    candidates: [],
   };
 }
 
@@ -279,9 +303,6 @@ async function scanDirectory(directory: string, context: ScanContext): Promise<v
   }
 
   for (const entry of entries) {
-    if (context.fatalSeen) {
-      return;
-    }
     const entryPath = path.join(directory, entry.name);
     if (entry.isSymbolicLink()) {
       await scanSymbolicLink(entry.name, entryPath, context);
@@ -297,7 +318,7 @@ async function scanDirectory(directory: string, context: ScanContext): Promise<v
     }
 
     if (entry.isFile()) {
-      await measureScannableFile(entryPath, context);
+      collectScannableFile(entryPath, context);
     }
   }
 }
@@ -325,25 +346,20 @@ async function scanSymbolicLink(name: string, entryPath: string, context: ScanCo
   }
 
   if (entryStat.isFile()) {
-    await measureScannableFile(entryPath, context, resolvedPath, resolvedPath);
+    collectScannableFile(entryPath, context, resolvedPath, resolvedPath);
   }
 }
 
-async function measureScannableFile(
-  file: string,
-  context: ScanContext,
-  languageFile = file,
-  realFile?: string
-): Promise<void> {
+function collectScannableFile(file: string, context: ScanContext, languageFile = file, realFile?: string): void {
   const language = getLanguage(languageFile, context.options);
-  if (language && !context.options.exclusion?.isExcludedPath(realFile ?? file)) {
-    await measureFile(file, language, 'directory', context, realFile);
+  if (language) {
+    context.candidates.push({ file, language, realFile });
   }
 }
 
 /**
- * Resolves and deduplicates the file in walk order, then starts measuring it concurrently; its
- * outcome is recorded in walk order (see ScanContext.outcomes).
+ * Resolves and deduplicates the file in discovery order, then starts measuring it concurrently; its
+ * outcome is recorded in discovery order (see ScanContext.outcomes).
  */
 async function measureFile(
   file: string,
@@ -391,7 +407,7 @@ async function readAndMeasureFile(
     if (mode === 'single-file') {
       return { file: { file, metrics: measureCode(code, measureOptions) } };
     }
-    if (context.options.exclusion?.isGeneratedCode(file, code)) {
+    if (context.exclusion?.isGeneratedCode(file, code)) {
       return { generatedFile: file };
     }
     const { metrics, crossFileData, crossFileError } = await measureWithCrossFileData(code, measureOptions);

@@ -138,6 +138,8 @@ export async function listLineHunks(
   const output = await runGit(repoRoot, [
     'diff',
     '--unified=0',
+    // A file git would show as binary (a `-diff` attribute, a NUL byte) must still yield hunks.
+    '--text',
     '--no-color',
     '--no-ext-diff',
     '--no-textconv',

@@ -619,6 +619,33 @@ describe('code-gauge diff --base: newly duplicated lines', () => {
     });
   });
 
+  it('flags code pasted next to an existing clone', () => {
+    const meanSource = reportSource.replaceAll('reportTotal', 'reportMean').replaceAll('sum * 3', 'sum * 5');
+    withBaseCommit({ 'src/report.ts': reportSource + meanSource, 'src/copy.ts': copiedReport }, () => {
+      writeFileSync(
+        path.join(repoDir, 'src', 'copy.ts'),
+        copiedReport + meanSource.replaceAll('reportMean', 'copiedMean')
+      );
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('src/copy.ts:10-18: 9 changed lines duplicate existing code');
+    });
+  });
+
+  it('flags a pasted copy in a file git diffs as binary', () => {
+    writeFileSync(path.join(repoDir, '.gitattributes'), 'src/calc.ts -diff\n');
+    runGit(['add', '.gitattributes'], repoDir);
+    runGit(['commit', '-q', '-m', 'mark calc.ts binary'], repoDir);
+    try {
+      writeFileSync(path.join(repoDir, 'src', 'calc.ts'), baseCalc + copiedReport);
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('src/calc.ts:8-16: 9 changed lines duplicate existing code');
+    } finally {
+      runGit(['reset', '-q', '--hard', 'HEAD~1'], repoDir);
+    }
+  });
+
   it('passes a move of an existing clone to another file', () => {
     withBaseCommit({ 'src/copy.ts': copiedReport }, () => {
       rmSync(path.join(repoDir, 'src', 'copy.ts'));

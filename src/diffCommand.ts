@@ -130,7 +130,10 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
       mergeBase
     ),
   ]);
-  const scan = await scanListedFiles(repoRoot, repositoryFiles, { ...options, exclusion: headExclusion });
+  const scan = await scanListedFiles(repoRoot, repositoryFiles, {
+    ...options,
+    loadExclusion: () => Promise.resolve(headExclusion),
+  });
   // A run-wide failure (a missing native addon) invalidates the whole gate: surface it once as
   // the fatal error (exit 2) instead of diagnosing every changed file as unmeasured.
   if (scan.fatalError) {

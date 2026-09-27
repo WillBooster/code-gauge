@@ -618,12 +618,15 @@ describe('cli: file discovery', () => {
       'src/schema/b.ts': trivialSource.ts as string,
       'src/third_party/c.py': trivialSource.py as string,
       'src/legacy/d.rb': trivialSource.rb as string,
+      // Git attributes apply to ignored files, which directory scans still walk.
+      'src/ignored/e.ts': trivialSource.ts as string,
     };
     const dir = makeProject('generated', {
       ...scanned,
       ...skipped,
       '.gitattributes':
-        'src/schema/** linguist-generated\nsrc/third_party/** linguist-vendored\nsrc/handwritten.ts -linguist-generated\n',
+        'src/schema/** linguist-generated\nsrc/third_party/** linguist-vendored\nsrc/ignored/** linguist-generated\nsrc/handwritten.ts -linguist-generated\n',
+      '.gitignore': 'src/ignored/\n',
       'code-gauge.config.json': JSON.stringify({ exclude: ['src/legacy/**'] }),
     });
     try {

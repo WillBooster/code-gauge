@@ -1,6 +1,6 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { listRepositoryFiles, readLinguistAttributes, resolveRepoRoot, type LinguistAttributes } from './git.js';
+import { readLinguistAttributes, resolveRepoRoot, type LinguistAttributes } from './git.js';
 
 /**
  * Files left out of measurement beyond the built-in directory and file-name rules: configured
@@ -53,17 +53,25 @@ export function createExclusion(
 }
 
 /**
- * The exclusion for scanning `directory`: git attributes come from the enclosing repository's
- * git-visible files, and a directory outside any repository relies on patterns and markers only.
+ * The exclusion for the given absolute paths found under `directory`, with git attributes from
+ * the enclosing repository (which apply to ignored files too); outside any repository only
+ * patterns and markers apply.
  */
-export async function loadExclusion(directory: string, excludePatterns: ExcludePatterns): Promise<Exclusion> {
+export async function loadExclusion(
+  directory: string,
+  excludePatterns: ExcludePatterns,
+  absolutePaths: readonly string[]
+): Promise<Exclusion> {
   let repoRoot;
   try {
     repoRoot = await realpath(await resolveRepoRoot(directory));
   } catch {
     return createExclusion(await canonicalizeRoot(excludePatterns));
   }
-  return await loadRepositoryExclusion(repoRoot, await listRepositoryFiles(repoRoot), excludePatterns);
+  const relativePaths = absolutePaths
+    .map((absolutePath) => path.relative(repoRoot, absolutePath).split(path.sep).join('/'))
+    .filter((relativePath) => relativePath !== '..' && !relativePath.startsWith('../'));
+  return await loadRepositoryExclusion(repoRoot, relativePaths, excludePatterns);
 }
 
 /**

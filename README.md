@@ -93,10 +93,10 @@ normalized-token LCS similarity, so renames and moves don't appear as delete+add
   ≤ 60, nesting depth ≤ 4 by default.
 - **No new duplication.** The changed lines of a file must not newly duplicate code, within the
   file or against the whole project (so copy-paste from unchanged code is caught where it was
-  pasted). Only added lines count, and only those forming a clone that did not exist before: a
-  file whose untouched code gained a copy elsewhere is not blamed for it, and editing inside
-  pre-existing duplication, rewriting a clone in place, or moving one elsewhere in the change is
-  not new duplication. Added lines come from `git diff`, like the hunks reviewers see.
+  pasted). Only added lines count: a file whose untouched code gained a copy elsewhere is not
+  blamed for it, and an edit between lines that were already duplicated, a clone rewritten in
+  place, or a clone moved elsewhere in the change is not new duplication, while code pasted next
+  to an existing clone is. Added lines come from `git diff`, like the hunks reviewers see.
 - **Anti-gaming backstops.** Splitting a function resets its entity identity and could hide a
   worsening behind the laxer new-code thresholds, so when a removed named function's content
   partially reappears in unmatched new code the file's max cognitive complexity and total NCSS
