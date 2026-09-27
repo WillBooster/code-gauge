@@ -1,4 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 import type { LineHunk } from './newDuplication.js';
 
@@ -177,12 +180,26 @@ export async function readLinguistAttributes(
   paths: Iterable<string>,
   source?: string
 ): Promise<Map<string, LinguistAttributes>> {
-  const args = ['check-attr', '--stdin', '-z', ...(source === undefined ? [] : [`--source=${source}`])];
-  const output = await runGitWithInput(
-    repoRoot,
-    [...args, 'linguist-generated', 'linguist-vendored'],
-    [...paths].join('\0')
-  );
+  const input = [...paths].join('\0');
+  if (input === '') {
+    return new Map();
+  }
+  const attributeArgs = ['--stdin', '-z', 'linguist-generated', 'linguist-vendored'];
+  let output;
+  if (source === undefined) {
+    output = await runGitWithInput(repoRoot, ['check-attr', ...attributeArgs], input);
+  } else {
+    // `check-attr --source` needs git 2.40, so the revision's attributes are read from a
+    // throwaway index holding its tree instead, which `--cached` supports on any git.
+    const indexDirectory = await mkdtemp(path.join(os.tmpdir(), 'code-gauge-index-'));
+    try {
+      const env = { ...process.env, GIT_INDEX_FILE: path.join(indexDirectory, 'index') };
+      await runGitWithInput(repoRoot, ['read-tree', source], '', env);
+      output = await runGitWithInput(repoRoot, ['check-attr', '--cached', ...attributeArgs], input, env);
+    } finally {
+      await rm(indexDirectory, { recursive: true, force: true });
+    }
+  }
   const attributesByPath = new Map<string, LinguistAttributes>();
   const fields = output.split('\0');
   for (let index = 0; index + 2 < fields.length; index += 3) {
@@ -218,9 +235,14 @@ export async function readFileAtRevision(repoRoot: string, revision: string, pat
   return await runGit(repoRoot, ['cat-file', 'blob', `${revision}:${path}`]);
 }
 
-async function runGitWithInput(cwd: string, args: string[], input: string): Promise<string> {
+async function runGitWithInput(
+  cwd: string,
+  args: string[],
+  input: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
   return await new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd });
+    const child = spawn('git', args, { cwd, env });
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
