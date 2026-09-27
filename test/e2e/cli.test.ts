@@ -653,6 +653,20 @@ describe('cli: file discovery', () => {
     }
   });
 
+  it('resolves exclude patterns against the config file directory, including ../ patterns', () => {
+    const dir = makeProject('exclude-parent', {
+      'src/a.ts': trivialSource.ts as string,
+      'src/parser.ts': trivialSource.ts as string,
+      '.config/gauge.json': JSON.stringify({ exclude: ['../src/parser.ts', '**/*.ts'] }),
+    });
+    try {
+      // `**/*.ts` stays inside .config/, while the ../ pattern reaches the sibling src/ directory.
+      expect(reportedFiles(dir, '--config', path.join(dir, '.config', 'gauge.json'))).toEqual(['src/a.ts']);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('follows symbolic links inside the root once, ignores links escaping it, and reports broken ones', () => {
     const outsideDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-outside-'));
     const dir = makeProject('symlinks', {

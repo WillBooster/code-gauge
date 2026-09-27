@@ -35,11 +35,10 @@ export function createExclusion(
       if (attributes?.generated === true || attributes?.vendored === true) {
         return true;
       }
+      // `*` and `**` never match `..` segments, so only a pattern spelling out `../` reaches
+      // outside the root.
       const relativePath = path.relative(excludePatterns.root, absolutePath).split(path.sep).join('/');
-      return (
-        !relativePath.startsWith('../') &&
-        excludePatterns.patterns.some((pattern) => path.posix.matchesGlob(relativePath, pattern))
-      );
+      return excludePatterns.patterns.some((pattern) => path.posix.matchesGlob(relativePath, pattern));
     },
     isGeneratedCode(absolutePath, code) {
       if (attributesByPath.get(absolutePath)?.generated === false) {
