@@ -318,6 +318,9 @@ impl FunctionBodyPass<'_, '_, '_> {
             ncss_frame.has_own_ncss_contribution = true;
         }
 
+        // Kotlin accessors hang off their property, yet are members of the class body.
+        let children_in_charged_class_body = is_charged_class_body
+            || (inside_charged_class_body && current.kind_name() == "property_declaration");
         for child in all_children(current) {
             self.visit(
                 child,
@@ -329,9 +332,7 @@ impl FunctionBodyPass<'_, '_, '_> {
                 } else {
                     inside_nested_region
                 },
-                // Kotlin accessors hang off their property, yet are members of the class body.
-                is_charged_class_body
-                    || (inside_charged_class_body && current.kind_name() == "property_declaration"),
+                children_in_charged_class_body,
             );
         }
 
@@ -400,6 +401,9 @@ fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64
 }
 
 /// goto, and break/continue that jump to a label.
+// Inlined into the recursive visit, its field lookup enlarges every frame enough to cut the depth the
+// Workers runtime's stack can measure by ~5%.
+#[inline(never)]
 fn is_flow_breaking_jump(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;
