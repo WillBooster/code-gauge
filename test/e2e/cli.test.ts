@@ -612,7 +612,9 @@ describe('cli: file discovery', () => {
       // An explicit -linguist-generated overrides the header marker.
       'src/handwritten.ts': `// @generated\n${trivialSource.ts}`,
       // Measured through its own path although the alias src/a-link.ts, walked first (entries are
-      // walked in name order), has no override.
+      // walked in name order), has no override and is judged generated: an alias skipped as
+      // generated must not keep the file from being measured. (The preference for a file's own
+      // path over an equally measurable alias is pinned by the symbolic-link test below.)
       'src/z-real.ts': `// @generated\n${trivialSource.ts}`,
     };
     const skipped = {
