@@ -353,7 +353,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
             return find_kotlin_property_name(holder, code);
         }
         if holder.kind_name() == "assignment" {
-            return find_kotlin_assignment_name(holder, code);
+            return find_assignment_target_name(holder, code);
         }
     }
     // A `lambda { }` / `proc { }` block is measured, but the call around it is what gets bound.
@@ -866,9 +866,9 @@ fn is_plain_assignment(assignment: Node<'_>, code: &Source<'_>) -> bool {
     }
 }
 
-/// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, or Java
-/// field access (`a.b.run` names `run`) or a C++ qualified name (`N::run`); subscripts (`o["run"]`)
-/// name nothing.
+/// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, Java
+/// field access, or Kotlin navigation (`a.b.run` names `run`) or a C++ qualified name (`N::run`);
+/// subscripts (`o["run"]`) name nothing.
 fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     if !is_plain_assignment(assignment, code) {
         return None;
@@ -880,22 +880,8 @@ fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
         "field_expression" => target.child_by_field_name("field")?,
         "member_access_expression" => target.child_by_field_name("name")?,
         "field_access" => target.child_by_field_name("field")?,
-        "qualified_identifier" => return unwrap_declarator_name(Some(target), code),
-        _ => return None,
-    };
-    Some(node_text(name, code).to_string())
-}
-
-/// The Kotlin assignment target: the variable itself or the member of a navigation (`obj.run` names
-/// `run`); an index (`arr[0] = { }`) names nothing, like subscripts in the other languages.
-fn find_kotlin_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
-    if !is_plain_assignment(assignment, code) {
-        return None;
-    }
-    let target = assignment.child_by_field_name("left")?;
-    let name = match target.kind_name() {
-        "identifier" => target,
         "navigation_expression" => target.named_child(target.named_child_count() - 1)?,
+        "qualified_identifier" => return unwrap_declarator_name(Some(target), code),
         _ => return None,
     };
     Some(node_text(name, code).to_string())
