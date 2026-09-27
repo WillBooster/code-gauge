@@ -766,6 +766,15 @@ describe('code-gauge diff --base: generated and excluded code', () => {
     });
   });
 
+  it('gates an explicitly targeted git-ignored file as an addition', () => {
+    writeFileSync(path.join(repoDir, '.gitignore'), 'local/\n');
+    mkdirSync(path.join(repoDir, 'local'));
+    writeFileSync(path.join(repoDir, 'local', 'gen.ts'), complexNewFile);
+    const result = runCli(['diff', '--base', 'main', 'local/gen.ts'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('local/gen.ts:1-');
+  });
+
   it('skips files matching the configured exclude patterns', () => {
     mkdirSync(path.join(repoDir, 'src', 'legacy'));
     writeFileSync(path.join(repoDir, 'src', 'legacy', 'old.ts'), violatingFile);

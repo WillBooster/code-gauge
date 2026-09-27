@@ -128,6 +128,14 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const baseSymlinkPaths = await listSymlinkPathsAtRevision(repoRoot, mergeBase);
   const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
   const explicitFiles = await listExplicitlyTargetedPaths(canonicalTarget, repoRoot, changedFiles);
+  // A targeted file git does not list (an ignored one) is still measured, as an addition.
+  const unlistedTarget = [...explicitFiles]
+    .map((file) => path.relative(repoRoot, file).split(path.sep).join('/'))
+    .find((file) => !file.startsWith('../') && !repositoryFiles.has(file));
+  if (unlistedTarget !== undefined) {
+    repositoryFiles.add(unlistedTarget);
+    changedFiles.push({ status: 'added', headPath: unlistedTarget });
+  }
   // Base blobs are excluded by the attributes of the revision they come from. A changed
   // .gitattributes can re-include files whose bytes did not change, so then every file's base
   // attributes are needed to find them.
