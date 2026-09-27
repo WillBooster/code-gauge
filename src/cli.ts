@@ -4,6 +4,7 @@ import { Command, InvalidArgumentError } from 'commander';
 import { type CliOptions, configFileName, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import { runDiffCommand, type DiffCliOptions } from './diffCommand.js';
+import { loadExclusion } from './exclusion.js';
 import {
   addCrossFileDuplication,
   collectDuplicatedLineNumbers,
@@ -95,7 +96,11 @@ async function main(): Promise<void> {
     const resolvedTarget = resolveTarget(target);
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
-    const result = await scanTarget(resolvedTarget, options);
+    const searchDirectory = await configSearchDirectory(resolvedTarget);
+    const result = await scanTarget(resolvedTarget, {
+      ...options,
+      loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
+    });
     addCrossFileDuplication(result, options);
     const rankedFiles = rankFiles(result, options.top);
 

@@ -2,3 +2,9 @@
 # A WebAssembly stack overflow corrupts memory silently instead of trapping, so the stack is sized
 # far beyond what trees at measure.rs's MAX_TREE_DEPTH need (under Rust's default 1 MiB).
 rustflags = ["-C", "link-arg=-zstack-size=8388608", "-C", "strip=symbols"]
+
+[target.'cfg(target_vendor = "apple")']
+# rustc's default release `strip = "debuginfo"` rewrites the dylib with rust-objcopy, which leaves
+# the LINKEDIT string pool misaligned so macOS 27's dyld refuses to load it; the linker strips
+# local symbols instead.
+rustflags = ["-C", "strip=none", "-C", "link-arg=-Wl,-x"]

@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
+import type { Exclusion } from './exclusion.js';
 import { detectLanguage } from './languages.js';
 import { measureCode, measureCodeWithCrossFileDataAsync } from './metrics.js';
 import { NativeAddonError } from './nativeMetrics.js';
@@ -12,6 +13,11 @@ import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } fr
 export interface ScanOptions {
   duplication: Required<DuplicationOptions>;
   includeTests: boolean;
+  /**
+   * Loads the exclusion covering the files a directory scan found (absolute paths); an explicitly
+   * targeted file is always measured.
+   */
+  loadExclusion?: (absolutePaths: readonly string[]) => Promise<Exclusion>;
 }
 
 export interface FileMetrics {
@@ -27,6 +33,8 @@ export interface ScanResult {
   errors: string[];
   /** Non-fatal degradations (e.g. cross-file candidates unavailable); the file is still measured. */
   warnings: string[];
+  /** Files skipped because their content is generated code (see Exclusion.isGeneratedCode). */
+  generatedFiles: string[];
   fatalError?: string;
   files: FileMetrics[];
 }
@@ -91,25 +99,39 @@ export async function configSearchDirectory(target: string): Promise<string> {
 interface ScanContext {
   options: ScanOptions;
   /**
-   * Outcomes in walk order. Files are measured concurrently, so a measurement is recorded as a
-   * promise here and applied in this order once the walk ends, keeping results deterministic.
+   * Outcomes in discovery order. Files are measured concurrently, so a measurement is recorded as
+   * a promise here and applied in this order once all have settled, keeping results deterministic.
    */
   outcomes: (ScanOutcome | Promise<ScanOutcome>)[];
-  /** Measurements in flight, bounded so file contents and payloads do not pile up during the walk. */
+  /** Measurements in flight, bounded so file contents and payloads do not pile up. */
   inFlight: Set<Promise<ScanOutcome>>;
-  /** Set once a measurement fails fatally; the walk then starts no further work. */
+  /** Set once a measurement fails fatally; no further measurement starts. */
   fatalSeen: boolean;
   visitedDirectories: Set<string>;
   visitedFiles: Set<string>;
   /** Scan root: paths are displayed relative to it, and symbolic links may not escape it. */
   rootDirectory: string;
+  /** Files the walk found, measured once the exclusion covering all of them is loaded. */
+  candidates: ScanCandidate[];
+  exclusion?: Exclusion;
+}
+
+interface ScanCandidate {
+  file: string;
+  language: LanguageName;
+  /** The resolved path when the file was reached through a symbolic link. */
+  realFile?: string;
 }
 
 /**
  * A missing native addon fails every file identically, so it ends the scan as one fatal error
  * instead of one "skipped" entry per file behind a successful exit code.
  */
-type ScanOutcome = { file: FileMetrics; warning?: string } | { error: string } | { fatal: NativeAddonError };
+type ScanOutcome =
+  | { file: FileMetrics; warning?: string }
+  | { generatedFile: string }
+  | { error: string }
+  | { fatal: NativeAddonError };
 
 // Twice the addon's worker count keeps its pool busy while finished payloads are parsed.
 const maxMeasurementsInFlight = os.availableParallelism() * 2;
@@ -129,7 +151,14 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
     targetStat = await stat(canonicalTarget);
   } catch (error) {
     const fatalError = `${formatPath(canonicalTarget, fallbackDisplayRoot)}: ${formatError(error)}`;
-    return { displayRoot: fallbackDisplayRoot, files: [], errors: [fatalError], warnings: [], fatalError };
+    return {
+      displayRoot: fallbackDisplayRoot,
+      files: [],
+      errors: [fatalError],
+      warnings: [],
+      generatedFiles: [],
+      fatalError,
+    };
   }
 
   if (targetStat.isFile()) {
@@ -137,7 +166,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
     const language = getLanguage(canonicalTarget, options, true);
     if (!language) {
       const fatalError = `${formatPath(canonicalTarget, displayRoot)}: unsupported file type`;
-      return { displayRoot, files: [], errors: [fatalError], warnings: [], fatalError };
+      return { displayRoot, files: [], errors: [fatalError], warnings: [], generatedFiles: [], fatalError };
     }
 
     const context = makeScanContext(options, displayRoot);
@@ -147,6 +176,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
 
   const context = makeScanContext(options, canonicalTarget);
   await scanDirectory(canonicalTarget, context);
+  await measureCandidates(context);
   return settleScan(context, canonicalTarget);
 }
 
@@ -159,40 +189,99 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
 export async function scanListedFiles(
   rootDirectory: string,
   relativePaths: Iterable<string>,
-  options: ScanOptions
+  options: ScanOptions,
+  explicitFiles: ReadonlySet<string> = new Set()
 ): Promise<ScanResult> {
   const context = makeScanContext(options, rootDirectory);
   for (const relativePath of relativePaths) {
-    if (context.fatalSeen) {
-      break;
-    }
-    const language = isScannedPath(relativePath, options) ? getLanguage(relativePath, options) : undefined;
+    const absolutePath = path.join(rootDirectory, relativePath);
+    const language = isScannedPath(relativePath, options, explicitFiles.has(absolutePath))
+      ? getLanguage(relativePath, options, explicitFiles.has(absolutePath))
+      : undefined;
     if (!language) {
       continue;
     }
-    const absolutePath = path.join(rootDirectory, relativePath);
     // Symbolic links are not source files: git stores only their target string, so measuring
     // through them would diverge from what any revision of the repository actually contains.
     const stats = await lstat(absolutePath).catch(() => {});
-    if (stats?.isSymbolicLink()) {
-      continue;
+    if (!stats?.isSymbolicLink()) {
+      context.candidates.push({ file: absolutePath, language });
     }
-    await measureFile(absolutePath, language, 'directory', context);
   }
+  await measureCandidates(context);
   return settleScan(context, rootDirectory);
 }
 
-/** Applies the scan's outcomes in walk order once every measurement has settled. */
+async function measureCandidates(context: ScanContext): Promise<void> {
+  const exclusion = await context.options.loadExclusion?.(
+    context.candidates.flatMap(({ file, realFile }) => (realFile === undefined ? [file] : [file, realFile]))
+  );
+  context.exclusion = exclusion;
+  // Every path reaching the same real file, in discovery order, so one alias cannot decide alone.
+  const pathsByRealFile = new Map<string, ScanCandidate[]>();
+  for (const candidate of context.candidates) {
+    let realFile;
+    try {
+      realFile = candidate.realFile ?? (await realpath(candidate.file));
+    } catch (error) {
+      recordError(context, candidate.file, error);
+      continue;
+    }
+    pathsByRealFile.set(realFile, [...(pathsByRealFile.get(realFile) ?? []), candidate]);
+  }
+  for (const [realFile, candidates] of pathsByRealFile) {
+    if (context.fatalSeen) {
+      return;
+    }
+    const chosen = await chooseMeasuredPath(realFile, candidates, exclusion);
+    if (chosen !== undefined) {
+      await measureFile(chosen.file, chosen.language, 'directory', context, realFile);
+    }
+  }
+}
+
+/**
+ * The path to measure a real file through. A path is excluded when its own exclusion or the real
+ * file's applies, so the real path, when the scan reached it directly, is never less measurable
+ * than an alias; otherwise the first alias not excluded, preferring one whose own attributes do
+ * not judge the content generated.
+ */
+async function chooseMeasuredPath(
+  realFile: string,
+  candidates: readonly ScanCandidate[],
+  exclusion: Exclusion | undefined
+): Promise<ScanCandidate | undefined> {
+  if (exclusion === undefined) {
+    return candidates[0];
+  }
+  if (exclusion.isExcludedPath(realFile)) {
+    return undefined;
+  }
+  const measurable = candidates.filter(({ file }) => !exclusion.isExcludedPath(file));
+  const direct = measurable.find(({ file }) => file === realFile);
+  if (direct !== undefined || measurable.length <= 1) {
+    return direct ?? measurable[0];
+  }
+  const code = await readFile(realFile, 'utf8').catch(() => {});
+  return measurable.find(({ file }) => code !== undefined && !exclusion.isGeneratedCode(file, code)) ?? measurable[0];
+}
+
+/** Applies the scan's outcomes in discovery order once every measurement has settled. */
 async function settleScan(context: ScanContext, displayRoot: string): Promise<ScanResult> {
   const files: FileMetrics[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
+  const generatedFiles: string[] = [];
   for (const pending of context.outcomes) {
     const outcome = await pending;
     if ('fatal' in outcome) {
       const fatalError = formatError(outcome.fatal);
       // Errors the walk recorded before the fatal failure stay reported alongside it.
-      return { displayRoot, files, errors: [...errors, fatalError], warnings, fatalError };
+      return { displayRoot, files, errors: [...errors, fatalError], warnings, generatedFiles, fatalError };
+    }
+    if ('generatedFile' in outcome) {
+      generatedFiles.push(outcome.generatedFile);
+      continue;
     }
     if ('error' in outcome) {
       errors.push(outcome.error);
@@ -203,7 +292,7 @@ async function settleScan(context: ScanContext, displayRoot: string): Promise<Sc
       warnings.push(outcome.warning);
     }
   }
-  return { displayRoot, files, errors, warnings };
+  return { displayRoot, files, errors, warnings, generatedFiles };
 }
 
 function makeScanContext(options: ScanOptions, rootDirectory: string): ScanContext {
@@ -215,6 +304,7 @@ function makeScanContext(options: ScanOptions, rootDirectory: string): ScanConte
     visitedDirectories: new Set(),
     visitedFiles: new Set(),
     rootDirectory,
+    candidates: [],
   };
 }
 
@@ -253,11 +343,11 @@ async function scanDirectory(directory: string, context: ScanContext): Promise<v
   if (entries === undefined) {
     return;
   }
+  // readdir order differs between file systems; sorting keeps which path reaches a file first,
+  // and so the scan's result, the same everywhere.
+  entries.sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0));
 
   for (const entry of entries) {
-    if (context.fatalSeen) {
-      return;
-    }
     const entryPath = path.join(directory, entry.name);
     if (entry.isSymbolicLink()) {
       await scanSymbolicLink(entry.name, entryPath, context);
@@ -273,7 +363,9 @@ async function scanDirectory(directory: string, context: ScanContext): Promise<v
     }
 
     if (entry.isFile()) {
-      await measureScannableFile(entryPath, context);
+      // Under a symbolically linked directory the real path differs, and exclusion checks both.
+      const realFile = resolvedDirectory === directory ? undefined : path.join(resolvedDirectory, entry.name);
+      collectScannableFile(entryPath, context, entryPath, realFile);
     }
   }
 }
@@ -301,25 +393,20 @@ async function scanSymbolicLink(name: string, entryPath: string, context: ScanCo
   }
 
   if (entryStat.isFile()) {
-    await measureScannableFile(entryPath, context, resolvedPath, resolvedPath);
+    collectScannableFile(entryPath, context, resolvedPath, resolvedPath);
   }
 }
 
-async function measureScannableFile(
-  file: string,
-  context: ScanContext,
-  languageFile = file,
-  realFile?: string
-): Promise<void> {
+function collectScannableFile(file: string, context: ScanContext, languageFile = file, realFile?: string): void {
   const language = getLanguage(languageFile, context.options);
   if (language) {
-    await measureFile(file, language, 'directory', context, realFile);
+    context.candidates.push({ file, language, realFile });
   }
 }
 
 /**
- * Resolves and deduplicates the file in walk order, then starts measuring it concurrently; its
- * outcome is recorded in walk order (see ScanContext.outcomes).
+ * Resolves and deduplicates the file in discovery order, then starts measuring it concurrently; its
+ * outcome is recorded in discovery order (see ScanContext.outcomes).
  */
 async function measureFile(
   file: string,
@@ -348,7 +435,7 @@ async function measureFile(
   while (context.inFlight.size >= maxMeasurementsInFlight) {
     await Promise.race(context.inFlight);
   }
-  const outcome = readAndMeasureFile(file, language, mode, context);
+  const outcome = readAndMeasureFile(file, resolvedFile, language, mode, context);
   context.inFlight.add(outcome);
   void outcome.then(() => context.inFlight.delete(outcome));
   context.outcomes.push(outcome);
@@ -356,6 +443,7 @@ async function measureFile(
 
 async function readAndMeasureFile(
   file: string,
+  resolvedFile: string,
   language: LanguageName,
   mode: 'single-file' | 'directory',
   context: ScanContext
@@ -366,6 +454,11 @@ async function readAndMeasureFile(
     // Only directory scans compare files against each other; a single-file target has no peers.
     if (mode === 'single-file') {
       return { file: { file, metrics: measureCode(code, measureOptions) } };
+    }
+    // Like path exclusion, either the scanned path or the real one can judge the code generated.
+    const exclusion = context.exclusion;
+    if (exclusion && (exclusion.isGeneratedCode(file, code) || exclusion.isGeneratedCode(resolvedFile, code))) {
+      return { generatedFile: file };
     }
     const { metrics, crossFileData, crossFileError } = await measureWithCrossFileData(code, measureOptions);
     return {
@@ -464,9 +557,13 @@ function isWithinDirectory(candidate: string, directory: string): boolean {
  * Whether a repository-relative path would be scanned: no ignored or excluded-test directory
  * segment and a supported, non-test file name. The diff gate uses this for base-revision
  * eligibility, so code renamed into scan scope gates as new code instead of ratcheting against
- * a blob the scanner would never have measured.
+ * a blob the scanner would never have measured. An explicitly targeted file only needs a supported
+ * language, as in the ranking command.
  */
-export function isScannedPath(relativePath: string, options: ScanOptions): boolean {
+export function isScannedPath(relativePath: string, options: ScanOptions, explicitTarget = false): boolean {
+  if (explicitTarget) {
+    return getLanguage(relativePath, options, true) !== undefined;
+  }
   const segments = relativePath.split('/');
   for (const segment of segments.slice(0, -1)) {
     if (ignoredDirectoryNames.has(segment) || (!options.includeTests && testDirectoryNames.has(segment))) {

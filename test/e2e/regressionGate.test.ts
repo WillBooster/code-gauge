@@ -90,8 +90,7 @@ function makeInput(base: string | undefined, head: string | undefined, extras?: 
     headMetrics: head === undefined ? undefined : measureCode(head, options),
     baseFunctionTokens: base === undefined ? undefined : collectFunctionTokenSequences(base, options),
     headFunctionTokens: head === undefined ? undefined : collectFunctionTokenSequences(head, options),
-    baseDuplicatedLineCount: 0,
-    headDuplicatedLineCount: 0,
+    newlyDuplicatedLines: [],
     duplicationPartners: [],
     ...extras,
   };
@@ -166,30 +165,22 @@ describe('evaluateRegressionGate', () => {
     expect(result.violations).toStrictEqual([]);
   });
 
-  it('reports increased duplicated lines with partner evidence', () => {
+  it('reports newly duplicated lines with their ranges and partner evidence', () => {
     const result = evaluateRegressionGate(
       [
         makeInput(baseCode, baseCode, {
-          baseDuplicatedLineCount: 3,
-          headDuplicatedLineCount: 9,
+          newlyDuplicatedLines: [3, 4, 5, 9],
           duplicationPartners: ['src/other.ts'],
         }),
       ],
       defaultGateOptions
     );
     expect(result.violations.map((violation) => [violation.gate, violation.metric])).toStrictEqual([
-      ['duplication', 'duplicated lines'],
+      ['duplication', 'newly duplicated lines'],
     ]);
-    expect(result.violations[0]).toMatchObject({ baseValue: 3, headValue: 9, allowedValue: 3 });
+    expect(result.violations[0]).toMatchObject({ startLine: 3, endLine: 9, headValue: 4, allowedValue: 0 });
+    expect(result.violations[0]?.message).toContain('lines 3-5, 9');
     expect(result.violations[0]?.message).toContain('src/other.ts');
-  });
-
-  it('allows duplicated lines up to the base count', () => {
-    const result = evaluateRegressionGate(
-      [makeInput(baseCode, baseCode, { baseDuplicatedLineCount: 9, headDuplicatedLineCount: 9 })],
-      defaultGateOptions
-    );
-    expect(result.violations).toStrictEqual([]);
   });
 });
 
@@ -264,8 +255,7 @@ function makeSyntheticInput(
     headMetrics,
     baseFunctionTokens: tokens?.base,
     headFunctionTokens: tokens?.head,
-    baseDuplicatedLineCount: 0,
-    headDuplicatedLineCount: 0,
+    newlyDuplicatedLines: [],
     duplicationPartners: [],
   };
 }
@@ -514,7 +504,7 @@ describe('evaluateRegressionGate: thresholds, options, and reporting', () => {
 
   it('honors a duplicated-lines tolerance', () => {
     const tolerant = { ...defaultGateOptions, tolerance: { ...defaultGateOptions.tolerance, duplicateLines: 6 } };
-    const input = makeInput(baseCode, baseCode, { baseDuplicatedLineCount: 3, headDuplicatedLineCount: 9 });
+    const input = makeInput(baseCode, baseCode, { newlyDuplicatedLines: [1, 2, 3, 4, 5, 6] });
     expect(evaluateRegressionGate([input], tolerant).violations).toStrictEqual([]);
     expect(evaluateRegressionGate([input], defaultGateOptions).violations).toHaveLength(1);
   });

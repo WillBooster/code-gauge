@@ -1281,3 +1281,42 @@ describe('duplication: within-file statement runs and containers', () => {
     expect(measureCode(csharp, { language: 'csharp' }).duplication.duplicateBlockGroupCount).toBe(1);
   });
 });
+
+describe('duplication: dependency declarations', () => {
+  // Each block is far above the 10-token minimum used here, so any of its declarations that still
+  // produced tokens would match across the two files.
+  const dependencyBlocks: [LanguageName, string][] = [
+    [
+      'typescript',
+      "import { a, b, c } from './alpha';\nimport type { G, H } from './gamma';\nimport x = require('x');\nexport { d, e } from './delta';\nconst { p, q } = require('p');\nconst r = require('r').s;\n",
+    ],
+    [
+      'javascript',
+      "require('./setup');\nrequire('./polyfill');\nmodule.exports = require('./impl');\nexports.helper = require('./helper').helper;\nvar legacy = require('legacy');\n",
+    ],
+    ['python', 'import os\nimport sys\nfrom a.b import c, d, e\nfrom __future__ import annotations\n'],
+    ['go', 'package main\n\nimport (\n\t"fmt"\n\t"os"\n\t"strings"\n)\n'],
+    ['rust', 'use std::collections::HashMap;\nuse std::io::{self, Read};\nmod parser;\nextern crate alloc;\n'],
+    ['java', 'package a.b.c;\nimport java.util.List;\nimport java.util.Map;\nimport static java.lang.Math.max;\n'],
+    ['kotlin', 'package a.b.c\nimport x.y.Z\nimport q.r.S\nimport w.*\nimport t.u.V as W\n'],
+    ['csharp', 'using System;\nusing System.Collections.Generic;\nusing static System.Math;\nusing L = System.Linq;\n'],
+    [
+      'c',
+      '#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <math.h>\n#include "a.h"\n#include "b.h"\n#include "c.h"\n',
+    ],
+    ['cpp', '#include <vector>\n#include <string>\nusing std::vector;\nusing std::string;\nusing namespace std;\n'],
+    [
+      'ruby',
+      "require 'json'\nrequire 'set'\nrequire 'time'\nrequire 'yaml'\nrequire_relative 'a/b'\nrequire_relative 'c/d'\nrequire_relative 'e/f'\n",
+    ],
+  ];
+
+  it.each(dependencyBlocks)('never forms a clone from %s dependency declarations', (language, block) => {
+    const options = { language, duplication: { minTokens: 10 } };
+    const files = ['first', 'second'].map((file) => ({
+      file,
+      ...collectCrossFileDuplicationFileData(block, options),
+    }));
+    expect(measureCrossFileDuplication(files, options.duplication).groups).toStrictEqual([]);
+  });
+});

@@ -1,5 +1,9 @@
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
+import type { LineHunk } from './newDuplication.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -123,9 +127,149 @@ export async function listSymlinkPathsAtRevision(repoRoot: string, revision: str
   return links;
 }
 
+/**
+ * The line hunks turning the merge-base blob at `basePath` into the working-tree file at
+ * `headPath` (equal unless renamed), as `git diff` computes them for review.
+ */
+export async function listLineHunks(
+  repoRoot: string,
+  mergeBase: string,
+  basePath: string,
+  headPath: string
+): Promise<LineHunk[]> {
+  // Literal pathspecs: a name like `app/[slug]/page.tsx` must not glob-match other files.
+  const paths = (basePath === headPath ? [headPath] : [basePath, headPath]).map((file) => `:(literal)${file}`);
+  const output = await runGit(repoRoot, [
+    // The algorithm and indent heuristic decide which lines count as added, so user config must
+    // not change them; `-c` values an older git does not know are ignored rather than rejected.
+    '-c',
+    'diff.algorithm=myers',
+    '-c',
+    'diff.indentHeuristic=true',
+    'diff',
+    '--unified=0',
+    // diff.interHunkContext would otherwise merge nearby hunks, and the unchanged lines between
+    // them would count as added.
+    '--inter-hunk-context=0',
+    // A file git would show as binary (a `-diff` attribute, a NUL byte) must still yield hunks.
+    '--text',
+    '--no-color',
+    '--no-ext-diff',
+    '--no-textconv',
+    '--find-renames',
+    mergeBase,
+    '--',
+    ...paths,
+  ]);
+  const hunks: LineHunk[] = [];
+  for (const match of output.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gmu)) {
+    const [, baseStart, baseCount, headStart, headCount] = match;
+    hunks.push({
+      baseStart: Number(baseStart),
+      baseCount: baseCount === undefined ? 1 : Number(baseCount),
+      headStart: Number(headStart),
+      headCount: headCount === undefined ? 1 : Number(headCount),
+    });
+  }
+  return hunks;
+}
+
+/** A file's `linguist-generated` / `linguist-vendored` attributes; undefined when unspecified. */
+export interface LinguistAttributes {
+  generated?: boolean;
+  vendored?: boolean;
+}
+
+/**
+ * The linguist attributes of repository-relative paths, from the working tree's `.gitattributes`
+ * or, with `source`, from that revision's. Paths with neither attribute specified are omitted.
+ */
+export async function readLinguistAttributes(
+  repoRoot: string,
+  paths: Iterable<string>,
+  source?: string
+): Promise<Map<string, LinguistAttributes>> {
+  const input = [...paths].join('\0');
+  if (input === '') {
+    return new Map();
+  }
+  const attributeArgs = ['--stdin', '-z', 'linguist-generated', 'linguist-vendored'];
+  let output;
+  if (source === undefined) {
+    output = await runGitWithInput(repoRoot, ['check-attr', ...attributeArgs], input);
+  } else {
+    // `check-attr --source` needs git 2.40, so the revision's attributes are read from a
+    // throwaway index holding its tree instead, which `--cached` supports on any git.
+    const indexDirectory = await mkdtemp(path.join(os.tmpdir(), 'code-gauge-index-'));
+    try {
+      const env = { ...process.env, GIT_INDEX_FILE: path.join(indexDirectory, 'index') };
+      await runGitWithInput(repoRoot, ['read-tree', source], '', env);
+      output = await runGitWithInput(repoRoot, ['check-attr', '--cached', ...attributeArgs], input, env);
+    } finally {
+      await rm(indexDirectory, { recursive: true, force: true });
+    }
+  }
+  const attributesByPath = new Map<string, LinguistAttributes>();
+  const fields = output.split('\0');
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const [file, attribute, value] = fields.slice(index, index + 3) as [string, string, string];
+    const enabled = toAttributeFlag(value);
+    if (enabled === undefined) {
+      continue;
+    }
+    const attributes = attributesByPath.get(file) ?? {};
+    if (attribute === 'linguist-generated') {
+      attributes.generated = enabled;
+    } else {
+      attributes.vendored = enabled;
+    }
+    attributesByPath.set(file, attributes);
+  }
+  return attributesByPath;
+}
+
+/** Linguist reads `attr`/`attr=true` as set and `-attr`/`attr=false` as explicitly unset. */
+function toAttributeFlag(value: string): boolean | undefined {
+  if (value === 'set' || value === 'true') {
+    return true;
+  }
+  if (value === 'unset' || value === 'false') {
+    return false;
+  }
+  return undefined;
+}
+
 /** The file's content at the given commit; the path is repository-relative with forward slashes. */
 export async function readFileAtRevision(repoRoot: string, revision: string, path: string): Promise<string> {
   return await runGit(repoRoot, ['cat-file', 'blob', `${revision}:${path}`]);
+}
+
+async function runGitWithInput(
+  cwd: string,
+  args: string[],
+  input: string,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<string> {
+  return await new Promise((resolve, reject) => {
+    const child = spawn('git', args, { cwd, env });
+    // git exiting before it reads all input (e.g. on a usage error) makes the write fail with
+    // EPIPE; its exit code and stderr, reported on close, already describe the failure.
+    child.stdin.on('error', () => {});
+    const stdout: Buffer[] = [];
+    const stderr: Buffer[] = [];
+    child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
+    child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(Buffer.concat(stdout).toString('utf8'));
+        return;
+      }
+      const message = Buffer.concat(stderr).toString('utf8').trim();
+      reject(new Error(`git ${describeCommand(args)} failed${message ? `: ${message}` : ''}`));
+    });
+    child.stdin.end(input);
+  });
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
@@ -134,6 +278,15 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
     return stdout;
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
-    throw new Error(`git ${args.slice(0, 2).join(' ')} failed${stderr ? `: ${stderr}` : ''}`);
+    throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);
   }
+}
+
+/** The subcommand and its first argument, skipping leading `-c key=value` overrides. */
+function describeCommand(args: readonly string[]): string {
+  let start = 0;
+  while (args[start] === '-c') {
+    start += 2;
+  }
+  return args.slice(start, start + 2).join(' ');
 }

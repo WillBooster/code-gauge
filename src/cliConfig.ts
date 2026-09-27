@@ -1,6 +1,7 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { defaultDuplicationOptions } from './duplication.js';
+import type { ExcludePatterns } from './exclusion.js';
 import {
   defaultGateOptions,
   type GateOptions,
@@ -27,8 +28,17 @@ export interface CodeGaugeConfig {
   rank?: { top?: number };
   /** Regression-gate settings for `code-gauge diff`. */
   gate?: GateConfig;
+  /** Glob patterns, relative to the config file's directory, of files left out of every command. */
+  exclude?: string[];
   includeTests?: boolean;
   failOnError?: boolean;
+}
+
+/** A parsed configuration file and the directory its relative settings resolve against. */
+export interface LoadedConfig {
+  config: CodeGaugeConfig;
+  /** The config file's directory; the search start directory when no config file was found. */
+  directory: string;
 }
 
 /** Raw command-line options; every field is undefined unless the user passed the flag. */
@@ -46,6 +56,7 @@ export interface CliOptions {
 /** Options after merging command-line flags, the configuration file, and the built-in defaults. */
 export interface ResolvedOptions {
   duplication: Required<DuplicationOptions>;
+  exclude: ExcludePatterns;
   /** Number of top-ranked files to report. */
   top: number;
   includeTests: boolean;
@@ -54,7 +65,7 @@ export interface ResolvedOptions {
 }
 
 /** Resolves options with precedence command-line flags > configuration file > built-in defaults. */
-export function resolveOptions(cli: CliOptions, config: CodeGaugeConfig): ResolvedOptions {
+export function resolveOptions(cli: CliOptions, { config, directory }: LoadedConfig): ResolvedOptions {
   return {
     duplication: {
       minTokens: cli.duplicationMinTokens ?? config.duplication?.minTokens ?? defaultDuplicationOptions.minTokens,
@@ -65,6 +76,7 @@ export function resolveOptions(cli: CliOptions, config: CodeGaugeConfig): Resolv
         config.duplication?.minSimilarityPercent ??
         defaultDuplicationOptions.minSimilarityPercent,
     },
+    exclude: { patterns: config.exclude ?? [], root: directory },
     top: cli.top ?? config.rank?.top ?? defaultTopFileCount,
     includeTests: cli.includeTests ?? config.includeTests ?? false,
     failOnError: cli.failOnError ?? config.failOnError ?? false,
@@ -73,7 +85,7 @@ export function resolveOptions(cli: CliOptions, config: CodeGaugeConfig): Resolv
 }
 
 /** Resolves the regression-gate settings with precedence configuration file > built-in defaults. */
-export function resolveGateOptions(config: CodeGaugeConfig): GateOptions {
+export function resolveGateOptions({ config }: LoadedConfig): GateOptions {
   return {
     newFunction: { ...defaultGateOptions.newFunction, ...config.gate?.newFunction },
     tolerance: { ...defaultGateOptions.tolerance, ...config.gate?.tolerance },
@@ -85,10 +97,10 @@ export function resolveGateOptions(config: CodeGaugeConfig): GateOptions {
  * Loads the configuration file. An explicit path must exist; otherwise the nearest
  * `code-gauge.config.json` is searched by walking up from the target directory.
  */
-export async function loadConfig(explicitPath: string | undefined, targetDirectory: string): Promise<CodeGaugeConfig> {
+export async function loadConfig(explicitPath: string | undefined, targetDirectory: string): Promise<LoadedConfig> {
   const configFile = explicitPath ?? (await findNearestConfig(targetDirectory));
   if (!configFile) {
-    return {};
+    return { config: {}, directory: targetDirectory };
   }
 
   let content;
@@ -98,7 +110,7 @@ export async function loadConfig(explicitPath: string | undefined, targetDirecto
     if (explicitPath) {
       throw new Error(`Cannot read config file "${configFile}": ${formatError(error)}`);
     }
-    return {};
+    return { config: {}, directory: targetDirectory };
   }
 
   let parsed: unknown;
@@ -108,7 +120,7 @@ export async function loadConfig(explicitPath: string | undefined, targetDirecto
     throw new Error(`Invalid JSON in config file "${configFile}": ${formatError(error)}`);
   }
 
-  return validateConfig(parsed, configFile);
+  return { config: validateConfig(parsed, configFile), directory: path.dirname(path.resolve(configFile)) };
 }
 
 async function findNearestConfig(targetDirectory: string): Promise<string | undefined> {
@@ -142,7 +154,7 @@ function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
   }
 
   const raw = value as Record<string, unknown>;
-  const knownKeys = new Set(['duplication', 'rank', 'gate', 'includeTests', 'failOnError']);
+  const knownKeys = new Set(['duplication', 'rank', 'gate', 'exclude', 'includeTests', 'failOnError']);
   for (const key of Object.keys(raw)) {
     if (!knownKeys.has(key)) {
       throw new Error(`Config file "${configFile}": unknown setting "${key}" (expected ${[...knownKeys].join(', ')}).`);
@@ -162,6 +174,10 @@ function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
     config.gate = validateGateObject(raw.gate, configFile);
   }
 
+  if (raw.exclude !== undefined) {
+    config.exclude = validateExcludePatterns(raw.exclude, configFile);
+  }
+
   for (const key of ['includeTests', 'failOnError'] as const) {
     if (raw[key] !== undefined) {
       config[key] = requireBoolean(raw[key], key, configFile);
@@ -169,6 +185,13 @@ function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
   }
 
   return config;
+}
+
+function validateExcludePatterns(value: unknown, configFile: string): string[] {
+  if (!Array.isArray(value) || !value.every((pattern) => typeof pattern === 'string' && pattern !== '')) {
+    throw new TypeError(`Config file "${configFile}": "exclude" must be an array of non-empty glob patterns.`);
+  }
+  return value as string[];
 }
 
 function validateRankObject(value: unknown, configFile: string): { top?: number } {

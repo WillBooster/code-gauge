@@ -201,6 +201,26 @@ const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
 
 const COMMENT_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
 
+/// Declaration kinds that only name dependencies (imports, package clauses, includes).
+const DEPENDENCY_DECLARATION_TYPES: &[&str] = &[
+    "import_statement",
+    "import_from_statement",
+    "future_import_statement",
+    "import_alias",
+    "import_declaration",
+    "package_clause",
+    "package_declaration",
+    "package_header",
+    "use_declaration",
+    "extern_crate_declaration",
+    "using_directive",
+    "extern_alias_directive",
+    "preproc_include",
+];
+
+/// Ruby methods that load another file, called without a receiver.
+const RUBY_REQUIRE_METHODS: &[&str] = &["require", "require_relative"];
+
 /// Children of a string node that carry only literal content; anything else is interpolation.
 const STRING_FRAGMENT_TYPES: &[&str] = &[
     "string_fragment",
@@ -553,7 +573,7 @@ fn collect_tokens<'a>(
                 node.start_position().row,
                 node.end_position().row,
             ));
-        } else if !COMMENT_TYPES.contains(&node.kind_name()) {
+        } else if !is_tokenless(node, code) {
             let mut statement_ranges: Vec<TokenRange> = Vec::new();
             let is_container = is_statement_container(node);
             for child in all_children(node) {
@@ -567,7 +587,7 @@ fn collect_tokens<'a>(
                 // A Kotlin lambda's parameters sit beside its statements.
                 if is_container
                     && child.is_named()
-                    && !COMMENT_TYPES.contains(&child.kind_name())
+                    && !is_tokenless(child, code)
                     && child.kind_name() != "lambda_parameters"
                 {
                     statement_ranges.push(child_range);
@@ -596,6 +616,89 @@ fn collect_tokens<'a>(
     }
 
     visit(root, code, tokens, block_ranges, container_statement_ranges);
+}
+
+/// Comments and dependency declarations contribute no tokens, so no clone consists of them; the
+/// tokens around them stay adjacent, so a clone may still extend across one.
+fn is_tokenless(node: Node<'_>, code: &Source<'_>) -> bool {
+    COMMENT_TYPES.contains(&node.kind_name()) || is_dependency_declaration(node, code)
+}
+
+/// Every module must spell out its own dependencies, so a clone made of them has no refactoring
+/// that could remove it; they are left out of clone detection entirely.
+fn is_dependency_declaration(node: Node<'_>, code: &Source<'_>) -> bool {
+    if !node.is_named() {
+        return false;
+    }
+    let kind = node.kind_name();
+    if DEPENDENCY_DECLARATION_TYPES.contains(&kind) {
+        return true;
+    }
+    match (crate::tree_index::language_name(), kind) {
+        // JavaScript's dynamic `import(...)` is a named `import` node too.
+        ("kotlin", "import") => true,
+        ("cpp", "using_declaration") => true,
+        // `mod name;` loads a file; a `mod name { ... }` with a body is code.
+        ("rust", "mod_item") => node.child_by_field_name("body").is_none(),
+        // Re-exports (`export { a } from './a'`); other exports wrap declarations.
+        ("javascript" | "jsx" | "typescript" | "tsx", "export_statement") => {
+            node.child_by_field_name("source").is_some()
+        }
+        (
+            "javascript" | "jsx" | "typescript" | "tsx",
+            "lexical_declaration" | "variable_declaration",
+        ) => is_require_declaration(node, code),
+        // `require('a');` and CommonJS re-exports such as `module.exports = require('a');`.
+        ("javascript" | "jsx" | "typescript" | "tsx", "expression_statement") => {
+            named_children(node).first().is_some_and(|expression| {
+                if expression.kind_name() == "assignment_expression" {
+                    expression
+                        .child_by_field_name("right")
+                        .is_some_and(|right| is_require_value(right, code))
+                } else {
+                    is_require_value(*expression, code)
+                }
+            })
+        }
+        ("ruby", "call") => {
+            node.child_by_field_name("receiver").is_none()
+                && node
+                    .child_by_field_name("method")
+                    .is_some_and(|method| RUBY_REQUIRE_METHODS.contains(&node_text(method, code)))
+        }
+        _ => false,
+    }
+}
+
+/// `const a = require('a')` (including destructuring and `require('a').b`) in every declarator.
+fn is_require_declaration(node: Node<'_>, code: &Source<'_>) -> bool {
+    let declarators: Vec<Node<'_>> = named_children(node)
+        .into_iter()
+        .filter(|child| child.kind_name() == "variable_declarator")
+        .collect();
+    !declarators.is_empty()
+        && declarators.iter().all(|declarator| {
+            declarator
+                .child_by_field_name("value")
+                .is_some_and(|value| is_require_value(value, code))
+        })
+}
+
+/// `require('a')` or a property read from it (`require('a').b`), but not a call on the module.
+fn is_require_value(node: Node<'_>, code: &Source<'_>) -> bool {
+    let mut value = node;
+    while value.kind_name() == "member_expression" {
+        let Some(object) = value.child_by_field_name("object") else {
+            return false;
+        };
+        value = object;
+    }
+    value.kind_name() == "call_expression"
+        && value
+            .child_by_field_name("function")
+            .is_some_and(|function| {
+                function.kind_name() == "identifier" && node_text(function, code) == "require"
+            })
 }
 
 /// The kind tag of a string-like node with no interpolation, or None to descend normally.

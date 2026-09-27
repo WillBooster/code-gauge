@@ -164,10 +164,11 @@ describe('code-gauge diff --base', () => {
     writeFileSync(path.join(repoDir, 'src', 'copy.ts'), reportSource.replaceAll('reportTotal', 'copiedTotal'));
     const result = runCli(['diff', '--base', 'main'], repoDir);
     expect(result.status).toBe(1);
-    expect(result.stdout).toMatch(/src\/copy\.ts:1-\d+: duplicated lines increased 0 -> /u);
-    expect(result.stdout).toContain('Deduplicate against src/report.ts');
+    expect(result.stdout).toContain(
+      'src/copy.ts:1-9: 9 changed lines duplicate existing code (lines 1-9; allowed <= 0). Deduplicate against src/report.ts by extracting a shared helper.'
+    );
     // Only the new copy is flagged: report.ts itself did not change.
-    expect(result.stdout).not.toMatch(/src\/report\.ts:1-\d+: duplicated lines/u);
+    expect(result.stdout).not.toContain('src/report.ts:');
   });
 
   it('prints machine-readable JSON with --json', () => {
@@ -458,7 +459,7 @@ describe('code-gauge diff --base: gates and options', () => {
     const result = runCli(['diff', '--base', 'main'], repoDir);
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(
-      /src\/report\.ts:1-\d+: duplicated lines increased 0 -> 18 \(allowed <= 0\)\. Deduplicate the repeated code by extracting a shared helper\./u
+      /src\/report\.ts:10-18: 9 changed lines duplicate existing code \(lines 10-18; allowed <= 0\)\. Deduplicate the repeated code by extracting a shared helper\./u
     );
   });
 
@@ -580,5 +581,263 @@ describe('code-gauge diff --base: output contract', () => {
     expect(report.passed).toBe(false);
     expect(report.errors).toHaveLength(1);
     expect(report.errors[0]).toContain('src/report.ts');
+  });
+});
+
+/** Commits `files` on top of main as the base of `action`, then drops that commit again. */
+function withBaseCommit(files: Record<string, string>, action: () => void): void {
+  for (const [file, content] of Object.entries(files)) {
+    mkdirSync(path.dirname(path.join(repoDir, file)), { recursive: true });
+    writeFileSync(path.join(repoDir, file), content);
+  }
+  runGit(['add', '-A'], repoDir);
+  runGit(['commit', '-q', '-m', 'temporary base'], repoDir);
+  try {
+    action();
+  } finally {
+    runGit(['reset', '-q', '--hard', 'HEAD~1'], repoDir);
+  }
+}
+
+const copiedReport = reportSource.replaceAll('reportTotal', 'copiedTotal');
+
+const productSource = (name: string): string =>
+  `export function ${name}(items: number[]): number {\n  let product = 1;\n  for (const item of items) {\n    product *= item + 1;\n  }\n  const result = product / 2;\n  const rounded = Math.floor(result) + Math.ceil(result);\n  return rounded - product;\n}\n`;
+
+describe('code-gauge diff --base: newly duplicated lines', () => {
+  it('flags only the pasted copy, not the copied code in a file changed elsewhere', () => {
+    writeFileSync(path.join(repoDir, 'src', 'report.ts'), reportSource + 'export const extra = 1;\n');
+    writeFileSync(path.join(repoDir, 'src', 'copy.ts'), copiedReport);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('src/copy.ts:1-9: 9 changed lines duplicate existing code');
+    expect(result.stdout).not.toContain('src/report.ts:');
+  });
+
+  it('keeps unchanged lines between nearby edits out of the added lines despite diff.interHunkContext', () => {
+    runGit(['config', 'diff.interHunkContext', '10'], repoDir);
+    try {
+      const edited = reportSource
+        .replace('(items: number[])', '(items: number[], scale = 1)')
+        .replace('return shifted + scaled + sum;', 'return shifted - scaled;');
+      writeFileSync(path.join(repoDir, 'src', 'report.ts'), edited);
+      writeFileSync(path.join(repoDir, 'src', 'copy.ts'), copiedReport);
+      const result = runCli(['diff', '--base', 'main'], repoDir);
+      expect(result.stdout).toContain('src/copy.ts:');
+      expect(result.stdout).not.toContain('src/report.ts:');
+    } finally {
+      runGit(['config', '--unset', 'diff.interHunkContext'], repoDir);
+    }
+  });
+
+  it('passes an in-place edit of an existing clone', () => {
+    withBaseCommit({ 'src/copy.ts': copiedReport }, () => {
+      writeFileSync(path.join(repoDir, 'src', 'copy.ts'), copiedReport.replace('scaled / 7', 'scaled / 9'));
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.stdout).toMatch(/^Regression gate passed/u);
+    });
+  });
+
+  it('flags code pasted next to an existing clone', () => {
+    const meanSource = reportSource.replaceAll('reportTotal', 'reportMean').replaceAll('sum * 3', 'sum * 5');
+    withBaseCommit({ 'src/report.ts': reportSource + meanSource, 'src/copy.ts': copiedReport }, () => {
+      writeFileSync(
+        path.join(repoDir, 'src', 'copy.ts'),
+        copiedReport + meanSource.replaceAll('reportMean', 'copiedMean')
+      );
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('src/copy.ts:10-18: 9 changed lines duplicate existing code');
+    });
+  });
+
+  it('flags a pasted copy in a file git diffs as binary', () => {
+    writeFileSync(path.join(repoDir, '.gitattributes'), 'src/calc.ts -diff\n');
+    runGit(['add', '.gitattributes'], repoDir);
+    runGit(['commit', '-q', '-m', 'mark calc.ts binary'], repoDir);
+    try {
+      writeFileSync(path.join(repoDir, 'src', 'calc.ts'), baseCalc + copiedReport);
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('src/calc.ts:8-16: 9 changed lines duplicate existing code');
+    } finally {
+      runGit(['reset', '-q', '--hard', 'HEAD~1'], repoDir);
+    }
+  });
+
+  it('reads the line diff of a file whose name contains glob characters from that file alone', () => {
+    // As a glob, `src/[id].ts` also matches `src/i.ts`; i.ts's insertion hunk leaking into [id].ts
+    // would mark its old, unchanged clone as added.
+    const idSource = copiedReport.replaceAll('copiedTotal', 'idTotal');
+    withBaseCommit({ 'src/[id].ts': idSource, 'src/i.ts': 'export const i = 1;\n' }, () => {
+      writeFileSync(path.join(repoDir, 'src', 'i.ts'), `export const i = 1;\n${copiedReport}`);
+      writeFileSync(path.join(repoDir, 'src', '[id].ts'), `${idSource}export const id = 1;\n`);
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.stdout).toContain('src/i.ts:2-10: 9 changed lines duplicate existing code');
+      expect(result.stdout).not.toContain('src/[id].ts:');
+    });
+  });
+
+  it('flags a clone replaced in place by a copy of unrelated code', () => {
+    withBaseCommit({ 'src/copy.ts': copiedReport, 'src/product.ts': productSource('product') }, () => {
+      writeFileSync(path.join(repoDir, 'src', 'copy.ts'), productSource('copiedTotal'));
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('src/copy.ts:');
+      expect(result.stdout).toContain('Deduplicate against src/product.ts');
+    });
+  });
+
+  it('passes a move of an existing clone to another file', () => {
+    withBaseCommit({ 'src/copy.ts': copiedReport }, () => {
+      rmSync(path.join(repoDir, 'src', 'copy.ts'));
+      writeFileSync(path.join(repoDir, 'src', 'moved.ts'), `export const moved = true;\n\n${copiedReport}`);
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.stdout).toMatch(/^Regression gate passed/u);
+    });
+  });
+
+  it('ignores dependency declarations repeated across files', () => {
+    const imports = [
+      "import { readFile, writeFile } from 'node:fs/promises';",
+      "import path from 'node:path';",
+      "import os from 'node:os';",
+      "import { spawn, spawnSync } from 'node:child_process';",
+      "import { createHash } from 'node:crypto';",
+      "import { setTimeout as delay } from 'node:timers/promises';",
+      "import { fileURLToPath, pathToFileURL } from 'node:url';",
+      "import { inspect, promisify } from 'node:util';",
+    ].join('\n');
+    writeFileSync(path.join(repoDir, 'src', 'calc.ts'), `${imports}\n\n${baseCalc}`);
+    writeFileSync(path.join(repoDir, 'src', 'report.ts'), `${imports}\n\n${reportSource}`);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.stdout).toMatch(/^Regression gate passed/u);
+  });
+});
+
+describe('code-gauge diff --base: generated and excluded code', () => {
+  const violatingFile = complexNewFile + copiedReport;
+
+  it.each([
+    ['a @generated tag', '/* Automatically @generated by tree-sitter */\n'],
+    ['a "generated ... DO NOT EDIT" line', '// Code generated by protoc-gen-ts. DO NOT EDIT.\n'],
+  ])('skips a file whose header carries %s', (_, header) => {
+    writeFileSync(path.join(repoDir, 'src', 'parser.ts'), header + violatingFile);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.stdout).toMatch(/^Regression gate passed/u);
+  });
+
+  it.each(['linguist-generated', 'linguist-vendored=true'])('skips files git attributes mark %s', (attribute) => {
+    writeFileSync(path.join(repoDir, '.gitattributes'), `src/external/** ${attribute}\n`);
+    mkdirSync(path.join(repoDir, 'src', 'external'));
+    writeFileSync(path.join(repoDir, 'src', 'external', 'lib.ts'), violatingFile);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.stdout).toMatch(/^Regression gate passed/u);
+  });
+
+  it('gates a file with a generated-code header that git attributes mark -linguist-generated', () => {
+    writeFileSync(path.join(repoDir, '.gitattributes'), 'src/parser.ts -linguist-generated\n');
+    writeFileSync(path.join(repoDir, 'src', 'parser.ts'), `/* @generated */\n${violatingFile}`);
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('new function decide');
+  });
+
+  it('gates an explicitly targeted file despite its generated-code marker', () => {
+    writeFileSync(path.join(repoDir, 'src', 'parser.ts'), `/* @generated */\n${complexNewFile}`);
+    const result = runCli(['diff', '--base', 'main', 'src/parser.ts'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('new function decide');
+  });
+
+  it('gates an explicitly targeted file inside a directory scans skip', () => {
+    mkdirSync(path.join(repoDir, 'tests'));
+    writeFileSync(path.join(repoDir, 'tests', 'complex.ts'), complexNewFile);
+    const result = runCli(['diff', '--base', 'main', 'tests/complex.ts'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('tests/complex.ts:1-');
+  });
+
+  it('gates an edit of an explicitly targeted, already committed test-named file', () => {
+    withBaseCommit({ 'src/check.test.ts': baseCalc }, () => {
+      writeFileSync(path.join(repoDir, 'src', 'check.test.ts'), worsenedCalc);
+      const result = runCli(['diff', '--base', 'HEAD', 'src/check.test.ts'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('src/check.test.ts:1-');
+      expect(result.stdout).toContain('cognitive complexity worsened');
+    });
+  });
+
+  it('gates an explicitly targeted renamed file against its base path', () => {
+    runGit(['mv', 'src/calc.ts', 'src/total.ts'], repoDir);
+    writeFileSync(path.join(repoDir, 'src', 'total.ts'), `${baseCalc}export const extra = 1;\n`);
+    const result = runCli(['diff', '--base', 'main', 'src/total.ts'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed: 1 changed files, 1 functions checked/u);
+  });
+
+  it('gates an explicitly targeted git-ignored file as an addition', () => {
+    writeFileSync(path.join(repoDir, '.gitignore'), 'local/\n');
+    mkdirSync(path.join(repoDir, 'local'));
+    writeFileSync(path.join(repoDir, 'local', 'gen.ts'), complexNewFile);
+    const result = runCli(['diff', '--base', 'main', 'local/gen.ts'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('local/gen.ts:1-');
+  });
+
+  it('skips files matching the configured exclude patterns', () => {
+    mkdirSync(path.join(repoDir, 'src', 'legacy'));
+    writeFileSync(path.join(repoDir, 'src', 'legacy', 'old.ts'), violatingFile);
+    writeFileSync(path.join(repoDir, 'code-gauge.config.json'), JSON.stringify({ exclude: ['src/legacy/**'] }));
+    const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.stdout).toMatch(/^Regression gate passed/u);
+  });
+
+  it('judges base blobs by the git attributes of the merge-base', () => {
+    withBaseCommit({ '.gitattributes': 'src/parser.ts linguist-generated\n', 'src/parser.ts': complexNewFile }, () => {
+      // Staged: git falls back to the index for a .gitattributes missing from the working tree.
+      runGit(['rm', '-q', '.gitattributes'], repoDir);
+      writeFileSync(path.join(repoDir, 'src', 'parser.ts'), `${complexNewFile}export const edited = 1;\n`);
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('new function decide: cognitive complexity 24 exceeds the new-code limit 15');
+    });
+  });
+
+  it('gates unchanged code that a .gitattributes edit stops excluding as new code', () => {
+    withBaseCommit({ '.gitattributes': 'src/parser.ts linguist-generated\n', 'src/parser.ts': complexNewFile }, () => {
+      writeFileSync(path.join(repoDir, '.gitattributes'), 'src/parser.ts -linguist-generated\n');
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('new function decide: cognitive complexity 24 exceeds the new-code limit 15');
+    });
+  });
+
+  it('gates unchanged marker-generated code that a new -linguist-generated override exposes', () => {
+    withBaseCommit({ 'src/parser.ts': `/* @generated */\n${complexNewFile}` }, () => {
+      writeFileSync(path.join(repoDir, '.gitattributes'), 'src/parser.ts -linguist-generated\n');
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('new function decide: cognitive complexity 24 exceeds the new-code limit 15');
+    });
+  });
+
+  it('keeps skipping a symbolic link that a .gitattributes edit marks -linguist-generated', () => {
+    symlinkSync('/nonexistent-code-gauge-target', path.join(repoDir, 'src', 'alias.ts'));
+    withBaseCommit({}, () => {
+      writeFileSync(path.join(repoDir, '.gitattributes'), 'src/alias.ts -linguist-generated\n');
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(0);
+      expect(result.stdout).toMatch(/^Regression gate passed/u);
+    });
+  });
+
+  it('gates the code of a file that stopped being generated as new code', () => {
+    withBaseCommit({ 'src/parser.ts': `/* @generated */\n${complexNewFile}` }, () => {
+      writeFileSync(path.join(repoDir, 'src', 'parser.ts'), complexNewFile);
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.status).toBe(1);
+      expect(result.stdout).toContain('new function decide: cognitive complexity 24 exceeds the new-code limit 15');
+    });
   });
 });
