@@ -3,13 +3,11 @@ use tree_sitter::Node;
 
 use crate::complexity::is_function_boundary;
 use crate::tree_index::NodeExt;
-use crate::util::{is_identifier_leaf, node_text, Source};
+use crate::util::{node_text, Source};
 
 /// Leaf node types treated as variable references by the def-use approximation.
 const VARIABLE_NODE_TYPES: &[&str] = &[
     "identifier",
-    "simple_identifier",
-    "interpolated_identifier",
     "implicit_parameter",
     "instance_variable",
     "class_variable",
@@ -51,17 +49,9 @@ const DEFINITION_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
     ("from_clause", "name"),
 ];
 
-/// Kotlin has no grammar fields: an identifier directly under one of these declares a binding
+/// Kotlin marks no binding fields: an identifier directly under one of these declares a binding
 /// (`val x`, `for (x in xs)`, lambda parameters, and the `catch (e: T)` exception name).
 const KOTLIN_DEFINITION_PARENT_TYPES: &[&str] = &["variable_declaration", "catch_block"];
-
-/// Kotlin parameter nodes whose identifier child is the declared name; the parameter LIST nodes
-/// (`function_value_parameters`) also hold default-value expressions, which are reads.
-const KOTLIN_PARAMETER_TYPES: &[&str] = &[
-    "parameter",
-    "parameter_with_optional_type",
-    "class_parameter",
-];
 
 /// C# LINQ clauses that bind a range variable as their first identifier child (no grammar field):
 /// `join y in ...`, `into ys`, `let z = ...`, and a query continuation `into g`.
@@ -133,7 +123,7 @@ pub fn measure_dep_degree(
     let mut pairs = 0u64;
     for index in 0..leaves.len() {
         let leaf = &leaves[index];
-        if !is_variable_leaf(leaf.node) {
+        if !is_variable_leaf(leaf) {
             continue;
         }
         let name = node_text(leaf.node, code);
@@ -161,11 +151,19 @@ pub fn measure_dep_degree(
 
 /// A C++ member-pointer variable (`int C::* p`, also `int C::* arr[1]`) is declared as a
 /// `type_identifier` under the `pointer_type_declarator` spelling `C::*`, possibly through further
-/// declarator wrappers; every other `type_identifier` names a type, not a variable.
-fn is_variable_leaf(node: Node<'_>) -> bool {
+/// declarator wrappers; every other `type_identifier` names a type, not a variable. Kotlin spells
+/// type names as identifiers: in a `user_type`, or as a type parameter's fieldless name (C# puts its
+/// type parameter in a `name` field).
+fn is_variable_leaf(leaf: &DepDegreeLeaf<'_>) -> bool {
+    let node = leaf.node;
+    if node.kind_name() == "type_identifier" {
+        return is_member_pointer_name(node);
+    }
     VARIABLE_NODE_TYPES.contains(&node.kind_name())
-        || crate::util::is_kotlin_callable_receiver(node)
-        || (node.kind_name() == "type_identifier" && is_member_pointer_name(node))
+        && !node.parent_node().is_some_and(|parent| {
+            parent.kind_name() == "user_type"
+                || (parent.kind_name() == "type_parameter" && leaf.field_name.is_none())
+        })
 }
 
 fn is_member_pointer_name(node: Node<'_>) -> bool {
@@ -232,11 +230,11 @@ fn collect_dep_degree_leaves<'t>(
 ) {
     if matches!(
         node.kind_name(),
-        "comment" | "line_comment" | "block_comment" | "multiline_comment"
+        "comment" | "line_comment" | "block_comment"
     ) {
         return;
     }
-    if is_identifier_leaf(node) {
+    if node.child_count() == 0 {
         leaves.push(DepDegreeLeaf {
             node,
             field_name,
@@ -297,7 +295,9 @@ fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
     let Some(parent) = leaf.node.parent_node() else {
         return false;
     };
-    if leaf.node.kind_name() == "simple_identifier"
+    // C#'s `variable_declaration` holds its type in the `type` field; Kotlin's bound name has none.
+    if leaf.node.kind_name() == "identifier"
+        && leaf.field_name.is_none()
         && KOTLIN_DEFINITION_PARENT_TYPES.contains(&parent.kind_name())
     {
         return true;
@@ -368,18 +368,6 @@ fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option
 /// (C/C++ function-pointer or array parameters) is a parameter-ish node, or the identifier
 /// directly occupies a parameter field; type annotations and default values bind nothing.
 fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
-    // Kotlin has no `type`/`value` fields to veto default values: a function parameter's default
-    // sits in the parameter list (`fun f(b: Int = a)`), a class parameter's inside the parameter
-    // node (`class A(val y: Int = a)`), so only a parameter node's first identifier child binds.
-    if leaf.node.kind_name() == "simple_identifier" {
-        return leaf.node.parent_node().is_some_and(|parent| {
-            KOTLIN_PARAMETER_TYPES.contains(&parent.kind_name())
-                && crate::util::named_children(parent)
-                    .into_iter()
-                    .find(|child| child.kind_name() == "simple_identifier")
-                    .is_some_and(|first| first.id() == leaf.node.id())
-        });
-    }
     let mut current = leaf.node;
     let mut depth = 0usize;
     // Only the member pointer's own declared name may climb past its qualified name; a size or
@@ -390,6 +378,19 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
         let Some(parent) = current.parent_node() else {
             return false;
         };
+        // Kotlin has no `type`/`value` fields to veto default values: a function parameter's default
+        // sits in the parameter list (`fun f(b: Int = a)`), a class parameter's inside the parameter
+        // node (`class A(val y: Int = a)`), so only such a node's first identifier child binds.
+        if parent.kind_name() == "function_value_parameters" {
+            return false;
+        }
+        if is_kotlin_parameter(parent) {
+            return depth == 0
+                && crate::util::named_children(parent)
+                    .into_iter()
+                    .find(|child| child.kind_name() == "identifier")
+                    .is_some_and(|first| first.id() == leaf.node.id());
+        }
         let parent_is_parameterish = parent.kind_name().contains("parameter");
         // Beyond the grandparent, only declarator wrappers keep climbing, plus the
         // `qualified_identifier` nodes that spell a member-pointer parameter's class (`int C::* q`,
@@ -425,6 +426,16 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
         current = parent;
         depth += 1;
     }
+}
+
+/// A Kotlin class parameter, or a setter's parameter list (`set(value)`; Ruby's `setter` is a method
+/// name, never under a property).
+fn is_kotlin_parameter(node: Node<'_>) -> bool {
+    node.kind_name() == "class_parameter"
+        || (node.kind_name() == "setter"
+            && node
+                .parent_node()
+                .is_some_and(|property| property.kind_name() == "property_declaration"))
 }
 
 /// Only called with small-arity parents (declarator wrappers, definition-list holders).

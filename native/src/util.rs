@@ -53,30 +53,12 @@ pub fn node_text<'a>(node: Node<'_>, code: &Source<'a>) -> &'a str {
     &code.code[code.utf8_offset(node.start_byte())..code.utf8_offset(node.end_byte())]
 }
 
-/// Kotlin spells the bound receiver of a callable reference (`xs::size`) as a `type_identifier`,
-/// the same kind as an unbound type (`List::size`); the receiver position is what distinguishes
-/// it, and only a visible definition then tells a variable from a type.
-pub fn is_kotlin_callable_receiver(node: Node<'_>) -> bool {
-    node.kind_name() == "type_identifier"
-        && node.parent_node().is_some_and(|parent| {
-            parent.kind_name() == "callable_reference"
-                && parent
-                    .named_child(0)
-                    .is_some_and(|first| first.id() == node.id())
-        })
-}
-
-/// Whether the node is a leaf for token-level walks. Kotlin soft keywords used as names (`value`,
-/// `data`, `get`, ...) parse as a `simple_identifier` — or its aliases `interpolated_identifier`
-/// (`"$value"`) and `type_identifier` (`value::size`) — wrapping an anonymous keyword token, so a
-/// plain leaf check would see the keyword instead of the identifier. Every other grammar's
-/// identifier kinds are already leaves.
-pub fn is_identifier_leaf(node: Node<'_>) -> bool {
-    node.child_count() == 0
-        || matches!(
-            node.kind_name(),
-            "simple_identifier" | "interpolated_identifier" | "type_identifier"
-        )
+/// Kotlin spells `true`, `false`, and `null` as plain identifiers, which the other grammars give
+/// literal node kinds of their own (an identifier with that text, e.g. Go's `null`, is a variable).
+pub fn is_kotlin_keyword_literal(node: Node<'_>, code: &Source<'_>) -> bool {
+    crate::tree_index::language_name() == "kotlin"
+        && node.kind_name() == "identifier"
+        && matches!(node_text(node, code), "true" | "false" | "null")
 }
 
 pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
@@ -91,8 +73,8 @@ pub fn all_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
 
 /// Children carrying the field, with node-tree-sitter's vendored-core semantics: extra children
 /// (error-recovery nodes, comments) inherit the field of the preceding structural sibling.
-/// tree-sitter 0.22.6 instead reports no field for extras (ts_node_field_name_for_child gained an
-/// is_extra early return), which would desynchronize field-based extraction on malformed source.
+/// The core instead reports no field for extras (ts_node_field_name_for_child returns early for
+/// them), which would desynchronize field-based extraction on malformed source.
 pub fn find_children_by_field_name<'t>(node: Node<'t>, field_name: &str) -> Vec<Node<'t>> {
     let mut children = Vec::new();
     let mut preceding_structural_field: Option<&'static str> = None;
@@ -166,38 +148,11 @@ pub fn to_int32(value: i64) -> i32 {
     value as i32
 }
 
-/// The body following a Kotlin `if_expression`'s bare `else` keyword (the grammar has no else
-/// clause node and no fields), or None for other languages' if nodes and else-less ifs.
-pub fn kotlin_else_body(if_node: Node<'_>) -> Option<Node<'_>> {
-    if if_node.kind_name() != "if_expression" {
-        return None;
-    }
-    let children = all_children(if_node);
-    let else_index = children
-        .iter()
-        .position(|child| !child.is_named() && child.kind_name() == "else")?;
-    children[else_index + 1..]
-        .iter()
-        .copied()
-        .find(|child| child.kind_name() == "control_structure_body")
-}
-
 /// Kotlin's `try { } catch { }` shares its node kind with Rust's `?` operator; only the Kotlin form
-/// holds a body or clause child.
+/// starts with the `try` keyword.
 pub fn is_kotlin_try_expression(node: Node<'_>) -> bool {
     node.kind_name() == "try_expression"
-        && named_children(node).iter().any(|child| {
-            matches!(
-                child.kind_name(),
-                "statements" | "catch_block" | "finally_block"
-            )
-        })
-}
-
-/// Whether a Kotlin else body is a braceless `else if`: the nested if sits directly in the
-/// control_structure_body, whereas a braced `else { if ... }` wraps it in `statements`.
-pub fn is_kotlin_else_if_body(else_body: Node<'_>) -> bool {
-    named_children(else_body)
-        .iter()
-        .any(|child| child.kind_name() == "if_expression")
+        && node
+            .child(0)
+            .is_some_and(|keyword| !keyword.is_named() && keyword.kind_name() == "try")
 }

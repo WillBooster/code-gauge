@@ -11,6 +11,7 @@ pub struct LanguageSets {
     pub nesting_nodes: FxHashSet<&'static str>,
     pub ncss_nodes: FxHashSet<&'static str>,
     pub ncss_containers: FxHashSet<&'static str>,
+    pub ncss_bare_body_parents: FxHashSet<&'static str>,
 }
 
 impl LanguageSets {
@@ -21,6 +22,11 @@ impl LanguageSets {
             nesting_nodes: language.nesting_node_types.iter().copied().collect(),
             ncss_nodes: language.ncss_node_types.iter().copied().collect(),
             ncss_containers: language.ncss_container_node_types.iter().copied().collect(),
+            ncss_bare_body_parents: language
+                .ncss_bare_body_parent_node_types
+                .iter()
+                .copied()
+                .collect(),
         }
     }
 }
@@ -31,8 +37,6 @@ const BOOLEAN_OPERATOR_PARENT_TYPES: &[&str] = &[
     "binary_expression",
     "binary",
     "boolean_operator",
-    "conjunction_expression",
-    "disjunction_expression",
     // C# pattern combinators (`is > 0 and <= 10`) sequence like `&&`/`||` (SonarC#).
     "and_pattern",
     "or_pattern",
@@ -306,6 +310,7 @@ impl FunctionBodyPass<'_, '_, '_> {
             parent,
             &self.sets.ncss_nodes,
             &self.sets.ncss_containers,
+            &self.sets.ncss_bare_body_parents,
         );
         let ncss_frame = self.top_frame();
         ncss_frame.ncss += own_ncss;
@@ -313,6 +318,9 @@ impl FunctionBodyPass<'_, '_, '_> {
             ncss_frame.has_own_ncss_contribution = true;
         }
 
+        // Kotlin accessors hang off their property, yet are members of the class body.
+        let is_charged_property =
+            inside_charged_class_body && current.kind_name() == "property_declaration";
         for child in all_children(current) {
             self.visit(
                 child,
@@ -324,7 +332,8 @@ impl FunctionBodyPass<'_, '_, '_> {
                 } else {
                     inside_nested_region
                 },
-                is_charged_class_body,
+                is_charged_class_body
+                    || (is_charged_property && matches!(child.kind_name(), "getter" | "setter")),
             );
         }
 
@@ -358,7 +367,7 @@ impl FunctionBodyPass<'_, '_, '_> {
 }
 
 /// Plain else branches attached to `current`: an `else_clause`/Ruby `else` whose branch is not an
-/// `else if` continuation, or a bare Java/Go `alternative:` statement without a clause wrapper.
+/// `else if` continuation, or a bare Java/Go/Kotlin `alternative:` branch without a clause wrapper.
 fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64 {
     if !current.is_named() {
         return 0;
@@ -379,11 +388,6 @@ fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64
     if kind != "if_statement" && kind != "if_expression" {
         return 0;
     }
-    // Kotlin's `else` is a bare keyword token followed by the branch body (no clause wrapper and
-    // no grammar field); an `else if` continuation is charged on the nested if instead.
-    if let Some(else_body) = crate::util::kotlin_else_body(current) {
-        return u64::from(!crate::util::is_kotlin_else_if_body(else_body));
-    }
     // Extras (comments) inherit the preceding sibling's field in find_children_by_field_name, so a
     // comment between an `elif_clause` and `else_clause` must not be miscounted as a bare branch.
     crate::util::find_children_by_field_name(current, "alternative")
@@ -397,7 +401,10 @@ fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64
         .count() as u64
 }
 
-/// goto, and break/continue that jump to a label (their only named child is the label).
+/// goto, and break/continue that jump to a label.
+// Inlined into the recursive visit, its field lookup enlarges every frame enough to cut the depth the
+// Workers runtime's stack can measure by ~5%.
+#[inline(never)]
 fn is_flow_breaking_jump(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;
@@ -405,19 +412,13 @@ fn is_flow_breaking_jump(node: Node<'_>) -> bool {
     if node.kind_name() == "goto_statement" {
         return true;
     }
-    // Rust jumps are expressions; `break value` carries a named expression child, so only an
-    // explicit `label` child marks a labeled jump.
+    // Rust and Kotlin jumps are expressions; a Rust `break value` carries a named expression child,
+    // so only an explicit Rust `label` child or Kotlin `label` field marks a labeled jump.
     if node.kind_name() == "break_expression" || node.kind_name() == "continue_expression" {
-        return crate::util::named_children(node)
-            .iter()
-            .any(|child| child.kind_name() == "label" || child.kind_name() == "loop_label");
-    }
-    // Kotlin folds every jump into `jump_expression`; the grammar tokenizes a labeled break or
-    // continue as `break@`/`continue@` followed by the label (`return@label` is a plain return).
-    if node.kind_name() == "jump_expression" {
-        return node.child(0).is_some_and(|keyword| {
-            keyword.kind_name() == "break@" || keyword.kind_name() == "continue@"
-        });
+        return node.child_by_field_name("label").is_some()
+            || crate::util::named_children(node)
+                .iter()
+                .any(|child| child.kind_name() == "label" || child.kind_name() == "loop_label");
     }
     // Comments are named children too (`break /* done */;`), so only non-comment children mark a
     // label.
@@ -519,14 +520,8 @@ fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool 
     let Some(parent) = parent else {
         return false;
     };
-    // Kotlin puts a braceless `else if` directly in the else branch's control_structure_body.
-    if parent.kind_name() == "control_structure_body" {
-        return parent
-            .parent_node()
-            .and_then(crate::util::kotlin_else_body)
-            .is_some_and(|else_body| else_body.id() == parent.id());
-    }
-    // JS/C/C++/Rust/C# wrap `else if` in an else clause or put it directly in `alternative`.
+    // JS/C/C++/Rust/C# wrap `else if` in an else clause; Java/Go/Kotlin put it directly in
+    // `alternative`.
     parent.kind_name() == "else_clause"
         || parent
             .child_by_field_name("alternative")
@@ -638,9 +633,7 @@ fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
             .is_some_and(|first| is_csharp_catch_all_pattern(*first));
     }
     if kind == "when_entry" {
-        return !crate::util::named_children(node)
-            .iter()
-            .any(|child| child.kind_name() == "when_condition");
+        return node.child_by_field_name("condition").is_none();
     }
 
     // Python arms with an irrefutable pattern are unconditional like `default`.

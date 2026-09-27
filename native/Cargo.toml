@@ -16,20 +16,20 @@ regex = "1"
 rustc-hash = "2"
 
 # Grammar crates are pinned exactly: every metric (and the golden-based test suite) is calibrated
-# against these grammar versions, so upgrades are deliberate, test-verified changes. The versions
-# match the npm grammar packages the former node-tree-sitter backend used, keeping historical
-# outputs stable. Core 0.22.6 parses identically to node-tree-sitter 0.21.1's vendored core
-# (0.21.0 does not: it lacks several parser fixes and can abort on malformed input); its one
-# behavioral difference — extra (error-recovery) children no longer inherit fields in
-# ts_node_field_name_for_child — is compensated in util::find_children_by_field_name.
-tree-sitter = "=0.22.6"
+# against these grammar versions, so upgrades are deliberate, test-verified changes. The Kotlin
+# grammar is WillBooster's fork, which is not on crates.io, pinned to a release tag. Core 0.25 is
+# the first to load that grammar's ABI 15 parser, and tree-sitter-javascript 0.21.x pins
+# `cc ~1.0`, which conflicts with the core's `cc ^1.2`, hence 0.25.0. The core reports no field for
+# extra (error-recovery) children in ts_node_field_name_for_child, which
+# util::find_children_by_field_name compensates for.
+tree-sitter = "=0.25.10"
 tree-sitter-c = "=0.21.4"
 tree-sitter-c-sharp = "=0.21.3"
 tree-sitter-cpp = "=0.22.3"
 tree-sitter-go = "=0.21.2"
 tree-sitter-java = "=0.21.0"
-tree-sitter-kotlin = "=0.3.8"
-tree-sitter-javascript = "=0.21.4"
+tree-sitter-kotlin = { package = "willbooster-tree-sitter-kotlin", git = "https://github.com/WillBooster/tree-sitter-kotlin", tag = "v1.1.0" }
+tree-sitter-javascript = "=0.25.0"
 tree-sitter-python = "=0.21.0"
 tree-sitter-ruby = "=0.21.0"
 # 0.21.0 breaks MSVC (its build script passes the GCC-only -Wno-unused-parameter

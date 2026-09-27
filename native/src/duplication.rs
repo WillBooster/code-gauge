@@ -10,7 +10,7 @@ use crate::types::{
     CrossFileCandidate, CrossFileToken, CrossFileTokenRange, DuplicateBlockOccurrence,
     DuplicationMetrics,
 };
-use crate::util::{all_children, is_identifier_leaf, named_children, node_text, to_int32, Source};
+use crate::util::{all_children, named_children, node_text, to_int32, Source};
 
 /// Block-like nodes considered as whole-subtree duplicate candidates.
 const DUPLICATE_BLOCK_TYPES: &[&str] = &[
@@ -62,10 +62,7 @@ const DUPLICATE_BLOCK_TYPES: &[&str] = &[
     "do_while_statement",
     "catch_block",
     "finally_block",
-    "statements",
-    "control_structure_body",
     "function_body",
-    "jump_expression",
     "jsx_element",
     "jsx_self_closing_element",
     "if",
@@ -106,10 +103,9 @@ const STATEMENT_CONTAINER_TYPES: &[&str] = &[
     "default_case",
     "compilation_unit",
     "switch_section",
-    "statements",
     "enum_class_body",
-    "control_structure_body",
     "function_body",
+    "lambda_literal",
 ];
 
 /// C# type bodies are `declaration_list`s, a name Rust also uses for `mod`/`impl`/`trait` bodies;
@@ -122,8 +118,8 @@ const CSHARP_DECLARATION_LIST_PARENT_TYPES: &[&str] = &[
     "namespace_declaration",
 ];
 
-/// Whole-subtree duplicate candidates: DUPLICATE_BLOCK_TYPES plus Kotlin's `try_expression`,
-/// distinguished by its clause children from Rust's `try_expression` (the `?` operator).
+/// Whole-subtree duplicate candidates: DUPLICATE_BLOCK_TYPES plus Kotlin's `try_expression`, which
+/// shares its name with Rust's `?` operator (see is_kotlin_try_expression).
 fn is_duplicate_block(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;
@@ -149,8 +145,6 @@ fn is_statement_container(node: Node<'_>) -> bool {
 /// Identifier leaves anonymized by occurrence order so consistently renamed copies still match.
 const ANONYMIZED_IDENTIFIER_TYPES: &[&str] = &[
     "identifier",
-    "simple_identifier",
-    "interpolated_identifier",
     "implicit_parameter",
     "constant",
     "instance_variable",
@@ -172,8 +166,6 @@ const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
     ("integer_literal", "#num"),
     ("float_literal", "#num"),
     ("real_literal", "#num"),
-    ("hex_literal", "#num"),
-    ("bin_literal", "#num"),
     ("int_literal", "#num"),
     ("rune_literal", "#char"),
     ("imaginary_literal", "#num"),
@@ -188,7 +180,6 @@ const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
     ("string_content", "#str"),
     ("string_literal_content", "#str"),
     ("character_literal_content", "#char"),
-    ("character_escape_seq", "#char"),
     ("verbatim_string_literal", "#str"),
     ("interpolated_string_expression", "#str"),
     ("raw_string_content", "#str"),
@@ -208,12 +199,7 @@ const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
     ("regex_pattern", "#regex"),
 ];
 
-const COMMENT_TYPES: &[&str] = &[
-    "comment",
-    "line_comment",
-    "block_comment",
-    "multiline_comment",
-];
+const COMMENT_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
 
 /// Children of a string node that carry only literal content; anything else is interpolation.
 const STRING_FRAGMENT_TYPES: &[&str] = &[
@@ -222,7 +208,6 @@ const STRING_FRAGMENT_TYPES: &[&str] = &[
     "string_content",
     "string_literal_content",
     "character_literal_content",
-    "character_escape_seq",
     "raw_string_content",
     "raw_string_start",
     "raw_string_end",
@@ -286,7 +271,6 @@ const STRING_CONTENT_FRAGMENT_TYPES: &[&str] = &[
     "string_content",
     "string_literal_content",
     "character_literal_content",
-    "character_escape_seq",
     "raw_string_content",
     "escape_sequence",
     "heredoc_content",
@@ -552,12 +536,12 @@ fn collect_tokens<'a>(
         container_statement_ranges: &mut Vec<Vec<TokenRange>>,
     ) -> TokenRange {
         let start_token_index = tokens.len();
-        let atomic_kind = if is_identifier_leaf(node) {
+        let atomic_kind = if node.child_count() == 0 {
             None
         } else {
             atomic_literal_kind(node)
         };
-        if is_identifier_leaf(node) {
+        if node.child_count() == 0 {
             append_leaf_token(node, code, tokens);
         } else if let Some(atomic_kind) = atomic_kind {
             // Interpolation-free strings collapse to their kind tag so copies differing only in
@@ -580,7 +564,12 @@ fn collect_tokens<'a>(
                     block_ranges,
                     container_statement_ranges,
                 );
-                if is_container && child.is_named() && !COMMENT_TYPES.contains(&child.kind_name()) {
+                // A Kotlin lambda's parameters sit beside its statements.
+                if is_container
+                    && child.is_named()
+                    && !COMMENT_TYPES.contains(&child.kind_name())
+                    && child.kind_name() != "lambda_parameters"
+                {
                     statement_ranges.push(child_range);
                 }
             }
@@ -664,14 +653,19 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         return;
     }
 
-    // A Kotlin bound callable-reference receiver (`xs::size`) renames like a variable unless it is
-    // PascalCase, the discriminator used for static receivers everywhere else.
-    let is_variable_receiver = crate::util::is_kotlin_callable_receiver(node)
-        && !pascal_case_regex().is_match(node_text(node, code));
+    if crate::util::is_kotlin_keyword_literal(node, code) {
+        tokens.push(make_text_token(
+            Cow::Borrowed(node_text(node, code)),
+            None,
+            false,
+            start_row,
+            end_row,
+        ));
+        return;
+    }
     if node.is_named()
-        && (is_variable_receiver
-            || (ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind_name())
-                && !is_semantic_name_leaf(node, code)))
+        && ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind_name())
+        && !is_semantic_name_leaf(node, code)
     {
         tokens.push(Token {
             is_id: true,
@@ -795,8 +789,15 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
     };
 
     // Java method references (`Foo::bar`) and Kotlin callable references (`::bar`) name their
-    // identifiers without grammar fields.
-    if parent.kind_name() == "method_reference" || parent.kind_name() == "callable_reference" {
+    // identifiers without grammar fields, and Kotlin spells type names as identifiers.
+    if matches!(
+        parent.kind_name(),
+        "method_reference" | "callable_reference" | "user_type"
+    ) {
+        return true;
+    }
+    // A Kotlin type parameter's name has no field (C# puts its own in `name`).
+    if parent.kind_name() == "type_parameter" && parent.child_by_field_name("name").is_none() {
         return true;
     }
 
@@ -823,16 +824,30 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         }
     }
 
-    // Kotlin (no grammar fields): a callee (`foo(...)`), a member name (`a.foo`), an infix function
-    // (`a shl b`), and a named argument (`foo(name = x)`) are API names.
-    if node.kind_name() == "simple_identifier" {
-        if parent.kind_name() == "navigation_suffix" {
-            return true;
-        }
+    // Kotlin (no callee or member fields): a callee (`foo(...)`, whose call ends in Kotlin's own
+    // argument nodes), a member name (`a.foo`), an infix function (`a shl b`), and a named
+    // argument (`foo(name = x)`) are API names.
+    if node.kind_name() == "identifier" {
         let is_first_named = parent
             .named_child(0)
             .is_some_and(|first| first.id() == node.id());
-        if parent.kind_name() == "call_expression" && is_first_named {
+        let is_last_named = parent
+            .named_child(parent.named_child_count().saturating_sub(1))
+            .is_some_and(|last| last.id() == node.id());
+        if parent.kind_name() == "navigation_expression" && is_last_named && !is_first_named {
+            return true;
+        }
+        if parent.kind_name() == "call_expression"
+            && is_first_named
+            && parent
+                .named_child(parent.named_child_count().saturating_sub(1))
+                .is_some_and(|arguments| {
+                    matches!(
+                        arguments.kind_name(),
+                        "value_arguments" | "annotated_lambda"
+                    )
+                })
+        {
             return true;
         }
         if parent.kind_name() == "infix_expression"

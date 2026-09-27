@@ -37,8 +37,8 @@ pub fn is_implemented_function(node: Node<'_>) -> bool {
             .is_some_and(|value| value.kind_name() == "arrow_expression_clause");
     }
 
-    // The Kotlin grammar has no fields; an implemented function or accessor holds a
-    // `function_body` child.
+    // Kotlin has no `body` field; an implemented function or accessor holds a `function_body`
+    // child.
     if node.kind_name() == "getter"
         || node.kind_name() == "setter"
         || node.kind_name() == "function_declaration"
@@ -175,7 +175,7 @@ fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
     if node.kind_name() == "setter"
         && named_children(node)
             .iter()
-            .any(|child| child.kind_name() == "parameter_with_optional_type")
+            .any(|child| child.kind_name() == "identifier")
     {
         return Some(node);
     }
@@ -343,14 +343,17 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // (`run = { ... }`, `obj.run = { ... }`) takes the assigned name.
     if node.kind_name() == "lambda_literal" || node.kind_name() == "anonymous_function" {
         let mut holder = parent;
-        while holder.kind_name() == "prefix_expression" {
+        while matches!(
+            holder.kind_name(),
+            "labeled_expression" | "annotated_expression"
+        ) {
             holder = holder.parent_node()?;
         }
         if holder.kind_name() == "property_declaration" {
             return find_kotlin_property_name(holder, code);
         }
         if holder.kind_name() == "assignment" {
-            return find_kotlin_assignment_name(holder, code);
+            return find_assignment_target_name(holder, code);
         }
     }
     // A `lambda { }` / `proc { }` block is measured, but the call around it is what gets bound.
@@ -852,8 +855,8 @@ fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<S
 }
 
 /// A compound assignment (`x += f`) does not bind the function to its target, so only a plain `=`
-/// names it. Grammars with an `operator` field (C/C++, C#, Java) expose it directly; Go and Kotlin
-/// have none, so the operator is the assignment's own anonymous token child.
+/// names it. Grammars with an `operator` field (C/C++, C#, Java, Kotlin) expose it directly; Go has
+/// none, so the operator is the assignment's own anonymous token child.
 fn is_plain_assignment(assignment: Node<'_>, code: &Source<'_>) -> bool {
     match assignment.child_by_field_name("operator") {
         Some(operator) => node_text(operator, code) == "=",
@@ -863,9 +866,9 @@ fn is_plain_assignment(assignment: Node<'_>, code: &Source<'_>) -> bool {
     }
 }
 
-/// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, or Java
-/// field access (`a.b.run` names `run`) or a C++ qualified name (`N::run`); subscripts (`o["run"]`)
-/// name nothing.
+/// The assigned identifier, or the member name of a JS member, Rust/C++ field, C# member, Java
+/// field access, or Kotlin navigation (`a.b.run` names `run`) or a C++ qualified name (`N::run`);
+/// subscripts (`o["run"]`) name nothing.
 fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
     if !is_plain_assignment(assignment, code) {
         return None;
@@ -877,34 +880,17 @@ fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
         "field_expression" => target.child_by_field_name("field")?,
         "member_access_expression" => target.child_by_field_name("name")?,
         "field_access" => target.child_by_field_name("field")?,
+        "navigation_expression" => target.named_child(target.named_child_count() - 1)?,
         "qualified_identifier" => return unwrap_declarator_name(Some(target), code),
         _ => return None,
     };
     Some(node_text(name, code).to_string())
 }
 
-/// The Kotlin assignment target: the variable itself or the member of a trailing navigation suffix
-/// (`obj.run` names `run`); a trailing indexing suffix (`arr[0] = { }`) names nothing, like
-/// subscripts in the other languages.
-fn find_kotlin_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
-    if !is_plain_assignment(assignment, code) {
-        return None;
-    }
-    let target = first_named_child_of_kind(assignment, "directly_assignable_expression")?;
-    let children = named_children(target);
-    let holder = match children.last()? {
-        last if last.kind_name() == "navigation_suffix" => *last,
-        last if last.kind_name() == "simple_identifier" && children.len() == 1 => target,
-        _ => return None,
-    };
-    first_named_child_of_kind(holder, "simple_identifier")
-        .map(|name| node_text(name, code).to_string())
-}
-
 /// Names of C# and Kotlin members whose grammars carry no usable `name` field: accessors are
 /// named after their property (`Count.get`; an expression-bodied property is its own getter),
-/// Kotlin functions by their identifier child, Kotlin secondary constructors and C# destructors
-/// after their class, and C# operators like C++ ones.
+/// Kotlin secondary constructors and C# destructors after their class, and C# operators like C++
+/// ones.
 fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     match node.kind_name() {
         "accessor_declaration" => {
@@ -923,12 +909,8 @@ fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String
             };
             Some(format!(
                 "{}.{keyword}",
-                find_kotlin_accessor_owner_name(node, code)?
+                find_kotlin_property_name(node.parent_node()?, code)?
             ))
-        }
-        "function_declaration" if node.child_by_field_name("name").is_none() => {
-            first_named_child_of_kind(node, "simple_identifier")
-                .map(|name| node_text(name, code).to_string())
         }
         "secondary_constructor" => {
             let mut ancestor = node.parent_node();
@@ -936,7 +918,8 @@ fn find_member_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String
                 if current.kind_name() == "class_declaration"
                     || current.kind_name() == "object_declaration"
                 {
-                    return first_named_child_of_kind(current, "type_identifier")
+                    return current
+                        .child_by_field_name("name")
                         .map(|name| node_text(name, code).to_string());
                 }
                 ancestor = current.parent_node();
@@ -967,38 +950,13 @@ fn csharp_property_name(owner: Node<'_>, code: &Source<'_>) -> Option<String> {
     }
 }
 
-/// The property a Kotlin accessor belongs to: its parent when the accessor follows the initializer
-/// on the same line, otherwise (accessor on its own line) the grammar emits it as a class-body
-/// sibling after the property, any preceding accessor, and any comments between them.
-fn find_kotlin_accessor_owner_name(accessor: Node<'_>, code: &Source<'_>) -> Option<String> {
-    if let Some(name) = accessor
-        .parent_node()
-        .and_then(|parent| find_kotlin_property_name(parent, code))
-    {
-        return Some(name);
-    }
-    let mut sibling = accessor.prev_named_sibling();
-    while let Some(current) = sibling {
-        if current.kind_name() == "property_declaration" {
-            return find_kotlin_property_name(current, code);
-        }
-        if !matches!(current.kind_name(), "getter" | "setter")
-            && !crate::ncss::COMMENT_NODE_TYPES.contains(&current.kind_name())
-        {
-            return None;
-        }
-        sibling = current.prev_named_sibling();
-    }
-    None
-}
-
 /// The declared name of a Kotlin `property_declaration` (`val name: T`), if it declares one.
 fn find_kotlin_property_name(property: Node<'_>, code: &Source<'_>) -> Option<String> {
     if property.kind_name() != "property_declaration" {
         return None;
     }
     let declaration = first_named_child_of_kind(property, "variable_declaration")?;
-    first_named_child_of_kind(declaration, "simple_identifier")
+    first_named_child_of_kind(declaration, "identifier")
         .map(|name| node_text(name, code).to_string())
 }
 

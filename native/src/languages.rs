@@ -15,6 +15,9 @@ pub struct LanguageDefinition {
     pub nesting_node_types: &'static [&'static str],
     pub ncss_node_types: &'static [&'static str],
     pub ncss_container_node_types: &'static [&'static str],
+    /// Parents whose braceless `consequence`/`alternative`/`body` child counts like the single
+    /// statement of a braced body, for grammars that wrap it in no statement node.
+    pub ncss_bare_body_parent_node_types: &'static [&'static str],
 }
 
 #[derive(Clone, Copy)]
@@ -43,8 +46,8 @@ impl LanguageDefinition {
             GrammarId::CSharp => tree_sitter_c_sharp::language(),
             GrammarId::Go => tree_sitter_go::language(),
             GrammarId::Java => tree_sitter_java::language(),
-            GrammarId::JavaScript => tree_sitter_javascript::language(),
-            GrammarId::Kotlin => tree_sitter_kotlin::language(),
+            GrammarId::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
+            GrammarId::Kotlin => tree_sitter_kotlin::LANGUAGE.into(),
             GrammarId::Python => tree_sitter_python::language(),
             GrammarId::Ruby => tree_sitter_ruby::language(),
             GrammarId::Rust => tree_sitter_rust::language(),
@@ -661,16 +664,21 @@ const KOTLIN_NCSS_NODES: &[&str] = &[
     "getter",
     "setter",
 ];
-// `control_structure_body` holds a braceless branch/loop body (`if (x) foo()`), which counts like
-// the single statement of a braced one; `function_body` holds an expression body (`fun f() = x`).
+// `function_body` holds an expression body (`fun f() = x`).
 const KOTLIN_NCSS_CONTAINERS: &[&str] = &[
     "source_file",
-    "import_list",
-    "statements",
+    "block",
     "class_body",
     "enum_class_body",
-    "control_structure_body",
     "function_body",
+    "lambda_literal",
+];
+const KOTLIN_NCSS_BARE_BODY_PARENTS: &[&str] = &[
+    "if_expression",
+    "for_statement",
+    "while_statement",
+    "do_while_statement",
+    "when_entry",
 ];
 
 pub const LANGUAGES: &[LanguageDefinition] = &[
@@ -684,6 +692,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: JS_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "jsx",
@@ -695,6 +704,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: JS_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "typescript",
@@ -706,6 +716,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: JS_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "tsx",
@@ -717,6 +728,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: JS_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "python",
@@ -728,6 +740,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: PYTHON_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "go",
@@ -739,6 +752,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: GO_NESTING_NODES,
         ncss_node_types: GO_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "rust",
@@ -750,6 +764,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: COMMON_NESTING_NODES,
         ncss_node_types: RUST_NCSS_NODES,
         ncss_container_node_types: RUST_NCSS_CONTAINERS,
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "java",
@@ -761,6 +776,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: JAVA_DECISION_NODES,
         ncss_node_types: JAVA_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "ruby",
@@ -772,6 +788,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: RUBY_DECISION_NODES,
         ncss_node_types: RUBY_NCSS_NODES,
         ncss_container_node_types: RUBY_NCSS_CONTAINERS,
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "c",
@@ -783,6 +800,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: C_DECISION_NODES,
         ncss_node_types: C_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "cpp",
@@ -794,6 +812,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: CPP_DECISION_NODES,
         ncss_node_types: CPP_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "csharp",
@@ -805,6 +824,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: CSHARP_DECISION_NODES,
         ncss_node_types: CSHARP_NCSS_NODES,
         ncss_container_node_types: &[],
+        ncss_bare_body_parent_node_types: &[],
     },
     LanguageDefinition {
         name: "kotlin",
@@ -816,6 +836,7 @@ pub const LANGUAGES: &[LanguageDefinition] = &[
         nesting_node_types: KOTLIN_DECISION_NODES,
         ncss_node_types: KOTLIN_NCSS_NODES,
         ncss_container_node_types: KOTLIN_NCSS_CONTAINERS,
+        ncss_bare_body_parent_node_types: KOTLIN_NCSS_BARE_BODY_PARENTS,
     },
 ];
 

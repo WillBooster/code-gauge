@@ -4,21 +4,14 @@ use tree_sitter::Node;
 use crate::tree_index::NodeExt;
 use crate::util::find_children_by_field_name;
 
-pub const COMMENT_NODE_TYPES: &[&str] = &[
-    "comment",
-    "line_comment",
-    "block_comment",
-    "multiline_comment",
-];
+pub const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
 
 /// Nodes never counted positionally inside NCSS containers: metadata, empty statements, Ruby
 /// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc),
-/// Ruby statement parentheses (transparent wrappers whose children count instead), Kotlin
-/// annotations (siblings of the statement they decorate), and Kotlin enum entries (Java enum
-/// constants are not counted either). Two Kotlin kinds are excluded contextually below because
-/// Rust shares their names: `try_expression` (Rust's `?` operator must keep counting as a tail
-/// expression) and `label` (a Rust block label `'outer:` stands for the labeled statement the
-/// other languages count, while a Kotlin `outer@` is a childless token beside its statement).
+/// Ruby statement parentheses (transparent wrappers whose children count instead), Kotlin enum
+/// entries (Java enum constants are not counted either), and Kotlin lambda parameters (siblings of
+/// the lambda's statements). Kotlin's `try_expression` is excluded contextually below because Rust
+/// shares its name: Rust's `?` operator must keep counting as a tail expression.
 const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "attribute_item",
     "inner_attribute_item",
@@ -27,8 +20,9 @@ const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "parenthesized_statements",
     "annotation",
     "file_annotation",
-    "shebang_line",
+    "shebang",
     "enum_entry",
+    "lambda_parameters",
 ];
 
 /// TypeScript interface members count like Java interface members, but the same node types appear
@@ -66,6 +60,7 @@ pub fn ncss_contribution(
     parent: Option<Node<'_>>,
     countable: &FxHashSet<&'static str>,
     containers: &FxHashSet<&'static str>,
+    bare_body_parents: &FxHashSet<&'static str>,
 ) -> u64 {
     if !node.is_named()
         || COMMENT_NODE_TYPES.contains(&node.kind_name())
@@ -74,7 +69,7 @@ pub fn ncss_contribution(
         return 0;
     }
     // A Kotlin accessor without a body (`private set`) only changes visibility and declares
-    // nothing of its own; it parses as a sibling of its property and must not count positionally.
+    // nothing of its own, so it must not count through its node type.
     if (node.kind_name() == "getter" || node.kind_name() == "setter")
         && !crate::functions::is_implemented_function(node)
     {
@@ -82,11 +77,13 @@ pub fn ncss_contribution(
     }
 
     let mut contribution = 0;
-    let positional = is_in_container_position(parent, containers)
-        && !containers.contains(node.kind_name())
+    // A Kotlin lambda holds its statements directly, so it is a container, yet it still counts where
+    // it stands like any other expression.
+    let positional = (is_in_container_position(parent, containers)
+        || is_bare_body(node, parent, bare_body_parents))
+        && (!containers.contains(node.kind_name()) || node.kind_name() == "lambda_literal")
         && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind_name())
-        && !crate::util::is_kotlin_try_expression(node)
-        && !(node.kind_name() == "label" && node.child_count() == 0);
+        && !crate::util::is_kotlin_try_expression(node);
     if (counts_through_node_type(node, countable)
         || positional
         || counts_contextually(node, parent))
@@ -95,12 +92,11 @@ pub fn ncss_contribution(
         contribution += 1;
     }
 
-    // A bare else branch (Java/Go `alternative:` without an else-clause wrapper, or Kotlin's bare
-    // `else` keyword) counts 1 like the `else` keyword does in PMD; an `else if` chain charges the
-    // nested if separately on top.
+    // A bare else branch (Java/Go/Kotlin `alternative:` without an else-clause wrapper) counts 1
+    // like the `else` keyword does in PMD; an `else if` chain charges the nested if separately on
+    // top.
     if IF_NODE_TYPES.contains(&node.kind_name()) {
-        contribution += count_bare_alternatives(node)
-            + u64::from(crate::util::kotlin_else_body(node).is_some());
+        contribution += count_bare_alternatives(node);
     }
 
     contribution
@@ -135,6 +131,19 @@ fn is_in_container_position(
         ancestor = current.parent_node();
     }
     false
+}
+
+/// A braceless branch or loop body (`if (x) foo()`) stands for the single statement a braced body
+/// would hold.
+fn is_bare_body(
+    node: Node<'_>,
+    parent: Option<Node<'_>>,
+    bare_body_parents: &FxHashSet<&'static str>,
+) -> bool {
+    parent.is_some_and(|parent| bare_body_parents.contains(parent.kind_name()))
+        && ["consequence", "alternative", "body"]
+            .iter()
+            .any(|field_name| is_field_of_parent(node, parent, field_name))
 }
 
 /// `export const x = 1` nests a countable declaration inside `export_statement`; only the inner
