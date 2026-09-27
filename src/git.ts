@@ -252,6 +252,9 @@ async function runGitWithInput(
 ): Promise<string> {
   return await new Promise((resolve, reject) => {
     const child = spawn('git', args, { cwd, env });
+    // git exiting before it reads all input (e.g. on a usage error) makes the write fail with
+    // EPIPE; its exit code and stderr, reported on close, already describe the failure.
+    child.stdin.on('error', () => {});
     const stdout: Buffer[] = [];
     const stderr: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
