@@ -666,10 +666,12 @@ describe('code-gauge diff --base: newly duplicated lines', () => {
   });
 
   it('reads the line diff of a file whose name contains glob characters from that file alone', () => {
-    // As a glob, `src/[id].ts` also matches `src/i.ts`, whose appended copy must not leak into it.
-    withBaseCommit({ 'src/[id].ts': baseCalc, 'src/i.ts': 'export const i = 1;\n' }, () => {
+    // As a glob, `src/[id].ts` also matches `src/i.ts`; i.ts's insertion hunk leaking into [id].ts
+    // would mark its old, unchanged clone as added.
+    const idSource = copiedReport.replaceAll('copiedTotal', 'idTotal');
+    withBaseCommit({ 'src/[id].ts': idSource, 'src/i.ts': 'export const i = 1;\n' }, () => {
       writeFileSync(path.join(repoDir, 'src', 'i.ts'), `export const i = 1;\n${copiedReport}`);
-      writeFileSync(path.join(repoDir, 'src', '[id].ts'), `${baseCalc}export const id = 1;\n`);
+      writeFileSync(path.join(repoDir, 'src', '[id].ts'), `${idSource}export const id = 1;\n`);
       const result = runCli(['diff', '--base', 'HEAD'], repoDir);
       expect(result.stdout).toContain('src/i.ts:2-10: 9 changed lines duplicate existing code');
       expect(result.stdout).not.toContain('src/[id].ts:');
