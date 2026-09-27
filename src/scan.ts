@@ -217,18 +217,53 @@ async function measureCandidates(context: ScanContext): Promise<void> {
     context.candidates.flatMap(({ file, realFile }) => (realFile === undefined ? [file] : [file, realFile]))
   );
   context.exclusion = exclusion;
-  for (const { file, language, realFile } of context.candidates) {
+  // Every path reaching the same real file, in discovery order, so one alias cannot decide alone.
+  const pathsByRealFile = new Map<string, ScanCandidate[]>();
+  for (const candidate of context.candidates) {
+    let realFile;
+    try {
+      realFile = candidate.realFile ?? (await realpath(candidate.file));
+    } catch (error) {
+      recordError(context, candidate.file, error);
+      continue;
+    }
+    pathsByRealFile.set(realFile, [...(pathsByRealFile.get(realFile) ?? []), candidate]);
+  }
+  for (const [realFile, candidates] of pathsByRealFile) {
     if (context.fatalSeen) {
       return;
     }
-    // A file reached through a symbolic link is excluded by the link's path or its target's.
-    const excluded =
-      exclusion !== undefined &&
-      (exclusion.isExcludedPath(file) || (realFile !== undefined && exclusion.isExcludedPath(realFile)));
-    if (!excluded) {
-      await measureFile(file, language, 'directory', context, realFile);
+    const chosen = await chooseMeasuredPath(realFile, candidates, exclusion);
+    if (chosen !== undefined) {
+      await measureFile(chosen.file, chosen.language, 'directory', context, realFile);
     }
   }
+}
+
+/**
+ * The path to measure a real file through. A path is excluded when its own exclusion or the real
+ * file's applies, so the real path, when the scan reached it directly, is never less measurable
+ * than an alias; otherwise the first alias not excluded, preferring one whose own attributes do
+ * not judge the content generated.
+ */
+async function chooseMeasuredPath(
+  realFile: string,
+  candidates: readonly ScanCandidate[],
+  exclusion: Exclusion | undefined
+): Promise<ScanCandidate | undefined> {
+  if (exclusion === undefined) {
+    return candidates[0];
+  }
+  if (exclusion.isExcludedPath(realFile)) {
+    return undefined;
+  }
+  const measurable = candidates.filter(({ file }) => !exclusion.isExcludedPath(file));
+  const direct = measurable.find(({ file }) => file === realFile);
+  if (direct !== undefined || measurable.length <= 1) {
+    return direct ?? measurable[0];
+  }
+  const code = await readFile(realFile, 'utf8').catch(() => {});
+  return measurable.find(({ file }) => code !== undefined && !exclusion.isGeneratedCode(file, code)) ?? measurable[0];
 }
 
 /** Applies the scan's outcomes in discovery order once every measurement has settled. */
