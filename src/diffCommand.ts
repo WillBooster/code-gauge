@@ -127,15 +127,15 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const repositoryFiles = await listRepositoryFiles(repoRoot);
   const baseSymlinkPaths = await listSymlinkPathsAtRevision(repoRoot, mergeBase);
   const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
-  const explicitFiles = await listExplicitlyTargetedPaths(canonicalTarget, repoRoot, changedFiles);
+  const targetStat = await stat(canonicalTarget).catch(() => {});
+  const targetFile = targetStat?.isFile() ? canonicalTarget : undefined;
   // A targeted file git does not list (an ignored one) is still measured, as an addition.
-  const unlistedTarget = [...explicitFiles]
-    .map((file) => path.relative(repoRoot, file).split(path.sep).join('/'))
-    .find((file) => !file.startsWith('../') && !repositoryFiles.has(file));
-  if (unlistedTarget !== undefined) {
+  const unlistedTarget = targetFile && path.relative(repoRoot, targetFile).split(path.sep).join('/');
+  if (unlistedTarget !== undefined && !unlistedTarget.startsWith('../') && !repositoryFiles.has(unlistedTarget)) {
     repositoryFiles.add(unlistedTarget);
     changedFiles.push({ status: 'added', headPath: unlistedTarget });
   }
+  const explicitFiles = listExplicitlyTargetedPaths(targetFile, repoRoot, changedFiles);
   // Base blobs are excluded by the attributes of the revision they come from. A changed
   // .gitattributes can re-include files whose bytes did not change, so then every file's base
   // attributes are needed to find them.
@@ -293,18 +293,17 @@ async function listReincludedFiles(
  * An explicitly targeted file is measured even when excluded, like the ranking command's single
  * file target: the file itself, and its base path when it was renamed.
  */
-async function listExplicitlyTargetedPaths(
-  canonicalTarget: string,
+function listExplicitlyTargetedPaths(
+  targetFile: string | undefined,
   repoRoot: string,
   changedFiles: ChangedFile[]
-): Promise<Set<string>> {
-  const targetStat = await stat(canonicalTarget).catch(() => {});
-  if (!targetStat?.isFile()) {
+): Set<string> {
+  if (targetFile === undefined) {
     return new Set();
   }
-  const paths = new Set([canonicalTarget]);
+  const paths = new Set([targetFile]);
   for (const changed of changedFiles) {
-    if (changed.basePath !== undefined && path.join(repoRoot, changed.headPath) === canonicalTarget) {
+    if (changed.basePath !== undefined && path.join(repoRoot, changed.headPath) === targetFile) {
       paths.add(path.join(repoRoot, changed.basePath));
     }
   }

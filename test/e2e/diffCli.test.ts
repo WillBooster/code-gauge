@@ -766,6 +766,14 @@ describe('code-gauge diff --base: generated and excluded code', () => {
     });
   });
 
+  it('gates an explicitly targeted renamed file against its base path', () => {
+    runGit(['mv', 'src/calc.ts', 'src/total.ts'], repoDir);
+    writeFileSync(path.join(repoDir, 'src', 'total.ts'), `${baseCalc}export const extra = 1;\n`);
+    const result = runCli(['diff', '--base', 'main', 'src/total.ts'], repoDir);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toMatch(/^Regression gate passed: 1 changed files, 1 functions checked/u);
+  });
+
   it('gates an explicitly targeted git-ignored file as an addition', () => {
     writeFileSync(path.join(repoDir, '.gitignore'), 'local/\n');
     mkdirSync(path.join(repoDir, 'local'));
