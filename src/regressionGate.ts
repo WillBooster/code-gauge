@@ -91,7 +91,7 @@ export interface GateViolation {
   functionName?: string;
   startLine: number;
   endLine: number;
-  /** Absent for new-function violations, which have no base value. */
+  /** Absent for new-function and duplication violations, which have no base value. */
   baseValue?: number;
   headValue: number;
   /** The largest value that would have passed. */

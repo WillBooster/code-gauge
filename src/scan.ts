@@ -325,7 +325,9 @@ async function scanDirectory(directory: string, context: ScanContext): Promise<v
     }
 
     if (entry.isFile()) {
-      collectScannableFile(entryPath, context);
+      // Under a symbolically linked directory the real path differs, and exclusion checks both.
+      const realFile = resolvedDirectory === directory ? undefined : path.join(resolvedDirectory, entry.name);
+      collectScannableFile(entryPath, context, entryPath, realFile);
     }
   }
 }

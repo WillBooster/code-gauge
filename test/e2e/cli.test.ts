@@ -625,7 +625,7 @@ describe('cli: file discovery', () => {
       ...scanned,
       ...skipped,
       '.gitattributes':
-        'src/schema/** linguist-generated\nsrc/third_party/** linguist-vendored\nsrc/ignored/** linguist-generated\nsrc/handwritten.ts -linguist-generated\n',
+        'src/schema/** linguist-generated\nsrc/third_party/** linguist-vendored\nsrc/ignored/** linguist-generated\nvendor/lib/** linguist-generated\nsrc/handwritten.ts -linguist-generated\n',
       '.gitignore': 'src/ignored/\n',
       'code-gauge.config.json': JSON.stringify({ exclude: ['src/legacy/**'] }),
     });
@@ -634,6 +634,11 @@ describe('cli: file discovery', () => {
     mkdirSync(path.join(dir, 'generated'));
     writeFileSync(path.join(dir, 'generated', 'target.ts'), trivialSource.ts as string);
     symlinkSync('../../generated/target.ts', path.join(dir, 'src', 'legacy', 'alias.ts'));
+    // A file reached through a linked directory is excluded by its real path as well (the link is
+    // the walk's only way into the skipped directory).
+    mkdirSync(path.join(dir, 'vendor', 'lib'), { recursive: true });
+    writeFileSync(path.join(dir, 'vendor', 'lib', 'linked.ts'), trivialSource.ts as string);
+    symlinkSync('../vendor/lib', path.join(dir, 'src', 'linked'));
     try {
       const init = spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf8' });
       expect(init.status).toBe(0);
