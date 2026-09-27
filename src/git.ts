@@ -263,7 +263,7 @@ async function runGitWithInput(
         return;
       }
       const message = Buffer.concat(stderr).toString('utf8').trim();
-      reject(new Error(`git ${args.slice(0, 2).join(' ')} failed${message ? `: ${message}` : ''}`));
+      reject(new Error(`git ${describeCommand(args)} failed${message ? `: ${message}` : ''}`));
     });
     child.stdin.end(input);
   });
@@ -275,6 +275,15 @@ async function runGit(cwd: string, args: string[]): Promise<string> {
     return stdout;
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
-    throw new Error(`git ${args.slice(0, 2).join(' ')} failed${stderr ? `: ${stderr}` : ''}`);
+    throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);
   }
+}
+
+/** The subcommand and its first argument, skipping leading `-c key=value` overrides. */
+function describeCommand(args: readonly string[]): string {
+  let start = 0;
+  while (args[start] === '-c') {
+    start += 2;
+  }
+  return args.slice(start, start + 2).join(' ');
 }
