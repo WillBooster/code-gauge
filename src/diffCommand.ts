@@ -121,7 +121,7 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const repositoryFiles = await listRepositoryFiles(repoRoot);
   const baseSymlinkPaths = await listSymlinkPathsAtRevision(repoRoot, mergeBase);
   const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
-  const keptPaths = await listExplicitlyTargetedPaths(canonicalTarget, repoRoot, changedFiles);
+  const explicitFiles = await listExplicitlyTargetedPaths(canonicalTarget, repoRoot, changedFiles);
   // Base blobs are excluded by the attributes of the revision they come from.
   const [headAttributesExclusion, baseAttributesExclusion] = await Promise.all([
     loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude),
@@ -132,12 +132,14 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
       mergeBase
     ),
   ]);
-  const headExclusion = keepPaths(headAttributesExclusion, keptPaths);
-  const baseExclusion = keepPaths(baseAttributesExclusion, keptPaths);
-  const scan = await scanListedFiles(repoRoot, repositoryFiles, {
-    ...options,
-    loadExclusion: () => Promise.resolve(headExclusion),
-  });
+  const headExclusion = keepPaths(headAttributesExclusion, explicitFiles);
+  const baseExclusion = keepPaths(baseAttributesExclusion, explicitFiles);
+  const scan = await scanListedFiles(
+    repoRoot,
+    repositoryFiles,
+    { ...options, loadExclusion: () => Promise.resolve(headExclusion) },
+    explicitFiles
+  );
   // A run-wide failure (a missing native addon) invalidates the whole gate: surface it once as
   // the fatal error (exit 2) instead of diagnosing every changed file as unmeasured.
   if (scan.fatalError) {
@@ -155,7 +157,7 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   const changedPaths = new Set(
     changedFiles
       .flatMap((changed) => [changed.headPath, ...(changed.basePath === undefined ? [] : [changed.basePath])])
-      .filter((changedPath) => isScannedPath(changedPath, options))
+      .filter((changedPath) => isScannedPath(changedPath, options, explicitFiles.has(path.join(repoRoot, changedPath))))
   );
   const errors: string[] = [];
   const warnings = [...scan.warnings];
@@ -179,6 +181,7 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
       scanErrors: [...errors],
       headExclusion,
       baseExclusion,
+      explicitFiles,
       generatedHeadFiles: new Set(scan.generatedFiles),
     },
     errors,
@@ -255,6 +258,8 @@ interface GateContext {
   scanErrors: readonly string[];
   headExclusion: Exclusion;
   baseExclusion: Exclusion;
+  /** The explicitly targeted file (and its renamed base path), measured despite every exclusion. */
+  explicitFiles: ReadonlySet<string>;
   /** Absolute paths the head scan skipped as generated code. */
   generatedHeadFiles: ReadonlySet<string>;
 }
@@ -312,17 +317,18 @@ async function prepareChangedFile(
   const absoluteHeadPath = path.join(context.repoRoot, changed.headPath);
   const headScannable =
     changed.status !== 'deleted' &&
-    isScannedPath(changed.headPath, context.options) &&
+    isScannedPath(changed.headPath, context.options, context.explicitFiles.has(absoluteHeadPath)) &&
     !context.headExclusion.isExcludedPath(absoluteHeadPath) &&
     !context.generatedHeadFiles.has(absoluteHeadPath) &&
     !(await isSymbolicLink(absoluteHeadPath));
   // A base path outside the scan scope (renamed from a test/ignored directory, or an unsupported
   // extension) was never measurable code: its content gates as new code instead of ratcheting
   // against a blob the scanner would not have measured.
+  const absoluteBasePath = changed.basePath === undefined ? '' : path.join(context.repoRoot, changed.basePath);
   const baseScannable =
     changed.basePath !== undefined &&
-    isScannedPath(changed.basePath, context.options) &&
-    !context.baseExclusion.isExcludedPath(path.join(context.repoRoot, changed.basePath)) &&
+    isScannedPath(changed.basePath, context.options, context.explicitFiles.has(absoluteBasePath)) &&
+    !context.baseExclusion.isExcludedPath(absoluteBasePath) &&
     !context.baseSymlinkPaths.has(changed.basePath);
   if (!headScannable && !baseScannable) {
     return undefined;

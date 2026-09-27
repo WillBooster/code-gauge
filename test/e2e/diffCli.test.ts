@@ -735,6 +735,14 @@ describe('code-gauge diff --base: generated and excluded code', () => {
     expect(result.stdout).toContain('new function decide');
   });
 
+  it('gates an explicitly targeted file inside a directory scans skip', () => {
+    mkdirSync(path.join(repoDir, 'tests'));
+    writeFileSync(path.join(repoDir, 'tests', 'complex.ts'), complexNewFile);
+    const result = runCli(['diff', '--base', 'main', 'tests/complex.ts'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('tests/complex.ts:1-');
+  });
+
   it('skips files matching the configured exclude patterns', () => {
     mkdirSync(path.join(repoDir, 'src', 'legacy'));
     writeFileSync(path.join(repoDir, 'src', 'legacy', 'old.ts'), violatingFile);

@@ -189,15 +189,18 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
 export async function scanListedFiles(
   rootDirectory: string,
   relativePaths: Iterable<string>,
-  options: ScanOptions
+  options: ScanOptions,
+  explicitFiles: ReadonlySet<string> = new Set()
 ): Promise<ScanResult> {
   const context = makeScanContext(options, rootDirectory);
   for (const relativePath of relativePaths) {
-    const language = isScannedPath(relativePath, options) ? getLanguage(relativePath, options) : undefined;
+    const absolutePath = path.join(rootDirectory, relativePath);
+    const language = isScannedPath(relativePath, options, explicitFiles.has(absolutePath))
+      ? getLanguage(relativePath, options, explicitFiles.has(absolutePath))
+      : undefined;
     if (!language) {
       continue;
     }
-    const absolutePath = path.join(rootDirectory, relativePath);
     // Symbolic links are not source files: git stores only their target string, so measuring
     // through them would diverge from what any revision of the repository actually contains.
     const stats = await lstat(absolutePath).catch(() => {});
@@ -511,9 +514,13 @@ function isWithinDirectory(candidate: string, directory: string): boolean {
  * Whether a repository-relative path would be scanned: no ignored or excluded-test directory
  * segment and a supported, non-test file name. The diff gate uses this for base-revision
  * eligibility, so code renamed into scan scope gates as new code instead of ratcheting against
- * a blob the scanner would never have measured.
+ * a blob the scanner would never have measured. An explicitly targeted file only needs a supported
+ * language, as in the ranking command.
  */
-export function isScannedPath(relativePath: string, options: ScanOptions): boolean {
+export function isScannedPath(relativePath: string, options: ScanOptions, explicitTarget = false): boolean {
+  if (explicitTarget) {
+    return getLanguage(relativePath, options, true) !== undefined;
+  }
   const segments = relativePath.split('/');
   for (const segment of segments.slice(0, -1)) {
     if (ignoredDirectoryNames.has(segment) || (!options.includeTests && testDirectoryNames.has(segment))) {
