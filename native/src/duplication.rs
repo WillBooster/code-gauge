@@ -648,6 +648,18 @@ fn is_dependency_declaration(node: Node<'_>, code: &Source<'_>) -> bool {
             "javascript" | "jsx" | "typescript" | "tsx",
             "lexical_declaration" | "variable_declaration",
         ) => is_require_declaration(node, code),
+        // `require('a');` and CommonJS re-exports such as `module.exports = require('a');`.
+        ("javascript" | "jsx" | "typescript" | "tsx", "expression_statement") => {
+            named_children(node).first().is_some_and(|expression| {
+                if expression.kind_name() == "assignment_expression" {
+                    expression
+                        .child_by_field_name("right")
+                        .is_some_and(|right| is_require_value(right, code))
+                } else {
+                    is_require_value(*expression, code)
+                }
+            })
+        }
         ("ruby", "call") => {
             node.child_by_field_name("receiver").is_none()
                 && node
@@ -666,21 +678,27 @@ fn is_require_declaration(node: Node<'_>, code: &Source<'_>) -> bool {
         .collect();
     !declarators.is_empty()
         && declarators.iter().all(|declarator| {
-            let mut value = declarator.child_by_field_name("value");
-            while let Some(member) = value.filter(|value| value.kind_name() == "member_expression")
-            {
-                value = member.child_by_field_name("object");
-            }
-            value.is_some_and(|call| {
-                call.kind_name() == "call_expression"
-                    && call
-                        .child_by_field_name("function")
-                        .is_some_and(|function| {
-                            function.kind_name() == "identifier"
-                                && node_text(function, code) == "require"
-                        })
-            })
+            declarator
+                .child_by_field_name("value")
+                .is_some_and(|value| is_require_value(value, code))
         })
+}
+
+/// `require('a')` or a property read from it (`require('a').b`), but not a call on the module.
+fn is_require_value(node: Node<'_>, code: &Source<'_>) -> bool {
+    let mut value = node;
+    while value.kind_name() == "member_expression" {
+        let Some(object) = value.child_by_field_name("object") else {
+            return false;
+        };
+        value = object;
+    }
+    value.kind_name() == "call_expression"
+        && value
+            .child_by_field_name("function")
+            .is_some_and(|function| {
+                function.kind_name() == "identifier" && node_text(function, code) == "require"
+            })
 }
 
 /// The kind tag of a string-like node with no interpolation, or None to descend normally.

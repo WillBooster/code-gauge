@@ -8,7 +8,7 @@ import {
   type CrossFileDuplicationMetrics,
 } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
-import { loadRepositoryExclusion, type Exclusion } from './exclusion.js';
+import { keepPaths, loadRepositoryExclusion, type Exclusion } from './exclusion.js';
 import {
   listChangedFiles,
   listLineHunks,
@@ -120,8 +120,10 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   // with the changed files' contents swapped for their merge-base blobs.
   const repositoryFiles = await listRepositoryFiles(repoRoot);
   const baseSymlinkPaths = await listSymlinkPathsAtRevision(repoRoot, mergeBase);
+  const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
+  const keptPaths = await listExplicitlyTargetedPaths(canonicalTarget, repoRoot, changedFiles);
   // Base blobs are excluded by the attributes of the revision they come from.
-  const [headExclusion, baseExclusion] = await Promise.all([
+  const [headAttributesExclusion, baseAttributesExclusion] = await Promise.all([
     loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude),
     loadRepositoryExclusion(
       repoRoot,
@@ -130,6 +132,8 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
       mergeBase
     ),
   ]);
+  const headExclusion = keepPaths(headAttributesExclusion, keptPaths);
+  const baseExclusion = keepPaths(baseAttributesExclusion, keptPaths);
   const scan = await scanListedFiles(repoRoot, repositoryFiles, {
     ...options,
     loadExclusion: () => Promise.resolve(headExclusion),
@@ -163,7 +167,6 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
     }
   }
 
-  const { canonicalTarget, targetExists } = await canonicalizeTarget(resolvedTarget);
   const prepared = await prepareChangedFiles(
     changedFiles,
     {
@@ -207,6 +210,28 @@ async function runGate(target: string, cliOptions: DiffCliOptions): Promise<void
   } else if (result.violations.length > 0) {
     process.exitCode = 1;
   }
+}
+
+/**
+ * An explicitly targeted file is measured even when excluded, like the ranking command's single
+ * file target: the file itself, and its base path when it was renamed.
+ */
+async function listExplicitlyTargetedPaths(
+  canonicalTarget: string,
+  repoRoot: string,
+  changedFiles: ChangedFile[]
+): Promise<Set<string>> {
+  const targetStat = await stat(canonicalTarget).catch(() => {});
+  if (!targetStat?.isFile()) {
+    return new Set();
+  }
+  const paths = new Set([canonicalTarget]);
+  for (const changed of changedFiles) {
+    if (changed.basePath !== undefined && path.join(repoRoot, changed.headPath) === canonicalTarget) {
+      paths.add(path.join(repoRoot, changed.basePath));
+    }
+  }
+  return paths;
 }
 
 /** The target may not exist (e.g. only deleted files under it); fall back to the resolved path. */

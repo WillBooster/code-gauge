@@ -629,6 +629,11 @@ describe('cli: file discovery', () => {
       '.gitignore': 'src/ignored/\n',
       'code-gauge.config.json': JSON.stringify({ exclude: ['src/legacy/**'] }),
     });
+    // An excluded alias is skipped even though its target path is not excluded (the walk reaches
+    // the target, inside a skipped directory, only through the alias).
+    mkdirSync(path.join(dir, 'generated'));
+    writeFileSync(path.join(dir, 'generated', 'target.ts'), trivialSource.ts as string);
+    symlinkSync('../../generated/target.ts', path.join(dir, 'src', 'legacy', 'alias.ts'));
     try {
       const init = spawnSync('git', ['init', '-q'], { cwd: dir, encoding: 'utf8' });
       expect(init.status).toBe(0);

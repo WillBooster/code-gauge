@@ -646,6 +646,17 @@ describe('code-gauge diff --base: newly duplicated lines', () => {
     }
   });
 
+  it('reads the line diff of a file whose name contains glob characters from that file alone', () => {
+    // As a glob, `src/[id].ts` also matches `src/i.ts`, whose appended copy must not leak into it.
+    withBaseCommit({ 'src/[id].ts': baseCalc, 'src/i.ts': 'export const i = 1;\n' }, () => {
+      writeFileSync(path.join(repoDir, 'src', 'i.ts'), `export const i = 1;\n${copiedReport}`);
+      writeFileSync(path.join(repoDir, 'src', '[id].ts'), `${baseCalc}export const id = 1;\n`);
+      const result = runCli(['diff', '--base', 'HEAD'], repoDir);
+      expect(result.stdout).toContain('src/i.ts:2-10: 9 changed lines duplicate existing code');
+      expect(result.stdout).not.toContain('src/[id].ts:');
+    });
+  });
+
   it('passes a move of an existing clone to another file', () => {
     withBaseCommit({ 'src/copy.ts': copiedReport }, () => {
       rmSync(path.join(repoDir, 'src', 'copy.ts'));
@@ -697,6 +708,13 @@ describe('code-gauge diff --base: generated and excluded code', () => {
     writeFileSync(path.join(repoDir, '.gitattributes'), 'src/parser.ts -linguist-generated\n');
     writeFileSync(path.join(repoDir, 'src', 'parser.ts'), `/* @generated */\n${violatingFile}`);
     const result = runCli(['diff', '--base', 'main'], repoDir);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('new function decide');
+  });
+
+  it('gates an explicitly targeted file despite its generated-code marker', () => {
+    writeFileSync(path.join(repoDir, 'src', 'parser.ts'), `/* @generated */\n${complexNewFile}`);
+    const result = runCli(['diff', '--base', 'main', 'src/parser.ts'], repoDir);
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('new function decide');
   });

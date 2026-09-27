@@ -1290,6 +1290,10 @@ describe('duplication: dependency declarations', () => {
       'typescript',
       "import { a, b, c } from './alpha';\nimport type { G, H } from './gamma';\nimport x = require('x');\nexport { d, e } from './delta';\nconst { p, q } = require('p');\nconst r = require('r').s;\n",
     ],
+    [
+      'javascript',
+      "require('./setup');\nrequire('./polyfill');\nmodule.exports = require('./impl');\nexports.helper = require('./helper').helper;\nvar legacy = require('legacy');\n",
+    ],
     ['python', 'import os\nimport sys\nfrom a.b import c, d, e\nfrom __future__ import annotations\n'],
     ['go', 'package main\n\nimport (\n\t"fmt"\n\t"os"\n\t"strings"\n)\n'],
     ['rust', 'use std::collections::HashMap;\nuse std::io::{self, Read};\nmod parser;\nextern crate alloc;\n'],

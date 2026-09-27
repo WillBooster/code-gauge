@@ -211,14 +211,18 @@ export async function scanListedFiles(
 
 async function measureCandidates(context: ScanContext): Promise<void> {
   const exclusion = await context.options.loadExclusion?.(
-    context.candidates.map((candidate) => candidate.realFile ?? candidate.file)
+    context.candidates.flatMap(({ file, realFile }) => (realFile === undefined ? [file] : [file, realFile]))
   );
   context.exclusion = exclusion;
   for (const { file, language, realFile } of context.candidates) {
     if (context.fatalSeen) {
       return;
     }
-    if (!exclusion?.isExcludedPath(realFile ?? file)) {
+    // A file reached through a symbolic link is excluded by the link's path or its target's.
+    const excluded =
+      exclusion !== undefined &&
+      (exclusion.isExcludedPath(file) || (realFile !== undefined && exclusion.isExcludedPath(realFile)));
+    if (!excluded) {
       await measureFile(file, language, 'directory', context, realFile);
     }
   }

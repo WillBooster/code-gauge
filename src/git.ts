@@ -134,7 +134,8 @@ export async function listLineHunks(
   basePath: string,
   headPath: string
 ): Promise<LineHunk[]> {
-  const paths = basePath === headPath ? [headPath] : [basePath, headPath];
+  // Literal pathspecs: a name like `app/[slug]/page.tsx` must not glob-match other files.
+  const paths = (basePath === headPath ? [headPath] : [basePath, headPath]).map((file) => `:(literal)${file}`);
   const output = await runGit(repoRoot, [
     'diff',
     '--unified=0',

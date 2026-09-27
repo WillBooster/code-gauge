@@ -52,6 +52,15 @@ export function createExclusion(
   };
 }
 
+/** The exclusion that never excludes the given absolute paths (explicitly targeted files). */
+export function keepPaths(exclusion: Exclusion, keptPaths: ReadonlySet<string>): Exclusion {
+  return {
+    isExcludedPath: (absolutePath) => !keptPaths.has(absolutePath) && exclusion.isExcludedPath(absolutePath),
+    isGeneratedCode: (absolutePath, code) =>
+      !keptPaths.has(absolutePath) && exclusion.isGeneratedCode(absolutePath, code),
+  };
+}
+
 /**
  * The exclusion for the given absolute paths found under `directory`, with git attributes from
  * the enclosing repository (which apply to ignored files too); outside any repository only
