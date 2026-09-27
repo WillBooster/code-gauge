@@ -12,6 +12,13 @@ thread_local! {
     static PARENTS: RefCell<FxHashMap<usize, Node<'static>>> = RefCell::new(FxHashMap::default());
     /// Node kind names of the indexed tree's language, indexed by kind id.
     static KIND_NAMES: Cell<&'static [&'static str]> = const { Cell::new(&[]) };
+    /// Name of the indexed tree's language.
+    static LANGUAGE_NAME: Cell<&'static str> = const { Cell::new("") };
+}
+
+/// The language of the tree indexed on this thread, or "" when none is.
+pub fn language_name() -> &'static str {
+    LANGUAGE_NAME.get()
 }
 
 /// Makes NodeExt lookups O(1) while the tree is being measured: tree-sitter's `Node::parent`
@@ -30,6 +37,7 @@ impl<'t> TreeIndex<'t> {
         // Constructed first so that the depth error below also clears the partial index on drop.
         let index = TreeIndex { tree: PhantomData };
         KIND_NAMES.set(language.kind_names());
+        LANGUAGE_NAME.set(language.name);
         PARENTS.with_borrow_mut(|parents| {
             assert!(
                 parents.is_empty(),
@@ -65,6 +73,7 @@ impl Drop for TreeIndex<'_> {
     fn drop(&mut self) {
         PARENTS.with_borrow_mut(|parents| parents.clear());
         KIND_NAMES.set(&[]);
+        LANGUAGE_NAME.set("");
     }
 }
 
