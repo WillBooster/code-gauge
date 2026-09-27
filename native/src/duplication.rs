@@ -618,8 +618,8 @@ fn collect_tokens<'a>(
     visit(root, code, tokens, block_ranges, container_statement_ranges);
 }
 
-/// Comments and dependency declarations contribute no tokens, so no clone can span or consist of
-/// them.
+/// Comments and dependency declarations contribute no tokens, so no clone consists of them; the
+/// tokens around them stay adjacent, so a clone may still extend across one.
 fn is_tokenless(node: Node<'_>, code: &Source<'_>) -> bool {
     COMMENT_TYPES.contains(&node.kind_name()) || is_dependency_declaration(node, code)
 }
