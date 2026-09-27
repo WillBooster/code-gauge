@@ -118,8 +118,8 @@ const CSHARP_DECLARATION_LIST_PARENT_TYPES: &[&str] = &[
     "namespace_declaration",
 ];
 
-/// Whole-subtree duplicate candidates: DUPLICATE_BLOCK_TYPES plus Kotlin's `try_expression`,
-/// distinguished by its clause children from Rust's `try_expression` (the `?` operator).
+/// Whole-subtree duplicate candidates: DUPLICATE_BLOCK_TYPES plus Kotlin's `try_expression`, which
+/// shares its name with Rust's `?` operator (see is_kotlin_try_expression).
 fn is_duplicate_block(node: Node<'_>) -> bool {
     if !node.is_named() {
         return false;
@@ -564,7 +564,12 @@ fn collect_tokens<'a>(
                     block_ranges,
                     container_statement_ranges,
                 );
-                if is_container && child.is_named() && !COMMENT_TYPES.contains(&child.kind_name()) {
+                // A Kotlin lambda's parameters sit beside its statements.
+                if is_container
+                    && child.is_named()
+                    && !COMMENT_TYPES.contains(&child.kind_name())
+                    && child.kind_name() != "lambda_parameters"
+                {
                     statement_ranges.push(child_range);
                 }
             }
@@ -648,6 +653,16 @@ fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Tok
         return;
     }
 
+    if crate::util::is_kotlin_keyword_literal(node, code) {
+        tokens.push(make_text_token(
+            Cow::Borrowed(node_text(node, code)),
+            None,
+            false,
+            start_row,
+            end_row,
+        ));
+        return;
+    }
     if node.is_named()
         && ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind_name())
         && !is_semantic_name_leaf(node, code)
@@ -779,6 +794,10 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         parent.kind_name(),
         "method_reference" | "callable_reference" | "user_type"
     ) {
+        return true;
+    }
+    // A Kotlin type parameter's name has no field (C# puts its own in `name`).
+    if parent.kind_name() == "type_parameter" && parent.child_by_field_name("name").is_none() {
         return true;
     }
 

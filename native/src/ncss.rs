@@ -69,7 +69,7 @@ pub fn ncss_contribution(
         return 0;
     }
     // A Kotlin accessor without a body (`private set`) only changes visibility and declares
-    // nothing of its own; it parses as a sibling of its property and must not count positionally.
+    // nothing of its own, so it must not count through its node type.
     if (node.kind_name() == "getter" || node.kind_name() == "setter")
         && !crate::functions::is_implemented_function(node)
     {

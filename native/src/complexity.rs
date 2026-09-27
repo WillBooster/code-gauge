@@ -319,8 +319,8 @@ impl FunctionBodyPass<'_, '_, '_> {
         }
 
         // Kotlin accessors hang off their property, yet are members of the class body.
-        let children_in_charged_class_body = is_charged_class_body
-            || (inside_charged_class_body && current.kind_name() == "property_declaration");
+        let is_charged_property =
+            inside_charged_class_body && current.kind_name() == "property_declaration";
         for child in all_children(current) {
             self.visit(
                 child,
@@ -332,7 +332,8 @@ impl FunctionBodyPass<'_, '_, '_> {
                 } else {
                     inside_nested_region
                 },
-                children_in_charged_class_body,
+                is_charged_class_body
+                    || (is_charged_property && matches!(child.kind_name(), "getter" | "setter")),
             );
         }
 

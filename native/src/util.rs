@@ -53,6 +53,13 @@ pub fn node_text<'a>(node: Node<'_>, code: &Source<'a>) -> &'a str {
     &code.code[code.utf8_offset(node.start_byte())..code.utf8_offset(node.end_byte())]
 }
 
+/// Kotlin spells `true`, `false`, and `null` as plain identifiers, which the other grammars give
+/// literal node kinds of their own; there, an identifier with that text is a rare variable name
+/// that merely keeps its spelling in token streams.
+pub fn is_kotlin_keyword_literal(node: Node<'_>, code: &Source<'_>) -> bool {
+    node.kind_name() == "identifier" && matches!(node_text(node, code), "true" | "false" | "null")
+}
+
 pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor).collect()

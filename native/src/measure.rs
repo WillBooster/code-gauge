@@ -284,6 +284,10 @@ fn collect_token_symbols(
         }
         return;
     }
+    if crate::util::is_kotlin_keyword_literal(node, code) {
+        symbols.push(hash_text(node_text(node, code)));
+        return;
+    }
     if IDENTIFIER_LEAF_NODE_TYPES.contains(&node.kind_name()) {
         let next_index = id_index_by_name.len();
         let index = *id_index_by_name
