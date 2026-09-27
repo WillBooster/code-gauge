@@ -649,12 +649,26 @@ function createLineSignatureIndex(scannedFiles: ScannedFile[]): (file: string) =
   };
 }
 
-/** Each line's tokens with identifiers anonymized, as clone detection compares them. */
+/**
+ * Each line's tokens with identifiers numbered by first occurrence, as clone detection anonymizes
+ * them.
+ */
 function signLines(tokens: readonly Token[]): LineSignatures {
   const byLine = new Map<number, string>();
+  const identifierIndexesByLine = new Map<number, Map<string, number>>();
   for (const token of tokens) {
     const line = token.startRow + 1;
-    byLine.set(line, `${byLine.get(line) ?? ''}${token.kind === 'id' ? '\u0001' : token.text}\u0000`);
+    let text = token.text;
+    if (token.kind === 'id') {
+      // Numbered by first occurrence within the line, so `a + a` and `a + b` stay distinct.
+      const identifierIndexes = identifierIndexesByLine.get(line) ?? new Map<string, number>();
+      identifierIndexesByLine.set(line, identifierIndexes);
+      if (!identifierIndexes.has(token.text)) {
+        identifierIndexes.set(token.text, identifierIndexes.size);
+      }
+      text = `\u0001${identifierIndexes.get(token.text)}`;
+    }
+    byLine.set(line, `${byLine.get(line) ?? ''}${text}\u0000`);
   }
   const lineCounts = new Map<string, number>();
   for (const signature of byLine.values()) {

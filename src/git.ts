@@ -140,6 +140,12 @@ export async function listLineHunks(
   // Literal pathspecs: a name like `app/[slug]/page.tsx` must not glob-match other files.
   const paths = (basePath === headPath ? [headPath] : [basePath, headPath]).map((file) => `:(literal)${file}`);
   const output = await runGit(repoRoot, [
+    // The algorithm and indent heuristic decide which lines count as added, so user config must
+    // not change them; `-c` values an older git does not know are ignored rather than rejected.
+    '-c',
+    'diff.algorithm=myers',
+    '-c',
+    'diff.indentHeuristic=true',
     'diff',
     '--unified=0',
     // diff.interHunkContext would otherwise merge nearby hunks, and the unchanged lines between
