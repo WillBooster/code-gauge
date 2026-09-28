@@ -23,6 +23,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { getErrorMessage } from '@willbooster/shared-lib';
 
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const registryUrl = 'https://registry.npmjs.org/';
@@ -266,9 +267,7 @@ async function waitForBuildNativeRun() {
         )
       );
     } catch (error) {
-      console.warn(
-        `Listing Build Native runs failed (${error instanceof Error ? error.message : String(error)}); retrying...`
-      );
+      console.warn(`Listing Build Native runs failed (${getErrorMessage(error)}); retrying...`);
     }
     if (runs) {
       const succeeded = runs.find((run) => run.status === 'completed' && run.conclusion === 'success');

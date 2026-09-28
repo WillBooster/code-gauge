@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command, InvalidArgumentError } from 'commander';
+import { getErrorMessage, parsePositiveInteger } from '@willbooster/shared-lib';
 import { type CliOptions, configFileName, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import { runDiffCommand, type DiffCliOptions } from './diffCommand.js';
@@ -9,7 +10,6 @@ import {
   addCrossFileDuplication,
   collectDuplicatedLineNumbers,
   configSearchDirectory,
-  formatError,
   formatPath,
   resolveTarget,
   scanTarget,
@@ -55,7 +55,7 @@ const maxCrossFilePartners = 3;
 
 // oxlint-disable-next-line unicorn/prefer-top-level-await -- CommonJS build output cannot preserve top-level await.
 void main().catch((error: unknown) => {
-  writeStderr(`Error: ${formatError(error)}\n`);
+  writeStderr(`Error: ${getErrorMessage(error)}\n`);
   process.exitCode = 1;
 });
 
@@ -66,7 +66,7 @@ function addSharedOptions(command: Command): Command {
     .option(
       '--duplication-min-tokens <number>',
       'minimum normalized token count for a duplicate region (default 40)',
-      parsePositiveInteger
+      parsePositiveIntegerOption
     )
     .option(
       '--duplication-max-gap-tokens <number>',
@@ -89,7 +89,7 @@ async function main(): Promise<void> {
       .description('Rank the files of a project by refactoring priority.')
       .argument('[target]', 'file or directory to measure', '.')
   )
-    .option('--top <number>', 'number of top-ranked files to report (default: 10)', parsePositiveInteger)
+    .option('--top <number>', 'number of top-ranked files to report (default: 10)', parsePositiveIntegerOption)
     .option('--fail-on-error', 'exit with code 1 when files or directories cannot be scanned');
 
   program.action(async (target: string, cliOptions: CliOptions) => {
@@ -357,7 +357,7 @@ function summarize(files: FileMetrics[]): {
 }
 
 function parsePercentInteger(value: string): number {
-  const parsed = parsePositiveInteger(value);
+  const parsed = parsePositiveIntegerOption(value);
   if (parsed > 100) {
     throw new InvalidArgumentError('Expected an integer between 1 and 100.');
   }
@@ -376,13 +376,9 @@ function parseNonNegativeInteger(value: string): number {
   return parsed;
 }
 
-function parsePositiveInteger(value: string): number {
-  if (!/^[1-9]\d*$/u.test(value)) {
-    throw new InvalidArgumentError('Expected a positive integer.');
-  }
-
-  const parsed = Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 1) {
+function parsePositiveIntegerOption(value: string): number {
+  const parsed = parsePositiveInteger(value);
+  if (parsed === undefined) {
     throw new InvalidArgumentError('Expected a positive integer.');
   }
   return parsed;

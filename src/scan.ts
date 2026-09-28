@@ -1,6 +1,7 @@
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { getErrorMessage } from '@willbooster/shared-lib';
 import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
 import type { Exclusion } from './exclusion.js';
@@ -150,7 +151,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
   try {
     targetStat = await stat(canonicalTarget);
   } catch (error) {
-    const fatalError = `${formatPath(canonicalTarget, fallbackDisplayRoot)}: ${formatError(error)}`;
+    const fatalError = `${formatPath(canonicalTarget, fallbackDisplayRoot)}: ${getErrorMessage(error)}`;
     return {
       displayRoot: fallbackDisplayRoot,
       files: [],
@@ -275,7 +276,7 @@ async function settleScan(context: ScanContext, displayRoot: string): Promise<Sc
   for (const pending of context.outcomes) {
     const outcome = await pending;
     if ('fatal' in outcome) {
-      const fatalError = formatError(outcome.fatal);
+      const fatalError = getErrorMessage(outcome.fatal);
       // Errors the walk recorded before the fatal failure stay reported alongside it.
       return { displayRoot, files, errors: [...errors, fatalError], warnings, generatedFiles, fatalError };
     }
@@ -309,7 +310,7 @@ function makeScanContext(options: ScanOptions, rootDirectory: string): ScanConte
 }
 
 function recordError(context: ScanContext, target: string, error: unknown): void {
-  context.outcomes.push({ error: `${formatPath(target, context.rootDirectory)}: ${formatError(error)}` });
+  context.outcomes.push({ error: `${formatPath(target, context.rootDirectory)}: ${getErrorMessage(error)}` });
 }
 
 /** Runs a filesystem operation, recording a scan error and returning undefined when it fails. */
@@ -475,7 +476,7 @@ async function readAndMeasureFile(
       context.fatalSeen = true;
       return { fatal: error };
     }
-    return { error: `${formatPath(file, context.rootDirectory)}: ${formatError(error)}` };
+    return { error: `${formatPath(file, context.rootDirectory)}: ${getErrorMessage(error)}` };
   }
 }
 
@@ -495,7 +496,7 @@ export async function measureWithCrossFileData(
     if (error instanceof NativeAddonError) {
       throw error;
     }
-    return { metrics: measureCode(code, measureOptions), crossFileError: formatError(error) };
+    return { metrics: measureCode(code, measureOptions), crossFileError: getErrorMessage(error) };
   }
 }
 
@@ -607,8 +608,4 @@ export function writeStdout(message: string): void {
 
 export function writeStderr(message: string): void {
   process.stderr.write(message);
-}
-
-export function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

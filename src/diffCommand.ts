@@ -1,6 +1,7 @@
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 import { loadConfig, resolveGateOptions, resolveOptions, type ResolvedOptions } from './cliConfig.js';
 import {
   measureCrossFileDuplication,
@@ -37,7 +38,6 @@ import {
 import {
   collectDuplicatedLineNumbers,
   configSearchDirectory,
-  formatError,
   formatPath,
   getLanguage,
   isScannedPath,
@@ -98,7 +98,7 @@ export async function runDiffCommand(target: string, cliOptions: DiffCliOptions)
   try {
     await runGate(target, cliOptions);
   } catch (error) {
-    writeStderr(`Error: ${formatError(error)}\n`);
+    writeStderr(`Error: ${getErrorMessage(error)}\n`);
     process.exitCode = 2;
   }
 }
@@ -363,21 +363,6 @@ async function prepareChangedFiles(
   return prepared;
 }
 
-/** `Promise.all(items.map(map))` with at most `limit` calls pending at once, results in input order. */
-async function mapConcurrently<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = [];
-  let nextIndex = 0;
-  const work = async (): Promise<void> => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await map(items[index] as T);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, work));
-  return results;
-}
-
 async function prepareChangedFile(
   changed: ChangedFile,
   context: GateContext,
@@ -443,7 +428,7 @@ async function prepareChangedFile(
     }
     file.hunks = await diffMeasuredRevisions(file, context);
   } catch (error) {
-    errors.push(`${displayFile}: ${formatError(error)}`);
+    errors.push(`${displayFile}: ${getErrorMessage(error)}`);
     return undefined;
   }
   return file;
@@ -494,7 +479,7 @@ function collectHeadFunctionTokens(
     });
   } catch (error) {
     // Only rename re-matching degrades without token sequences; the head metrics still gate.
-    warnings.push(`${file.displayFile}: function token sequences unavailable: ${formatError(error)}`);
+    warnings.push(`${file.displayFile}: function token sequences unavailable: ${getErrorMessage(error)}`);
   }
 }
 
@@ -530,13 +515,13 @@ async function measureBaseRevision(
       warnings.push(`${basePath} (at merge-base): duplication candidates unavailable: ${measured.crossFileError}`);
     }
   } catch (error) {
-    errors.push(`${basePath} (at merge-base): ${formatError(error)}`);
+    errors.push(`${basePath} (at merge-base): ${getErrorMessage(error)}`);
     return 'failed';
   }
   try {
     file.baseFunctionTokens = collectFunctionTokenSequences(baseContent, measureOptions);
   } catch (error) {
-    warnings.push(`${basePath} (at merge-base): function token sequences unavailable: ${formatError(error)}`);
+    warnings.push(`${basePath} (at merge-base): function token sequences unavailable: ${getErrorMessage(error)}`);
   }
   return 'measured';
 }

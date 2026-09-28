@@ -1,3 +1,4 @@
+import { clamp, getErrorMessage } from '@willbooster/shared-lib';
 import type { CrossFileDuplicateCandidate, Token, TokenRange } from './duplication.js';
 import type { CodeMetrics, DuplicationOptions, FunctionMetrics } from './types.js';
 
@@ -152,9 +153,7 @@ function toWellFormed(code: string): string {
  * instead.
  */
 function clampToU32(value: number | undefined): number | undefined {
-  return value === undefined || Number.isNaN(value)
-    ? undefined
-    : Math.min(Math.max(Math.trunc(value), 0), 0xFF_FF_FF_FF);
+  return value === undefined || Number.isNaN(value) ? undefined : clamp(Math.trunc(value), 0, 0xFF_FF_FF_FF);
 }
 
 /**
@@ -196,7 +195,7 @@ function loadBinding(): NativeBinding {
     try {
       binding = requireNative(specifier) as NativeBinding;
     } catch (error) {
-      failures.push(`  ${specifier}: ${error instanceof Error ? error.message.split('\n')[0] : String(error)}`);
+      failures.push(`  ${specifier}: ${getErrorMessage(error).split('\n')[0]}`);
       continue;
     }
     const version = binding.payloadVersion?.();

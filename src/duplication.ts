@@ -1,3 +1,4 @@
+import { clamp } from '@willbooster/shared-lib';
 import type { DuplicationOptions } from './types.js';
 
 /**
@@ -28,9 +29,7 @@ export function resolveDuplicationOptions(options?: DuplicationOptions): Require
 }
 
 function resolveOption(value: number | undefined, fallback: number): number {
-  return value === undefined || Number.isNaN(value)
-    ? fallback
-    : Math.min(Math.max(Math.trunc(value), 0), 0xFF_FF_FF_FF);
+  return value === undefined || Number.isNaN(value) ? fallback : clamp(Math.trunc(value), 0, 0xFF_FF_FF_FF);
 }
 
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
