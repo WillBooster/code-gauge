@@ -1,6 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { getErrorMessage } from '@willbooster/shared-lib';
+import { getErrorMessage, isRecord } from '@willbooster/shared-lib';
 import { defaultDuplicationOptions } from './duplication.js';
 import type { ExcludePatterns } from './exclusion.js';
 import {
@@ -150,38 +150,37 @@ async function fileExists(file: string): Promise<boolean> {
 }
 
 function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error(`Config file "${configFile}" must contain a JSON object.`);
   }
 
-  const raw = value as Record<string, unknown>;
   const knownKeys = new Set(['duplication', 'rank', 'gate', 'exclude', 'includeTests', 'failOnError']);
-  for (const key of Object.keys(raw)) {
+  for (const key of Object.keys(value)) {
     if (!knownKeys.has(key)) {
       throw new Error(`Config file "${configFile}": unknown setting "${key}" (expected ${[...knownKeys].join(', ')}).`);
     }
   }
   const config: CodeGaugeConfig = {};
 
-  if (raw.duplication !== undefined) {
-    config.duplication = validateDuplicationObject(raw.duplication, configFile);
+  if (value.duplication !== undefined) {
+    config.duplication = validateDuplicationObject(value.duplication, configFile);
   }
 
-  if (raw.rank !== undefined) {
-    config.rank = validateRankObject(raw.rank, configFile);
+  if (value.rank !== undefined) {
+    config.rank = validateRankObject(value.rank, configFile);
   }
 
-  if (raw.gate !== undefined) {
-    config.gate = validateGateObject(raw.gate, configFile);
+  if (value.gate !== undefined) {
+    config.gate = validateGateObject(value.gate, configFile);
   }
 
-  if (raw.exclude !== undefined) {
-    config.exclude = validateExcludePatterns(raw.exclude, configFile);
+  if (value.exclude !== undefined) {
+    config.exclude = validateExcludePatterns(value.exclude, configFile);
   }
 
   for (const key of ['includeTests', 'failOnError'] as const) {
-    if (raw[key] !== undefined) {
-      config[key] = requireBoolean(raw[key], key, configFile);
+    if (value[key] !== undefined) {
+      config[key] = requireBoolean(value[key], key, configFile);
     }
   }
 
@@ -196,11 +195,11 @@ function validateExcludePatterns(value: unknown, configFile: string): string[] {
 }
 
 function validateRankObject(value: unknown, configFile: string): { top?: number } {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error(`Config file "${configFile}": "rank" must be an object.`);
   }
   const rank: { top?: number } = {};
-  for (const [key, setting] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, setting] of Object.entries(value)) {
     if (key !== 'top') {
       throw new Error(`Config file "${configFile}": unknown setting "${key}" in "rank" (expected top).`);
     }
@@ -210,11 +209,11 @@ function validateRankObject(value: unknown, configFile: string): { top?: number 
 }
 
 function validateGateObject(value: unknown, configFile: string): GateConfig {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error(`Config file "${configFile}": "gate" must be an object.`);
   }
   const gate: GateConfig = {};
-  for (const [key, setting] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, setting] of Object.entries(value)) {
     if (key === 'newFunction') {
       // Zero is a meaningful upper bound (branch-free or unnested new functions), so the limits
       // are validated as non-negative rather than positive.
@@ -255,11 +254,11 @@ function validateGateNumberObject(
   configFile: string,
   requireNumber: (value: unknown, key: string, configFile: string) => number
 ): Record<string, number> {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error(`Config file "${configFile}": "${settingName}" must be an object.`);
   }
   const validated: Record<string, number> = {};
-  for (const [key, setting] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, setting] of Object.entries(value)) {
     if (!knownKeys.includes(key)) {
       throw new Error(
         `Config file "${configFile}": unknown setting "${key}" in "${settingName}" (expected ${knownKeys.join(', ')}).`
@@ -271,11 +270,11 @@ function validateGateNumberObject(
 }
 
 function validateDuplicationObject(value: unknown, configFile: string): DuplicationOptions {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     throw new Error(`Config file "${configFile}": "duplication" must be an object.`);
   }
   const duplication: DuplicationOptions = {};
-  for (const [key, setting] of Object.entries(value as Record<string, unknown>)) {
+  for (const [key, setting] of Object.entries(value)) {
     if (key === 'minTokens') {
       duplication.minTokens = requirePositiveInteger(setting, 'duplication.minTokens', configFile);
     } else if (key === 'maxGapTokens') {
