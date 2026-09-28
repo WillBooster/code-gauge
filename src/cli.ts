@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { Command, InvalidArgumentError } from 'commander';
+import { getErrorMessage } from '@willbooster/shared-lib';
 import { type CliOptions, configFileName, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import { runDiffCommand, type DiffCliOptions } from './diffCommand.js';
@@ -9,7 +10,6 @@ import {
   addCrossFileDuplication,
   collectDuplicatedLineNumbers,
   configSearchDirectory,
-  formatError,
   formatPath,
   resolveTarget,
   scanTarget,
@@ -55,7 +55,7 @@ const maxCrossFilePartners = 3;
 
 // oxlint-disable-next-line unicorn/prefer-top-level-await -- CommonJS build output cannot preserve top-level await.
 void main().catch((error: unknown) => {
-  writeStderr(`Error: ${formatError(error)}\n`);
+  writeStderr(`Error: ${getErrorMessage(error)}\n`);
   process.exitCode = 1;
 });
 

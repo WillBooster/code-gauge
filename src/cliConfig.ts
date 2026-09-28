@@ -1,5 +1,6 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+import { getErrorMessage } from '@willbooster/shared-lib';
 import { defaultDuplicationOptions } from './duplication.js';
 import type { ExcludePatterns } from './exclusion.js';
 import {
@@ -108,7 +109,7 @@ export async function loadConfig(explicitPath: string | undefined, targetDirecto
     content = await readFile(configFile, 'utf8');
   } catch (error) {
     if (explicitPath) {
-      throw new Error(`Cannot read config file "${configFile}": ${formatError(error)}`);
+      throw new Error(`Cannot read config file "${configFile}": ${getErrorMessage(error)}`);
     }
     return { config: {}, directory: targetDirectory };
   }
@@ -117,7 +118,7 @@ export async function loadConfig(explicitPath: string | undefined, targetDirecto
   try {
     parsed = JSON.parse(content);
   } catch (error) {
-    throw new Error(`Invalid JSON in config file "${configFile}": ${formatError(error)}`);
+    throw new Error(`Invalid JSON in config file "${configFile}": ${getErrorMessage(error)}`);
   }
 
   return { config: validateConfig(parsed, configFile), directory: path.dirname(path.resolve(configFile)) };
@@ -331,8 +332,4 @@ function requireBoolean(value: unknown, key: string, configFile: string): boolea
     throw new TypeError(`Config file "${configFile}": "${key}" must be a boolean.`);
   }
   return value;
-}
-
-function formatError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

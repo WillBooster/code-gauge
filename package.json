@@ -62,6 +62,7 @@
     "verify-full": "bun wb verify --full"
   },
   "dependencies": {
+    "@willbooster/shared-lib": "10.18.0",
     "commander": "15.0.0"
   },
   "devDependencies": {
