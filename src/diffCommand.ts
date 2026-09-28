@@ -1,7 +1,7 @@
 import { lstat, readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { getErrorMessage } from '@willbooster/shared-lib';
+import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 import { loadConfig, resolveGateOptions, resolveOptions, type ResolvedOptions } from './cliConfig.js';
 import {
   measureCrossFileDuplication,
@@ -361,21 +361,6 @@ async function prepareChangedFiles(
     }
   }
   return prepared;
-}
-
-/** `Promise.all(items.map(map))` with at most `limit` calls pending at once, results in input order. */
-async function mapConcurrently<T, R>(items: readonly T[], limit: number, map: (item: T) => Promise<R>): Promise<R[]> {
-  const results: R[] = [];
-  let nextIndex = 0;
-  const work = async (): Promise<void> => {
-    while (nextIndex < items.length) {
-      const index = nextIndex;
-      nextIndex += 1;
-      results[index] = await map(items[index] as T);
-    }
-  };
-  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, work));
-  return results;
 }
 
 async function prepareChangedFile(
