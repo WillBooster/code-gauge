@@ -16,7 +16,9 @@ use crate::tree_index::{NodeExt, TreeIndex};
 use crate::types::{
     CrossFileFileData, FunctionMetrics, HalsteadCounts, LineMetrics, NativeMetrics,
 };
-use crate::util::{all_children, is_js_whitespace, named_children, node_text, split_lines, Source};
+use crate::util::{
+    all_children, is_js_whitespace, is_token, named_children, node_text, split_lines, Source,
+};
 
 pub fn measure(
     code: &str,
@@ -274,11 +276,11 @@ fn collect_token_symbols(
     ) {
         return;
     }
-    if atomic_operand_node_types().contains(node.kind_name()) {
+    if is_atomic_operand(node) {
         symbols.push(hash_text(node.kind_name()));
         return;
     }
-    if node.child_count() != 0 {
+    if !is_token(node) {
         for child in all_children(node) {
             collect_token_symbols(child, code, symbols, id_index_by_name);
         }
@@ -584,8 +586,6 @@ const OPERAND_NODE_TYPES: &[&str] = &[
     "hex_floating_point_literal",
     "string",
     "string_literal",
-    // Go raw strings are leaves with no content child, unlike Rust/C++ `raw_string_literal`s.
-    "raw_string_literal",
     "verbatim_string_literal",
     "string_fragment",
     "multiline_string_fragment",
@@ -638,7 +638,7 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
     let mut operands: FxHashMap<&str, u64> = FxHashMap::default();
 
     fn visit<'a>(
-        node: Node<'_>,
+        node: Node<'a>,
         code: &Source<'a>,
         operators: &mut FxHashMap<&'a str, u64>,
         operands: &mut FxHashMap<&'a str, u64>,
@@ -650,14 +650,14 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
             return;
         }
 
-        if atomic_operand_node_types().contains(node.kind_name()) {
+        if is_atomic_operand(node) {
             *operands.entry(node_text(node, code)).or_insert(0) += 1;
             return;
         }
 
         // Operators are counted from leaf tokens only: keyword-named nodes always contain a
         // same-text anonymous keyword leaf, so counting the named node as well would double-count.
-        if node.child_count() == 0 {
+        if is_token(node) {
             let text = node_text(node, code);
             // Operands win over text matches so identifiers spelled like word operators stay operands;
             // C# `nameof(x)` is the one keyword operator the grammar parses as a plain callee.
@@ -692,6 +692,14 @@ fn measure_halstead(root: Node<'_>, code: &Source<'_>) -> HalsteadCounts {
         total_operators: operators.values().sum(),
         total_operands: operands.values().sum(),
     }
+}
+
+/// A literal counted as one operand without descending: ATOMIC_OPERAND_NODE_TYPES, or a Go raw
+/// string, which wraps its content like Go's interpreted strings (the Rust and C++
+/// `raw_string_literal`s count their content leaves instead).
+fn is_atomic_operand(node: Node<'_>) -> bool {
+    atomic_operand_node_types().contains(node.kind_name())
+        || (node.kind_name() == "raw_string_literal" && crate::tree_index::language_name() == "go")
 }
 
 /// tree-sitter-c-sharp parses `nameof(x)` as an invocation of an identifier named `nameof`.

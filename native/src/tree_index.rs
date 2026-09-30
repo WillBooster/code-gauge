@@ -11,7 +11,7 @@ thread_local! {
     /// nodes; TreeIndex borrows the tree and clears the map on drop, so no entry outlives it.
     static PARENTS: RefCell<FxHashMap<usize, Node<'static>>> = RefCell::new(FxHashMap::default());
     /// Node kind names of the indexed tree's language, indexed by kind id.
-    static KIND_NAMES: Cell<&'static [&'static str]> = const { Cell::new(&[]) };
+    static KIND_NAMES: Cell<&'static [String]> = const { Cell::new(&[]) };
     /// Name of the indexed tree's language.
     static LANGUAGE_NAME: Cell<&'static str> = const { Cell::new("") };
 }
@@ -87,7 +87,7 @@ pub trait NodeExt<'t> {
     /// `Node::parent`, answered from the TreeIndex when one is installed.
     fn parent_node(self) -> Option<Node<'t>>;
     /// `Node::kind`, answered from the TreeIndex when one is installed.
-    fn kind_name(self) -> &'static str;
+    fn kind_name(self) -> &'t str;
 }
 
 impl<'t> NodeExt<'t> for Node<'t> {
@@ -109,11 +109,11 @@ impl<'t> NodeExt<'t> for Node<'t> {
             .or_else(|| self.parent())
     }
 
-    fn kind_name(self) -> &'static str {
+    fn kind_name(self) -> &'t str {
         KIND_NAMES
             .get()
             .get(usize::from(self.kind_id()))
-            .copied()
+            .map(String::as_str)
             .unwrap_or_else(|| self.kind())
     }
 }

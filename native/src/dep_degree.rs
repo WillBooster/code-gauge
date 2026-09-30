@@ -93,7 +93,7 @@ const NON_BINDING_PARAMETER_FIELDS: &[&str] = &["type", "value"];
 /// One leaf of the def-use walk: its field in the parent and its function-scope chain.
 struct DepDegreeLeaf<'t> {
     node: Node<'t>,
-    field_name: Option<&'static str>,
+    field_name: Option<&'t str>,
     /// Chain of nested-function scope ids below the measured function: "" for its own body,
     /// then "/0", "/0/1", ...
     scope: String,
@@ -221,7 +221,7 @@ fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>)
 #[allow(clippy::too_many_arguments)]
 fn collect_dep_degree_leaves<'t>(
     node: Node<'t>,
-    field_name: Option<&'static str>,
+    field_name: Option<&'t str>,
     scope: &str,
     next_scope_id: &mut usize,
     function_nodes: &FxHashSet<&'static str>,
@@ -234,7 +234,7 @@ fn collect_dep_degree_leaves<'t>(
     ) {
         return;
     }
-    if node.child_count() == 0 {
+    if crate::util::is_token(node) {
         leaves.push(DepDegreeLeaf {
             node,
             field_name,
@@ -341,7 +341,7 @@ fn is_definition_field(holder: Node<'_>, field_name: Option<&str>) -> bool {
 /// fieldless child; a member pointer's `pointer_type_declarator` is the `name` of a
 /// `qualified_identifier`; an `array_declarator` size or a nested parameter has another field and
 /// stops the climb) to the outermost wrapper and its field in the declaration.
-fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option<&'static str>) {
+fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option<&'t str>) {
     let mut current = leaf.node;
     let mut field_name = leaf.field_name;
     while let Some(parent) = current
@@ -439,11 +439,11 @@ fn is_kotlin_parameter(node: Node<'_>) -> bool {
 }
 
 /// Only called with small-arity parents (declarator wrappers, definition-list holders).
-fn field_name_in_parent(node: Node<'_>, parent: Node<'_>) -> Option<&'static str> {
+fn field_name_in_parent<'t>(node: Node<'_>, parent: Node<'t>) -> Option<&'t str> {
     for index in 0..parent.child_count() {
         if let Some(child) = parent.child(index) {
             if child.id() == node.id() {
-                return parent.field_name_for_child(index as u32);
+                return parent.field_name_for_child(index);
             }
         }
     }
