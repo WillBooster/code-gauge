@@ -362,7 +362,6 @@ const PYTHON_NCSS_NODES: &[&str] = &[
     "for_statement",
     "while_statement",
     "except_clause",
-    "except_group_clause",
     "finally_clause",
     "with_statement",
     "match_statement",
