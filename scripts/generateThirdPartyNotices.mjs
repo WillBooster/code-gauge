@@ -31,16 +31,8 @@ const upstreamCopyrights = {
   'napi-derive@3.5.10': 'Copyright (c) 2020-present LongYinan',
   'napi-derive-backend@5.1.2': 'Copyright (c) 2020-present LongYinan',
   'napi-sys@3.2.3': 'Copyright (c) 2020-present LongYinan',
-  'tree-sitter@0.25.10': 'Copyright (c) 2018-2024 Max Brunsfeld',
-  'tree-sitter-c@0.21.4': 'Copyright (c) 2014 Max Brunsfeld',
-  'tree-sitter-c-sharp@0.21.3': 'Copyright (c) 2014-2023 Max Brunsfeld, Damien Guard, Amaan Qureshi, and contributors.',
-  'tree-sitter-cpp@0.22.3': 'Copyright (c) 2014 Max Brunsfeld',
-  'tree-sitter-go@0.21.2': 'Copyright (c) 2014 Max Brunsfeld',
-  'tree-sitter-java@0.21.0': 'Copyright (c) 2017 Ayman Nadeem',
-  'tree-sitter-python@0.21.0': 'Copyright (c) 2016 Max Brunsfeld',
-  'tree-sitter-ruby@0.21.0': 'Copyright (c) 2016 Rob Rix',
-  'tree-sitter-rust@0.21.2': 'Copyright (c) 2017 Maxim Sokolov',
-  'tree-sitter-typescript@0.21.2': 'Copyright (c) 2017 Max Brunsfeld',
+  'tree-sitter-java@0.23.5': 'Copyright (c) 2017 Ayman Nadeem',
+  'tree-sitter-ruby@0.23.1': 'Copyright (c) 2016 Rob Rix',
 };
 
 const metadata = JSON.parse(

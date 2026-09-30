@@ -61,6 +61,13 @@ pub fn is_kotlin_keyword_literal(node: Node<'_>, code: &Source<'_>) -> bool {
         && matches!(node_text(node, code), "true" | "false" | "null")
 }
 
+/// Whether the node stands for one source token. C# spells a contextual keyword used as a name
+/// (`type`, `field`, `alias`) as an `identifier` or `implicit_parameter` wrapping the keyword token,
+/// which still names a variable like any other identifier.
+pub fn is_token(node: Node<'_>) -> bool {
+    node.child_count() == 0 || matches!(node.kind_name(), "identifier" | "implicit_parameter")
+}
+
 pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
     let mut cursor = node.walk();
     node.named_children(&mut cursor).collect()
@@ -77,13 +84,13 @@ pub fn all_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
 /// them), which would desynchronize field-based extraction on malformed source.
 pub fn find_children_by_field_name<'t>(node: Node<'t>, field_name: &str) -> Vec<Node<'t>> {
     let mut children = Vec::new();
-    let mut preceding_structural_field: Option<&'static str> = None;
+    let mut preceding_structural_field = None;
     for index in 0..node.child_count() {
         if let Some(child) = node.child(index) {
             let field = if child.is_extra() {
                 preceding_structural_field
             } else {
-                let field = node.field_name_for_child(index as u32);
+                let field = node.field_name_for_child(index);
                 preceding_structural_field = field;
                 field
             };

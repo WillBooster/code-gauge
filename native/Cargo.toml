@@ -16,27 +16,22 @@ regex = "1"
 rustc-hash = "2"
 
 # Grammar crates are pinned exactly: every metric (and the golden-based test suite) is calibrated
-# against these grammar versions, so upgrades are deliberate, test-verified changes. The Kotlin
-# grammar is WillBooster's fork, which is not on crates.io, pinned to a release tag. Core 0.25 is
-# the first to load that grammar's ABI 15 parser, and tree-sitter-javascript 0.21.x pins
-# `cc ~1.0`, which conflicts with the core's `cc ^1.2`, hence 0.25.0. The core reports no field for
-# extra (error-recovery) children in ts_node_field_name_for_child, which
-# util::find_children_by_field_name compensates for.
-tree-sitter = "=0.25.10"
-tree-sitter-c = "=0.21.4"
-tree-sitter-c-sharp = "=0.21.3"
-tree-sitter-cpp = "=0.22.3"
-tree-sitter-go = "=0.21.2"
-tree-sitter-java = "=0.21.0"
-tree-sitter-kotlin = { package = "willbooster-tree-sitter-kotlin", git = "https://github.com/WillBooster/tree-sitter-kotlin", tag = "v1.1.0" }
-tree-sitter-javascript = "=0.25.0"
-tree-sitter-python = "=0.21.0"
-tree-sitter-ruby = "=0.21.0"
-# 0.21.0 breaks MSVC (its build script passes the GCC-only -Wno-unused-parameter
-# unconditionally; cl.exe fails with D8021); 0.21.2 gates the flag and the golden-based test
-# suite verifies its grammar changes leave every measured metric unchanged.
-tree-sitter-rust = "=0.21.2"
-tree-sitter-typescript = "=0.21.2"
+# against these grammar versions, so upgrades are deliberate, test-verified changes. The
+# `willbooster-*` crates are WillBooster's forks of the runtime and grammars. Every grammar crate
+# depends only on `tree-sitter-language`, never on upstream's `tree-sitter` crate, whose
+# `links = "tree-sitter"` would conflict with the forked runtime's.
+tree-sitter = { package = "willbooster-tree-sitter", version = "1" }
+tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=1.1.0" }
+tree-sitter-c-sharp = { package = "willbooster-tree-sitter-c-sharp", version = "=1.0.3" }
+tree-sitter-cpp = { package = "willbooster-tree-sitter-cpp", version = "=1.1.1" }
+tree-sitter-go = "=0.25.0"
+tree-sitter-java = "=0.23.5"
+tree-sitter-javascript = { package = "willbooster-tree-sitter-javascript", version = "=1.0.3" }
+tree-sitter-kotlin = { package = "willbooster-tree-sitter-kotlin", version = "=1.4.0" }
+tree-sitter-python = "=0.25.0"
+tree-sitter-ruby = "=0.23.1"
+tree-sitter-rust = { package = "willbooster-tree-sitter-rust", version = "=1.1.1" }
+tree-sitter-typescript = { package = "willbooster-tree-sitter-typescript", version = "=1.1.1" }
 
 # The WebAssembly build (src/wasm.rs) exports a plain C ABI instead of N-API.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

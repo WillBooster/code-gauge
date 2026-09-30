@@ -41,24 +41,24 @@ const GRAMMAR_COUNT: usize = GrammarId::Tsx as usize + 1;
 impl LanguageDefinition {
     pub fn grammar(&self) -> Language {
         match self.grammar_id {
-            GrammarId::C => tree_sitter_c::language(),
-            GrammarId::Cpp => tree_sitter_cpp::language(),
-            GrammarId::CSharp => tree_sitter_c_sharp::language(),
-            GrammarId::Go => tree_sitter_go::language(),
-            GrammarId::Java => tree_sitter_java::language(),
+            GrammarId::C => tree_sitter_c::LANGUAGE.into(),
+            GrammarId::Cpp => tree_sitter_cpp::LANGUAGE.into(),
+            GrammarId::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
+            GrammarId::Go => tree_sitter_go::LANGUAGE.into(),
+            GrammarId::Java => tree_sitter_java::LANGUAGE.into(),
             GrammarId::JavaScript => tree_sitter_javascript::LANGUAGE.into(),
             GrammarId::Kotlin => tree_sitter_kotlin::LANGUAGE.into(),
-            GrammarId::Python => tree_sitter_python::language(),
-            GrammarId::Ruby => tree_sitter_ruby::language(),
-            GrammarId::Rust => tree_sitter_rust::language(),
-            GrammarId::TypeScript => tree_sitter_typescript::language_typescript(),
-            GrammarId::Tsx => tree_sitter_typescript::language_tsx(),
+            GrammarId::Python => tree_sitter_python::LANGUAGE.into(),
+            GrammarId::Ruby => tree_sitter_ruby::LANGUAGE.into(),
+            GrammarId::Rust => tree_sitter_rust::LANGUAGE.into(),
+            GrammarId::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
+            GrammarId::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
         }
     }
 
     /// The grammar's node kind names, indexed by kind id.
-    pub fn kind_names(&self) -> &'static [&'static str] {
-        static KIND_NAMES: [OnceLock<Vec<&'static str>>; GRAMMAR_COUNT] =
+    pub fn kind_names(&self) -> &'static [String] {
+        static KIND_NAMES: [OnceLock<Vec<String>>; GRAMMAR_COUNT] =
             [const { OnceLock::new() }; GRAMMAR_COUNT];
         KIND_NAMES[self.grammar_id as usize].get_or_init(|| {
             let grammar = self.grammar();
@@ -68,6 +68,7 @@ impl LanguageDefinition {
                         .ok()
                         .and_then(|id| grammar.node_kind_for_id(id))
                         .unwrap_or_default()
+                        .to_string()
                 })
                 .collect()
         })
@@ -595,6 +596,7 @@ const CSHARP_NCSS_NODES: &[&str] = &[
     "interface_declaration",
     "enum_declaration",
     "record_declaration",
+    "extension_declaration",
     "delegate_declaration",
     "field_declaration",
     "event_field_declaration",

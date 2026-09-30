@@ -325,8 +325,8 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       nestingDepth: 3,
       ncssCount: 360,
       duplication: {
-        duplicateBlockCount: 4,
-        duplicateBlockGroupCount: 3,
+        duplicateBlockCount: 3,
+        duplicateBlockGroupCount: 2,
         duplicateBlockGroups: [
           [
             {
@@ -352,20 +352,10 @@ export const ossExpectations: readonly OssFileExpectation[] = [
               endLine: 567,
             },
           ],
-          [
-            {
-              startLine: 513,
-              endLine: 526,
-            },
-            {
-              startLine: 536,
-              endLine: 550,
-            },
-          ],
         ],
-        duplicateLineCount: 75,
-        duplicationRatio: 0.154,
-        maxDuplicateBlockSize: 97,
+        duplicateLineCount: 50,
+        duplicationRatio: 0.1027,
+        maxDuplicateBlockSize: 89,
       },
       halstead: {
         distinctOperators: 23,
@@ -674,14 +664,14 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         maxDuplicateBlockSize: 0,
       },
       halstead: {
-        distinctOperators: 25,
+        distinctOperators: 24,
         distinctOperands: 197,
         totalOperators: 286,
         totalOperands: 551,
-        vocabulary: 222,
+        vocabulary: 221,
         length: 837,
-        volume: 6523.9261,
-        effort: 228_089.04,
+        volume: 6518.4744,
+        effort: 218_782.5026,
       },
     },
     oracleFunctions: [

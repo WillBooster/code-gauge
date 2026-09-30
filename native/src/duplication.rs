@@ -10,7 +10,7 @@ use crate::types::{
     CrossFileCandidate, CrossFileToken, CrossFileTokenRange, DuplicateBlockOccurrence,
     DuplicationMetrics,
 };
-use crate::util::{all_children, named_children, node_text, to_int32, Source};
+use crate::util::{all_children, is_token, named_children, node_text, to_int32, Source};
 
 /// Block-like nodes considered as whole-subtree duplicate candidates.
 const DUPLICATE_BLOCK_TYPES: &[&str] = &[
@@ -103,6 +103,7 @@ const STATEMENT_CONTAINER_TYPES: &[&str] = &[
     "default_case",
     "compilation_unit",
     "switch_section",
+    "extension_body",
     "enum_class_body",
     "function_body",
     "lambda_literal",
@@ -229,6 +230,8 @@ const STRING_FRAGMENT_TYPES: &[&str] = &[
     "string_literal_content",
     "character_literal_content",
     "raw_string_content",
+    "interpreted_string_literal_content",
+    "raw_string_literal_content",
     "raw_string_start",
     "raw_string_end",
     "escape_sequence",
@@ -292,6 +295,8 @@ const STRING_CONTENT_FRAGMENT_TYPES: &[&str] = &[
     "string_literal_content",
     "character_literal_content",
     "raw_string_content",
+    "interpreted_string_literal_content",
+    "raw_string_literal_content",
     "escape_sequence",
     "heredoc_content",
 ];
@@ -548,20 +553,25 @@ fn collect_tokens<'a>(
     block_ranges: &mut Vec<TokenRange>,
     container_statement_ranges: &mut Vec<Vec<TokenRange>>,
 ) {
+    /// `statement_list_statements` receives the statements of a Go `statement_list`, which wraps
+    /// the statements of blocks and case clauses and whose statements belong to the run of the
+    /// enclosing container.
     fn visit<'a>(
         node: Node<'_>,
         code: &Source<'a>,
         tokens: &mut Vec<Token<'a>>,
         block_ranges: &mut Vec<TokenRange>,
         container_statement_ranges: &mut Vec<Vec<TokenRange>>,
+        statement_list_statements: &mut Vec<TokenRange>,
     ) -> TokenRange {
         let start_token_index = tokens.len();
-        let atomic_kind = if node.child_count() == 0 {
+        let is_token = is_token(node);
+        let atomic_kind = if is_token {
             None
         } else {
             atomic_literal_kind(node)
         };
-        if node.child_count() == 0 {
+        if is_token {
             append_leaf_token(node, code, tokens);
         } else if let Some(atomic_kind) = atomic_kind {
             // Interpolation-free strings collapse to their kind tag so copies differing only in
@@ -575,14 +585,17 @@ fn collect_tokens<'a>(
             ));
         } else if !is_tokenless(node, code) {
             let mut statement_ranges: Vec<TokenRange> = Vec::new();
-            let is_container = is_statement_container(node);
+            let is_statement_list = node.kind_name() == "statement_list";
+            let is_container = is_statement_list || is_statement_container(node);
             for child in all_children(node) {
+                let mut child_statements = Vec::new();
                 let child_range = visit(
                     child,
                     code,
                     tokens,
                     block_ranges,
                     container_statement_ranges,
+                    &mut child_statements,
                 );
                 // A Kotlin lambda's parameters sit beside its statements.
                 if is_container
@@ -590,13 +603,19 @@ fn collect_tokens<'a>(
                     && !is_tokenless(child, code)
                     && child.kind_name() != "lambda_parameters"
                 {
-                    statement_ranges.push(child_range);
+                    if child.kind_name() == "statement_list" {
+                        statement_ranges.append(&mut child_statements);
+                    } else {
+                        statement_ranges.push(child_range);
+                    }
                 }
             }
-            // Single-statement containers are recorded too: window enumeration needs two
-            // statements and yields nothing for them, but cross-file matching catalogues each
-            // container's full run.
-            if is_container && !statement_ranges.is_empty() {
+            if is_statement_list {
+                *statement_list_statements = statement_ranges;
+            } else if is_container && !statement_ranges.is_empty() {
+                // Single-statement containers are recorded too: window enumeration needs two
+                // statements and yields nothing for them, but cross-file matching catalogues each
+                // container's full run.
                 container_statement_ranges.push(statement_ranges);
             }
         }
@@ -615,7 +634,14 @@ fn collect_tokens<'a>(
         range
     }
 
-    visit(root, code, tokens, block_ranges, container_statement_ranges);
+    visit(
+        root,
+        code,
+        tokens,
+        block_ranges,
+        container_statement_ranges,
+        &mut Vec::new(),
+    );
 }
 
 /// Comments and dependency declarations contribute no tokens, so no clone consists of them; the
@@ -935,7 +961,7 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
             .named_child(0)
             .is_some_and(|first| first.id() == node.id());
         let is_last_named = parent
-            .named_child(parent.named_child_count().saturating_sub(1))
+            .named_child(parent.named_child_count().saturating_sub(1) as u32)
             .is_some_and(|last| last.id() == node.id());
         if parent.kind_name() == "navigation_expression" && is_last_named && !is_first_named {
             return true;
@@ -943,7 +969,7 @@ fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
         if parent.kind_name() == "call_expression"
             && is_first_named
             && parent
-                .named_child(parent.named_child_count().saturating_sub(1))
+                .named_child(parent.named_child_count().saturating_sub(1) as u32)
                 .is_some_and(|arguments| {
                     matches!(
                         arguments.kind_name(),

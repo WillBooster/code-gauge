@@ -821,13 +821,16 @@ fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<S
     {
         return None;
     }
-    // Go exposes no content node at all: it names only the escapes, so the concatenation is
-    // trusted only when the literal really spells its content out.
+    // Escapes alone do not spell the content out, so the concatenation is trusted only when a
+    // content node takes part in it.
     let mut content = String::new();
     let mut has_content_node = false;
     for child in &children {
         match child.kind_name() {
-            "string_content" | "string_fragment" => {
+            "string_content"
+            | "string_fragment"
+            | "interpreted_string_literal_content"
+            | "raw_string_literal_content" => {
                 has_content_node = true;
                 content.push_str(node_text(*child, code));
             }
@@ -838,8 +841,8 @@ fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<S
     if has_content_node && !content.is_empty() {
         return Some(content);
     }
-    // A grammar that exposes no content child (Go's string literals) keeps its delimiters in the
-    // text; an empty literal is left without a name.
+    // A literal without a content child (Go's rune literal) keeps its delimiters in the text; an
+    // empty literal is left without a name.
     let text = node_text(literal, code);
     let quote = text
         .chars()
@@ -880,7 +883,7 @@ fn find_assignment_target_name(assignment: Node<'_>, code: &Source<'_>) -> Optio
         "field_expression" => target.child_by_field_name("field")?,
         "member_access_expression" => target.child_by_field_name("name")?,
         "field_access" => target.child_by_field_name("field")?,
-        "navigation_expression" => target.named_child(target.named_child_count() - 1)?,
+        "navigation_expression" => target.named_child(target.named_child_count() as u32 - 1)?,
         "qualified_identifier" => return unwrap_declarator_name(Some(target), code),
         _ => return None,
     };
@@ -975,7 +978,7 @@ fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
             .is_some_and(|child| child.id() == node.id())
         {
             return matches!(
-                parent.field_name_for_child(index as u32),
+                parent.field_name_for_child(index),
                 None | Some("value")
             );
         }
