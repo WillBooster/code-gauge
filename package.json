@@ -56,7 +56,7 @@
     "lint-fix": "bun wb lint --fix",
     "prepare": "(bun lefthook install || true) && (test ! -f .lefthook/normalize-bun-lockfile.sh || bash .lefthook/normalize-bun-lockfile.sh)",
     "test": "bun wb test",
-    "test/ci": "bun run build-native && vitest",
+    "test/ci": "bun wb test-on-ci",
     "typecheck": "bun wb typecheck",
     "verify": "bun wb verify",
     "verify-full": "bun wb verify --full"
