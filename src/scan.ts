@@ -556,7 +556,7 @@ function shouldSkipDirectory(name: string, options: ScanOptions): boolean {
   return testDirectoryNames.has(name);
 }
 
-function isWithinDirectory(candidate: string, directory: string): boolean {
+export function isWithinDirectory(candidate: string, directory: string): boolean {
   const relative = path.relative(directory, candidate);
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }

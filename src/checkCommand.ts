@@ -20,6 +20,7 @@ import {
   configSearchDirectory,
   formatPath,
   getLanguage,
+  isWithinDirectory,
   resolveTarget,
   scanListedFiles,
   scanTarget,
@@ -190,7 +191,8 @@ async function scanRepository(
     targetFile === undefined && canonicalTarget !== repoRoot ? targetPath : ''
   );
   const crossFileDuplication = measureDuplication(scan, options);
-  const isInTarget = (relativePath: string): boolean => isWithin(path.join(repoRoot, relativePath), canonicalTarget);
+  const isInTarget = (relativePath: string): boolean =>
+    isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
   let isCovered = (error: string): boolean =>
@@ -270,11 +272,6 @@ function measureDuplication(scan: ScanResult, options: ResolvedOptions): CrossFi
   }
   addCrossFileDuplication(scan, options);
   return scan.crossFileDuplication;
-}
-
-function isWithin(candidate: string, target: string): boolean {
-  const relative = path.relative(target, candidate);
-  return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`));
 }
 
 function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result: CheckResult): void {
