@@ -495,27 +495,28 @@ describe('code-gauge check: unmeasurable input', () => {
     expect(runCheck(['--base', 'main', 'vendor']).stdout).toContain(line);
   });
 
-  it.each([
-    ['build/', 'build'],
-    ['build/*', 'build'],
-    ['build/', 'build/deep'],
-    ['build/*\n!build/.gitkeep', 'build'],
-  ])(
-    'exits 2 for a directory whose sources %j ignores (target %s), while a git-ignored file is checked',
-    (pattern, target) => {
-      writeSource('.gitignore', `${pattern}\n`);
+  it.each(['build', 'build/deep'])(
+    'exits 2 for the git-ignored directory %s, while a git-ignored file is checked',
+    (target) => {
+      writeSource('.gitignore', 'build/\n');
       writeSource('build/deep/legacy.ts', legacy);
-      writeSource('build/.gitkeep', '');
       for (const args of [[target], ['--base', 'main', target]]) {
         const result = runCheck(args);
         expect(result.status).toBe(2);
-        expect(result.stderr).toContain(
-          `${target}: no source file in this directory is git-visible in this repository`
-        );
+        expect(result.stderr).toContain(`${target}: git ignores this directory`);
       }
       expect(runCheck(['build/deep/legacy.ts']).stdout).toContain('build/deep/legacy.ts:1-21 decide:');
     }
   );
+
+  it('passes a directory whose only sources are git-ignored build output', () => {
+    writeSource('.gitignore', 'site/\n');
+    writeSource('docs/site/app.ts', legacy);
+    writeSource('docs/README.md', '# docs\n');
+    const result = runCheck(['docs']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toBe('No threshold violations: 0 files, 0 functions checked.\n');
+  });
 
   it('exits 2 for a targeted file of an unsupported type', () => {
     writeSource('notes.txt', 'plain text\n');

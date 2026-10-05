@@ -85,11 +85,12 @@ the target. Inside a git repository it measures the repository's git-visible fil
 untracked and not ignored), so a block copied from a file outside the target is reported with that
 file as its partner, and a copy that exists only in a git-ignored file is not duplication. The
 built-in skipped directory names (`vendor`, `fixtures`, test directories, ...) apply below the
-target, as in the ranking command, so `code-gauge check vendor` checks what is in `vendor`. A git-ignored file is checked only when it is the target itself. A directory target in which the
-check measures no file although it holds source files, because git ignores them or they belong to
-a nested repository, is an error (exit code 2): target a file or the nested repository instead. A
-directory holding no source files passes as a check of zero files. Outside a git repository it walks the target directory like the
-ranking command. The thresholds:
+target, as in the ranking command, so `code-gauge check vendor` checks what is in `vendor`. A
+git-ignored file is checked only when it is the target itself, and a directory git ignores (itself or
+through a parent directory) is an error as the target (exit code 2). A directory git does not
+ignore passes as a check of zero files when it holds no git-visible source file, for example when
+its only sources are ignored build output. Outside a git repository it walks the target directory
+like the ranking command. The thresholds:
 
 | Config key                        | Violation                                         | Default |
 | --------------------------------- | ------------------------------------------------- | ------- |

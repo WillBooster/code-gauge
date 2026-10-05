@@ -6,6 +6,7 @@ import { loadConfig, resolveOptions, type CliOptions, type ResolvedOptions } fro
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
+  isIgnored,
   listChangedFiles,
   listLineHunks,
   listRepositoryFiles,
@@ -132,7 +133,11 @@ async function scanScope(
 }
 
 async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptions): Promise<CheckScope> {
-  const scan = await walkTarget(canonicalTarget, options);
+  const searchDirectory = await configSearchDirectory(canonicalTarget);
+  const scan = await scanTarget(canonicalTarget, {
+    ...options,
+    loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
+  });
   const crossFileDuplication = measureDuplication(scan, options);
   return {
     files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
@@ -141,14 +146,6 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
     warnings: scan.warnings,
     root: scan.displayRoot,
   };
-}
-
-async function walkTarget(canonicalTarget: string, options: ResolvedOptions): Promise<ScanResult> {
-  const searchDirectory = await configSearchDirectory(canonicalTarget);
-  return await scanTarget(canonicalTarget, {
-    ...options,
-    loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
-  });
 }
 
 interface RepositoryTarget {
@@ -168,6 +165,14 @@ async function scanRepository(
   base: string | undefined,
   options: ResolvedOptions
 ): Promise<CheckScope> {
+  // Only git-visible files are measured, so a directory git ignores would pass as a check of no
+  // files. A directory git lists but whose sources it ignores is not told apart from a repository
+  // or package whose only sources are ignored build output, which must pass.
+  if (targetFile === undefined && canonicalTarget !== repoRoot && (await isIgnored(repoRoot, canonicalTarget))) {
+    throw new Error(
+      `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
+    );
+  }
   const repositoryFiles = await listRepositoryFiles(repoRoot);
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
   const unlistedTarget =
@@ -192,17 +197,6 @@ async function scanRepository(
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
-  // Only git-visible files are measured, so a directory whose sources git ignores or a nested
-  // repository owns would pass as a check of no files. Walking it finds those sources without
-  // asking git why it does not list them.
-  if (targetFile === undefined && files.length === 0) {
-    const walk = await walkTarget(canonicalTarget, options);
-    if (walk.files.length > 0) {
-      throw new Error(
-        `${formatPath(canonicalTarget, repoRoot)}: no source file in this directory is git-visible in this repository (git ignores them or they belong to a nested repository), so none is checked; target a file or the nested repository instead`
-      );
-    }
-  }
   let isCovered = (error: string): boolean =>
     canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
   let mergeBase;

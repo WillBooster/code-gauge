@@ -26,6 +26,17 @@ export async function resolveRepoRoot(directory: string): Promise<string> {
   return output.trim();
 }
 
+/** Whether git ignores the path or a directory above it (`git check-ignore` exits 1 otherwise). */
+export async function isIgnored(repoRoot: string, path: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['check-ignore', '--quiet', '--', path], { cwd: repoRoot });
+    return true;
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 1) return false;
+    throw error;
+  }
+}
+
 export async function resolveMergeBase(repoRoot: string, baseRef: string): Promise<string> {
   const output = await runGit(repoRoot, ['merge-base', baseRef, 'HEAD']);
   return output.trim();
