@@ -187,7 +187,7 @@ async function attachHunks(
     if (metrics === undefined) {
       return [];
     }
-    const wholeFile: LineHunk = { baseStart: 0, baseCount: 0, headStart: 1, headCount: metrics.lines.total };
+    const wholeFile: LineHunk = { headStart: 1, headCount: metrics.lines.total };
     const hunks =
       changed.basePath === undefined
         ? [wholeFile]

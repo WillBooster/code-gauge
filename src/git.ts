@@ -6,10 +6,8 @@ const execFileAsync = promisify(execFile);
 /** Large enough for whole-file blobs; execFile's 1 MiB default truncates real sources. */
 const maxOutputBytes = 512 * 1024 * 1024;
 
-/** One region of a line diff: base lines [baseStart, baseStart + baseCount) became head lines [headStart, headStart + headCount). */
+/** The head side of one region of a line diff: lines [headStart, headStart + headCount); a pure deletion has headCount 0. */
 export interface LineHunk {
-  baseStart: number;
-  baseCount: number;
   headStart: number;
   headCount: number;
 }
@@ -152,11 +150,9 @@ export async function listLineHunks(
     ...paths,
   ]);
   const hunks: LineHunk[] = [];
-  for (const match of output.matchAll(/^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/gmu)) {
-    const [, baseStart, baseCount, headStart, headCount] = match;
+  for (const match of output.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gmu)) {
+    const [, headStart, headCount] = match;
     hunks.push({
-      baseStart: Number(baseStart),
-      baseCount: baseCount === undefined ? 1 : Number(baseCount),
       headStart: Number(headStart),
       headCount: headCount === undefined ? 1 : Number(headCount),
     });
