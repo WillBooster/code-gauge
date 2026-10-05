@@ -15,9 +15,9 @@ interface CliResult {
   stderr: string;
 }
 
-function runCheck(args: string[]): CliResult {
+function runCheck(args: string[], cwd = repoDir): CliResult {
   const result = spawnSync(process.execPath, [cliPath, 'check', ...args], {
-    cwd: repoDir,
+    cwd,
     encoding: 'utf8',
     timeout: 60_000,
   });
@@ -102,6 +102,24 @@ function reportFunction(name: string): string {
 // oxlint-disable-next-line unicorn/no-null -- the config file disables a limit with JSON null.
 const disabled = null;
 
+// Structurally different from reportFunction, so the two never match each other.
+function otherFunction(name: string): string {
+  return `export function ${name}(text: string, width: number): string[] {
+  const words = text.split(' ').filter((word) => word.length > 0);
+  const lines: string[] = [];
+  let current = '';
+  for (const word of words) {
+    const candidate = current === '' ? word : current + ' ' + word;
+    if (candidate.length > width && current !== '') {
+      lines.push(current.padEnd(width, ' '));
+      current = word;
+    } else { current = candidate; }
+  }
+  return current === '' ? lines : [...lines, current.padEnd(width, ' ')];
+}
+`;
+}
+
 let repoDir: string;
 
 // chmod 000 does not stop root from reading, so the unreadable-file case is skipped there.
@@ -156,32 +174,31 @@ How to fix:
   });
 
   it('lists at most three partner locations of a duplicated block', () => {
-    for (const name of ['a', 'b', 'c', 'd']) {
-      writeSource(`src/copies/${name}.ts`, reportFunction(`copy${name}`));
-    }
-    const result = runCheck(['src/copies']);
-    expect(result.stdout).toContain('a.ts:1-12: duplicated lines 12 (< 10), also at b.ts:1-12, c.ts:1-12, d.ts:1-12\n');
-    writeSource('src/copies/e.ts', reportFunction('copyE'));
+    writeSource('src/copies/a.ts', reportFunction('copyA'));
     expect(runCheck(['src/copies']).stdout).toContain(
-      'a.ts:1-12: duplicated lines 12 (< 10), also at b.ts:1-12, c.ts:1-12, d.ts:1-12, ...\n'
+      'src/copies/a.ts:1-12: duplicated lines 12 (< 10), also at src/report.ts:1-12, src/summary.ts:1-12\n'
+    );
+    writeSource('src/copies/b.ts', reportFunction('copyB'));
+    writeSource('src/copies/c.ts', reportFunction('copyC'));
+    expect(runCheck(['src/copies']).stdout).toContain(
+      'src/copies/a.ts:1-12: duplicated lines 12 (< 10), also at src/copies/b.ts:1-12, src/copies/c.ts:1-12, src/report.ts:1-12, ...\n'
     );
   });
 
-  it('reports overlapping duplicated ranges of a file as one block with the partners of each', () => {
-    // b.ts repeats only the statements inside the function that a.ts holds twice, so a.ts has two
-    // clone ranges per copy: the whole function and the statements nested in it.
-    const statements = reportFunction('first').split('\n').slice(1, 10).join('\n');
-    writeSource('src/overlap/a.ts', `${reportFunction('first')}\n${reportFunction('second')}`);
-    writeSource(
-      'src/overlap/b.ts',
-      `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
-    );
-    const result = runCheck(['--min-duplicate-lines', '5', 'src/overlap']);
-    expect(result.stdout).toContain(`
-a.ts:1-12: duplicated lines 12 (< 5), also at a.ts:14-25, b.ts:3-11
-a.ts:14-25: duplicated lines 12 (< 5), also at a.ts:1-12, b.ts:3-11
-b.ts:3-11: duplicated lines 9 (< 5), also at a.ts:2-10, a.ts:15-23
-`);
+  it('detects duplication against the git-visible files of the whole repository, with or without --base', () => {
+    writeSource('.gitignore', 'build/\n');
+    writeSource('build/generated.ts', otherFunction('generated'));
+    writeSource('src2/fresh.ts', otherFunction('fresh'));
+    // The only other copy is git-ignored, so neither mode sees duplication.
+    expect(runCheck(['src2']).status).toBe(0);
+    expect(runCheck(['--base', 'main', 'src2']).status).toBe(0);
+
+    writeSource('lib/origin.ts', otherFunction('origin'));
+    // A copy outside the target is a partner in both modes, under its repository-relative path.
+    const line = 'src2/fresh.ts:1-13: duplicated lines 13 (< 10), also at lib/origin.ts:1-13\n';
+    expect(runCheck(['src2']).stdout).toContain(line);
+    expect(runCheck(['--base', 'main', 'src2']).stdout).toContain(line);
+    expect(runCheck(['src2']).stdout).toContain('(1 files, 2 functions checked)');
   });
 
   it('prints a JSON report with --json', () => {
@@ -237,13 +254,13 @@ b.ts:3-11: duplicated lines 9 (< 5), also at a.ts:2-10, a.ts:15-23
     expect((JSON.parse(result.stdout) as { violations: unknown[] }).violations).toEqual([
       {
         kind: 'file',
-        file: 'calc.ts',
+        file: 'src/calc.ts',
         startLine: 1,
         endLine: 7,
         exceeded: [{ metric: 'fileNcss', value: 5, limit: 4 }],
       },
     ]);
-    expect(runCheck(['--max-file-ncss', '4', 'src/calc.ts']).stdout).toContain('\ncalc.ts: file NCSS 5 (<= 4)\n');
+    expect(runCheck(['--max-file-ncss', '4', 'src/calc.ts']).stdout).toContain('\nsrc/calc.ts: file NCSS 5 (<= 4)\n');
   });
 });
 
@@ -413,6 +430,42 @@ describe('code-gauge check --base', () => {
     writeSource('lib/pasted.ts', reportFunction('pasted'));
     expect(runCheck(['--base', 'main', 'src']).status).toBe(0);
     expect(runCheck(['--base', 'main', 'lib']).stdout).toContain('lib/pasted.ts:1-12: duplicated lines 12');
+  });
+});
+
+describe('code-gauge check outside a git repository', () => {
+  let plainDir: string;
+
+  beforeAll(() => {
+    plainDir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-plain-'));
+    writeFileSync(path.join(plainDir, 'code-gauge.config.json'), '{}');
+    // b.ts repeats only the statements inside the function that a.ts holds twice, so a.ts has two
+    // clone ranges per copy: the whole function and the statements nested in it.
+    const statements = reportFunction('first').split('\n').slice(1, 10).join('\n');
+    writeFileSync(path.join(plainDir, 'a.ts'), `${reportFunction('first')}\n${reportFunction('second')}`);
+    writeFileSync(
+      path.join(plainDir, 'b.ts'),
+      `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
+    );
+  });
+
+  afterAll(() => {
+    rmSync(plainDir, { recursive: true, force: true });
+  });
+
+  it('walks the target directory and reports overlapping duplicated ranges of a file as one block', () => {
+    const result = runCheck(['--min-duplicate-lines', '5', plainDir], plainDir);
+    expect(result.stdout).toContain(`
+a.ts:1-12: duplicated lines 12 (< 5), also at a.ts:14-25, b.ts:3-11
+a.ts:14-25: duplicated lines 12 (< 5), also at a.ts:1-12, b.ts:3-11
+b.ts:3-11: duplicated lines 9 (< 5), also at a.ts:2-10, a.ts:15-23
+`);
+  });
+
+  it('exits 2 with --base', () => {
+    const result = runCheck(['--base', 'main', plainDir], plainDir);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('not a git repository');
   });
 });
 

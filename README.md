@@ -80,8 +80,11 @@ code-gauge check --base main         # only violations in what the working tree 
 code-gauge check --base main src/api # the same, for the changed files under src/api
 ```
 
-`code-gauge check [target]` measures the target like the ranking command and reports every
-violation of these thresholds:
+`code-gauge check [target]` reports every violation of the thresholds below in the files under
+the target. Inside a git repository it measures the repository's git-visible files (tracked, or
+untracked and not ignored), so a block copied from a file outside the target is reported with that
+file as its partner, and a copy that exists only in a git-ignored file is not duplication. Outside
+a git repository it walks the target directory like the ranking command. The thresholds:
 
 | Config key                        | Violation                                         | Default |
 | --------------------------------- | ------------------------------------------------- | ------- |
@@ -117,10 +120,10 @@ With `--base <ref>`, the check covers only what the working tree changed since t
   change alone does not count);
 - a duplicated block, when it overlaps lines the change added.
 
-The whole repository is still measured, restricted to git-visible files (tracked, or untracked and
-not ignored), so code pasted from an unchanged file is reported where it was pasted, and a
-`[target]` only limits which changed files are checked. A violation the change did not introduce
-is reported too once the change touches its function, file, or duplicated block.
+`--base` only filters the report: the files measured and the duplication found are those of the
+check without it, so code pasted from an unchanged file is reported where it was pasted. A
+violation the change did not introduce is reported too once the change touches its function, file,
+or duplicated block. `--base` requires a git repository.
 
 When nothing violates a threshold, `check` prints a single line. Otherwise it prints a header with
 the counts, one line per violation ordered by path and line, and one remediation hint per violated
@@ -141,7 +144,7 @@ How to fix:
 
 A function gets one line listing every threshold it exceeds, a file-level violation prints the path
 without a line span, and a duplicated block lists up to three of its other copies. Paths are
-relative to the target directory, or to the repository root with `--base`.
+relative to the repository root, or to the target directory outside a git repository.
 
 | Exit code | Meaning                                                                                                                          |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
@@ -149,8 +152,9 @@ relative to the target directory, or to the repository root with `--base`.
 | 1         | Violations. Whether they are warnings or errors is up to the caller.                                                             |
 | 2         | The check is incomplete: a file it covers could not be measured, or the arguments, config file, target, or base ref are invalid. |
 
-With `--base`, a file that cannot be measured causes exit code 2 only when it is a changed file
-under the target; other unmeasured files are warnings on stderr.
+A file that cannot be measured causes exit code 2 only when the check covers it: a file under the
+target or, with `--base`, a changed file under the target. Other unmeasured files of the
+repository are warnings on stderr.
 
 `check` accepts `--config`, `--include-tests`, `--json`, and the `--duplication-*` options of the
 ranking command.
@@ -202,7 +206,8 @@ ranking command.
 - `passed`: `true` when there are no violations and no errors (exit code 0).
 - `base`, `mergeBase`: the `--base` ref and the commit compared against; absent without `--base`.
 - `summary`: the violation counts in total and per kind, and the number of files and functions
-  checked (with `--base`, the changed files and the functions the change touches).
+  checked: those under the target or, with `--base`, the changed files under it and the functions
+  the change touches.
 - `violations`: ordered by `file`, then `startLine`. Each has
   - `kind`: `function`, `file`, or `duplication`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
@@ -215,8 +220,8 @@ ranking command.
   - `partners`: only for kind `duplication`; every other copy of the block, ordered by `file`, then
     `startLine`.
 - `errors`: the files the check covers that could not be measured (exit code 2).
-- `warnings`: files measured without cross-file duplication data and, with `--base`, unmeasured
-  files the check does not cover.
+- `warnings`: files measured without cross-file duplication data, and unmeasured files of the
+  repository the check does not cover.
 
 ## Configuration
 

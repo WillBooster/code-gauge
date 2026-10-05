@@ -57,7 +57,7 @@ const maxListedPartners = 3;
 
 /**
  * Reports every exceeded threshold of the target or, with `base`, of what the working tree changed
- * since the merge-base with that ref. Exit codes: 0 no violations, 1 violations, 2 files the check
+ * under it since the merge-base with that ref. Exit codes: 0 no violations, 1 violations, 2 files the check
  * covers could not be measured.
  */
 export async function runCheckCommand(target: string, cliOptions: CheckCliOptions, cliLimits: Limits): Promise<void> {
@@ -65,10 +65,7 @@ export async function runCheckCommand(target: string, cliOptions: CheckCliOption
     const resolvedTarget = resolveTarget(target);
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
-    const scope =
-      cliOptions.base === undefined
-        ? await scanWholeTarget(resolvedTarget, options)
-        : await scanChange(resolvedTarget, cliOptions.base, options);
+    const scope = await scanScope(resolvedTarget, cliOptions.base, options);
     const result = checkThresholds(
       scope.files,
       scope.crossFileDuplication,
@@ -105,9 +102,37 @@ async function endFileViolationsAtLastLine(violations: readonly Violation[], roo
   }
 }
 
-async function scanWholeTarget(resolvedTarget: string, options: ResolvedOptions): Promise<CheckScope> {
-  const searchDirectory = await configSearchDirectory(resolvedTarget);
-  const scan = await scanTarget(resolvedTarget, {
+/**
+ * Inside a git repository, the scope is the repository's git-visible files under the target, and
+ * duplication is detected against all of them; `base` only narrows the scope to what changed.
+ * Outside a repository, where there is no change to narrow to, the target directory is walked.
+ */
+async function scanScope(
+  resolvedTarget: string,
+  base: string | undefined,
+  options: ResolvedOptions
+): Promise<CheckScope> {
+  const canonicalTarget = await realpath(resolvedTarget);
+  const targetStat = await stat(canonicalTarget);
+  const targetFile = targetStat.isFile() ? canonicalTarget : undefined;
+  if (targetFile && !getLanguage(targetFile, options, true)) {
+    throw new Error(`${path.basename(targetFile)}: unsupported file type`);
+  }
+  let repoRoot;
+  try {
+    repoRoot = await realpath(await resolveRepoRoot(targetFile ? path.dirname(canonicalTarget) : canonicalTarget));
+  } catch (error) {
+    if (base !== undefined) {
+      throw error;
+    }
+    return await scanDirectoryWalk(canonicalTarget, options);
+  }
+  return await scanRepository({ repoRoot, canonicalTarget, targetFile }, base, options);
+}
+
+async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptions): Promise<CheckScope> {
+  const searchDirectory = await configSearchDirectory(canonicalTarget);
+  const scan = await scanTarget(canonicalTarget, {
     ...options,
     loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
   });
@@ -121,33 +146,32 @@ async function scanWholeTarget(resolvedTarget: string, options: ResolvedOptions)
   };
 }
 
+interface RepositoryTarget {
+  repoRoot: string;
+  canonicalTarget: string;
+  /** Set when the target is a file, which is measured even when git ignores it or it is excluded. */
+  targetFile?: string;
+}
+
 /**
  * Measures every git-visible file (tracked or untracked non-ignored) of the repository, so that
- * code the change pasted from unchanged files is detected as duplication, and keeps the changed
- * ones under the target with their line hunks against the merge-base.
+ * code copied from outside the target is detected as duplication, and keeps the files under the
+ * target: all of them or, with `base`, the changed ones with their line hunks.
  */
-async function scanChange(resolvedTarget: string, base: string, options: ResolvedOptions): Promise<CheckScope> {
-  const canonicalTarget = await realpath(resolvedTarget);
-  const targetStat = await stat(canonicalTarget);
-  const targetFile = targetStat.isFile() ? canonicalTarget : undefined;
-  if (targetFile && !getLanguage(targetFile, options, true)) {
-    throw new Error(`${path.basename(targetFile)}: unsupported file type`);
-  }
-  const repoRoot = await realpath(await resolveRepoRoot(targetFile ? path.dirname(canonicalTarget) : canonicalTarget));
-  const mergeBase = await resolveMergeBase(repoRoot, base);
-  const [changedFiles, repositoryFiles] = await Promise.all([
-    listChangedFiles(repoRoot, mergeBase),
-    listRepositoryFiles(repoRoot),
-  ]);
-  // A targeted file git does not list (an ignored one) is still checked, as an addition.
-  const unlistedTarget = targetFile && formatPath(targetFile, repoRoot);
-  if (unlistedTarget !== undefined && !repositoryFiles.has(unlistedTarget)) {
-    repositoryFiles.add(unlistedTarget);
-    changedFiles.push({ status: 'added', headPath: unlistedTarget });
-  }
-
-  // An explicitly targeted file is measured even when excluded, like the ranking command's.
+async function scanRepository(
+  { repoRoot, canonicalTarget, targetFile }: RepositoryTarget,
+  base: string | undefined,
+  options: ResolvedOptions
+): Promise<CheckScope> {
+  const repositoryFiles = await listRepositoryFiles(repoRoot);
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
+  const unlistedTarget =
+    targetFile !== undefined && !repositoryFiles.has(formatPath(targetFile, repoRoot))
+      ? formatPath(targetFile, repoRoot)
+      : undefined;
+  if (unlistedTarget !== undefined) {
+    repositoryFiles.add(unlistedTarget);
+  }
   const exclusion = keepPaths(await loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude), explicitFiles);
   const scan = await scanListedFiles(
     repoRoot,
@@ -156,31 +180,47 @@ async function scanChange(resolvedTarget: string, base: string, options: Resolve
     explicitFiles
   );
   const crossFileDuplication = measureDuplication(scan, options);
+  const isInTarget = (relativePath: string): boolean => isWithin(path.join(repoRoot, relativePath), canonicalTarget);
+  const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
+  // Scan errors start with the file or directory they concern.
+  const targetPath = path.relative(repoRoot, canonicalTarget).replaceAll(path.sep, '/');
+  let files = measuredFiles.filter(({ file }) => isInTarget(file));
+  let isCovered = (error: string): boolean =>
+    targetPath === '' || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
+  let mergeBase;
+  if (base !== undefined) {
+    mergeBase = await resolveMergeBase(repoRoot, base);
+    const changedFiles = await listChangedFiles(repoRoot, mergeBase);
+    // A targeted file git does not list has no diff; all of it counts as added.
+    if (unlistedTarget !== undefined) {
+      changedFiles.push({ status: 'added', headPath: unlistedTarget });
+    }
+    const changesInTarget = changedFiles.filter(({ status, headPath }) => status !== 'deleted' && isInTarget(headPath));
+    files = await attachHunks(measuredFiles, changesInTarget, repoRoot, mergeBase);
+    isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
+  }
+  return { files, crossFileDuplication, ...partitionErrors(scan, isCovered), root: repoRoot, mergeBase };
+}
 
-  const changesInTarget = changedFiles.filter(
-    ({ status, headPath }) => status !== 'deleted' && isWithin(path.join(repoRoot, headPath), canonicalTarget)
-  );
-  // Only a failure on a changed file under the target leaves the change unchecked.
-  const isCovered = (error: string): boolean =>
-    changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
+/** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
+function partitionErrors(
+  scan: ScanResult,
+  isCovered: (error: string) => boolean
+): Pick<CheckScope, 'errors' | 'warnings'> {
   return {
-    files: await attachHunks(scan, changesInTarget, repoRoot, mergeBase),
-    crossFileDuplication,
     errors: scan.errors.filter((error) => isCovered(error)),
     warnings: [...scan.warnings, ...scan.errors.filter((error) => !isCovered(error))],
-    root: repoRoot,
-    mergeBase,
   };
 }
 
 /** The measured changed files with their line hunks against the merge-base. */
 async function attachHunks(
-  scan: ScanResult,
+  measuredFiles: readonly CheckedFile[],
   changedFiles: readonly ChangedFile[],
   repoRoot: string,
   mergeBase: string
 ): Promise<CheckedFile[]> {
-  const metricsByPath = new Map(scan.files.map(({ file, metrics }) => [formatPath(file, repoRoot), metrics]));
+  const metricsByPath = new Map(measuredFiles.map(({ file, metrics }) => [file, metrics]));
   const files = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
     const metrics = metricsByPath.get(changed.headPath);
     // A changed file the scan left out (unsupported, excluded, or failed) has nothing to check.

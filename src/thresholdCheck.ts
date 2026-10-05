@@ -8,7 +8,7 @@ import {
   type Limits,
   type Threshold,
 } from './thresholds.js';
-import type { CodeMetrics } from './types.js';
+import type { CodeMetrics, FunctionMetrics } from './types.js';
 
 /** A measured file to check, under the path cross-file duplication knows it by. */
 export interface CheckedFile {
@@ -56,28 +56,21 @@ export function checkThresholds(
   const crossFileGroupsByFile = indexGroupsByFile(crossFileDuplication, new Set(files.map(({ file }) => file)));
   const violations: Violation[] = [];
   let checkedFunctionCount = 0;
-  for (const { file, metrics, hunks } of files) {
+  for (const checkedFile of files) {
+    const { file, metrics, hunks } = checkedFile;
     const limits = limitsOf(metrics.language);
     // A rename or a mode change lists the file as changed without touching any of its lines.
     const fileExceeded = hunks?.length === 0 ? [] : collectExceeded(fileThresholds, metrics, limits);
     if (fileExceeded.length > 0) {
       violations.push({ kind: 'file', file, startLine: 1, endLine: metrics.lines.total, exceeded: fileExceeded });
     }
-    for (const fn of metrics.functions) {
-      if (hunks && !hunks.some((hunk) => touchesSpan(hunk, fn.startLine, fn.endLine, metrics.language === 'python'))) {
-        continue;
-      }
-      checkedFunctionCount += 1;
+    const checkedFunctions = listCheckedFunctions(checkedFile);
+    checkedFunctionCount += checkedFunctions.length;
+    for (const fn of checkedFunctions) {
       const exceeded = collectExceeded(functionThresholds, fn, limits);
       if (exceeded.length > 0) {
-        violations.push({
-          kind: 'function',
-          file,
-          startLine: fn.startLine,
-          endLine: fn.endLine,
-          name: fn.name ?? '<anonymous>',
-          exceeded,
-        });
+        const { startLine, endLine } = fn;
+        violations.push({ kind: 'function', file, startLine, endLine, name: fn.name ?? '<anonymous>', exceeded });
       }
     }
     violations.push(
@@ -90,16 +83,26 @@ export function checkThresholds(
       )
     );
   }
-  return {
-    violations: violations.toSorted(
-      (left, right) =>
-        compareStrings(left.file, right.file) ||
-        left.startLine - right.startLine ||
-        left.endLine - right.endLine ||
-        violationKinds.indexOf(left.kind) - violationKinds.indexOf(right.kind)
-    ),
-    checkedFunctionCount,
-  };
+  return { violations: violations.toSorted(compareViolations), checkedFunctionCount };
+}
+
+function compareViolations(left: Violation, right: Violation): number {
+  return (
+    compareStrings(left.file, right.file) ||
+    left.startLine - right.startLine ||
+    left.endLine - right.endLine ||
+    violationKinds.indexOf(left.kind) - violationKinds.indexOf(right.kind)
+  );
+}
+
+/** The file's functions or, for a changed file, those the change touches. */
+function listCheckedFunctions({ metrics, hunks }: CheckedFile): FunctionMetrics[] {
+  const endsByIndentation = metrics.language === 'python';
+  return hunks
+    ? metrics.functions.filter((fn) =>
+        hunks.some((hunk) => touchesSpan(hunk, fn.startLine, fn.endLine, endsByIndentation))
+      )
+    : metrics.functions;
 }
 
 function collectExceeded<Subject>(
