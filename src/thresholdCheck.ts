@@ -86,12 +86,14 @@ export function checkThresholds(
   return { violations: violations.toSorted(compareViolations), checkedFunctionCount };
 }
 
+// The kind is compared before the end line because a file violation's end line is corrected after
+// this ordering (to the last line that exists), and the order must not depend on that correction.
 function compareViolations(left: Violation, right: Violation): number {
   return (
     compareStrings(left.file, right.file) ||
     left.startLine - right.startLine ||
-    left.endLine - right.endLine ||
-    violationKinds.indexOf(left.kind) - violationKinds.indexOf(right.kind)
+    violationKinds.indexOf(left.kind) - violationKinds.indexOf(right.kind) ||
+    left.endLine - right.endLine
   );
 }
 
