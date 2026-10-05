@@ -6,7 +6,7 @@ import { loadConfig, resolveOptions, type CliOptions, type ResolvedOptions } fro
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
-  isIgnored,
+  hasIgnoredEntries,
   listChangedFiles,
   listLineHunks,
   listRepositoryFiles,
@@ -165,13 +165,18 @@ async function scanRepository(
   base: string | undefined,
   options: ResolvedOptions
 ): Promise<CheckScope> {
-  // Only git-visible files are measured, so an ignored directory would pass as a check of no files.
-  if (targetFile === undefined && canonicalTarget !== repoRoot && (await isIgnored(repoRoot, canonicalTarget))) {
+  const repositoryFiles = await listRepositoryFiles(repoRoot);
+  // Only git-visible files are measured, so a directory git ignores (itself or all of its
+  // contents) would pass as a check of no files.
+  if (
+    targetFile === undefined &&
+    ![...repositoryFiles].some((file) => isWithinDirectory(path.join(repoRoot, file), canonicalTarget)) &&
+    (await hasIgnoredEntries(repoRoot, canonicalTarget))
+  ) {
     throw new Error(
-      `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
+      `${formatPath(canonicalTarget, repoRoot)}: git ignores what this directory holds, so nothing in it is checked; target a file to check it regardless`
     );
   }
-  const repositoryFiles = await listRepositoryFiles(repoRoot);
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
   const unlistedTarget =
     targetFile !== undefined && !repositoryFiles.has(formatPath(targetFile, repoRoot))

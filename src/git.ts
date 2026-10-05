@@ -26,15 +26,18 @@ export async function resolveRepoRoot(directory: string): Promise<string> {
   return output.trim();
 }
 
-/** Whether git ignores the path (`git check-ignore` exits 1 for a path it does not ignore). */
-export async function isIgnored(repoRoot: string, path: string): Promise<boolean> {
-  try {
-    await execFileAsync('git', ['check-ignore', '--quiet', '--', path], { cwd: repoRoot });
-    return true;
-  } catch (error) {
-    if ((error as { code?: unknown }).code === 1) return false;
-    throw error;
-  }
+/** Whether the directory holds a file or directory git ignores. */
+export async function hasIgnoredEntries(repoRoot: string, directory: string): Promise<boolean> {
+  const output = await runGit(repoRoot, [
+    'ls-files',
+    '--others',
+    '--ignored',
+    '--exclude-standard',
+    '--directory',
+    '--',
+    directory,
+  ]);
+  return output !== '';
 }
 
 export async function resolveMergeBase(repoRoot: string, baseRef: string): Promise<string> {
@@ -110,7 +113,7 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
 
 /**
  * Repository-relative paths git considers part of the project AND that exist in the working tree:
- * tracked files (minus worktree deletions) plus untracked non-ignored ones. `check --base` scans
+ * tracked files (minus worktree deletions) plus untracked non-ignored ones. `check` scans
  * exactly these, so local ignored artifacts (build output, generated copies) are neither measured
  * nor allowed to skew duplication detection.
  */
