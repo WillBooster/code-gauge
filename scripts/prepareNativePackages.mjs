@@ -4,8 +4,9 @@
 // WebAssembly module and the third-party notices into the main package, wrap each napi addon in
 // a `code-gauge-<platform>` package (#52), publish the platform packages, and inject them into
 // the main package's optionalDependencies at the
-// released version (only in the packed tarball — the committed package.json stays version-less,
-// like the 0.0.0-semantically-released version field). Everything runs in the PREPARE phase on
+// released version, dropping the postinstall source build they replace (only in the packed
+// tarball — the committed package.json stays version-less, like the 0.0.0-semantically-released
+// version field, and keeps the postinstall that builds the addon in a checkout). Everything runs in the PREPARE phase on
 // purpose: semantic-release pushes the release tag after prepare and before the publish
 // plugins, so a failure here aborts the release before anything is tagged and a plain re-run
 // recovers (recomputing the same version; already-published platform versions are verified
@@ -170,6 +171,14 @@ async function prepare(newVersion) {
   mainPackageJson.optionalDependencies = Object.fromEntries(
     platformTargets.map((target) => [`code-gauge-${target.suffix}`, newVersion])
   );
+  // With the prebuilt addons in place the packed package runs no install script: one that runs a
+  // local file makes dependency scanners treat every packaged file as executed at install time,
+  // and they reject the WebAssembly module as too large to inspect. `prepare` runs on an install
+  // from a git URL and only sets up the checkout's git hooks, and the postinstall script file has no
+  // other caller.
+  delete mainPackageJson.scripts.postinstall;
+  delete mainPackageJson.scripts.prepare;
+  mainPackageJson.files = mainPackageJson.files.filter((file) => file !== 'scripts/installNative.mjs');
   writeFileSync(path.join(packageRoot, 'package.json'), `${JSON.stringify(mainPackageJson, undefined, 2)}\n`);
 }
 

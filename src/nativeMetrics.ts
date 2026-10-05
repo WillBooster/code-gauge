@@ -212,8 +212,7 @@ function loadBinding(): NativeBinding {
   cachedFailure = new NativeAddonError(
     `The code-gauge native addon is not available for ${platformTriplet()}. Build it with ` +
       '`node scripts/buildNative.mjs` in the code-gauge package directory (requires a Rust ' +
-      'toolchain); when installing with npm, also allow install scripts for code-gauge so its ' +
-      `postinstall build can run.\n${failures.join('\n')}`
+      `toolchain).\n${failures.join('\n')}`
   );
   throw cachedFailure;
 }

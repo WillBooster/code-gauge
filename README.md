@@ -375,14 +375,10 @@ supporting arbitrary grammars would mean shipping incomplete metrics for them.
 
 Parsing and every metric pass run in a Rust addon (tree-sitter); the thin TypeScript layer handles
 the CLI, cross-file matching, and the Halstead float derivations. Releases include prebuilt addons
-for Linux x64/arm64 (glibc and musl), macOS x64/arm64, and Windows x64. On other platforms,
-`postinstall` builds the addon from the bundled sources, which requires a
-[Rust toolchain](https://rustup.rs).
-
-If a prebuilt addon is unavailable, package managers that block dependency install scripts by
-default (recent npm versions, and Bun unless `code-gauge` is listed in `trustedDependencies`) skip
-the fallback build. Either approve `code-gauge`'s install script, or build the addon manually
-inside the installed package (the runtime error message points here too):
+for Linux x64/arm64 (glibc and musl), macOS x64/arm64, and Windows x64, and a release that
+includes them runs no install script. On other platforms, build the addon from the bundled sources inside the installed
+package, which requires a [Rust toolchain](https://rustup.rs) (the runtime error message points
+here too):
 
 ```sh
 node node_modules/code-gauge/scripts/buildNative.mjs
