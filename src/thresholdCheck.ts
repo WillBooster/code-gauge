@@ -58,7 +58,8 @@ export function checkThresholds(
   let checkedFunctionCount = 0;
   for (const { file, metrics, hunks } of files) {
     const limits = limitsOf(metrics.language);
-    const fileExceeded = collectExceeded(fileThresholds, metrics, limits);
+    // A rename or a mode change lists the file as changed without touching any of its lines.
+    const fileExceeded = hunks?.length === 0 ? [] : collectExceeded(fileThresholds, metrics, limits);
     if (fileExceeded.length > 0) {
       violations.push({ kind: 'file', file, startLine: 1, endLine: metrics.lines.total, exceeded: fileExceeded });
     }

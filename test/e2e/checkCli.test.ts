@@ -365,6 +365,13 @@ describe('code-gauge check --base', () => {
     expect(report.mergeBase).toMatch(/^[0-9a-f]{40}$/u);
   });
 
+  it('reports no file-level violation for a file whose lines did not change', () => {
+    chmodSync(path.join(repoDir, 'src', 'calc.ts'), 0o755);
+    const result = runCheck(['--base', 'main', '--max-file-ncss', '1']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('1 changed files, 0 functions checked');
+  });
+
   it('reports the duplicated block a change added, with the unchanged code it copies as its partners', () => {
     writeSource('src/pasted.ts', reportFunction('pasted'));
     const result = runCheck(['--base', 'main']);
