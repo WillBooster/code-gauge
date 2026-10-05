@@ -207,10 +207,12 @@ export async function scanListedFiles(
     if (!language) {
       continue;
     }
-    // Symbolic links are not source files: git stores only their target string, so measuring
-    // through them would diverge from what any revision of the repository actually contains.
+    // Like the walk, only regular files are sources. A symbolic link is not one: git stores only its
+    // target string, so measuring through it would diverge from what any revision of the repository
+    // contains. Reading a FIFO would block forever. A path lstat cannot inspect stays a candidate so
+    // that measuring it reports the error.
     const stats = await lstat(absolutePath).catch(() => {});
-    if (!stats?.isSymbolicLink()) {
+    if (!stats || stats.isFile()) {
       context.candidates.push({ file: absolutePath, language });
     }
   }
