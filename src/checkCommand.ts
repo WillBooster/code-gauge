@@ -132,11 +132,7 @@ async function scanScope(
 }
 
 async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptions): Promise<CheckScope> {
-  const searchDirectory = await configSearchDirectory(canonicalTarget);
-  const scan = await scanTarget(canonicalTarget, {
-    ...options,
-    loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
-  });
+  const scan = await walkTarget(canonicalTarget, options);
   const crossFileDuplication = measureDuplication(scan, options);
   return {
     files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
@@ -145,6 +141,14 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
     warnings: scan.warnings,
     root: scan.displayRoot,
   };
+}
+
+async function walkTarget(canonicalTarget: string, options: ResolvedOptions): Promise<ScanResult> {
+  const searchDirectory = await configSearchDirectory(canonicalTarget);
+  return await scanTarget(canonicalTarget, {
+    ...options,
+    loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
+  });
 }
 
 interface RepositoryTarget {
@@ -191,7 +195,7 @@ async function scanRepository(
   // Only git-visible files are measured, so a directory whose sources git ignores would pass as a
   // check of no files. Walking it finds those sources without asking git how it ignores them.
   if (targetFile === undefined && files.length === 0) {
-    const walk = await scanDirectoryWalk(canonicalTarget, options);
+    const walk = await walkTarget(canonicalTarget, options);
     if (walk.files.length > 0) {
       throw new Error(
         `${formatPath(canonicalTarget, repoRoot)}: git ignores the source files in this directory, so none is checked; target a file to check it regardless`
