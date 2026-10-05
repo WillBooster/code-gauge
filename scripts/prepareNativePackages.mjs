@@ -174,9 +174,11 @@ async function prepare(newVersion) {
   // With the prebuilt addons in place the packed package runs no install script: one that runs a
   // local file makes dependency scanners treat every packaged file as executed at install time,
   // and they reject the WebAssembly module as too large to inspect. `prepare` runs on an install
-  // from a git URL and only sets up the checkout's git hooks.
+  // from a git URL and only sets up the checkout's git hooks, and the postinstall script file has no
+  // other caller.
   delete mainPackageJson.scripts.postinstall;
   delete mainPackageJson.scripts.prepare;
+  mainPackageJson.files = mainPackageJson.files.filter((file) => file !== 'scripts/installNative.mjs');
   writeFileSync(path.join(packageRoot, 'package.json'), `${JSON.stringify(mainPackageJson, undefined, 2)}\n`);
 }
 
