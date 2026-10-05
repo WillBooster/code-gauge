@@ -140,7 +140,7 @@ async function scanChange(resolvedTarget: string, base: string, options: Resolve
     listRepositoryFiles(repoRoot),
   ]);
   // A targeted file git does not list (an ignored one) is still checked, as an addition.
-  const unlistedTarget = targetFile && path.relative(repoRoot, targetFile);
+  const unlistedTarget = targetFile && formatPath(targetFile, repoRoot);
   if (unlistedTarget !== undefined && !repositoryFiles.has(unlistedTarget)) {
     repositoryFiles.add(unlistedTarget);
     changedFiles.push({ status: 'added', headPath: unlistedTarget });

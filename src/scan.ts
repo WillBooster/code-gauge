@@ -596,8 +596,9 @@ export function getLanguage(file: string, options: ScanOptions, explicitTarget =
   return detectLanguage(file);
 }
 
+/** The path relative to `base` with forward slashes on every platform, so it compares equal to the paths git prints. */
 export function formatPath(file: string, base: string): string {
-  return path.relative(base, file) || path.basename(file);
+  return path.relative(base, file).replaceAll(path.sep, '/') || path.basename(file);
 }
 
 export function writeStdout(message: string): void {
