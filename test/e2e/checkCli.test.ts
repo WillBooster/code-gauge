@@ -143,7 +143,10 @@ beforeAll(() => {
 });
 
 afterEach(() => {
-  runGit(['reset', '-q', '--hard', 'HEAD']);
+  // A test that commits on a branch is undone here, so a failed assertion cannot leave it behind.
+  runGit(['checkout', '-q', '-f', '-B', 'feature']);
+  runGit(['checkout', '-q', '-f', 'main']);
+  runGit(['branch', '-q', '-D', 'feature']);
   runGit(['clean', '-fdxq']);
 });
 
@@ -387,8 +390,6 @@ describe('code-gauge check --base', () => {
     runGit(['commit', '-q', '-m', 'wide']);
     writeSource('src/wide.py', wide.replace('    return a\n', ''));
     const result = runCheck(['--base', 'HEAD']);
-    runGit(['checkout', '-q', '-f', 'main']);
-    runGit(['branch', '-q', '-D', 'feature']);
     expect(result.stdout).toContain('src/wide.py:1-2 calculate: parameters 8 (<= 7)\n');
   });
 
@@ -433,8 +434,6 @@ describe('code-gauge check --base', () => {
     expect(runCheck(['--base', 'main']).status).toBe(1);
     runGit(['commit', '-q', '-m', 'paste']);
     expect(runCheck(['--base', 'main']).status).toBe(1);
-    runGit(['checkout', '-q', 'main']);
-    runGit(['branch', '-q', '-D', 'feature']);
   });
 
   it('limits the check to the changed files under the target', () => {
