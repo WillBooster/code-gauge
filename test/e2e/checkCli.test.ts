@@ -390,6 +390,14 @@ describe('code-gauge check --base', () => {
     expect(result.stdout).toContain('src/wide.py:1-2 calculate: parameters 8 (<= 7)\n');
   });
 
+  it('keeps a function whose name spans lines on one line', () => {
+    writeSource(
+      'src/holder.ts',
+      'export class Holder {\n  [`foo\nbar`](a, b, c, d, e, f, g, h) {\n    return a;\n  }\n}\n'
+    );
+    expect(runCheck(['src/holder.ts']).stdout).toContain('src/holder.ts:2-5 [`foo bar`]: parameters 8 (<= 7)\n');
+  });
+
   it('reports a file-level violation only for a changed file', () => {
     writeSource('src/calc.ts', `${calc}export const offset = 1;\n`);
     const result = runCheck(['--base', 'main', '--max-file-ncss', '5', '--json']);
@@ -476,6 +484,17 @@ describe('code-gauge check: unmeasurable input', () => {
     expect(result.status).toBe(2);
     expect(result.stdout).toBe('');
     expect(result.stderr).toMatch(/^Error: /u);
+  });
+
+  it('exits 2 for a git-ignored directory, while a git-ignored file is checked', () => {
+    writeSource('.gitignore', 'build/\n');
+    writeSource('build/legacy.ts', legacy);
+    for (const args of [['build'], ['--base', 'main', 'build']]) {
+      const result = runCheck(args);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('build: git ignores this directory');
+    }
+    expect(runCheck(['build/legacy.ts']).stdout).toContain('build/legacy.ts:1-21 decide:');
   });
 
   it('exits 2 for a targeted file of an unsupported type', () => {

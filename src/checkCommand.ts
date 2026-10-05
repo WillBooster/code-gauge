@@ -6,6 +6,7 @@ import { loadConfig, resolveOptions, type CliOptions, type ResolvedOptions } fro
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
+  isIgnored,
   listChangedFiles,
   listLineHunks,
   listRepositoryFiles,
@@ -163,6 +164,12 @@ async function scanRepository(
   base: string | undefined,
   options: ResolvedOptions
 ): Promise<CheckScope> {
+  // Only git-visible files are measured, so an ignored directory would pass as a check of no files.
+  if (targetFile === undefined && canonicalTarget !== repoRoot && (await isIgnored(repoRoot, canonicalTarget))) {
+    throw new Error(
+      `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
+    );
+  }
   const repositoryFiles = await listRepositoryFiles(repoRoot);
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
   const unlistedTarget =
@@ -342,7 +349,8 @@ function formatViolation(violation: Violation): string {
       return `${violation.file}: ${exceeded}`;
     }
     case 'function': {
-      return `${formatLocation(violation)} ${violation.name}: ${exceeded}`;
+      // A computed name can span lines in the source; the report keeps one line per function.
+      return `${formatLocation(violation)} ${violation.name?.replaceAll(/\s*[\n\r]\s*/gu, ' ')}: ${exceeded}`;
     }
     case 'duplication': {
       const partners = (violation.partners ?? []).map((partner) => formatLocation(partner));
