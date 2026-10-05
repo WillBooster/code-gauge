@@ -165,20 +165,6 @@ async function scanRepository(
   options: ResolvedOptions
 ): Promise<CheckScope> {
   const repositoryFiles = await listRepositoryFiles(repoRoot);
-  // Only git-visible files are measured, so a directory that holds sources but no git-visible file
-  // (git ignores it or its contents) would pass as a check of no files. Walking it finds those
-  // sources without asking git how it came to ignore them.
-  if (
-    targetFile === undefined &&
-    ![...repositoryFiles].some((file) => isWithinDirectory(path.join(repoRoot, file), canonicalTarget))
-  ) {
-    const walk = await scanDirectoryWalk(canonicalTarget, options);
-    if (walk.files.length > 0) {
-      throw new Error(
-        `${formatPath(canonicalTarget, repoRoot)}: git ignores the source files in this directory, so none is checked; target a file to check it regardless`
-      );
-    }
-  }
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
   const unlistedTarget =
     targetFile !== undefined && !repositoryFiles.has(formatPath(targetFile, repoRoot))
@@ -202,6 +188,16 @@ async function scanRepository(
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
+  // Only git-visible files are measured, so a directory whose sources git ignores would pass as a
+  // check of no files. Walking it finds those sources without asking git how it ignores them.
+  if (targetFile === undefined && files.length === 0) {
+    const walk = await scanDirectoryWalk(canonicalTarget, options);
+    if (walk.files.length > 0) {
+      throw new Error(
+        `${formatPath(canonicalTarget, repoRoot)}: git ignores the source files in this directory, so none is checked; target a file to check it regardless`
+      );
+    }
+  }
   let isCovered = (error: string): boolean =>
     canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
   let mergeBase;

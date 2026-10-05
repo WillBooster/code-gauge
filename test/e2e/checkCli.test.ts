@@ -499,11 +499,13 @@ describe('code-gauge check: unmeasurable input', () => {
     ['build/', 'build'],
     ['build/*', 'build'],
     ['build/', 'build/deep'],
+    ['build/*\n!build/.gitkeep', 'build'],
   ])(
     'exits 2 for a directory whose sources %j ignores (target %s), while a git-ignored file is checked',
     (pattern, target) => {
       writeSource('.gitignore', `${pattern}\n`);
       writeSource('build/deep/legacy.ts', legacy);
+      writeSource('build/.gitkeep', '');
       for (const args of [[target], ['--base', 'main', target]]) {
         const result = runCheck(args);
         expect(result.status).toBe(2);
