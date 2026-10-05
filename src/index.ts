@@ -15,17 +15,6 @@ export {
   defaultMeasurer,
   measureCode,
 } from './metrics.js';
-export { findNewlyDuplicatedLines } from './newDuplication.js';
-export type { CloneOccurrence, DuplicationChange, LineHunk } from './newDuplication.js';
-export { defaultGateOptions, evaluateRegressionGate } from './regressionGate.js';
-export type {
-  GateFileInput,
-  GateOptions,
-  GateResult,
-  GateTolerances,
-  GateViolation,
-  NewFunctionThresholds,
-} from './regressionGate.js';
 export type {
   CodeMetrics,
   DuplicationMetrics,

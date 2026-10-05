@@ -14,9 +14,8 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 // These tests exercise the built CLI (dist/cli.js) as a real subprocess so the whole pipeline is
-// covered: file/directory scanning, ignore rules, ranking, exit codes, and JSON output. The CLI is
-// rebuilt in beforeAll so it always reflects the current source, and every fixture is generated in
-// an isolated temp directory to keep the run hermetic.
+// covered: file/directory scanning, ignore rules, ranking, exit codes, and JSON output. Every
+// fixture is generated in an isolated temp directory to keep the run hermetic.
 
 const repoRoot = path.join(import.meta.dirname, '..', '..');
 const cliPath = path.join(repoRoot, 'dist', 'cli.js');
@@ -797,37 +796,7 @@ describe('cli: configuration discovery and validation', () => {
       '{ "duplication": { "threshold": 1 } }',
       'unknown setting "threshold" in "duplication"',
     ],
-    [
-      'a negative new-function limit',
-      '{ "gate": { "newFunction": { "maxNcss": -1 } } }',
-      '"gate.newFunction.maxNcss" must be a non-negative integer',
-    ],
-    [
-      'an unknown new-function key',
-      '{ "gate": { "newFunction": { "maxDepth": 1 } } }',
-      'unknown setting "maxDepth" in "gate.newFunction"',
-    ],
-    [
-      'a string tolerance',
-      '{ "gate": { "tolerance": { "ncss": "5" } } }',
-      '"gate.tolerance.ncss" must be a non-negative number',
-    ],
-    [
-      'a negative tolerance',
-      '{ "gate": { "tolerance": { "halsteadVolume": -1 } } }',
-      '"gate.tolerance.halsteadVolume" must be a non-negative number',
-    ],
     ['a non-array exclude', '{ "exclude": "dist/**" }', '"exclude" must be an array of non-empty glob patterns'],
-    [
-      'gate.matchSimilarityPercent of 0',
-      '{ "gate": { "matchSimilarityPercent": 0 } }',
-      '"gate.matchSimilarityPercent" must be a positive integer',
-    ],
-    [
-      'gate.matchSimilarityPercent above 100',
-      '{ "gate": { "matchSimilarityPercent": 101 } }',
-      '"gate.matchSimilarityPercent" must be between 1 and 100',
-    ],
   ];
   for (const [label, content, message] of invalidConfigs) {
     it(`rejects ${label}`, () => {
@@ -842,25 +811,23 @@ describe('cli: configuration discovery and validation', () => {
     });
   }
 
-  it('accepts fractional tolerances, zero new-function limits, and every documented default', () => {
+  it('accepts every documented default', () => {
     const configFile = path.join(projectDir, 'full.config.json');
     writeFileSync(
       configFile,
       JSON.stringify({
         duplication: { minTokens: 40, maxGapTokens: 30, minSimilarityPercent: 70 },
         rank: { top: 10 },
-        gate: {
-          newFunction: { maxCognitiveComplexity: 0, maxNcss: 60, maxNestingDepth: 4 },
-          tolerance: {
-            cognitiveComplexity: 2,
-            ncss: 5,
-            nestingDepth: 1,
-            depDegree: 10,
-            halsteadVolume: 12.5,
-            fileNcss: 20,
-            duplicateLines: 0,
-          },
-          matchSimilarityPercent: 70,
+        thresholds: {
+          maxFunctionCognitiveComplexity: 15,
+          maxFunctionNcss: 60,
+          maxFunctionNestingDepth: 4,
+          maxFunctionHalsteadVolume: 2000,
+          maxFunctionDepDegree: 50,
+          maxFunctionParameterCount: 7,
+          maxFileNcss: 500,
+          minDuplicateLines: 10,
+          languages: {},
         },
         exclude: [],
         includeTests: false,

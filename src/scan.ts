@@ -182,7 +182,7 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
 }
 
 /**
- * Measures an explicit list of repository-relative files (the diff gate's git-visible allowlist)
+ * Measures an explicit list of repository-relative files (the git-visible ones of `check --base`)
  * instead of walking the directory tree, so ignored artifact directories are never parsed. Paths
  * outside the scan scope (ignored/test directories, unsupported or test file names) are skipped
  * with the same rules as the walk.
@@ -486,7 +486,7 @@ async function readAndMeasureFile(
  * cross the addon boundary), the metrics are still returned with the failure message, which
  * callers report as a warning rather than an error.
  */
-export async function measureWithCrossFileData(
+async function measureWithCrossFileData(
   code: string,
   measureOptions: MeasureOptions
 ): Promise<{ metrics: CodeMetrics; crossFileData?: CrossFileDuplicationFileData; crossFileError?: string }> {
@@ -556,12 +556,10 @@ function isWithinDirectory(candidate: string, directory: string): boolean {
 
 /**
  * Whether a repository-relative path would be scanned: no ignored or excluded-test directory
- * segment and a supported, non-test file name. The diff gate uses this for base-revision
- * eligibility, so code renamed into scan scope gates as new code instead of ratcheting against
- * a blob the scanner would never have measured. An explicitly targeted file only needs a supported
+ * segment and a supported, non-test file name. An explicitly targeted file only needs a supported
  * language, as in the ranking command.
  */
-export function isScannedPath(relativePath: string, options: ScanOptions, explicitTarget = false): boolean {
+function isScannedPath(relativePath: string, options: ScanOptions, explicitTarget = false): boolean {
   if (explicitTarget) {
     return getLanguage(relativePath, options, true) !== undefined;
   }

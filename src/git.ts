@@ -1,14 +1,18 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
-import os from 'node:os';
-import path from 'node:path';
 import { promisify } from 'node:util';
-import type { LineHunk } from './newDuplication.js';
 
 const execFileAsync = promisify(execFile);
 
 /** Large enough for whole-file blobs; execFile's 1 MiB default truncates real sources. */
 const maxOutputBytes = 512 * 1024 * 1024;
+
+/** One region of a line diff: base lines [baseStart, baseStart + baseCount) became head lines [headStart, headStart + headCount). */
+export interface LineHunk {
+  baseStart: number;
+  baseCount: number;
+  headStart: number;
+  headCount: number;
+}
 
 /** One entry of the working tree's diff against the merge-base commit. */
 export interface ChangedFile {
@@ -31,8 +35,7 @@ export async function resolveMergeBase(repoRoot: string, baseRef: string): Promi
 
 /**
  * Files whose working-tree content differs from the merge-base commit (staged or not), with
- * rename detection, plus untracked (non-ignored) files as additions. Copies gate like additions:
- * only the new path is measured against the new-code thresholds.
+ * rename detection, plus untracked (non-ignored) files as additions.
  */
 export async function listChangedFiles(repoRoot: string, mergeBase: string): Promise<ChangedFile[]> {
   const [diffOutput, untrackedOutput] = await Promise.all([
@@ -66,7 +69,7 @@ function parseNameStatusEntries(output: string): ChangedFile[] {
   return files;
 }
 
-/** Undefined for unmerged (U) and unknown statuses, which have nothing to gate. */
+/** Undefined for unmerged (U) and unknown statuses, which have nothing to check. */
 function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile | undefined {
   const [first, second] = paths;
   if (first === undefined) {
@@ -76,7 +79,7 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
     case 'R': {
       return second === undefined ? undefined : { status: 'renamed', basePath: first, headPath: second };
     }
-    // A copy gates like an addition: only the new path is measured against the new-code thresholds.
+    // A copy is an addition: every line of the new path is new.
     case 'C': {
       return second === undefined ? undefined : { status: 'added', headPath: second };
     }
@@ -98,9 +101,9 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
 
 /**
  * Repository-relative paths git considers part of the project AND that exist in the working tree:
- * tracked files (minus worktree deletions) plus untracked non-ignored ones. The diff gate scans
+ * tracked files (minus worktree deletions) plus untracked non-ignored ones. `check --base` scans
  * exactly these, so local ignored artifacts (build output, generated copies) are neither measured
- * nor allowed to skew the duplication universes.
+ * nor allowed to skew duplication detection.
  */
 export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>> {
   const [listed, deleted] = await Promise.all([
@@ -112,19 +115,6 @@ export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>
     files.delete(path);
   }
   return files;
-}
-
-/** Paths that are symbolic links (blob mode 120000) at the given revision. */
-export async function listSymlinkPathsAtRevision(repoRoot: string, revision: string): Promise<Set<string>> {
-  const output = await runGit(repoRoot, ['ls-tree', '-r', '-z', revision]);
-  const links = new Set<string>();
-  for (const entry of output.split('\0')) {
-    const tabIndex = entry.indexOf('\t');
-    if (entry.startsWith('120000 ') && tabIndex !== -1) {
-      links.add(entry.slice(tabIndex + 1));
-    }
-  }
-  return links;
 }
 
 /**
@@ -181,34 +171,22 @@ export interface LinguistAttributes {
 }
 
 /**
- * The linguist attributes of repository-relative paths, from the working tree's `.gitattributes`
- * or, with `source`, from that revision's. Paths with neither attribute specified are omitted.
+ * The linguist attributes of repository-relative paths, from the working tree's `.gitattributes`.
+ * Paths with neither attribute specified are omitted.
  */
 export async function readLinguistAttributes(
   repoRoot: string,
-  paths: Iterable<string>,
-  source?: string
+  paths: Iterable<string>
 ): Promise<Map<string, LinguistAttributes>> {
   const input = [...paths].join('\0');
   if (input === '') {
     return new Map();
   }
-  const attributeArgs = ['--stdin', '-z', 'linguist-generated', 'linguist-vendored'];
-  let output;
-  if (source === undefined) {
-    output = await runGitWithInput(repoRoot, ['check-attr', ...attributeArgs], input);
-  } else {
-    // `check-attr --source` needs git 2.40, so the revision's attributes are read from a
-    // throwaway index holding its tree instead, which `--cached` supports on any git.
-    const indexDirectory = await mkdtemp(path.join(os.tmpdir(), 'code-gauge-index-'));
-    try {
-      const env = { ...process.env, GIT_INDEX_FILE: path.join(indexDirectory, 'index') };
-      await runGitWithInput(repoRoot, ['read-tree', source], '', env);
-      output = await runGitWithInput(repoRoot, ['check-attr', '--cached', ...attributeArgs], input, env);
-    } finally {
-      await rm(indexDirectory, { recursive: true, force: true });
-    }
-  }
+  const output = await runGitWithInput(
+    repoRoot,
+    ['check-attr', '--stdin', '-z', 'linguist-generated', 'linguist-vendored'],
+    input
+  );
   const attributesByPath = new Map<string, LinguistAttributes>();
   const fields = output.split('\0');
   for (let index = 0; index + 2 < fields.length; index += 3) {
@@ -239,19 +217,9 @@ function toAttributeFlag(value: string): boolean | undefined {
   return undefined;
 }
 
-/** The file's content at the given commit; the path is repository-relative with forward slashes. */
-export async function readFileAtRevision(repoRoot: string, revision: string, path: string): Promise<string> {
-  return await runGit(repoRoot, ['cat-file', 'blob', `${revision}:${path}`]);
-}
-
-async function runGitWithInput(
-  cwd: string,
-  args: string[],
-  input: string,
-  env: NodeJS.ProcessEnv = process.env
-): Promise<string> {
+async function runGitWithInput(cwd: string, args: string[], input: string): Promise<string> {
   return await new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd, env });
+    const child = spawn('git', args, { cwd });
     // git exiting before it reads all input (e.g. on a usage error) makes the write fail with
     // EPIPE; its exit code and stderr, reported on close, already describe the failure.
     child.stdin.on('error', () => {});

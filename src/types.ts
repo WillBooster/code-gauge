@@ -92,7 +92,7 @@ export interface FunctionMetrics {
    * short-circuit operator (`&&`, `||`, `and`, `or`) wherever it appears, and per case-labelled
    * statement or match arm (stacked labels share one; default and catch-all arms add none).
    * Full-evaluation operators and `throw` add nothing. Nested function bodies are excluded, so
-   * summing over functions counts each decision once. Not used by ranking or the regression gate.
+   * summing over functions counts each decision once. Not used by the command-line tool.
    */
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
@@ -112,9 +112,8 @@ export interface FunctionMetrics {
   /**
    * Approximate def-use dependency degree (DepDegree, Beyer & Fararooy 2010): the number of
    * variable reads whose name has a preceding definition (declaration, assignment, or parameter)
-   * within the same function. A file-local single-assignment approximation — each read is charged
-   * one reaching definition — which is stable enough for regression ratcheting where only the
-   * delta matters.
+   * within the same function. A file-local single-assignment approximation: each read is charged
+   * one reaching definition.
    */
   depDegree: number;
 }
