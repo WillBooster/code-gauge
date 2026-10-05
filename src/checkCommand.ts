@@ -275,8 +275,8 @@ function formatViolation(violation: Violation): string {
   const exceeded = violation.exceeded
     .map(
       ({ metric, value, limit }) =>
-        // Halstead volume is fractional; one decimal is enough to compare it with its limit.
-        `${labelByMetric.get(metric)} ${Math.round(value * 10) / 10} (${violation.kind === 'duplication' ? '<' : '<='} ${limit})`
+        // Halstead values are fractional; rounding up keeps a violating value above the printed limit.
+        `${labelByMetric.get(metric)} ${Math.ceil(value * 10) / 10} (${violation.kind === 'duplication' ? '<' : '<='} ${limit})`
     )
     .join(', ');
   switch (violation.kind) {

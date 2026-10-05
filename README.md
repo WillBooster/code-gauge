@@ -111,7 +111,8 @@ With `--base <ref>`, the check covers only what the working tree changed since t
 `<ref>` and `HEAD` (committed, staged, unstaged, and untracked changes; nothing is checked out):
 
 - a function, when a diff hunk touches its span; deleting lines inside the span counts;
-- a file-level threshold, when the file changed;
+- a file-level threshold, when the change adds or deletes lines of the file (a rename or a mode
+  change alone does not count);
 - a duplicated block, when it overlaps lines the change added.
 
 The whole repository is still measured, restricted to git-visible files (tracked, or untracked and
