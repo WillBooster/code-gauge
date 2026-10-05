@@ -182,30 +182,37 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
 }
 
 /**
- * Measures an explicit list of repository-relative files (the diff gate's git-visible allowlist)
- * instead of walking the directory tree, so ignored artifact directories are never parsed. Paths
- * outside the scan scope (ignored/test directories, unsupported or test file names) are skipped
- * with the same rules as the walk.
+ * Measures an explicit list of repository-relative files (the git-visible ones of `check`) instead
+ * of walking the directory tree, so ignored artifact directories are never parsed. Paths outside
+ * the scan scope (ignored/test directories, unsupported or test file names) are skipped with the
+ * same rules as the walk. Like the walk, which never tests the directory it starts in, the rules
+ * apply to a file under `targetDirectory` (repository-relative, forward slashes) by its path below
+ * that directory, so naming `vendor` or `test` as the target measures what is in it.
  */
 export async function scanListedFiles(
   rootDirectory: string,
   relativePaths: Iterable<string>,
   options: ScanOptions,
-  explicitFiles: ReadonlySet<string> = new Set()
+  explicitFiles: ReadonlySet<string> = new Set(),
+  targetDirectory = ''
 ): Promise<ScanResult> {
   const context = makeScanContext(options, rootDirectory);
+  const targetPrefix = targetDirectory === '' ? '' : `${targetDirectory}/`;
   for (const relativePath of relativePaths) {
     const absolutePath = path.join(rootDirectory, relativePath);
-    const language = isScannedPath(relativePath, options, explicitFiles.has(absolutePath))
+    const scopedPath = relativePath.startsWith(targetPrefix) ? relativePath.slice(targetPrefix.length) : relativePath;
+    const language = isScannedPath(scopedPath, options, explicitFiles.has(absolutePath))
       ? getLanguage(relativePath, options, explicitFiles.has(absolutePath))
       : undefined;
     if (!language) {
       continue;
     }
-    // Symbolic links are not source files: git stores only their target string, so measuring
-    // through them would diverge from what any revision of the repository actually contains.
+    // Like the walk, only regular files are sources. A symbolic link is not one: git stores only its
+    // target string, so measuring through it would diverge from what any revision of the repository
+    // contains. Reading a FIFO would block forever. A path lstat cannot inspect stays a candidate so
+    // that measuring it reports the error.
     const stats = await lstat(absolutePath).catch(() => {});
-    if (!stats?.isSymbolicLink()) {
+    if (!stats || stats.isFile()) {
       context.candidates.push({ file: absolutePath, language });
     }
   }
@@ -486,7 +493,7 @@ async function readAndMeasureFile(
  * cross the addon boundary), the metrics are still returned with the failure message, which
  * callers report as a warning rather than an error.
  */
-export async function measureWithCrossFileData(
+async function measureWithCrossFileData(
   code: string,
   measureOptions: MeasureOptions
 ): Promise<{ metrics: CodeMetrics; crossFileData?: CrossFileDuplicationFileData; crossFileError?: string }> {
@@ -549,19 +556,17 @@ function shouldSkipDirectory(name: string, options: ScanOptions): boolean {
   return testDirectoryNames.has(name);
 }
 
-function isWithinDirectory(candidate: string, directory: string): boolean {
+export function isWithinDirectory(candidate: string, directory: string): boolean {
   const relative = path.relative(directory, candidate);
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
 }
 
 /**
  * Whether a repository-relative path would be scanned: no ignored or excluded-test directory
- * segment and a supported, non-test file name. The diff gate uses this for base-revision
- * eligibility, so code renamed into scan scope gates as new code instead of ratcheting against
- * a blob the scanner would never have measured. An explicitly targeted file only needs a supported
+ * segment and a supported, non-test file name. An explicitly targeted file only needs a supported
  * language, as in the ranking command.
  */
-export function isScannedPath(relativePath: string, options: ScanOptions, explicitTarget = false): boolean {
+function isScannedPath(relativePath: string, options: ScanOptions, explicitTarget = false): boolean {
   if (explicitTarget) {
     return getLanguage(relativePath, options, true) !== undefined;
   }
@@ -598,8 +603,9 @@ export function getLanguage(file: string, options: ScanOptions, explicitTarget =
   return detectLanguage(file);
 }
 
+/** The path relative to `base` with forward slashes on every platform, so it compares equal to the paths git prints. */
 export function formatPath(file: string, base: string): string {
-  return path.relative(base, file) || path.basename(file);
+  return path.relative(base, file).replaceAll(path.sep, '/') || path.basename(file);
 }
 
 export function writeStdout(message: string): void {

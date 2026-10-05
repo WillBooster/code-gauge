@@ -4,7 +4,7 @@ import { Command, InvalidArgumentError } from 'commander';
 import { getErrorMessage, parsePositiveInteger } from '@willbooster/shared-lib';
 import { type CliOptions, configFileName, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
-import { runDiffCommand, type DiffCliOptions } from './diffCommand.js';
+import { runCheckCommand, type CheckCliOptions } from './checkCommand.js';
 import { loadExclusion } from './exclusion.js';
 import {
   addCrossFileDuplication,
@@ -18,6 +18,7 @@ import {
   type FileMetrics,
   type ScanResult,
 } from './scan.js';
+import { duplicationThreshold, fileThresholds, functionThresholds, thresholds } from './thresholds.js';
 import type { FunctionMetrics } from './types.js';
 
 /** The worst (highest-cognitive-complexity) function of a file, reported as the ranking evidence. */
@@ -59,7 +60,49 @@ void main().catch((error: unknown) => {
   process.exitCode = 1;
 });
 
-/** Registers the options shared by the ranking command and the diff gate. */
+async function main(): Promise<void> {
+  const program = new Command()
+    .name('code-gauge')
+    .description('Measure code metrics: rank refactoring candidates (the default command) or check thresholds.');
+
+  addSharedOptions(
+    program
+      .command('rank', { isDefault: true })
+      .description('Rank the files of a project by refactoring priority')
+      .argument('[target]', 'file or directory to measure', '.')
+  )
+    .option('--top <number>', 'number of top-ranked files to report (default: 10)', parsePositiveIntegerOption)
+    .option('--fail-on-error', 'exit with code 1 when files or directories cannot be scanned')
+    .action(runRankCommand);
+
+  const check = addSharedOptions(
+    program
+      .command('check')
+      .description(
+        'Report every exceeded threshold (exit 1 on violations, 2 when files cannot be measured); with --base, only in what the change touches'
+      )
+      .argument('[target]', 'file or directory to check', '.')
+  ).option('--base <ref>', 'check only what the working tree changed since the merge-base of this git ref and HEAD');
+  for (const { key, defaultLimit } of thresholds) {
+    check.option(
+      `--${toKebabCase(key)} <number>`,
+      `${describeLimit(key)} (default ${defaultLimit}); "off" disables it`,
+      parseLimit
+    );
+  }
+  // Exit code 1 means violations, so a rejected command line must not use it.
+  check.exitOverride((error) => process.exit(error.exitCode === 0 ? 0 : 2));
+  check.action(async (target: string, cliOptions: CheckCliOptions & Record<string, unknown>) => {
+    const cliLimits = Object.fromEntries(
+      thresholds.flatMap(({ key }) => (cliOptions[key] === undefined ? [] : [[key, cliOptions[key] as number]]))
+    );
+    await runCheckCommand(target, cliOptions, cliLimits);
+  });
+
+  await program.parseAsync();
+}
+
+/** Registers the options shared by the ranking and check commands. */
 function addSharedOptions(command: Command): Command {
   return command
     .option('--config <path>', `config file to use instead of the auto-detected ${configFileName}`)
@@ -82,56 +125,41 @@ function addSharedOptions(command: Command): Command {
     .option('--json', 'print JSON output');
 }
 
-async function main(): Promise<void> {
-  const program = addSharedOptions(
-    new Command()
-      .name('code-gauge')
-      .description('Rank the files of a project by refactoring priority.')
-      .argument('[target]', 'file or directory to measure', '.')
-  )
-    .option('--top <number>', 'number of top-ranked files to report (default: 10)', parsePositiveIntegerOption)
-    .option('--fail-on-error', 'exit with code 1 when files or directories cannot be scanned');
+function describeLimit(key: string): string {
+  if (key === duplicationThreshold.key) {
+    return 'line count from which a duplicated block is a violation';
+  }
+  const fileThreshold = fileThresholds.find((threshold) => threshold.key === key);
+  return fileThreshold
+    ? `maximum ${fileThreshold.label}`
+    : `maximum ${functionThresholds.find((threshold) => threshold.key === key)?.label} of a function`;
+}
 
-  program.action(async (target: string, cliOptions: CliOptions) => {
-    const resolvedTarget = resolveTarget(target);
-    const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
-    const options = resolveOptions(cliOptions, config);
-    const searchDirectory = await configSearchDirectory(resolvedTarget);
-    const result = await scanTarget(resolvedTarget, {
-      ...options,
-      loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
-    });
-    addCrossFileDuplication(result, options);
-    const rankedFiles = rankFiles(result, options.top);
+function toKebabCase(key: string): string {
+  return key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
+}
 
-    if (options.json) {
-      printJson(result, rankedFiles, options);
-    } else {
-      printTextReport(resolvedTarget, result, rankedFiles, options);
-    }
-
-    if (result.fatalError || (options.failOnError && result.errors.length > 0)) {
-      process.exitCode = 1;
-    }
+async function runRankCommand(target: string, cliOptions: CliOptions): Promise<void> {
+  const resolvedTarget = resolveTarget(target);
+  const searchDirectory = await configSearchDirectory(resolvedTarget);
+  const config = await loadConfig(cliOptions.config, searchDirectory);
+  const options = resolveOptions(cliOptions, config);
+  const result = await scanTarget(resolvedTarget, {
+    ...options,
+    loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
   });
+  addCrossFileDuplication(result, options);
+  const rankedFiles = rankFiles(result, options.top);
 
-  addSharedOptions(
-    program
-      .command('diff')
-      .description(
-        'Gate the working tree against a base ref: report only metric regressions in changed files (exit 1 on violations)'
-      )
-      .argument('[target]', 'directory whose changed files are gated', '.')
-      .requiredOption('--base <ref>', 'base git ref; changes are measured against its merge-base with HEAD')
-  )
-    .option('--full', 'also print the passing gate values of every checked function and file')
-    .action(async (target: string, _cliOptions: DiffCliOptions, command: Command) => {
-      // Options sharing a name with a root option (--json, --config, ...) land in the root's
-      // option store, so the merged view is required to see them.
-      await runDiffCommand(target, command.optsWithGlobals() as DiffCliOptions);
-    });
+  if (options.json) {
+    printJson(result, rankedFiles, options);
+  } else {
+    printTextReport(resolvedTarget, result, rankedFiles, options);
+  }
 
-  await program.parseAsync();
+  if (result.fatalError || (options.failOnError && result.errors.length > 0)) {
+    process.exitCode = 1;
+  }
 }
 
 function rankFiles(result: ScanResult, top: number): RankedFile[] {
@@ -354,6 +382,17 @@ function summarize(files: FileMetrics[]): {
   }
 
   return { fileCount: files.length, functionCount, linesOfCode, maxCognitiveComplexity, ncssCount };
+}
+
+function parseLimit(value: string): number {
+  if (value === 'off') {
+    return Infinity;
+  }
+  const parsed = value.trim() === '' ? Number.NaN : Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new InvalidArgumentError('Expected a non-negative number or "off".');
+  }
+  return parsed;
 }
 
 function parsePercentInteger(value: string): number {

@@ -90,15 +90,14 @@ export async function loadExclusion(
 
 /**
  * The exclusion for repository-relative `paths` of the canonical `repoRoot`, with git attributes
- * from the working tree or, with `source`, from that revision.
+ * from the working tree.
  */
 export async function loadRepositoryExclusion(
   repoRoot: string,
   paths: Iterable<string>,
-  excludePatterns: ExcludePatterns,
-  source?: string
+  excludePatterns: ExcludePatterns
 ): Promise<Exclusion> {
-  const attributes = await readLinguistAttributes(repoRoot, paths, source);
+  const attributes = await readLinguistAttributes(repoRoot, paths);
   return createExclusion(
     await canonicalizeRoot(excludePatterns),
     new Map([...attributes].map(([relativePath, value]) => [path.join(repoRoot, relativePath), value]))

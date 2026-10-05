@@ -63,6 +63,7 @@ function roundFloats(metrics: CodeMetrics): RoundedAggregates {
       vocabulary: metrics.halstead.vocabulary,
       length: metrics.halstead.length,
       volume: round(metrics.halstead.volume),
+      difficulty: round(metrics.halstead.difficulty),
       effort: round(metrics.halstead.effort),
     },
   };
