@@ -71,8 +71,7 @@ export class TreeMeasurer {
   /**
    * Normalized token hash sequences of every function, index-parallel to the functions array of
    * measure(): identifiers are anonymized by first occurrence within the function, literals by
-   * kind, and keywords/operators kept verbatim, so renamed or moved functions can be re-matched
-   * across two revisions by token-LCS similarity.
+   * kind, and keywords/operators kept verbatim.
    */
   collectFunctionTokenSequences(code: string, options: MeasureOptions): Int32Array[] {
     const language = this.resolveLanguage(options.language);
