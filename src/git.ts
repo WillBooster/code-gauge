@@ -26,20 +26,6 @@ export async function resolveRepoRoot(directory: string): Promise<string> {
   return output.trim();
 }
 
-/** Whether the directory holds a file or directory git ignores. */
-export async function hasIgnoredEntries(repoRoot: string, directory: string): Promise<boolean> {
-  const output = await runGit(repoRoot, [
-    'ls-files',
-    '--others',
-    '--ignored',
-    '--exclude-standard',
-    '--directory',
-    '--',
-    directory,
-  ]);
-  return output !== '';
-}
-
 export async function resolveMergeBase(repoRoot: string, baseRef: string): Promise<string> {
   const output = await runGit(repoRoot, ['merge-base', baseRef, 'HEAD']);
   return output.trim();

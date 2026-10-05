@@ -496,17 +496,21 @@ describe('code-gauge check: unmeasurable input', () => {
     expect(runCheck(['--base', 'main', 'vendor']).stdout).toContain(line);
   });
 
-  it.each(['build/', 'build/*'])(
-    'exits 2 for a directory ignored by %j, while a git-ignored file is checked',
-    (pattern) => {
+  it.each([
+    ['build/', 'build'],
+    ['build/*', 'build'],
+    ['build/', 'build/deep'],
+  ])(
+    'exits 2 for a directory whose sources %j ignores (target %s), while a git-ignored file is checked',
+    (pattern, target) => {
       writeSource('.gitignore', `${pattern}\n`);
-      writeSource('build/legacy.ts', legacy);
-      for (const args of [['build'], ['--base', 'main', 'build']]) {
+      writeSource('build/deep/legacy.ts', legacy);
+      for (const args of [[target], ['--base', 'main', target]]) {
         const result = runCheck(args);
         expect(result.status).toBe(2);
-        expect(result.stderr).toContain('build: git ignores what this directory holds');
+        expect(result.stderr).toContain(`${target}: git ignores the source files in this directory`);
       }
-      expect(runCheck(['build/legacy.ts']).stdout).toContain('build/legacy.ts:1-21 decide:');
+      expect(runCheck(['build/deep/legacy.ts']).stdout).toContain('build/deep/legacy.ts:1-21 decide:');
     }
   );
 

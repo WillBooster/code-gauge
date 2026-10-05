@@ -6,7 +6,6 @@ import { loadConfig, resolveOptions, type CliOptions, type ResolvedOptions } fro
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
-  hasIgnoredEntries,
   listChangedFiles,
   listLineHunks,
   listRepositoryFiles,
@@ -166,16 +165,19 @@ async function scanRepository(
   options: ResolvedOptions
 ): Promise<CheckScope> {
   const repositoryFiles = await listRepositoryFiles(repoRoot);
-  // Only git-visible files are measured, so a directory git ignores (itself or all of its
-  // contents) would pass as a check of no files.
+  // Only git-visible files are measured, so a directory that holds sources but no git-visible file
+  // (git ignores it or its contents) would pass as a check of no files. Walking it finds those
+  // sources without asking git how it came to ignore them.
   if (
     targetFile === undefined &&
-    ![...repositoryFiles].some((file) => isWithinDirectory(path.join(repoRoot, file), canonicalTarget)) &&
-    (await hasIgnoredEntries(repoRoot, canonicalTarget))
+    ![...repositoryFiles].some((file) => isWithinDirectory(path.join(repoRoot, file), canonicalTarget))
   ) {
-    throw new Error(
-      `${formatPath(canonicalTarget, repoRoot)}: git ignores what this directory holds, so nothing in it is checked; target a file to check it regardless`
-    );
+    const walk = await scanDirectoryWalk(canonicalTarget, options);
+    if (walk.files.length > 0) {
+      throw new Error(
+        `${formatPath(canonicalTarget, repoRoot)}: git ignores the source files in this directory, so none is checked; target a file to check it regardless`
+      );
+    }
   }
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
   const unlistedTarget =
