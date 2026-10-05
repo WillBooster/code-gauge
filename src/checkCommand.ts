@@ -18,6 +18,7 @@ import {
   addCrossFileDuplication,
   configSearchDirectory,
   formatPath,
+  getLanguage,
   resolveTarget,
   scanListedFiles,
   scanTarget,
@@ -129,6 +130,9 @@ async function scanChange(resolvedTarget: string, base: string, options: Resolve
   const canonicalTarget = await realpath(resolvedTarget);
   const targetStat = await stat(canonicalTarget);
   const targetFile = targetStat.isFile() ? canonicalTarget : undefined;
+  if (targetFile && !getLanguage(targetFile, options, true)) {
+    throw new Error(`${path.basename(targetFile)}: unsupported file type`);
+  }
   const repoRoot = await realpath(await resolveRepoRoot(targetFile ? path.dirname(canonicalTarget) : canonicalTarget));
   const mergeBase = await resolveMergeBase(repoRoot, base);
   const [changedFiles, repositoryFiles] = await Promise.all([

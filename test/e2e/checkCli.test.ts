@@ -401,6 +401,16 @@ describe('code-gauge check: unmeasurable input', () => {
     expect(result.stderr).toMatch(/^Error: /u);
   });
 
+  it('exits 2 for a targeted file of an unsupported type', () => {
+    writeSource('notes.txt', 'plain text\n');
+    for (const args of [['notes.txt'], ['--base', 'main', 'notes.txt']]) {
+      const result = runCheck(args);
+      expect(result.status).toBe(2);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toBe('Error: notes.txt: unsupported file type\n');
+    }
+  });
+
   it.skipIf(runAsRoot)('exits 2 without claiming a pass when a file cannot be read', () => {
     writeSource('src/locked.ts', calc);
     chmodSync(path.join(repoDir, 'src', 'locked.ts'), 0o000);
