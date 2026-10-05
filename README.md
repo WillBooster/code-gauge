@@ -114,7 +114,7 @@ With `--base <ref>`, the check covers only what the working tree changed since t
 `<ref>` and `HEAD` (committed, staged, unstaged, and untracked changes; nothing is checked out):
 
 - a function, when a diff hunk touches its span; deleting lines inside the span counts, and so does
-  deleting lines after the last line of a Python function (blank lines aside), which may have been its
+  deleting lines after the last line of a Python function (blank and comment-only lines aside), which may have been its
   tail;
 - a file-level threshold, when the change adds or deletes lines of the file (a rename or a mode
   change alone does not count);

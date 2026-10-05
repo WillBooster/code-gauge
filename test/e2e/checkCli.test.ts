@@ -376,6 +376,7 @@ describe('code-gauge check --base', () => {
   it.each([
     ['right after the remaining statements', ''],
     ['after a blank line', '\n'],
+    ['after a comment-only line', '# finish\n'],
   ])('counts deleting the last statement of a Python function %s as touching it', (_, gap) => {
     const wide = `def calculate(a, b, c, d, e, f, g, h):\n    print(a)\n${gap}    return a\n`;
     runGit(['checkout', '-q', '-b', 'feature']);

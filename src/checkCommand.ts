@@ -241,15 +241,15 @@ async function attachHunks(
 }
 
 /**
- * Moves each pure deletion up to the last non-blank line before it. A Python function ends at its
- * last statement, so the blank lines left above a deleted tail lie outside the span the deletion
- * shortened; anchored to that statement, the deletion counts as touching the function.
+ * Moves each pure deletion up to the last code line before it. A Python function ends at its last
+ * statement, so the blank and comment-only lines left above a deleted tail lie outside the span the
+ * deletion shortened; anchored to that statement, the deletion counts as touching the function.
  */
 function anchorDeletionsToCode(hunks: LineHunk[], content: string): void {
   const lines = content.split(/\r\n|\n|\r/u);
   for (const hunk of hunks) {
     if (hunk.headCount > 0) continue;
-    while (hunk.headStart > 0 && lines[hunk.headStart - 1]?.trim() === '') {
+    while (hunk.headStart > 0 && /^\s*(?:#.*)?$/u.test(lines[hunk.headStart - 1] ?? '')) {
       hunk.headStart -= 1;
     }
   }
