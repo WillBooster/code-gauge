@@ -192,13 +192,14 @@ async function scanRepository(
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
-  // Only git-visible files are measured, so a directory whose sources git ignores would pass as a
-  // check of no files. Walking it finds those sources without asking git how it ignores them.
+  // Only git-visible files are measured, so a directory whose sources git ignores or a nested
+  // repository owns would pass as a check of no files. Walking it finds those sources without
+  // asking git why it does not list them.
   if (targetFile === undefined && files.length === 0) {
     const walk = await walkTarget(canonicalTarget, options);
     if (walk.files.length > 0) {
       throw new Error(
-        `${formatPath(canonicalTarget, repoRoot)}: git ignores the source files in this directory, so none is checked; target a file to check it regardless`
+        `${formatPath(canonicalTarget, repoRoot)}: no source file in this directory is git-visible in this repository (git ignores them or they belong to a nested repository), so none is checked; target a file or the nested repository instead`
       );
     }
   }

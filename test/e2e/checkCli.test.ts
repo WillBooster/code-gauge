@@ -509,7 +509,9 @@ describe('code-gauge check: unmeasurable input', () => {
       for (const args of [[target], ['--base', 'main', target]]) {
         const result = runCheck(args);
         expect(result.status).toBe(2);
-        expect(result.stderr).toContain(`${target}: git ignores the source files in this directory`);
+        expect(result.stderr).toContain(
+          `${target}: no source file in this directory is git-visible in this repository`
+        );
       }
       expect(runCheck(['build/deep/legacy.ts']).stdout).toContain('build/deep/legacy.ts:1-21 decide:');
     }
