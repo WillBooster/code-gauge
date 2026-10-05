@@ -130,6 +130,8 @@ beforeAll(() => {
   runGit(['init', '-q', '-b', 'main']);
   runGit(['config', 'user.email', 'test@example.com']);
   runGit(['config', 'user.name', 'test']);
+  // git init records whether the filesystem keeps the executable bit; the mode-change case needs it.
+  runGit(['config', 'core.fileMode', 'true']);
   // A config at the repo root bounds the ancestor config search.
   writeConfig({});
   writeSource('src/calc.ts', calc);
