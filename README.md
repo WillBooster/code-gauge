@@ -83,7 +83,9 @@ code-gauge check --base main src/api # the same, for the changed files under src
 `code-gauge check [target]` reports every violation of the thresholds below in the files under
 the target. Inside a git repository it measures the repository's git-visible files (tracked, or
 untracked and not ignored), so a block copied from a file outside the target is reported with that
-file as its partner, and a copy that exists only in a git-ignored file is not duplication. A
+file as its partner, and a copy that exists only in a git-ignored file is not duplication. The
+built-in skipped directory names (`vendor`, `fixtures`, test directories, ...) apply below the
+target, as in the ranking command, so `code-gauge check vendor` checks what is in `vendor`. A
 git-ignored file is checked only when it is the target itself, and a git-ignored directory as the
 target is an error (exit code 2). Outside a git repository it walks the target directory like the
 ranking command. The thresholds:

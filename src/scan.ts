@@ -182,21 +182,26 @@ export async function scanTarget(target: string, options: ScanOptions): Promise<
 }
 
 /**
- * Measures an explicit list of repository-relative files (the git-visible ones of `check --base`)
- * instead of walking the directory tree, so ignored artifact directories are never parsed. Paths
- * outside the scan scope (ignored/test directories, unsupported or test file names) are skipped
- * with the same rules as the walk.
+ * Measures an explicit list of repository-relative files (the git-visible ones of `check`) instead
+ * of walking the directory tree, so ignored artifact directories are never parsed. Paths outside
+ * the scan scope (ignored/test directories, unsupported or test file names) are skipped with the
+ * same rules as the walk. Like the walk, which never tests the directory it starts in, the rules
+ * apply to a file under `targetDirectory` (repository-relative, forward slashes) by its path below
+ * that directory, so naming `vendor` or `test` as the target measures what is in it.
  */
 export async function scanListedFiles(
   rootDirectory: string,
   relativePaths: Iterable<string>,
   options: ScanOptions,
-  explicitFiles: ReadonlySet<string> = new Set()
+  explicitFiles: ReadonlySet<string> = new Set(),
+  targetDirectory = ''
 ): Promise<ScanResult> {
   const context = makeScanContext(options, rootDirectory);
+  const targetPrefix = targetDirectory === '' ? '' : `${targetDirectory}/`;
   for (const relativePath of relativePaths) {
     const absolutePath = path.join(rootDirectory, relativePath);
-    const language = isScannedPath(relativePath, options, explicitFiles.has(absolutePath))
+    const scopedPath = relativePath.startsWith(targetPrefix) ? relativePath.slice(targetPrefix.length) : relativePath;
+    const language = isScannedPath(scopedPath, options, explicitFiles.has(absolutePath))
       ? getLanguage(relativePath, options, explicitFiles.has(absolutePath))
       : undefined;
     if (!language) {

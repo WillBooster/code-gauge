@@ -180,20 +180,21 @@ async function scanRepository(
     repositoryFiles.add(unlistedTarget);
   }
   const exclusion = keepPaths(await loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude), explicitFiles);
+  // Scan errors start with the file or directory they concern.
+  const targetPath = formatPath(canonicalTarget, repoRoot);
   const scan = await scanListedFiles(
     repoRoot,
     repositoryFiles,
     { ...options, loadExclusion: () => Promise.resolve(exclusion) },
-    explicitFiles
+    explicitFiles,
+    targetFile === undefined && canonicalTarget !== repoRoot ? targetPath : ''
   );
   const crossFileDuplication = measureDuplication(scan, options);
   const isInTarget = (relativePath: string): boolean => isWithin(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
-  // Scan errors start with the file or directory they concern.
-  const targetPath = path.relative(repoRoot, canonicalTarget).replaceAll(path.sep, '/');
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
   let isCovered = (error: string): boolean =>
-    targetPath === '' || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
+    canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
   let mergeBase;
   if (base !== undefined) {
     mergeBase = await resolveMergeBase(repoRoot, base);

@@ -488,6 +488,14 @@ describe('code-gauge check: unmeasurable input', () => {
     expect(result.stderr).toMatch(/^Error: /u);
   });
 
+  it('measures a targeted directory whose name the scan skips elsewhere, with or without --base', () => {
+    writeSource('vendor/legacy.ts', legacy);
+    expect(runCheck([]).stdout).not.toContain('vendor/legacy.ts');
+    const line = 'vendor/legacy.ts:1-21 decide:';
+    expect(runCheck(['vendor']).stdout).toContain(line);
+    expect(runCheck(['--base', 'main', 'vendor']).stdout).toContain(line);
+  });
+
   it('exits 2 for a git-ignored directory, while a git-ignored file is checked', () => {
     writeSource('.gitignore', 'build/\n');
     writeSource('build/legacy.ts', legacy);
