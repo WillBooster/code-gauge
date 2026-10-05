@@ -142,8 +142,9 @@ function indexGroupsByFile(
 }
 
 /**
- * One violation per distinct line range of the file's clone occurrences, within-file and
- * cross-file, spanning at least `minLines`; with `hunks`, only those overlapping added lines.
+ * One violation per duplicated region of the file: its clone occurrences, within-file and
+ * cross-file, that span at least `minLines` (with `hunks`, only those overlapping added lines),
+ * with overlapping occurrences merged into one region.
  */
 function collectDuplicationViolations(
   file: string,
@@ -156,40 +157,50 @@ function collectDuplicationViolations(
     ...metrics.duplication.duplicateBlockGroups.map((group) => group.map((occurrence) => ({ ...occurrence, file }))),
     ...crossFileGroups.map((group) => group.occurrences),
   ];
-  const partnersByRange = new Map<string, { violation: Violation; partners: Map<string, BlockLocation> }>();
   const isReported = (block: BlockLocation): boolean =>
     block.file === file &&
     duplicationThreshold.measure(block) >= minLines &&
     (!hunks || hunks.some((hunk) => hunk.headCount > 0 && touchesSpan(hunk, block.startLine, block.endLine)));
+  const copiesByBlock = new Map<BlockLocation, BlockLocation[]>();
   for (const group of groups) {
     for (const block of group.filter((occurrence) => isReported(occurrence))) {
-      const range = `${block.startLine}-${block.endLine}`;
-      const entry = partnersByRange.get(range) ?? {
-        violation: {
-          kind: 'duplication',
-          file,
-          startLine: block.startLine,
-          endLine: block.endLine,
-          exceeded: [
-            { metric: metricNameOf(duplicationThreshold), value: duplicationThreshold.measure(block), limit: minLines },
-          ],
-        },
-        partners: new Map(),
-      };
-      partnersByRange.set(range, entry);
-      for (const { file: partnerFile, startLine, endLine } of group) {
-        if (partnerFile !== file || startLine !== block.startLine || endLine !== block.endLine) {
-          entry.partners.set(`${partnerFile}\0${startLine}-${endLine}`, { file: partnerFile, startLine, endLine });
-        }
-      }
+      copiesByBlock.set(block, group);
     }
   }
-  return [...partnersByRange.values()].map(({ violation, partners }) => ({
-    ...violation,
-    partners: [...partners.values()].toSorted(
-      (left, right) => compareStrings(left.file, right.file) || left.startLine - right.startLine
-    ),
+  return mergeOverlapping([...copiesByBlock.keys()]).map(({ merged, sources }) => ({
+    kind: 'duplication',
+    ...merged,
+    exceeded: [
+      { metric: metricNameOf(duplicationThreshold), value: duplicationThreshold.measure(merged), limit: minLines },
+    ],
+    // The region's own occurrences are among the copies of the groups it belongs to.
+    partners: mergeOverlapping(sources.flatMap((source) => copiesByBlock.get(source) ?? []))
+      .map((partner) => partner.merged)
+      .filter((partner) => !overlaps(partner, merged)),
   }));
+}
+
+/** The locations with those overlapping in the same file merged, ordered by file, then line. */
+function mergeOverlapping(locations: readonly BlockLocation[]): { merged: BlockLocation; sources: BlockLocation[] }[] {
+  const regions: { merged: BlockLocation; sources: BlockLocation[] }[] = [];
+  const ordered = locations.toSorted(
+    (left, right) => compareStrings(left.file, right.file) || left.startLine - right.startLine
+  );
+  for (const location of ordered) {
+    const last = regions.at(-1);
+    if (last && overlaps(last.merged, location)) {
+      last.merged.endLine = Math.max(last.merged.endLine, location.endLine);
+      last.sources.push(location);
+    } else {
+      const { file, startLine, endLine } = location;
+      regions.push({ merged: { file, startLine, endLine }, sources: [location] });
+    }
+  }
+  return regions;
+}
+
+function overlaps(left: BlockLocation, right: BlockLocation): boolean {
+  return left.file === right.file && left.startLine <= right.endLine && right.startLine <= left.endLine;
 }
 
 /** Code-unit order, so reports do not depend on the locale. */

@@ -83,20 +83,24 @@ code-gauge check --base main src/api # the same, for the changed files under src
 `code-gauge check [target]` measures the target like the ranking command and reports every
 violation of these thresholds:
 
-| Config key                       | Violation                                         | Default |
-| -------------------------------- | ------------------------------------------------- | ------- |
-| `maxFunctionCognitiveComplexity` | a function's cognitive complexity is above it     | 15      |
-| `maxFunctionNcss`                | a function's NCSS is above it                     | 60      |
-| `maxFunctionNestingDepth`        | a function's nesting depth is above it            | 4       |
-| `maxFunctionHalsteadVolume`      | a function's Halstead volume is above it          | 2000    |
-| `maxFunctionDepDegree`           | a function's DepDegree is above it                | 50      |
-| `maxFunctionParameterCount`      | a function's parameter count is above it          | 7       |
-| `maxFileNcss`                    | a file's NCSS is above it                         | 500     |
-| `minDuplicateLines`              | a duplicated block spans at least this many lines | 10      |
+| Config key                        | Violation                                         | Default |
+| --------------------------------- | ------------------------------------------------- | ------- |
+| `maxFunctionCognitiveComplexity`  | a function's cognitive complexity is above it     | 15      |
+| `maxFunctionCyclomaticComplexity` | a function's cyclomatic complexity is above it    | 10      |
+| `maxFunctionNcss`                 | a function's NCSS is above it                     | 60      |
+| `maxFunctionNestingDepth`         | a function's nesting depth is above it            | 4       |
+| `maxFunctionParameterCount`       | a function's parameter count is above it          | 7       |
+| `maxFunctionHalsteadVolume`       | a function's Halstead volume is above it          | 2000    |
+| `maxFunctionHalsteadDifficulty`   | a function's Halstead difficulty is above it      | 20      |
+| `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it          | 30000   |
+| `maxFunctionDepDegree`            | a function's DepDegree is above it                | 50      |
+| `maxFileNcss`                     | a file's NCSS is above it                         | 500     |
+| `minDuplicateLines`               | a duplicated block spans at least this many lines | 10      |
 
 A duplicated block is one occurrence of a within-file or cross-file clone, found with the
 [duplication detection settings](#duplication-detection-settings); its span runs from its first to
-its last line.
+its last line. Occurrences of at least `minDuplicateLines` lines that overlap in a file are
+reported as one block covering all of them.
 
 Each threshold is set in the [`thresholds` config section](#configuration), where `null` disables
 it and `languages` overrides thresholds for the files of one language, or with the command-line
@@ -121,12 +125,13 @@ metric:
 
 ```
 Threshold violations: 3 violations (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), nesting depth 5 (<= 4)
+src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), cyclomatic complexity 15 (<= 10), nesting depth 5 (<= 4)
 src/report.ts:1-12: duplicated lines 12 (< 10), also at src/summary.ts:1-12
 src/summary.ts:1-12: duplicated lines 12 (< 10), also at src/report.ts:1-12
 
 How to fix:
 - cognitive complexity: flatten nested branching with early returns and extract nested blocks into named functions.
+- cyclomatic complexity: the function has too many independent paths; split it by decision or replace condition chains with a lookup table.
 - nesting depth: replace nested conditions with guard clauses or move inner blocks into functions.
 - duplicated lines: extract the repeated code into one shared function or module and call it from every location.
 ```
@@ -173,6 +178,7 @@ ranking command.
       "name": "decide",
       "exceeded": [
         { "metric": "functionCognitiveComplexity", "value": 24, "limit": 15 },
+        { "metric": "functionCyclomaticComplexity", "value": 15, "limit": 10 },
         { "metric": "functionNestingDepth", "value": 5, "limit": 4 }
       ]
     },
@@ -197,7 +203,7 @@ ranking command.
 - `violations`: ordered by `file`, then `startLine`. Each has
   - `kind`: `function`, `file`, or `duplication`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
-    kind `file`, the whole file;
+    kind `file`, the first and last line of the file;
   - `name`: only for kind `function`; `<anonymous>` for a function without a name;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
     `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, and the `limit`
@@ -224,11 +230,14 @@ with `--config`). The following config reproduces every built-in default:
   "rank": { "top": 10 },
   "thresholds": {
     "maxFunctionCognitiveComplexity": 15,
+    "maxFunctionCyclomaticComplexity": 10,
     "maxFunctionNcss": 60,
     "maxFunctionNestingDepth": 4,
-    "maxFunctionHalsteadVolume": 2000,
-    "maxFunctionDepDegree": 50,
     "maxFunctionParameterCount": 7,
+    "maxFunctionHalsteadVolume": 2000,
+    "maxFunctionHalsteadDifficulty": 20,
+    "maxFunctionHalsteadEffort": 30000,
+    "maxFunctionDepDegree": 50,
     "maxFileNcss": 500,
     "minDuplicateLines": 10,
     "languages": {}
@@ -316,8 +325,7 @@ The `duplication` section tunes how clones are detected:
 - Per-function cyclomatic complexity (McCabe, own body only), counted as NIST SP 500-235 defines it:
   every decision and short-circuit operator adds one, one per case-labelled statement, plus the
   file total over McCabe's components (every function, every initializer block, decisions outside
-  functions, and the module body of a file that runs top-level code); an API-only metric that
-  the command-line tool does not use
+  functions, and the module body of a file that runs top-level code)
 - Per-function parameter counts and locations (name, node type, line span)
 - Within-file duplication: copy-pasted blocks matched on normalized tokens (identifiers anonymized
   consistently, literals by kind, and literal-dense data tables excluded unless their values also
@@ -328,16 +336,16 @@ The `duplication` section tunes how clones are detected:
 - Cross-file duplication (via `measureCrossFileDuplication`): copy-pasted blocks shared between
   files, matched with the same normalization (exact, gapped, and near-miss clones) and reported as
   groups with their file locations
-- Halstead base counts, vocabulary, length, volume, and effort, per function and per file — the
-  strongest correlates of measured cognitive load in the EEG/fMRI validation literature
+- Halstead base counts, vocabulary, length, volume, difficulty (half the distinct operators times
+  the total operands per distinct operand; 0 without operands), and effort (difficulty times
+  volume), per function and per file
 - Per-function DepDegree (Beyer & Fararooy 2010), approximated as the number of variable reads
   with a preceding same-name definition (declaration, assignment, or parameter) in the function —
   a file-local single-assignment approximation
 
 Metrics that the validation literature shows to be weakly grounded or that invite misdirected
 "improvements" (call-graph fan-in/fan-out, coupling and cohesion counts, maintainability index,
-and similar) are intentionally not measured, and cyclomatic complexity is kept out of the CLI
-output for the same reason; see
+and similar) are intentionally not measured; see
 [issue #44](https://github.com/WillBooster/code-gauge/issues/44) for the rationale and references.
 
 ## Supported languages

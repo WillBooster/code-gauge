@@ -16,6 +16,7 @@ exports[`measureCode: golden edge cases > matches the golden metrics for empty i
   },
   "functions": [],
   "halstead": {
+    "difficulty": 0,
     "distinctOperands": 0,
     "distinctOperators": 0,
     "effort": 0,
@@ -55,6 +56,7 @@ exports[`measureCode: golden edge cases > matches the golden metrics for whitesp
   },
   "functions": [],
   "halstead": {
+    "difficulty": 0,
     "distinctOperands": 0,
     "distinctOperators": 0,
     "effort": 0,
@@ -102,6 +104,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 3,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 2,
         "distinctOperators": 0,
         "effort": 0,
@@ -126,6 +129,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 10,
       "halstead": {
+        "difficulty": 0.875,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 16.25349666,
@@ -150,6 +154,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 15,
       "halstead": {
+        "difficulty": 0.66666667,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 6.66666667,
@@ -174,6 +179,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 21,
       "halstead": {
+        "difficulty": 0.83333333,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 10,
@@ -198,6 +204,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 31,
       "halstead": {
+        "difficulty": 2.25,
         "distinctOperands": 8,
         "distinctOperators": 3,
         "effort": 132.32325941,
@@ -222,6 +229,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 29,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 25.84962501,
@@ -246,6 +254,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 37,
       "halstead": {
+        "difficulty": 0.625,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 8.70723036,
@@ -270,6 +279,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 48,
       "halstead": {
+        "difficulty": 2.5,
         "distinctOperands": 6,
         "distinctOperators": 3,
         "effort": 110.94737505,
@@ -294,6 +304,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 54,
       "halstead": {
+        "difficulty": 0.6,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 10.8568425,
@@ -318,6 +329,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 59,
       "halstead": {
+        "difficulty": 0.625,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 8.70723036,
@@ -342,6 +354,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 65,
       "halstead": {
+        "difficulty": 0.78571429,
         "distinctOperands": 7,
         "distinctOperators": 1,
         "effort": 35.35714286,
@@ -366,6 +379,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 22,
       "endLine": 62,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -390,6 +404,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 23,
       "endLine": 63,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -414,6 +429,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 70,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 4,
         "distinctOperators": 0,
         "effort": 0,
@@ -438,6 +454,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 74,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -462,6 +479,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 80,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 5,
         "distinctOperators": 0,
         "effort": 0,
@@ -486,6 +504,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 85,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 3,
         "distinctOperators": 0,
         "effort": 0,
@@ -510,6 +529,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 90,
       "halstead": {
+        "difficulty": 0.625,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 8.70723036,
@@ -534,6 +554,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 95,
       "halstead": {
+        "difficulty": 0.66666667,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 6.66666667,
@@ -558,6 +579,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 20,
       "endLine": 97,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -582,6 +604,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 102,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -606,6 +629,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 31,
       "endLine": 104,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 11.60964047,
@@ -625,6 +649,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 7.34545455,
     "distinctOperands": 55,
     "distinctOperators": 8,
     "effort": 5576.04142391,
@@ -670,6 +695,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 4,
       "halstead": {
+        "difficulty": 6,
         "distinctOperands": 3,
         "distinctOperators": 4,
         "effort": 235.81781345,
@@ -694,6 +720,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 10,
       "halstead": {
+        "difficulty": 2.57142857,
         "distinctOperands": 7,
         "distinctOperators": 3,
         "effort": 136.67361305,
@@ -718,6 +745,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 14,
       "halstead": {
+        "difficulty": 1.66666667,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 27.08916111,
@@ -737,6 +765,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 8.66666667,
     "distinctOperands": 9,
     "distinctOperators": 6,
     "effort": 1252.80958433,
@@ -782,6 +811,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 13,
       "halstead": {
+        "difficulty": 11.57142857,
         "distinctOperands": 7,
         "distinctOperators": 9,
         "effort": 1249.71428571,
@@ -801,6 +831,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 11.57142857,
     "distinctOperands": 7,
     "distinctOperators": 9,
     "effort": 1249.71428571,
@@ -846,6 +877,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 61,
       "endLine": 32,
       "halstead": {
+        "difficulty": 0.75,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 12.1901225,
@@ -870,6 +902,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 65,
       "halstead": {
+        "difficulty": 22.89473684,
         "distinctOperands": 19,
         "distinctOperators": 15,
         "effort": 10249.89881911,
@@ -894,6 +927,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 73,
       "halstead": {
+        "difficulty": 7,
         "distinctOperands": 10,
         "distinctOperators": 7,
         "effort": 801.14271689,
@@ -918,6 +952,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 77,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -942,6 +977,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 81,
       "halstead": {
+        "difficulty": 1.6,
         "distinctOperands": 5,
         "distinctOperators": 2,
         "effort": 44.91767875,
@@ -966,6 +1002,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 95,
       "halstead": {
+        "difficulty": 7.5862069,
         "distinctOperands": 29,
         "distinctOperators": 10,
         "effort": 2485.96159535,
@@ -985,6 +1022,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 37.92982456,
     "distinctOperands": 57,
     "distinctOperators": 23,
     "effort": 62105.51249398,
@@ -1030,6 +1068,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 42,
       "endLine": 21,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 4,
         "distinctOperators": 0,
         "effort": 0,
@@ -1054,6 +1093,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 34,
       "endLine": 24,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -1078,6 +1118,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 25,
       "endLine": 34,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 2,
         "distinctOperators": 0,
         "effort": 0,
@@ -1102,6 +1143,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 37,
       "halstead": {
+        "difficulty": 0.7,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 14.47579,
@@ -1126,6 +1168,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 66,
       "endLine": 38,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 31.01955001,
@@ -1150,6 +1193,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 77,
       "endLine": 39,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 4,
         "distinctOperators": 4,
         "effort": 99,
@@ -1174,6 +1218,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 40,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -1198,6 +1243,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 42,
       "endLine": 47,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 11.60964047,
@@ -1222,6 +1268,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 83,
       "halstead": {
+        "difficulty": 26.52083333,
         "distinctOperands": 24,
         "distinctOperators": 19,
         "effort": 14678.72444456,
@@ -1246,6 +1293,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 96,
       "halstead": {
+        "difficulty": 21.17647059,
         "distinctOperands": 17,
         "distinctOperators": 16,
         "effort": 7691.21738669,
@@ -1270,6 +1318,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 52,
       "endLine": 86,
       "halstead": {
+        "difficulty": 1.33333333,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 18.57542476,
@@ -1294,6 +1343,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 109,
       "endLine": 87,
       "halstead": {
+        "difficulty": 6.28571429,
         "distinctOperands": 7,
         "distinctOperators": 8,
         "effort": 491.15196059,
@@ -1318,6 +1368,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 100,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -1342,6 +1393,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 114,
       "halstead": {
+        "difficulty": 4.95833333,
         "distinctOperands": 12,
         "distinctOperators": 7,
         "effort": 610.81657704,
@@ -1361,6 +1413,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 52.13793103,
     "distinctOperands": 58,
     "distinctOperators": 28,
     "effort": 110902.26118329,
@@ -1406,6 +1459,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 29,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 1,
         "distinctOperators": 1,
         "effort": 1,
@@ -1430,6 +1484,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 29,
       "endLine": 30,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 1,
         "distinctOperators": 1,
         "effort": 1,
@@ -1454,6 +1509,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 39,
       "halstead": {
+        "difficulty": 2.5,
         "distinctOperands": 8,
         "distinctOperators": 4,
         "effort": 125.47368753,
@@ -1478,6 +1534,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 41,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 1,
         "distinctOperators": 0,
         "effort": 0,
@@ -1502,6 +1559,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 35,
       "endLine": 45,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 8,
@@ -1526,6 +1584,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 46,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -1550,6 +1609,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 44,
       "endLine": 50,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 36,
@@ -1574,6 +1634,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 50,
       "endLine": 51,
       "halstead": {
+        "difficulty": 0.6,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 10.8568425,
@@ -1598,6 +1659,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 117,
       "halstead": {
+        "difficulty": 21.89189189,
         "distinctOperands": 37,
         "distinctOperators": 18,
         "effort": 18478.47566815,
@@ -1622,6 +1684,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 6,
       "endLine": 126,
       "halstead": {
+        "difficulty": 4.0625,
         "distinctOperands": 16,
         "distinctOperators": 5,
         "effort": 678.06400214,
@@ -1646,6 +1709,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 139,
       "halstead": {
+        "difficulty": 11.68421053,
         "distinctOperands": 19,
         "distinctOperators": 12,
         "effort": 3531.03823343,
@@ -1670,6 +1734,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 49,
       "endLine": 131,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -1694,6 +1759,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 76,
       "endLine": 132,
       "halstead": {
+        "difficulty": 4,
         "distinctOperands": 3,
         "distinctOperators": 4,
         "effort": 112.29419688,
@@ -1718,6 +1784,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 58,
       "endLine": 133,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 31.01955001,
@@ -1742,6 +1809,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 91,
       "endLine": 141,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -1766,6 +1834,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 111,
       "endLine": 143,
       "halstead": {
+        "difficulty": 4,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 202.87520009,
@@ -1790,6 +1859,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 80,
       "endLine": 145,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 22.61842188,
@@ -1814,6 +1884,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 150,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 11.60964047,
@@ -1833,6 +1904,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 34.59574468,
     "distinctOperands": 94,
     "distinctOperators": 24,
     "effort": 96910.83579772,
@@ -1878,6 +1950,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 33,
       "halstead": {
+        "difficulty": 6.61111111,
         "distinctOperands": 9,
         "distinctOperators": 7,
         "effort": 661.11111111,
@@ -1902,6 +1975,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 40,
       "halstead": {
+        "difficulty": 3.33333333,
         "distinctOperands": 15,
         "distinctOperators": 5,
         "effort": 388.97352854,
@@ -1926,6 +2000,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 49,
       "endLine": 42,
       "halstead": {
+        "difficulty": 1.2,
         "distinctOperands": 5,
         "distinctOperators": 2,
         "effort": 26.95060725,
@@ -1950,6 +2025,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 84,
       "halstead": {
+        "difficulty": 19.23913043,
         "distinctOperands": 23,
         "distinctOperators": 15,
         "effort": 8985.93501296,
@@ -1974,6 +2050,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 76,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -1998,6 +2075,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 91,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 126,
@@ -2022,6 +2100,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 47,
       "endLine": 93,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 37.15084952,
@@ -2041,6 +2120,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 28.875,
     "distinctOperands": 52,
     "distinctOperators": 21,
     "effort": 35924.96801167,
@@ -2086,6 +2166,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 21,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 3,
         "distinctOperators": 0,
         "effort": 0,
@@ -2110,6 +2191,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 30,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 5.80482024,
@@ -2134,6 +2216,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 35,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 15.509775,
@@ -2158,6 +2241,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 42,
       "halstead": {
+        "difficulty": 2.28571429,
         "distinctOperands": 7,
         "distinctOperators": 4,
         "effort": 94.88726725,
@@ -2182,6 +2266,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 51,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 6,
         "distinctOperators": 2,
         "effort": 31.5,
@@ -2206,6 +2291,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 59,
       "halstead": {
+        "difficulty": 2.90909091,
         "distinctOperands": 11,
         "distinctOperators": 4,
         "effort": 238.6754982,
@@ -2230,6 +2316,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 93,
       "halstead": {
+        "difficulty": 19.79166667,
         "distinctOperands": 36,
         "distinctOperators": 19,
         "effort": 13616.30657529,
@@ -2254,6 +2341,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 105,
       "halstead": {
+        "difficulty": 6.93333333,
         "distinctOperands": 15,
         "distinctOperators": 8,
         "effort": 1223.17115292,
@@ -2278,6 +2366,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 118,
       "halstead": {
+        "difficulty": 6.52631579,
         "distinctOperands": 19,
         "distinctOperators": 8,
         "effort": 1458.49917698,
@@ -2302,6 +2391,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 113,
       "halstead": {
+        "difficulty": 0.58333333,
         "distinctOperands": 6,
         "distinctOperators": 1,
         "effort": 14.73861334,
@@ -2326,6 +2416,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 103,
       "endLine": 116,
       "halstead": {
+        "difficulty": 4,
         "distinctOperands": 3,
         "distinctOperators": 4,
         "effort": 112.29419688,
@@ -2350,6 +2441,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 122,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -2369,6 +2461,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 30.23595506,
     "distinctOperands": 89,
     "distinctOperators": 23,
     "effort": 71421.92648375,
@@ -2414,6 +2507,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 13,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 3,
         "distinctOperators": 3,
         "effort": 41.35940001,
@@ -2438,6 +2532,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 16,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 13.93156857,
@@ -2462,6 +2557,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 19,
       "halstead": {
+        "difficulty": 0.66666667,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 6.66666667,
@@ -2486,6 +2582,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 24,
       "halstead": {
+        "difficulty": 2.4,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 98.90166005,
@@ -2510,6 +2607,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 28,
       "halstead": {
+        "difficulty": 2.8,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 97.63369004,
@@ -2534,6 +2632,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 67,
       "halstead": {
+        "difficulty": 22.125,
         "distinctOperands": 24,
         "distinctOperators": 18,
         "effort": 11095.36713705,
@@ -2558,6 +2657,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 72,
       "halstead": {
+        "difficulty": 6,
         "distinctOperands": 12,
         "distinctOperators": 8,
         "effort": 726.08391994,
@@ -2582,6 +2682,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 67,
       "endLine": 71,
       "halstead": {
+        "difficulty": 2.625,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 73.6930667,
@@ -2606,6 +2707,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 77,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 101.06477719,
@@ -2625,6 +2727,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 32.89795918,
     "distinctOperands": 49,
     "distinctOperators": 26,
     "effort": 40983.08460849,
@@ -2670,6 +2773,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 8,
       "halstead": {
+        "difficulty": 2.25,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 69.48203432,
@@ -2694,6 +2798,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 50,
       "endLine": 7,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 2,
         "distinctOperators": 3,
         "effort": 48.76048999,
@@ -2718,6 +2823,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 19,
       "halstead": {
+        "difficulty": 6.28571429,
         "distinctOperands": 14,
         "distinctOperators": 8,
         "effort": 1205.32066035,
@@ -2742,6 +2848,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 34,
       "halstead": {
+        "difficulty": 9.23684211,
         "distinctOperands": 19,
         "distinctOperators": 9,
         "effort": 3241.54882021,
@@ -2766,6 +2873,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 79,
       "endLine": 22,
       "halstead": {
+        "difficulty": 4,
         "distinctOperands": 3,
         "distinctOperators": 4,
         "effort": 123.52361657,
@@ -2790,6 +2898,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 78,
       "endLine": 26,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 25.84962501,
@@ -2814,6 +2923,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 66,
       "endLine": 29,
       "halstead": {
+        "difficulty": 3.33333333,
         "distinctOperands": 3,
         "distinctOperators": 4,
         "effort": 84.22064766,
@@ -2838,6 +2948,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 89,
       "endLine": 30,
       "halstead": {
+        "difficulty": 5,
         "distinctOperands": 6,
         "distinctOperators": 6,
         "effort": 322.64662506,
@@ -2862,6 +2973,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 83,
       "endLine": 36,
       "halstead": {
+        "difficulty": 3.5,
         "distinctOperands": 4,
         "distinctOperators": 4,
         "effort": 168,
@@ -2886,6 +2998,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 45,
       "halstead": {
+        "difficulty": 2.16666667,
         "distinctOperands": 12,
         "distinctOperators": 4,
         "effort": 190.66666667,
@@ -2905,6 +3018,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 11.53846154,
     "distinctOperands": 52,
     "distinctOperators": 12,
     "effort": 12530.76923077,
@@ -2950,6 +3064,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 29,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -2974,6 +3089,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 31,
       "endLine": 32,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -2998,6 +3114,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 47,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 8,
@@ -3022,6 +3139,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 33,
       "endLine": 51,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 8,
@@ -3046,6 +3164,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 9,
       "endLine": 54,
       "halstead": {
+        "difficulty": 1.33333333,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 18.57542476,
@@ -3070,6 +3189,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 65,
       "halstead": {
+        "difficulty": 2.14285714,
         "distinctOperands": 7,
         "distinctOperators": 3,
         "effort": 92.5394255,
@@ -3094,6 +3214,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 101,
       "halstead": {
+        "difficulty": 19.5,
         "distinctOperands": 38,
         "distinctOperators": 19,
         "effort": 13762.70398842,
@@ -3118,6 +3239,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 44,
       "endLine": 91,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 1,
         "distinctOperators": 0,
         "effort": 0,
@@ -3142,6 +3264,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 113,
       "halstead": {
+        "difficulty": 3.75,
         "distinctOperands": 14,
         "distinctOperators": 5,
         "effort": 509.75130161,
@@ -3166,6 +3289,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 131,
       "halstead": {
+        "difficulty": 12.4,
         "distinctOperands": 30,
         "distinctOperators": 12,
         "effort": 6218.42045195,
@@ -3190,6 +3314,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 13,
       "endLine": 120,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 25.84962501,
@@ -3214,6 +3339,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 80,
       "endLine": 123,
       "halstead": {
+        "difficulty": 2.625,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 73.6930667,
@@ -3238,6 +3364,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 88,
       "endLine": 124,
       "halstead": {
+        "difficulty": 3.57142857,
         "distinctOperands": 7,
         "distinctOperators": 5,
         "effort": 192.05156254,
@@ -3262,6 +3389,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 49,
       "endLine": 125,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 22.61842188,
@@ -3286,6 +3414,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 43,
       "endLine": 126,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -3310,6 +3439,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 56,
       "endLine": 126,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 1,
         "distinctOperators": 0,
         "effort": 0,
@@ -3334,6 +3464,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 79,
       "endLine": 134,
       "halstead": {
+        "difficulty": 1.83333333,
         "distinctOperands": 9,
         "distinctOperators": 3,
         "effort": 111.73133127,
@@ -3358,6 +3489,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 83,
       "endLine": 136,
       "halstead": {
+        "difficulty": 5.2,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 296.70498014,
@@ -3382,6 +3514,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 76,
       "endLine": 138,
       "halstead": {
+        "difficulty": 3.6,
         "distinctOperands": 5,
         "distinctOperators": 6,
         "effort": 149.44744593,
@@ -3401,6 +3534,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 32.22689076,
     "distinctOperands": 119,
     "distinctOperators": 26,
     "effort": 100652.97345958,
@@ -3446,6 +3580,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 24,
       "endLine": 15,
       "halstead": {
+        "difficulty": 2.5,
         "distinctOperands": 6,
         "distinctOperators": 3,
         "effort": 110.94737505,
@@ -3470,6 +3605,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 30,
       "endLine": 19,
       "halstead": {
+        "difficulty": 1.8,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 48.6,
@@ -3494,6 +3630,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 69,
       "endLine": 23,
       "halstead": {
+        "difficulty": 2.85714286,
         "distinctOperands": 7,
         "distinctOperators": 4,
         "effort": 138.37726475,
@@ -3518,6 +3655,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 28,
       "halstead": {
+        "difficulty": 2.25,
         "distinctOperands": 6,
         "distinctOperators": 3,
         "effort": 85.58797504,
@@ -3542,6 +3680,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 44,
       "endLine": 68,
       "halstead": {
+        "difficulty": 18.13333333,
         "distinctOperands": 30,
         "distinctOperators": 17,
         "effort": 9770.15148418,
@@ -3566,6 +3705,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 44,
       "endLine": 78,
       "halstead": {
+        "difficulty": 6.25,
         "distinctOperands": 12,
         "distinctOperators": 6,
         "effort": 886.10906281,
@@ -3590,6 +3730,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 51,
       "endLine": 74,
       "halstead": {
+        "difficulty": 3.5,
         "distinctOperands": 3,
         "distinctOperators": 3,
         "effort": 90.47368753,
@@ -3614,6 +3755,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 39,
       "endLine": 77,
       "halstead": {
+        "difficulty": 0.83333333,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 10,
@@ -3638,6 +3780,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 27,
       "endLine": 84,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 101.06477719,
@@ -3657,6 +3800,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 28.19047619,
     "distinctOperands": 63,
     "distinctOperators": 24,
     "effort": 38505.48478586,
@@ -3702,6 +3846,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 18,
       "halstead": {
+        "difficulty": 3.25,
         "distinctOperands": 12,
         "distinctOperators": 6,
         "effort": 271.04512509,
@@ -3726,6 +3871,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 36,
       "endLine": 20,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 22.61842188,
@@ -3750,6 +3896,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 24,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 15.509775,
@@ -3774,6 +3921,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 42,
       "halstead": {
+        "difficulty": 5.6,
         "distinctOperands": 20,
         "distinctOperators": 7,
         "effort": 1144.97691052,
@@ -3798,6 +3946,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 76,
       "halstead": {
+        "difficulty": 13.79411765,
         "distinctOperands": 34,
         "distinctOperators": 14,
         "effort": 7626.92334915,
@@ -3822,6 +3971,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 9,
       "endLine": 54,
       "halstead": {
+        "difficulty": 6.66666667,
         "distinctOperands": 9,
         "distinctOperators": 6,
         "effort": 781.37811912,
@@ -3846,6 +3996,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 73,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 18,
@@ -3870,6 +4021,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 82,
       "halstead": {
+        "difficulty": 0.66666667,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 6.66666667,
@@ -3894,6 +4046,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 32,
       "endLine": 86,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 15,
@@ -3918,6 +4071,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 89,
       "halstead": {
+        "difficulty": 4.16666667,
         "distinctOperands": 6,
         "distinctOperators": 5,
         "effort": 273.87166981,
@@ -3942,6 +4096,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 81,
       "endLine": 88,
       "halstead": {
+        "difficulty": 4.375,
         "distinctOperands": 4,
         "distinctOperators": 5,
         "effort": 180.28948446,
@@ -3966,6 +4121,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 95,
       "halstead": {
+        "difficulty": 2.5,
         "distinctOperands": 12,
         "distinctOperators": 3,
         "effort": 273.48234169,
@@ -3985,6 +4141,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 20.31521739,
     "distinctOperands": 92,
     "distinctOperators": 21,
     "effort": 35746.78191342,
@@ -4030,6 +4187,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 22,
       "halstead": {
+        "difficulty": 2.33333333,
         "distinctOperands": 6,
         "distinctOperators": 4,
         "effort": 85.2628211,
@@ -4054,6 +4212,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 28,
       "halstead": {
+        "difficulty": 2.75,
         "distinctOperands": 8,
         "distinctOperators": 4,
         "effort": 147.87970315,
@@ -4078,6 +4237,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 66,
       "halstead": {
+        "difficulty": 20.48717949,
         "distinctOperands": 39,
         "distinctOperators": 17,
         "effort": 17489.51942719,
@@ -4102,6 +4262,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 46,
       "endLine": 64,
       "halstead": {
+        "difficulty": 1.33333333,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 21.67132889,
@@ -4126,6 +4287,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 72,
       "halstead": {
+        "difficulty": 4.9,
         "distinctOperands": 10,
         "distinctOperators": 7,
         "effort": 480.68563013,
@@ -4150,6 +4312,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 82,
       "halstead": {
+        "difficulty": 11.5,
         "distinctOperands": 12,
         "distinctOperators": 12,
         "effort": 2056.35568157,
@@ -4174,6 +4337,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 86,
       "halstead": {
+        "difficulty": 3.75,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 136.85855245,
@@ -4193,6 +4357,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 29.79166667,
     "distinctOperands": 72,
     "distinctOperators": 22,
     "effort": 57995.82148325,
@@ -4238,6 +4403,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 6,
       "endLine": 26,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 5,
         "distinctOperators": 0,
         "effort": 0,
@@ -4262,6 +4428,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 30,
       "halstead": {
+        "difficulty": 2.1,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 63,
@@ -4286,6 +4453,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 38,
       "halstead": {
+        "difficulty": 5.25,
         "distinctOperands": 12,
         "distinctOperators": 6,
         "effort": 700.54740024,
@@ -4310,6 +4478,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 56,
       "endLine": 35,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 11.60964047,
@@ -4334,6 +4503,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 28,
       "endLine": 37,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 1,
         "distinctOperators": 0,
         "effort": 0,
@@ -4358,6 +4528,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 43,
       "halstead": {
+        "difficulty": 9.44444444,
         "distinctOperands": 9,
         "distinctOperators": 10,
         "effort": 1123.34083133,
@@ -4382,6 +4553,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 49,
       "endLine": 45,
       "halstead": {
+        "difficulty": 5.83333333,
         "distinctOperands": 6,
         "distinctOperators": 7,
         "effort": 388.5461704,
@@ -4406,6 +4578,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 52,
       "halstead": {
+        "difficulty": 8.44444444,
         "distinctOperands": 9,
         "distinctOperators": 8,
         "effort": 1000.97423357,
@@ -4425,6 +4598,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 20.9787234,
     "distinctOperands": 47,
     "distinctOperators": 17,
     "effort": 21020.68085106,
@@ -4470,6 +4644,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 14,
       "halstead": {
+        "difficulty": 5.25,
         "distinctOperands": 16,
         "distinctOperators": 7,
         "effort": 878.70190996,
@@ -4494,6 +4669,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 73,
       "endLine": 12,
       "halstead": {
+        "difficulty": 2.25,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 56.84893717,
@@ -4518,6 +4694,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 24,
       "halstead": {
+        "difficulty": 5.75,
         "distinctOperands": 14,
         "distinctOperators": 7,
         "effort": 934.4655317,
@@ -4542,6 +4719,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 63,
       "endLine": 18,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 18,
@@ -4566,6 +4744,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 62,
       "endLine": 18,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 1,
         "distinctOperators": 2,
         "effort": 12.67970001,
@@ -4590,6 +4769,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 32,
       "halstead": {
+        "difficulty": 3.75,
         "distinctOperands": 8,
         "distinctOperators": 5,
         "effort": 291.4096278,
@@ -4614,6 +4794,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 44,
       "halstead": {
+        "difficulty": 7.59375,
         "distinctOperands": 16,
         "distinctOperators": 9,
         "effort": 1798.47843,
@@ -4638,6 +4819,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 11,
       "endLine": 40,
       "halstead": {
+        "difficulty": 7.2,
         "distinctOperands": 10,
         "distinctOperators": 8,
         "effort": 990.77418034,
@@ -4662,6 +4844,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 111,
       "endLine": 39,
       "halstead": {
+        "difficulty": 3.33333333,
         "distinctOperands": 3,
         "distinctOperators": 4,
         "effort": 93.5784974,
@@ -4681,6 +4864,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 14.92592593,
     "distinctOperands": 54,
     "distinctOperators": 13,
     "effort": 18108.39958337,
@@ -4726,6 +4910,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 11,
       "halstead": {
+        "difficulty": 3.33333333,
         "distinctOperands": 9,
         "distinctOperators": 5,
         "effort": 215.75011225,
@@ -4745,6 +4930,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 4.3125,
     "distinctOperands": 16,
     "distinctOperators": 6,
     "effort": 576.93896566,
@@ -4826,6 +5012,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 12,
       "halstead": {
+        "difficulty": 7.63636364,
         "distinctOperands": 11,
         "distinctOperators": 7,
         "effort": 1210.0364186,
@@ -4850,6 +5037,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 25,
       "halstead": {
+        "difficulty": 7.63636364,
         "distinctOperands": 11,
         "distinctOperators": 7,
         "effort": 1210.0364186,
@@ -4869,6 +5057,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 12,
     "distinctOperands": 14,
     "distinctOperators": 7,
     "effort": 4005.79348957,
@@ -4950,6 +5139,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 15,
       "halstead": {
+        "difficulty": 13.84615385,
         "distinctOperands": 13,
         "distinctOperators": 9,
         "effort": 3643.01259923,
@@ -4974,6 +5164,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 28,
       "halstead": {
+        "difficulty": 13.84615385,
         "distinctOperands": 13,
         "distinctOperators": 9,
         "effort": 3643.01259923,
@@ -4998,6 +5189,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 34,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5022,6 +5214,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 39,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5041,6 +5234,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 9.71428571,
     "distinctOperands": 63,
     "distinctOperators": 9,
     "effort": 10668.68174535,
@@ -5122,6 +5316,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 16,
       "halstead": {
+        "difficulty": 16,
         "distinctOperands": 15,
         "distinctOperators": 12,
         "effort": 5021.16120228,
@@ -5146,6 +5341,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 29,
       "halstead": {
+        "difficulty": 16,
         "distinctOperands": 15,
         "distinctOperators": 12,
         "effort": 5021.16120228,
@@ -5170,6 +5366,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 35,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5194,6 +5391,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 40,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5213,6 +5411,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 12.75,
     "distinctOperands": 64,
     "distinctOperators": 12,
     "effort": 15294.92655291,
@@ -5298,6 +5497,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 18,
       "halstead": {
+        "difficulty": 13.15384615,
         "distinctOperands": 13,
         "distinctOperators": 9,
         "effort": 3226.22725948,
@@ -5322,6 +5522,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 34,
       "halstead": {
+        "difficulty": 13.15384615,
         "distinctOperands": 13,
         "distinctOperators": 9,
         "effort": 3226.22725948,
@@ -5346,6 +5547,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 41,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5370,6 +5572,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 47,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5389,6 +5592,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 9.5,
     "distinctOperands": 63,
     "distinctOperators": 9,
     "effort": 10023.04316484,
@@ -5476,6 +5680,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 18,
       "halstead": {
+        "difficulty": 7.75,
         "distinctOperands": 12,
         "distinctOperators": 6,
         "effort": 1454.26134425,
@@ -5500,6 +5705,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 34,
       "halstead": {
+        "difficulty": 7.75,
         "distinctOperands": 12,
         "distinctOperators": 6,
         "effort": 1454.26134425,
@@ -5524,6 +5730,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 40,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5548,6 +5755,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 45,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5567,6 +5775,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 5.61904762,
     "distinctOperands": 63,
     "distinctOperators": 6,
     "effort": 5148.61347071,
@@ -5648,6 +5857,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 14,
       "halstead": {
+        "difficulty": 13.15384615,
         "distinctOperands": 13,
         "distinctOperators": 9,
         "effort": 3226.22725948,
@@ -5672,6 +5882,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 27,
       "halstead": {
+        "difficulty": 13.15384615,
         "distinctOperands": 13,
         "distinctOperators": 9,
         "effort": 3226.22725948,
@@ -5696,6 +5907,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 33,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5720,6 +5932,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 38,
       "halstead": {
+        "difficulty": 1.16666667,
         "distinctOperands": 24,
         "distinctOperators": 2,
         "effort": 164.51539013,
@@ -5739,6 +5952,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 9.5,
     "distinctOperands": 63,
     "distinctOperators": 9,
     "effort": 10023.04316484,
@@ -5820,6 +6034,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 13,
       "halstead": {
+        "difficulty": 8.59090909,
         "distinctOperands": 11,
         "distinctOperators": 7,
         "effort": 1540.40820394,
@@ -5844,6 +6059,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 26,
       "halstead": {
+        "difficulty": 8.59090909,
         "distinctOperands": 11,
         "distinctOperators": 7,
         "effort": 1540.40820394,
@@ -5868,6 +6084,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 32,
       "halstead": {
+        "difficulty": 1.08695652,
         "distinctOperands": 23,
         "distinctOperators": 2,
         "effort": 136.28708383,
@@ -5892,6 +6109,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 37,
       "halstead": {
+        "difficulty": 1.08695652,
         "distinctOperands": 23,
         "distinctOperators": 2,
         "effort": 136.28708383,
@@ -5911,6 +6129,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 5.96721311,
     "distinctOperands": 61,
     "distinctOperators": 7,
     "effort": 5085.52633426,
@@ -6024,6 +6243,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 12,
       "halstead": {
+        "difficulty": 5.14705882,
         "distinctOperands": 17,
         "distinctOperators": 5,
         "effort": 1491.94219594,
@@ -6048,6 +6268,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 24,
       "halstead": {
+        "difficulty": 5.14705882,
         "distinctOperands": 17,
         "distinctOperators": 5,
         "effort": 1491.94219594,
@@ -6072,6 +6293,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 38,
       "halstead": {
+        "difficulty": 8.59090909,
         "distinctOperands": 11,
         "distinctOperators": 7,
         "effort": 1540.40820394,
@@ -6096,6 +6318,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 51,
       "halstead": {
+        "difficulty": 8.59090909,
         "distinctOperands": 11,
         "distinctOperators": 7,
         "effort": 1540.40820394,
@@ -6115,6 +6338,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 18,
     "distinctOperands": 31,
     "distinctOperators": 9,
     "effort": 20691.65643292,
@@ -6196,6 +6420,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 14,
       "halstead": {
+        "difficulty": 7.75,
         "distinctOperands": 14,
         "distinctOperators": 7,
         "effort": 1531.82070119,
@@ -6220,6 +6445,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 27,
       "halstead": {
+        "difficulty": 7.75,
         "distinctOperands": 14,
         "distinctOperators": 7,
         "effort": 1531.82070119,
@@ -6244,6 +6470,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 33,
       "halstead": {
+        "difficulty": 1.12,
         "distinctOperands": 25,
         "distinctOperators": 2,
         "effort": 159.76422007,
@@ -6268,6 +6495,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 38,
       "halstead": {
+        "difficulty": 1.12,
         "distinctOperands": 25,
         "distinctOperators": 2,
         "effort": 159.76422007,
@@ -6287,6 +6515,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 6.31060606,
     "distinctOperands": 66,
     "distinctOperators": 7,
     "effort": 5898.29320068,
@@ -6360,6 +6589,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 34,
       "endLine": 10,
       "halstead": {
+        "difficulty": 8.59090909,
         "distinctOperands": 11,
         "distinctOperators": 7,
         "effort": 1540.40820394,
@@ -6384,6 +6614,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 34,
       "endLine": 21,
       "halstead": {
+        "difficulty": 8.59090909,
         "distinctOperands": 11,
         "distinctOperators": 7,
         "effort": 1540.40820394,
@@ -6408,6 +6639,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 24,
       "endLine": 27,
       "halstead": {
+        "difficulty": 1.08695652,
         "distinctOperands": 23,
         "distinctOperators": 2,
         "effort": 136.28708383,
@@ -6432,6 +6664,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 24,
       "endLine": 32,
       "halstead": {
+        "difficulty": 1.08695652,
         "distinctOperands": 23,
         "distinctOperators": 2,
         "effort": 136.28708383,
@@ -6451,6 +6684,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 5.96721311,
     "distinctOperands": 61,
     "distinctOperators": 7,
     "effort": 5085.52633426,
@@ -6528,6 +6762,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 13,
       "halstead": {
+        "difficulty": 8.16666667,
         "distinctOperands": 12,
         "distinctOperators": 7,
         "effort": 1526.42195316,
@@ -6552,6 +6787,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 10,
       "halstead": {
+        "difficulty": 3.14285714,
         "distinctOperands": 7,
         "distinctOperators": 4,
         "effort": 195.70498871,
@@ -6576,6 +6812,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 26,
       "halstead": {
+        "difficulty": 8.16666667,
         "distinctOperands": 12,
         "distinctOperators": 7,
         "effort": 1526.42195316,
@@ -6600,6 +6837,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 23,
       "halstead": {
+        "difficulty": 3.14285714,
         "distinctOperands": 7,
         "distinctOperators": 4,
         "effort": 195.70498871,
@@ -6624,6 +6862,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 32,
       "halstead": {
+        "difficulty": 0.54347826,
         "distinctOperands": 23,
         "distinctOperators": 1,
         "effort": 64.7875136,
@@ -6648,6 +6887,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 37,
       "halstead": {
+        "difficulty": 0.54347826,
         "distinctOperands": 23,
         "distinctOperators": 1,
         "effort": 64.7875136,
@@ -6667,6 +6907,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 5.98387097,
     "distinctOperands": 62,
     "distinctOperators": 7,
     "effort": 5117.36710137,
@@ -6748,6 +6989,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 13,
       "halstead": {
+        "difficulty": 9.14285714,
         "distinctOperands": 14,
         "distinctOperators": 8,
         "effort": 1997.82536515,
@@ -6772,6 +7014,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 26,
       "halstead": {
+        "difficulty": 9.14285714,
         "distinctOperands": 14,
         "distinctOperators": 8,
         "effort": 1997.82536515,
@@ -6796,6 +7039,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 32,
       "halstead": {
+        "difficulty": 1.08,
         "distinctOperands": 25,
         "distinctOperators": 2,
         "effort": 148.92307657,
@@ -6820,6 +7064,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 37,
       "halstead": {
+        "difficulty": 1.08,
         "distinctOperands": 25,
         "distinctOperators": 2,
         "effort": 148.92307657,
@@ -6839,6 +7084,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 7.15151515,
     "distinctOperands": 66,
     "distinctOperators": 8,
     "effort": 6927.491973,
@@ -6920,6 +7166,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 13,
       "halstead": {
+        "difficulty": 8.61538462,
         "distinctOperands": 13,
         "distinctOperators": 7,
         "effort": 1787.28349524,
@@ -6944,6 +7191,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 26,
       "halstead": {
+        "difficulty": 8.61538462,
         "distinctOperands": 13,
         "distinctOperators": 7,
         "effort": 1787.28349524,
@@ -6968,6 +7216,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 32,
       "halstead": {
+        "difficulty": 1.68,
         "distinctOperands": 25,
         "distinctOperators": 3,
         "effort": 250.36704434,
@@ -6992,6 +7241,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 37,
       "halstead": {
+        "difficulty": 1.68,
         "distinctOperands": 25,
         "distinctOperators": 3,
         "effort": 250.36704434,
@@ -7011,6 +7261,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 7.61904762,
     "distinctOperands": 63,
     "distinctOperators": 8,
     "effort": 7403.12415148,
@@ -7124,6 +7375,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 20,
       "halstead": {
+        "difficulty": 5.13888889,
         "distinctOperands": 18,
         "distinctOperators": 5,
         "effort": 1557.48751237,
@@ -7148,6 +7400,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 32,
       "halstead": {
+        "difficulty": 5.13888889,
         "distinctOperands": 18,
         "distinctOperators": 5,
         "effort": 1557.48751237,
@@ -7172,6 +7425,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 46,
       "halstead": {
+        "difficulty": 7.80769231,
         "distinctOperands": 13,
         "distinctOperators": 7,
         "effort": 1518.49281334,
@@ -7196,6 +7450,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 59,
       "halstead": {
+        "difficulty": 7.80769231,
         "distinctOperands": 13,
         "distinctOperators": 7,
         "effort": 1518.49281334,
@@ -7215,6 +7470,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 18.92647059,
     "distinctOperands": 34,
     "distinctOperators": 9,
     "effort": 24134.5094667,
@@ -7260,6 +7516,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 21,
       "endLine": 8,
       "halstead": {
+        "difficulty": 1.28571429,
         "distinctOperands": 7,
         "distinctOperators": 2,
         "effort": 57.05865003,
@@ -7279,6 +7536,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 1.28571429,
     "distinctOperands": 7,
     "distinctOperators": 2,
     "effort": 57.05865003,
@@ -7324,6 +7582,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 7,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 34.89699376,
@@ -7343,6 +7602,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 1.5,
     "distinctOperands": 4,
     "distinctOperators": 2,
     "effort": 34.89699376,
@@ -7388,6 +7648,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 34,
       "endLine": 1,
       "halstead": {
+        "difficulty": 0.66666667,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 8,
@@ -7407,6 +7668,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 1.2,
     "distinctOperands": 5,
     "distinctOperators": 2,
     "effort": 30.31943316,
@@ -7446,6 +7708,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [],
   "halstead": {
+    "difficulty": 1,
     "distinctOperands": 5,
     "distinctOperators": 2,
     "effort": 22.45883938,
@@ -7491,6 +7754,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 3,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 3,
         "distinctOperators": 0,
         "effort": 0,
@@ -7515,6 +7779,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 29,
       "endLine": 5,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 0,
         "distinctOperators": 0,
         "effort": 0,
@@ -7539,6 +7804,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 5,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 0,
         "distinctOperators": 0,
         "effort": 0,
@@ -7558,6 +7824,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 0.5,
     "distinctOperands": 6,
     "distinctOperators": 1,
     "effort": 9.82574223,
@@ -7603,6 +7870,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 6,
       "halstead": {
+        "difficulty": 2.7,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 105.3,
@@ -7622,6 +7890,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 3.33333333,
     "distinctOperands": 6,
     "distinctOperators": 4,
     "effort": 166.09640474,
@@ -7667,6 +7936,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 82,
       "endLine": 1,
       "halstead": {
+        "difficulty": 0.58333333,
         "distinctOperands": 6,
         "distinctOperators": 1,
         "effort": 13.10098964,
@@ -7691,6 +7961,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 60,
       "endLine": 3,
       "halstead": {
+        "difficulty": 0.75,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 12.1901225,
@@ -7715,6 +7986,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 9,
       "halstead": {
+        "difficulty": 2.66666667,
         "distinctOperands": 6,
         "distinctOperators": 4,
         "effort": 115.16017396,
@@ -7734,6 +8006,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 4,
     "distinctOperands": 15,
     "distinctOperators": 5,
     "effort": 570.49450853,
@@ -7773,6 +8046,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [],
   "halstead": {
+    "difficulty": 0.5,
     "distinctOperands": 6,
     "distinctOperators": 1,
     "effort": 9.82574223,
@@ -7818,6 +8092,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 3,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -7842,6 +8117,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 10,
       "halstead": {
+        "difficulty": 3.6,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 159.76422007,
@@ -7861,6 +8137,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 3.66666667,
     "distinctOperands": 6,
     "distinctOperators": 4,
     "effort": 207.06685125,
@@ -7906,6 +8183,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 15,
       "endLine": 2,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 2,
         "distinctOperators": 0,
         "effort": 0,
@@ -7930,6 +8208,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 25,
       "endLine": 4,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 4,
         "distinctOperators": 0,
         "effort": 0,
@@ -7954,6 +8233,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 9,
       "halstead": {
+        "difficulty": 0.6,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 10.8568425,
@@ -7978,6 +8258,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 15,
       "endLine": 13,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 2,
         "distinctOperators": 0,
         "effort": 0,
@@ -8002,6 +8283,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 17,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 3,
         "distinctOperators": 0,
         "effort": 0,
@@ -8021,6 +8303,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 0.95,
     "distinctOperands": 10,
     "distinctOperators": 1,
     "effort": 65.72920075,
@@ -8066,6 +8349,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 20,
       "halstead": {
+        "difficulty": 14.66666667,
         "distinctOperands": 15,
         "distinctOperators": 11,
         "effort": 3929.56760437,
@@ -8085,6 +8369,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 14.66666667,
     "distinctOperands": 15,
     "distinctOperators": 11,
     "effort": 3929.56760437,
@@ -8130,6 +8415,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 23,
       "halstead": {
+        "difficulty": 12.1,
         "distinctOperands": 15,
         "distinctOperators": 11,
         "effort": 2900.64135006,
@@ -8149,6 +8435,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 12.1,
     "distinctOperands": 15,
     "distinctOperators": 11,
     "effort": 2900.64135006,
@@ -8194,6 +8481,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 30,
       "halstead": {
+        "difficulty": 11.42857143,
         "distinctOperands": 14,
         "distinctOperators": 10,
         "effort": 2410.38028609,
@@ -8213,6 +8501,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 11,
     "distinctOperands": 15,
     "distinctOperators": 10,
     "effort": 2400.87365011,
@@ -8258,6 +8547,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 22,
       "halstead": {
+        "difficulty": 9.3,
         "distinctOperands": 15,
         "distinctOperators": 9,
         "effort": 1918.80680655,
@@ -8277,6 +8567,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 9.3,
     "distinctOperands": 15,
     "distinctOperators": 9,
     "effort": 1918.80680655,
@@ -8322,6 +8613,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 21,
       "halstead": {
+        "difficulty": 10.28571429,
         "distinctOperands": 14,
         "distinctOperators": 9,
         "effort": 2093.76296252,
@@ -8341,6 +8633,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 9.9,
     "distinctOperands": 15,
     "distinctOperators": 9,
     "effort": 2087.99192283,
@@ -8386,6 +8679,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 20,
       "halstead": {
+        "difficulty": 10.125,
         "distinctOperands": 12,
         "distinctOperators": 9,
         "effort": 1778.88855623,
@@ -8405,6 +8699,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 10.125,
     "distinctOperands": 12,
     "distinctOperators": 9,
     "effort": 1778.88855623,
@@ -8450,6 +8745,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 20,
       "halstead": {
+        "difficulty": 13.5,
         "distinctOperands": 10,
         "distinctOperators": 9,
         "effort": 2982.04511444,
@@ -8469,6 +8765,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 13.5,
     "distinctOperands": 10,
     "distinctOperators": 9,
     "effort": 2982.04511444,
@@ -8514,6 +8811,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 17,
       "halstead": {
+        "difficulty": 11,
         "distinctOperands": 15,
         "distinctOperators": 11,
         "effort": 2430.12733428,
@@ -8533,6 +8831,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 11,
     "distinctOperands": 15,
     "distinctOperators": 11,
     "effort": 2430.12733428,
@@ -8578,6 +8877,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 16,
       "halstead": {
+        "difficulty": 11.25,
         "distinctOperands": 12,
         "distinctOperators": 10,
         "effort": 2056.9128341,
@@ -8597,6 +8897,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 11.25,
     "distinctOperands": 12,
     "distinctOperators": 10,
     "effort": 2056.9128341,
@@ -8642,6 +8943,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 20,
       "halstead": {
+        "difficulty": 10.125,
         "distinctOperands": 12,
         "distinctOperators": 9,
         "effort": 1689.94412841,
@@ -8661,6 +8963,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 10.125,
     "distinctOperands": 12,
     "distinctOperators": 9,
     "effort": 1689.94412841,
@@ -8706,6 +9009,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 17,
       "halstead": {
+        "difficulty": 13.43333333,
         "distinctOperands": 15,
         "distinctOperators": 13,
         "effort": 3228.94005598,
@@ -8725,6 +9029,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 13.43333333,
     "distinctOperands": 15,
     "distinctOperators": 13,
     "effort": 3228.94005598,
@@ -8770,6 +9075,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 20,
       "halstead": {
+        "difficulty": 9.64285714,
         "distinctOperands": 14,
         "distinctOperators": 9,
         "effort": 1875.66265392,
@@ -8789,6 +9095,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 9.64285714,
     "distinctOperands": 14,
     "distinctOperators": 9,
     "effort": 1875.66265392,
@@ -8834,6 +9141,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 20,
       "halstead": {
+        "difficulty": 13.07692308,
         "distinctOperands": 13,
         "distinctOperators": 10,
         "effort": 3371.79348878,
@@ -8853,6 +9161,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 13.07692308,
     "distinctOperands": 13,
     "distinctOperators": 10,
     "effort": 3371.79348878,
@@ -8898,6 +9207,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 15,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 7.7548875,
@@ -8922,6 +9232,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 25,
       "halstead": {
+        "difficulty": 0.75,
         "distinctOperands": 18,
         "distinctOperators": 1,
         "effort": 121.06593413,
@@ -8946,6 +9257,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 60,
       "halstead": {
+        "difficulty": 5.10344828,
         "distinctOperands": 29,
         "distinctOperators": 4,
         "effort": 2728.84327395,
@@ -8970,6 +9282,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 73,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 31.01955001,
@@ -8994,6 +9307,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 77,
       "halstead": {
+        "difficulty": 1.4,
         "distinctOperands": 5,
         "distinctOperators": 2,
         "effort": 35.37267202,
@@ -9018,6 +9332,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 81,
       "halstead": {
+        "difficulty": 1.4,
         "distinctOperands": 5,
         "distinctOperators": 2,
         "effort": 35.37267202,
@@ -9042,6 +9357,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 93,
       "halstead": {
+        "difficulty": 1.66666667,
         "distinctOperands": 15,
         "distinctOperators": 2,
         "effort": 224.81045627,
@@ -9066,6 +9382,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 104,
       "halstead": {
+        "difficulty": 1.5625,
         "distinctOperands": 16,
         "distinctOperators": 2,
         "effort": 215.01175789,
@@ -9090,6 +9407,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 126,
       "halstead": {
+        "difficulty": 2.45454545,
         "distinctOperands": 22,
         "distinctOperators": 3,
         "effort": 615.52202952,
@@ -9114,6 +9432,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 133,
       "halstead": {
+        "difficulty": 1.6875,
         "distinctOperands": 16,
         "distinctOperators": 2,
         "effort": 239.24944696,
@@ -9138,6 +9457,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 181,
       "halstead": {
+        "difficulty": 20.94444444,
         "distinctOperands": 27,
         "distinctOperators": 13,
         "effort": 16273.86478882,
@@ -9162,6 +9482,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 186,
       "halstead": {
+        "difficulty": 0.66666667,
         "distinctOperands": 9,
         "distinctOperators": 1,
         "effort": 31.00466222,
@@ -9181,6 +9502,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 26.51785714,
     "distinctOperands": 112,
     "distinctOperators": 15,
     "effort": 106747.16667281,
@@ -9226,6 +9548,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 5,
       "halstead": {
+        "difficulty": 4.8,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 243.45024011,
@@ -9250,6 +9573,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 11,
       "halstead": {
+        "difficulty": 2.4375,
         "distinctOperands": 8,
         "distinctOperators": 3,
         "effort": 143.3501977,
@@ -9274,6 +9598,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 15,
       "halstead": {
+        "difficulty": 2.57142857,
         "distinctOperands": 7,
         "distinctOperators": 3,
         "effort": 136.67361305,
@@ -9298,6 +9623,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 24,
       "halstead": {
+        "difficulty": 2.78571429,
         "distinctOperands": 7,
         "distinctOperators": 3,
         "effort": 157.31702335,
@@ -9322,6 +9648,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 38,
       "halstead": {
+        "difficulty": 1.75,
         "distinctOperands": 12,
         "distinctOperators": 3,
         "effort": 143.57822939,
@@ -9341,6 +9668,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 9.1,
     "distinctOperands": 25,
     "distinctOperators": 7,
     "effort": 4004,
@@ -9386,6 +9714,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 14,
       "halstead": {
+        "difficulty": 3.14285714,
         "distinctOperands": 7,
         "distinctOperators": 4,
         "effort": 184.83248934,
@@ -9410,6 +9739,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 18,
       "halstead": {
+        "difficulty": 2.375,
         "distinctOperands": 12,
         "distinctOperators": 3,
         "effort": 250.52935944,
@@ -9434,6 +9764,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 26,
       "halstead": {
+        "difficulty": 5,
         "distinctOperands": 8,
         "distinctOperators": 4,
         "effort": 501.8947501,
@@ -9458,6 +9789,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 35,
       "halstead": {
+        "difficulty": 6.42857143,
         "distinctOperands": 7,
         "distinctOperators": 6,
         "effort": 499.55936195,
@@ -9482,6 +9814,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 42,
       "halstead": {
+        "difficulty": 2.46153846,
         "distinctOperands": 13,
         "distinctOperators": 4,
         "effort": 251.53617485,
@@ -9506,6 +9839,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 9,
       "endLine": 41,
       "halstead": {
+        "difficulty": 2.1,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 69.3,
@@ -9525,6 +9859,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 15.67647059,
     "distinctOperands": 34,
     "distinctOperators": 13,
     "effort": 10362.0855028,
@@ -9570,6 +9905,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 6,
       "halstead": {
+        "difficulty": 1.83333333,
         "distinctOperands": 6,
         "distinctOperators": 2,
         "effort": 77,
@@ -9594,6 +9930,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 11,
       "halstead": {
+        "difficulty": 1.83333333,
         "distinctOperands": 6,
         "distinctOperators": 2,
         "effort": 77,
@@ -9618,6 +9955,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 16,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 7,
         "distinctOperators": 3,
         "effort": 179.38411712,
@@ -9642,6 +9980,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 19,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -9666,6 +10005,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 38,
       "halstead": {
+        "difficulty": 6.25,
         "distinctOperands": 14,
         "distinctOperators": 7,
         "effort": 960.81943623,
@@ -9690,6 +10030,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 13,
       "endLine": 35,
       "halstead": {
+        "difficulty": 4.36363636,
         "distinctOperands": 11,
         "distinctOperators": 6,
         "effort": 410.23263425,
@@ -9709,6 +10050,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 13.51851852,
     "distinctOperands": 27,
     "distinctOperators": 10,
     "effort": 6901.56099587,
@@ -9754,6 +10096,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 9,
       "endLine": 6,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 15.509775,
@@ -9778,6 +10121,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 9,
       "endLine": 12,
       "halstead": {
+        "difficulty": 0.6,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 12.40782,
@@ -9802,6 +10146,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 16,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 15.509775,
@@ -9826,6 +10171,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 22,
       "halstead": {
+        "difficulty": 1.28571429,
         "distinctOperands": 7,
         "distinctOperators": 2,
         "effort": 52.98303217,
@@ -9850,6 +10196,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 27,
       "halstead": {
+        "difficulty": 0.75,
         "distinctOperands": 8,
         "distinctOperators": 1,
         "effort": 40.41654377,
@@ -9869,6 +10216,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 3.79310345,
     "distinctOperands": 29,
     "distinctOperators": 5,
     "effort": 1138.53909792,
@@ -9914,6 +10262,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 10,
       "halstead": {
+        "difficulty": 6,
         "distinctOperands": 6,
         "distinctOperators": 6,
         "effort": 387.17595008,
@@ -9938,6 +10287,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 20,
       "halstead": {
+        "difficulty": 2.4,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 86.4,
@@ -9962,6 +10312,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 29,
       "halstead": {
+        "difficulty": 0.59090909,
         "distinctOperands": 11,
         "distinctOperators": 1,
         "effort": 33.89419092,
@@ -9986,6 +10337,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 40,
       "halstead": {
+        "difficulty": 8.3125,
         "distinctOperands": 8,
         "distinctOperators": 7,
         "effort": 876.85275805,
@@ -10010,6 +10362,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 44,
       "halstead": {
+        "difficulty": 2.57142857,
         "distinctOperands": 7,
         "distinctOperators": 3,
         "effort": 145.21571386,
@@ -10034,6 +10387,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 48,
       "halstead": {
+        "difficulty": 3.75,
         "distinctOperands": 12,
         "distinctOperators": 5,
         "effort": 429.18359833,
@@ -10058,6 +10412,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 81,
       "endLine": 46,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 4,
         "distinctOperators": 4,
         "effort": 90,
@@ -10077,6 +10432,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 17.78571429,
     "distinctOperands": 28,
     "distinctOperators": 12,
     "effort": 11263.86081283,
@@ -10122,6 +10478,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 10,
       "halstead": {
+        "difficulty": 0.75,
         "distinctOperands": 6,
         "distinctOperators": 1,
         "effort": 23.16067811,
@@ -10146,6 +10503,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 21,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 6,
         "distinctOperators": 2,
         "effort": 58.5,
@@ -10170,6 +10528,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 30,
       "halstead": {
+        "difficulty": 0.75,
         "distinctOperands": 6,
         "distinctOperators": 1,
         "effort": 23.16067811,
@@ -10189,6 +10548,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 3.11111111,
     "distinctOperands": 9,
     "distinctOperators": 2,
     "effort": 387.45634129,
@@ -10234,6 +10594,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 8,
       "halstead": {
+        "difficulty": 0.55555556,
         "distinctOperands": 9,
         "distinctOperators": 1,
         "effort": 22.1461873,
@@ -10258,6 +10619,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 15,
       "halstead": {
+        "difficulty": 0.57142857,
         "distinctOperands": 7,
         "distinctOperators": 1,
         "effort": 17.14285714,
@@ -10282,6 +10644,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 22,
       "halstead": {
+        "difficulty": 2.25,
         "distinctOperands": 14,
         "distinctOperators": 3,
         "effort": 294.29732457,
@@ -10306,6 +10669,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 27,
       "halstead": {
+        "difficulty": 0.57142857,
         "distinctOperands": 7,
         "distinctOperators": 1,
         "effort": 15.42857143,
@@ -10330,6 +10694,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 30,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 15.509775,
@@ -10354,6 +10719,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 38,
       "halstead": {
+        "difficulty": 2.25,
         "distinctOperands": 8,
         "distinctOperators": 3,
         "effort": 124.53953827,
@@ -10378,6 +10744,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 13,
       "endLine": 35,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 7.7548875,
@@ -10397,6 +10764,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 4.57142857,
     "distinctOperands": 28,
     "distinctOperators": 4,
     "effort": 1965.71428571,
@@ -10442,6 +10810,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 39,
       "halstead": {
+        "difficulty": 5.5,
         "distinctOperands": 14,
         "distinctOperators": 7,
         "effort": 797.20561223,
@@ -10466,6 +10835,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 53,
       "halstead": {
+        "difficulty": 10.76923077,
         "distinctOperands": 13,
         "distinctOperators": 10,
         "effort": 2143.47243456,
@@ -10490,6 +10860,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 57,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -10514,6 +10885,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 61,
       "halstead": {
+        "difficulty": 2.25,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 63.97782189,
@@ -10538,6 +10910,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 74,
       "halstead": {
+        "difficulty": 6.85185185,
         "distinctOperands": 27,
         "distinctOperators": 10,
         "effort": 1820.41453721,
@@ -10557,6 +10930,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 31.27659574,
     "distinctOperands": 47,
     "distinctOperators": 21,
     "effort": 37317.44242172,
@@ -10602,6 +10976,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 42,
       "endLine": 16,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 4,
         "distinctOperators": 0,
         "effort": 0,
@@ -10626,6 +11001,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 20,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 31.01955001,
@@ -10650,6 +11026,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 25,
       "endLine": 28,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 2,
         "distinctOperators": 0,
         "effort": 0,
@@ -10674,6 +11051,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 44,
       "endLine": 29,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 4,
         "distinctOperators": 0,
         "effort": 0,
@@ -10698,6 +11076,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 36,
       "endLine": 32,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -10722,6 +11101,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 36,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 4,
         "distinctOperators": 4,
         "effort": 99,
@@ -10746,6 +11126,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 56,
       "halstead": {
+        "difficulty": 7.07692308,
         "distinctOperands": 13,
         "distinctOperators": 8,
         "effort": 1150.11142363,
@@ -10770,6 +11151,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 72,
       "halstead": {
+        "difficulty": 16.25,
         "distinctOperands": 18,
         "distinctOperators": 13,
         "effort": 5715.90399311,
@@ -10794,6 +11176,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 52,
       "endLine": 59,
       "halstead": {
+        "difficulty": 1.33333333,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 18.57542476,
@@ -10818,6 +11201,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 76,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -10842,6 +11226,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 92,
       "halstead": {
+        "difficulty": 8.40909091,
         "distinctOperands": 22,
         "distinctOperators": 10,
         "effort": 2396.59090909,
@@ -10861,6 +11246,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 32.15686275,
     "distinctOperands": 51,
     "distinctOperators": 20,
     "effort": 48252.60406551,
@@ -10906,6 +11292,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 33,
       "halstead": {
+        "difficulty": 2.57142857,
         "distinctOperands": 7,
         "distinctOperators": 4,
         "effort": 115.64385697,
@@ -10930,6 +11317,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 35,
       "endLine": 37,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 8,
@@ -10954,6 +11342,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 38,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -10978,6 +11367,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 44,
       "endLine": 41,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 36,
@@ -11002,6 +11392,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 50,
       "endLine": 43,
       "halstead": {
+        "difficulty": 0.6,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 10.8568425,
@@ -11026,6 +11417,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 83,
       "halstead": {
+        "difficulty": 14.53846154,
         "distinctOperands": 26,
         "distinctOperators": 14,
         "effort": 6886.1655757,
@@ -11050,6 +11442,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 6,
       "endLine": 91,
       "halstead": {
+        "difficulty": 4.28571429,
         "distinctOperands": 14,
         "distinctOperators": 5,
         "effort": 637.18912702,
@@ -11074,6 +11467,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 119,
       "halstead": {
+        "difficulty": 11,
         "distinctOperands": 28,
         "distinctOperators": 11,
         "effort": 4941.85107464,
@@ -11098,6 +11492,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 9,
       "endLine": 107,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -11122,6 +11517,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 57,
       "endLine": 109,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 15,
@@ -11146,6 +11542,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 9,
       "endLine": 113,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 31.01955001,
@@ -11170,6 +11567,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 52,
       "endLine": 114,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 15,
@@ -11194,6 +11592,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 124,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -11218,6 +11617,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 129,
       "halstead": {
+        "difficulty": 4.4,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 237.11039011,
@@ -11242,6 +11642,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 134,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 11.60964047,
@@ -11261,6 +11662,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 33.72151899,
     "distinctOperands": 79,
     "distinctOperators": 24,
     "effort": 75084.49184393,
@@ -11306,6 +11708,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 23,
       "halstead": {
+        "difficulty": 1.8,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 48.6,
@@ -11330,6 +11733,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 31,
       "halstead": {
+        "difficulty": 4,
         "distinctOperands": 15,
         "distinctOperators": 6,
         "effort": 491.93955135,
@@ -11354,6 +11758,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 48,
       "halstead": {
+        "difficulty": 6.22222222,
         "distinctOperands": 18,
         "distinctOperators": 7,
         "effort": 1271.38462796,
@@ -11378,6 +11783,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 62,
       "halstead": {
+        "difficulty": 5.71428571,
         "distinctOperands": 14,
         "distinctOperators": 8,
         "effort": 815.43892455,
@@ -11402,6 +11808,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 74,
       "halstead": {
+        "difficulty": 3.5,
         "distinctOperands": 8,
         "distinctOperators": 4,
         "effort": 250.94737505,
@@ -11426,6 +11833,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 81,
       "halstead": {
+        "difficulty": 5.2,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 313.18859014,
@@ -11450,6 +11858,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 52,
       "endLine": 83,
       "halstead": {
+        "difficulty": 1.66666667,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 27.08916111,
@@ -11474,6 +11883,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 92,
       "halstead": {
+        "difficulty": 4.66666667,
         "distinctOperands": 15,
         "distinctOperators": 7,
         "effort": 582.69906484,
@@ -11493,6 +11903,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 25.56363636,
     "distinctOperands": 55,
     "distinctOperators": 19,
     "effort": 32858.39502617,
@@ -11538,6 +11949,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 17,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 3,
         "distinctOperators": 0,
         "effort": 0,
@@ -11562,6 +11974,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 26,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 5.80482024,
@@ -11586,6 +11999,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 31,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 15.509775,
@@ -11610,6 +12024,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 38,
       "halstead": {
+        "difficulty": 2.14285714,
         "distinctOperands": 7,
         "distinctOperators": 3,
         "effort": 92.5394255,
@@ -11634,6 +12049,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 60,
       "halstead": {
+        "difficulty": 13.84615385,
         "distinctOperands": 26,
         "distinctOperators": 15,
         "effort": 5934.51914358,
@@ -11658,6 +12074,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 69,
       "halstead": {
+        "difficulty": 4.92857143,
         "distinctOperands": 14,
         "distinctOperators": 6,
         "effort": 724.23166504,
@@ -11682,6 +12099,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 88,
       "halstead": {
+        "difficulty": 8.5,
         "distinctOperands": 20,
         "distinctOperators": 10,
         "effort": 2127.1370732,
@@ -11706,6 +12124,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 83,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 7.7548875,
@@ -11730,6 +12149,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 65,
       "endLine": 86,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 15,
@@ -11754,6 +12174,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 92,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -11773,6 +12194,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 25.8125,
     "distinctOperands": 72,
     "distinctOperators": 21,
     "effort": 45911.43401279,
@@ -11818,6 +12240,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 15,
       "halstead": {
+        "difficulty": 1.2,
         "distinctOperands": 5,
         "distinctOperators": 2,
         "effort": 30.31943316,
@@ -11842,6 +12265,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 19,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 13.93156857,
@@ -11866,6 +12290,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 46,
       "halstead": {
+        "difficulty": 8.83928571,
         "distinctOperands": 28,
         "distinctOperators": 11,
         "effort": 3223.62344259,
@@ -11890,6 +12315,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 56,
       "halstead": {
+        "difficulty": 10,
         "distinctOperands": 6,
         "distinctOperators": 8,
         "effort": 913.76518129,
@@ -11914,6 +12340,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 37,
       "endLine": 58,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 15,
@@ -11938,6 +12365,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 65,
       "halstead": {
+        "difficulty": 4,
         "distinctOperands": 18,
         "distinctOperators": 6,
         "effort": 623.5549001,
@@ -11957,6 +12385,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 20.16666667,
     "distinctOperands": 60,
     "distinctOperators": 22,
     "effort": 21539.38619165,
@@ -12002,6 +12431,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 20,
       "halstead": {
+        "difficulty": 8.70833333,
         "distinctOperands": 24,
         "distinctOperators": 11,
         "effort": 3037.39042653,
@@ -12026,6 +12456,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 16,
       "halstead": {
+        "difficulty": 3.63636364,
         "distinctOperands": 11,
         "distinctOperators": 5,
         "effort": 407.27272727,
@@ -12050,6 +12481,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 46,
       "endLine": 14,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 11.60964047,
@@ -12074,6 +12506,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 57,
       "endLine": 26,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 3,
         "distinctOperators": 3,
         "effort": 23.26466251,
@@ -12098,6 +12531,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 33,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 9,
         "distinctOperators": 3,
         "effort": 121.88872502,
@@ -12117,6 +12551,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 9.81081081,
     "distinctOperands": 37,
     "distinctOperators": 11,
     "effort": 5972.43814233,
@@ -12162,6 +12597,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 22,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -12186,6 +12622,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 31,
       "endLine": 25,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -12210,6 +12647,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 41,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 8,
@@ -12234,6 +12672,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 54,
       "halstead": {
+        "difficulty": 2.14285714,
         "distinctOperands": 7,
         "distinctOperators": 3,
         "effort": 92.5394255,
@@ -12258,6 +12697,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 76,
       "halstead": {
+        "difficulty": 11.07692308,
         "distinctOperands": 26,
         "distinctOperators": 12,
         "effort": 4476.07848224,
@@ -12282,6 +12722,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 87,
       "halstead": {
+        "difficulty": 3.75,
         "distinctOperands": 14,
         "distinctOperators": 5,
         "effort": 477.89184526,
@@ -12306,6 +12747,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 114,
       "halstead": {
+        "difficulty": 13.89705882,
         "distinctOperands": 34,
         "distinctOperators": 15,
         "effort": 7568.71143913,
@@ -12330,6 +12772,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 13,
       "endLine": 100,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -12354,6 +12797,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 55,
       "endLine": 103,
       "halstead": {
+        "difficulty": 1.33333333,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 18.57542476,
@@ -12378,6 +12822,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 49,
       "endLine": 104,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 22.61842188,
@@ -12402,6 +12847,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 43,
       "endLine": 105,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 2,
         "distinctOperators": 1,
         "effort": 2.37744375,
@@ -12426,6 +12872,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 51,
       "endLine": 117,
       "halstead": {
+        "difficulty": 1.8,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 54,
@@ -12450,6 +12897,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 83,
       "endLine": 119,
       "halstead": {
+        "difficulty": 5.2,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 296.70498014,
@@ -12469,6 +12917,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 29.16129032,
     "distinctOperands": 93,
     "distinctOperators": 24,
     "effort": 67317.16327049,
@@ -12514,6 +12963,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 16,
       "halstead": {
+        "difficulty": 1.2,
         "distinctOperands": 5,
         "distinctOperators": 2,
         "effort": 26.95060725,
@@ -12538,6 +12988,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 41,
       "endLine": 19,
       "halstead": {
+        "difficulty": 0.75,
         "distinctOperands": 6,
         "distinctOperators": 1,
         "effort": 23.16067811,
@@ -12562,6 +13013,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 32,
       "endLine": 37,
       "halstead": {
+        "difficulty": 9.56521739,
         "distinctOperands": 23,
         "distinctOperators": 10,
         "effort": 2991.54503426,
@@ -12586,6 +13038,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 26,
       "endLine": 49,
       "halstead": {
+        "difficulty": 1.96153846,
         "distinctOperands": 13,
         "distinctOperators": 3,
         "effort": 180.46153846,
@@ -12610,6 +13063,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 25,
       "endLine": 57,
       "halstead": {
+        "difficulty": 11.6875,
         "distinctOperands": 16,
         "distinctOperators": 11,
         "effort": 2778.63738408,
@@ -12634,6 +13088,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 55,
       "endLine": 56,
       "halstead": {
+        "difficulty": 1.75,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 40.71315939,
@@ -12658,6 +13113,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 16,
       "endLine": 67,
       "halstead": {
+        "difficulty": 5.66666667,
         "distinctOperands": 9,
         "distinctOperators": 6,
         "effort": 531.337121,
@@ -12682,6 +13138,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 16,
       "endLine": 77,
       "halstead": {
+        "difficulty": 5.66666667,
         "distinctOperands": 9,
         "distinctOperators": 6,
         "effort": 531.337121,
@@ -12701,6 +13158,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 20.09589041,
     "distinctOperands": 73,
     "distinctOperators": 18,
     "effort": 29948.60349058,
@@ -12746,6 +13204,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 18,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 15.509775,
@@ -12770,6 +13229,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 24,
       "halstead": {
+        "difficulty": 3.33333333,
         "distinctOperands": 6,
         "distinctOperators": 4,
         "effort": 166.09640474,
@@ -12794,6 +13254,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 28,
       "halstead": {
+        "difficulty": 0,
         "distinctOperands": 2,
         "distinctOperators": 0,
         "effort": 0,
@@ -12818,6 +13279,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 32,
       "halstead": {
+        "difficulty": 0.66666667,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 8,
@@ -12842,6 +13304,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 45,
       "halstead": {
+        "difficulty": 3.92307692,
         "distinctOperands": 13,
         "distinctOperators": 6,
         "effort": 416.62365997,
@@ -12866,6 +13329,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 7,
       "endLine": 64,
       "halstead": {
+        "difficulty": 5.83333333,
         "distinctOperands": 21,
         "distinctOperators": 7,
         "effort": 1430.18808931,
@@ -12890,6 +13354,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 9,
       "endLine": 57,
       "halstead": {
+        "difficulty": 5,
         "distinctOperands": 6,
         "distinctOperators": 4,
         "effort": 348.80244996,
@@ -12914,6 +13379,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 40,
       "endLine": 59,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 18,
@@ -12938,6 +13404,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 32,
       "endLine": 68,
       "halstead": {
+        "difficulty": 1.5,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 15,
@@ -12962,6 +13429,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 73,
       "halstead": {
+        "difficulty": 5.57142857,
         "distinctOperands": 7,
         "distinctOperators": 6,
         "effort": 474.18491817,
@@ -12986,6 +13454,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 78,
       "endLine": 71,
       "halstead": {
+        "difficulty": 4.375,
         "distinctOperands": 4,
         "distinctOperators": 5,
         "effort": 180.28948446,
@@ -13010,6 +13479,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 79,
       "halstead": {
+        "difficulty": 2.5,
         "distinctOperands": 12,
         "distinctOperators": 3,
         "effort": 273.48234169,
@@ -13029,6 +13499,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 14.87323944,
     "distinctOperands": 71,
     "distinctOperators": 16,
     "effort": 18207.21384517,
@@ -13074,6 +13545,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 24,
       "halstead": {
+        "difficulty": 2.33333333,
         "distinctOperands": 6,
         "distinctOperators": 4,
         "effort": 85.2628211,
@@ -13098,6 +13570,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 30,
       "halstead": {
+        "difficulty": 1.28571429,
         "distinctOperands": 7,
         "distinctOperators": 2,
         "effort": 48.90741431,
@@ -13122,6 +13595,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 55,
       "halstead": {
+        "difficulty": 11.56896552,
         "distinctOperands": 29,
         "distinctOperators": 11,
         "effort": 5972.21265365,
@@ -13146,6 +13620,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 61,
       "halstead": {
+        "difficulty": 1.8,
         "distinctOperands": 5,
         "distinctOperators": 3,
         "effort": 54,
@@ -13170,6 +13645,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 67,
       "halstead": {
+        "difficulty": 5.05555556,
         "distinctOperands": 9,
         "distinctOperators": 7,
         "effort": 444.88888889,
@@ -13194,6 +13670,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 72,
       "halstead": {
+        "difficulty": 5.2,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 296.70498014,
@@ -13218,6 +13695,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 88,
       "halstead": {
+        "difficulty": 15.16666667,
         "distinctOperands": 12,
         "distinctOperators": 13,
         "effort": 3380.72730616,
@@ -13242,6 +13720,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 39,
       "endLine": 75,
       "halstead": {
+        "difficulty": 1.33333333,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 21.67132889,
@@ -13261,6 +13740,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 24.890625,
     "distinctOperands": 64,
     "distinctOperators": 18,
     "effort": 42883.9730164,
@@ -13340,6 +13820,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 24,
       "halstead": {
+        "difficulty": 1.125,
         "distinctOperands": 8,
         "distinctOperators": 2,
         "effort": 44.84602928,
@@ -13364,6 +13845,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 59,
       "halstead": {
+        "difficulty": 16,
         "distinctOperands": 29,
         "distinctOperators": 16,
         "effort": 8084.0077578,
@@ -13388,6 +13870,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 64,
       "halstead": {
+        "difficulty": 6.5,
         "distinctOperands": 5,
         "distinctOperators": 5,
         "effort": 410.25811972,
@@ -13412,6 +13895,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 74,
       "halstead": {
+        "difficulty": 5.66666667,
         "distinctOperands": 21,
         "distinctOperators": 7,
         "effort": 1253.11718302,
@@ -13436,6 +13920,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 52,
       "endLine": 67,
       "halstead": {
+        "difficulty": 1.66666667,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 27.08916111,
@@ -13460,6 +13945,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 87,
       "halstead": {
+        "difficulty": 6,
         "distinctOperands": 11,
         "distinctOperators": 6,
         "effort": 760.26808847,
@@ -13484,6 +13970,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 99,
       "halstead": {
+        "difficulty": 6,
         "distinctOperands": 11,
         "distinctOperators": 6,
         "effort": 760.26808847,
@@ -13503,6 +13990,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 35.53571429,
     "distinctOperands": 70,
     "distinctOperators": 25,
     "effort": 67237.77939726,
@@ -13548,6 +14036,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 30,
       "halstead": {
+        "difficulty": 9.66666667,
         "distinctOperands": 30,
         "distinctOperators": 10,
         "effort": 5401.75701631,
@@ -13572,6 +14061,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 78,
       "endLine": 11,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 6,
         "distinctOperators": 3,
         "effort": 82.41805004,
@@ -13596,6 +14086,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 74,
       "endLine": 11,
       "halstead": {
+        "difficulty": 2.5,
         "distinctOperands": 3,
         "distinctOperators": 3,
         "effort": 51.69925001,
@@ -13620,6 +14111,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 43,
       "endLine": 14,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 2,
         "distinctOperators": 2,
         "effort": 8,
@@ -13644,6 +14136,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 11,
       "endLine": 24,
       "halstead": {
+        "difficulty": 6.33333333,
         "distinctOperands": 9,
         "distinctOperators": 6,
         "effort": 940.25833668,
@@ -13668,6 +14161,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 37,
       "halstead": {
+        "difficulty": 3.33333333,
         "distinctOperands": 9,
         "distinctOperators": 5,
         "effort": 253.82366147,
@@ -13692,6 +14186,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 41,
       "halstead": {
+        "difficulty": 5,
         "distinctOperands": 4,
         "distinctOperators": 5,
         "effort": 221.8947501,
@@ -13716,6 +14211,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 47,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 12,
         "distinctOperators": 2,
         "effort": 99.9430667,
@@ -13740,6 +14236,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 46,
       "halstead": {
+        "difficulty": 1.25,
         "distinctOperands": 8,
         "distinctOperators": 2,
         "effort": 58.13374166,
@@ -13759,6 +14256,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 11.3,
     "distinctOperands": 50,
     "distinctOperators": 10,
     "effort": 12348.35479012,
@@ -13804,6 +14302,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 6,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 56.86917502,
@@ -13823,6 +14322,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 2,
     "distinctOperands": 4,
     "distinctOperators": 2,
     "effort": 56.86917502,
@@ -13868,6 +14368,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 8,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 56.86917502,
@@ -13887,6 +14388,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 1.8,
     "distinctOperands": 5,
     "distinctOperators": 2,
     "effort": 60.63886632,
@@ -13932,6 +14434,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 10,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 56.86917502,
@@ -13951,6 +14454,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 1.8,
     "distinctOperands": 5,
     "distinctOperators": 2,
     "effort": 60.63886632,
@@ -13996,6 +14500,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 8,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 56.86917502,
@@ -14015,6 +14520,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 2,
     "distinctOperands": 4,
     "distinctOperators": 2,
     "effort": 56.86917502,
@@ -14060,6 +14566,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 7,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 56.86917502,
@@ -14079,6 +14586,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 1.8,
     "distinctOperands": 5,
     "distinctOperators": 2,
     "effort": 60.63886632,
@@ -14124,6 +14632,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 9,
       "halstead": {
+        "difficulty": 6.6,
         "distinctOperands": 5,
         "distinctOperators": 6,
         "effort": 410.98047629,
@@ -14143,6 +14652,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 6,
     "distinctOperands": 6,
     "distinctOperators": 6,
     "effort": 408.68572508,
@@ -14188,6 +14698,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 3,
       "halstead": {
+        "difficulty": 2.8,
         "distinctOperands": 5,
         "distinctOperators": 4,
         "effort": 133.13685006,
@@ -14207,6 +14718,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 2.8,
     "distinctOperands": 5,
     "distinctOperators": 4,
     "effort": 133.13685006,
@@ -14252,6 +14764,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 7,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 56.86917502,
@@ -14271,6 +14784,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 1.8,
     "distinctOperands": 5,
     "distinctOperators": 2,
     "effort": 60.63886632,
@@ -14316,6 +14830,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 16,
       "endLine": 4,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 41.79470571,
@@ -14335,6 +14850,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 2,
     "distinctOperands": 3,
     "distinctOperators": 2,
     "effort": 41.79470571,
@@ -14380,6 +14896,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 3,
       "endLine": 6,
       "halstead": {
+        "difficulty": 2,
         "distinctOperands": 3,
         "distinctOperators": 2,
         "effort": 37.15084952,
@@ -14399,6 +14916,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 2,
     "distinctOperands": 3,
     "distinctOperators": 2,
     "effort": 37.15084952,
@@ -14444,6 +14962,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 6,
       "halstead": {
+        "difficulty": 3,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 92.64271243,
@@ -14463,6 +14982,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 3,
     "distinctOperands": 4,
     "distinctOperators": 3,
     "effort": 92.64271243,
@@ -14508,6 +15028,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 6,
       "halstead": {
+        "difficulty": 0.6,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 12.40782,
@@ -14527,6 +15048,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 0.6,
     "distinctOperands": 5,
     "distinctOperators": 1,
     "effort": 12.40782,
@@ -14572,6 +15094,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 5,
       "halstead": {
+        "difficulty": 2.66666667,
         "distinctOperands": 6,
         "distinctOperators": 4,
         "effort": 141.73559872,
@@ -14591,6 +15114,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 4.16666667,
     "distinctOperands": 6,
     "distinctOperators": 5,
     "effort": 273.87166981,
@@ -14636,6 +15160,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 16,
       "halstead": {
+        "difficulty": 6.54545455,
         "distinctOperands": 11,
         "distinctOperators": 8,
         "effort": 778.52926065,
@@ -14655,6 +15180,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 6.54545455,
     "distinctOperands": 11,
     "distinctOperators": 8,
     "effort": 778.52926065,
@@ -14700,6 +15226,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 11,
       "halstead": {
+        "difficulty": 6,
         "distinctOperands": 6,
         "distinctOperators": 6,
         "effort": 387.17595008,
@@ -14719,6 +15246,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 6.07894737,
     "distinctOperands": 19,
     "distinctOperators": 7,
     "effort": 1371.53883144,
@@ -14764,6 +15292,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 13,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 7.7548875,
@@ -14788,6 +15317,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 17,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 5,
         "distinctOperators": 1,
         "effort": 7.7548875,
@@ -14812,6 +15342,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 21,
       "halstead": {
+        "difficulty": 1,
         "distinctOperands": 4,
         "distinctOperators": 2,
         "effort": 15.509775,
@@ -14836,6 +15367,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 25,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -14855,6 +15387,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 2.15217391,
     "distinctOperands": 23,
     "distinctOperators": 3,
     "effort": 434.99504087,
@@ -14900,6 +15433,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 12,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -14924,6 +15458,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 16,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -14948,6 +15483,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 25,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -14972,6 +15508,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 31,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -14996,6 +15533,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 35,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -15020,6 +15558,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 43,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -15044,6 +15583,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 49,
       "halstead": {
+        "difficulty": 1.875,
         "distinctOperands": 4,
         "distinctOperators": 3,
         "effort": 42.11032383,
@@ -15068,6 +15608,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 1,
       "endLine": 57,
       "halstead": {
+        "difficulty": 0.75,
         "distinctOperands": 4,
         "distinctOperators": 1,
         "effort": 13.93156857,
@@ -15092,6 +15633,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "endColumn": 5,
       "endLine": 55,
       "halstead": {
+        "difficulty": 0.5,
         "distinctOperands": 3,
         "distinctOperators": 1,
         "effort": 4,
@@ -15111,6 +15653,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     },
   ],
   "halstead": {
+    "difficulty": 3.79032258,
     "distinctOperands": 31,
     "distinctOperators": 5,
     "effort": 1175.74100839,

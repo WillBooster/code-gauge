@@ -153,11 +153,11 @@ describe('measureCode: line, complexity, and Halstead metrics', () => {
     expect(halstead.vocabulary).toBe(halstead.distinctOperators + halstead.distinctOperands);
     expect(halstead.length).toBe(halstead.totalOperators + halstead.totalOperands);
     expect(halstead.volume).toBeCloseTo(halstead.length * Math.log2(halstead.vocabulary), 5);
-    // effort = difficulty * volume with difficulty = (n1 / 2) * (N2 / n2).
-    expect(halstead.effort).toBeCloseTo(
-      (halstead.distinctOperators / 2) * (halstead.totalOperands / halstead.distinctOperands) * halstead.volume,
+    expect(halstead.difficulty).toBeCloseTo(
+      (halstead.distinctOperators / 2) * (halstead.totalOperands / halstead.distinctOperands),
       5
     );
+    expect(halstead.effort).toBeCloseTo(halstead.difficulty * halstead.volume, 5);
   });
 
   it('measures multiple functions and reports the maximum function complexity', () => {

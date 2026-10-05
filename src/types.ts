@@ -68,6 +68,11 @@ export interface HalsteadMetrics {
   vocabulary: number;
   length: number;
   volume: number;
+  /**
+   * (distinctOperators / 2) * (totalOperands / distinctOperands), i.e. effort / volume; 0 when
+   * there are no operands.
+   */
+  difficulty: number;
   effort: number;
 }
 
@@ -92,7 +97,7 @@ export interface FunctionMetrics {
    * short-circuit operator (`&&`, `||`, `and`, `or`) wherever it appears, and per case-labelled
    * statement or match arm (stacked labels share one; default and catch-all arms add none).
    * Full-evaluation operators and `throw` add nothing. Nested function bodies are excluded, so
-   * summing over functions counts each decision once. Not used by the command-line tool.
+   * summing over functions counts each decision once.
    */
   cyclomaticComplexity: number;
   cognitiveComplexity: number;

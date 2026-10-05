@@ -164,6 +164,7 @@ function deriveHalsteadMetrics(counts: NativeHalsteadCounts): HalsteadMetrics {
     vocabulary,
     length,
     volume,
+    difficulty,
     effort,
   };
 }

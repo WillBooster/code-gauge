@@ -1,4 +1,4 @@
-import { realpath, stat } from 'node:fs/promises';
+import { readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
@@ -46,6 +46,8 @@ interface CheckScope {
   /** Measurement failures of files the check covers. */
   errors: string[];
   warnings: string[];
+  /** The directory the files' paths are relative to. */
+  root: string;
   mergeBase?: string;
 }
 
@@ -71,6 +73,7 @@ export async function runCheckCommand(target: string, cliOptions: CheckCliOption
       scope.crossFileDuplication,
       resolveLimits(cliLimits, config.config.thresholds)
     );
+    await endFileViolationsAtLastLine(result.violations, scope.root);
 
     if (options.json) {
       printJsonReport(cliOptions, scope, result);
@@ -88,6 +91,19 @@ export async function runCheckCommand(target: string, cliOptions: CheckCliOption
   }
 }
 
+/**
+ * A file's measured line count includes the empty line after a final line terminator, which is
+ * not a line of the file, so file-level violations end at the last line that exists.
+ */
+async function endFileViolationsAtLastLine(violations: readonly Violation[], root: string): Promise<void> {
+  for (const violation of violations.filter(({ kind }) => kind === 'file')) {
+    const content = await readFile(path.join(root, violation.file), 'utf8');
+    if (/[\n\r]$/u.test(content)) {
+      violation.endLine = Math.max(violation.endLine - 1, 1);
+    }
+  }
+}
+
 async function scanWholeTarget(resolvedTarget: string, options: ResolvedOptions): Promise<CheckScope> {
   const searchDirectory = await configSearchDirectory(resolvedTarget);
   const scan = await scanTarget(resolvedTarget, {
@@ -100,6 +116,7 @@ async function scanWholeTarget(resolvedTarget: string, options: ResolvedOptions)
     crossFileDuplication,
     errors: scan.errors,
     warnings: scan.warnings,
+    root: scan.displayRoot,
   };
 }
 
@@ -147,6 +164,7 @@ async function scanChange(resolvedTarget: string, base: string, options: Resolve
     crossFileDuplication,
     errors: scan.errors.filter((error) => isCovered(error)),
     warnings: [...scan.warnings, ...scan.errors.filter((error) => !isCovered(error))],
+    root: repoRoot,
     mergeBase,
   };
 }
@@ -265,11 +283,9 @@ function formatViolation(violation: Violation): string {
       return `${formatLocation(violation)} ${violation.name}: ${exceeded}`;
     }
     case 'duplication': {
-      const partners = violation.partners ?? [];
-      return `${formatLocation(violation)}: ${exceeded}, also at ${partners
-        .slice(0, maxListedPartners)
-        .map((partner) => formatLocation(partner))
-        .join(', ')}${partners.length > maxListedPartners ? ', ...' : ''}`;
+      const partners = (violation.partners ?? []).map((partner) => formatLocation(partner));
+      const listed = [...partners.slice(0, maxListedPartners), ...(partners.length > maxListedPartners ? ['...'] : [])];
+      return `${formatLocation(violation)}: ${exceeded}${listed.length > 0 ? `, also at ${listed.join(', ')}` : ''}`;
     }
   }
 }

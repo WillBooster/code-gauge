@@ -52,8 +52,8 @@ const calc = `export function total(items: number[]): number {
 }
 `;
 
-// \`decide\` (lines 1-21) exceeds the default cognitive-complexity and nesting-depth limits;
-// \`identity\` (lines 23-26) exceeds none.
+// `decide` (lines 1-21) exceeds the default cognitive-complexity, cyclomatic-complexity, and
+// nesting-depth limits; `identity` (lines 23-26) exceeds none.
 const legacy = `export function decide(a: number, b: number, c: number, d: number): number {
   if (a > 0) {
     if (b > 0) {
@@ -137,12 +137,13 @@ describe('code-gauge check', () => {
     expect(result.status).toBe(1);
     expect(result.stdout)
       .toBe(`Threshold violations: 3 violations (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), nesting depth 5 (<= 4)
+src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), cyclomatic complexity 15 (<= 10), nesting depth 5 (<= 4)
 src/report.ts:1-12: duplicated lines 12 (< 10), also at src/summary.ts:1-12
 src/summary.ts:1-12: duplicated lines 12 (< 10), also at src/report.ts:1-12
 
 How to fix:
 - cognitive complexity: flatten nested branching with early returns and extract nested blocks into named functions.
+- cyclomatic complexity: the function has too many independent paths; split it by decision or replace condition chains with a lookup table.
 - nesting depth: replace nested conditions with guard clauses or move inner blocks into functions.
 - duplicated lines: extract the repeated code into one shared function or module and call it from every location.
 `);
@@ -164,6 +165,23 @@ How to fix:
     expect(runCheck(['src/copies']).stdout).toContain(
       'a.ts:1-12: duplicated lines 12 (< 10), also at b.ts:1-12, c.ts:1-12, d.ts:1-12, ...\n'
     );
+  });
+
+  it('reports overlapping duplicated ranges of a file as one block with the partners of each', () => {
+    // b.ts repeats only the statements inside the function that a.ts holds twice, so a.ts has two
+    // clone ranges per copy: the whole function and the statements nested in it.
+    const statements = reportFunction('first').split('\n').slice(1, 10).join('\n');
+    writeSource('src/overlap/a.ts', `${reportFunction('first')}\n${reportFunction('second')}`);
+    writeSource(
+      'src/overlap/b.ts',
+      `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
+    );
+    const result = runCheck(['--min-duplicate-lines', '5', 'src/overlap']);
+    expect(result.stdout).toContain(`
+a.ts:1-12: duplicated lines 12 (< 5), also at a.ts:14-25, b.ts:3-11
+a.ts:14-25: duplicated lines 12 (< 5), also at a.ts:1-12, b.ts:3-11
+b.ts:3-11: duplicated lines 9 (< 5), also at a.ts:2-10, a.ts:15-23
+`);
   });
 
   it('prints a JSON report with --json', () => {
@@ -188,6 +206,7 @@ How to fix:
           name: 'decide',
           exceeded: [
             { metric: 'functionCognitiveComplexity', value: 24, limit: 15 },
+            { metric: 'functionCyclomaticComplexity', value: 15, limit: 10 },
             { metric: 'functionNestingDepth', value: 5, limit: 4 },
           ],
         },
@@ -220,7 +239,7 @@ How to fix:
         kind: 'file',
         file: 'calc.ts',
         startLine: 1,
-        endLine: 8,
+        endLine: 7,
         exceeded: [{ metric: 'fileNcss', value: 5, limit: 4 }],
       },
     ]);
@@ -241,8 +260,12 @@ describe('code-gauge check: thresholds', () => {
     writeConfig({ thresholds: { maxFunctionCognitiveComplexity: disabled, minDuplicateLines: disabled } });
     const result = runCheck([]);
     expect(result.stdout).toContain('1 violations (1 functions, 0 files, 0 duplicated blocks)');
-    expect(result.stdout).toContain('src/legacy.ts:1-21 decide: nesting depth 5 (<= 4)\n');
-    expect(runCheck(['--max-function-nesting-depth', 'off']).status).toBe(0);
+    expect(result.stdout).toContain(
+      'src/legacy.ts:1-21 decide: cyclomatic complexity 15 (<= 10), nesting depth 5 (<= 4)\n'
+    );
+    expect(
+      runCheck(['--max-function-nesting-depth', 'off', '--max-function-cyclomatic-complexity', 'off']).status
+    ).toBe(0);
   });
 
   it('overrides thresholds per language', () => {
@@ -321,7 +344,7 @@ describe('code-gauge check --base', () => {
     const touched = runCheck(['--base', 'main']);
     expect(touched.status).toBe(1);
     expect(touched.stdout).toContain(
-      'src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), nesting depth 5 (<= 4)\n'
+      'src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), cyclomatic complexity 15 (<= 10), nesting depth 5 (<= 4)\n'
     );
   });
 

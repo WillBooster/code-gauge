@@ -27,6 +27,13 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     measure: (fn) => fn.cognitiveComplexity,
   },
   {
+    key: 'maxFunctionCyclomaticComplexity',
+    label: 'cyclomatic complexity',
+    defaultLimit: 10,
+    hint: 'the function has too many independent paths; split it by decision or replace condition chains with a lookup table.',
+    measure: (fn) => fn.cyclomaticComplexity,
+  },
+  {
     key: 'maxFunctionNcss',
     label: 'NCSS',
     defaultLimit: 60,
@@ -41,6 +48,13 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     measure: (fn) => fn.nestingDepth,
   },
   {
+    key: 'maxFunctionParameterCount',
+    label: 'parameters',
+    defaultLimit: 7,
+    hint: 'group related parameters into one object or split the function.',
+    measure: (fn) => fn.parameterCount,
+  },
+  {
     key: 'maxFunctionHalsteadVolume',
     label: 'Halstead volume',
     defaultLimit: 2000,
@@ -48,18 +62,25 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     measure: (fn) => fn.halstead.volume,
   },
   {
+    key: 'maxFunctionHalsteadDifficulty',
+    label: 'Halstead difficulty',
+    defaultLimit: 20,
+    hint: 'the function reuses the same operands many times; split it so each part handles fewer values.',
+    measure: (fn) => fn.halstead.difficulty,
+  },
+  {
+    key: 'maxFunctionHalsteadEffort',
+    label: 'Halstead effort',
+    defaultLimit: 30_000,
+    hint: 'the function is both large and dense; split it into smaller functions with fewer values each.',
+    measure: (fn) => fn.halstead.effort,
+  },
+  {
     key: 'maxFunctionDepDegree',
     label: 'DepDegree',
     defaultLimit: 50,
     hint: 'too many values flow between the variables of the function; split it so each part works on fewer variables.',
     measure: (fn) => fn.depDegree,
-  },
-  {
-    key: 'maxFunctionParameterCount',
-    label: 'parameters',
-    defaultLimit: 7,
-    hint: 'group related parameters into one object or split the function.',
-    measure: (fn) => fn.parameterCount,
   },
 ];
 
