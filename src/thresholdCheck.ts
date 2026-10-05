@@ -64,7 +64,7 @@ export function checkThresholds(
       violations.push({ kind: 'file', file, startLine: 1, endLine: metrics.lines.total, exceeded: fileExceeded });
     }
     for (const fn of metrics.functions) {
-      if (hunks && !hunks.some((hunk) => touchesSpan(hunk, fn.startLine, fn.endLine))) {
+      if (hunks && !hunks.some((hunk) => touchesSpan(hunk, fn.startLine, fn.endLine, metrics.language === 'python'))) {
         continue;
       }
       checkedFunctionCount += 1;
@@ -116,11 +116,14 @@ function collectExceeded<Subject>(
 
 /**
  * Whether the hunk changes the head lines [startLine, endLine]. A hunk without head lines (a pure
- * deletion) sits between its headStart line and the next one.
+ * deletion) sits between its headStart line and the next one. Where indentation ends a span, its
+ * last line is a statement rather than a closing delimiter, so a deletion right after that line may
+ * have removed the span's tail; `endsByIndentation` counts it as touching, since the head alone
+ * cannot tell it from a deletion after the span.
  */
-function touchesSpan(hunk: LineHunk, startLine: number, endLine: number): boolean {
+function touchesSpan(hunk: LineHunk, startLine: number, endLine: number, endsByIndentation = false): boolean {
   return hunk.headCount === 0
-    ? hunk.headStart >= startLine && hunk.headStart < endLine
+    ? hunk.headStart >= startLine && (hunk.headStart < endLine || (endsByIndentation && hunk.headStart === endLine))
     : hunk.headStart <= endLine && hunk.headStart + hunk.headCount > startLine;
 }
 

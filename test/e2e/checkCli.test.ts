@@ -356,6 +356,19 @@ describe('code-gauge check --base', () => {
     expect(runCheck(['--base', 'main']).status).toBe(0);
   });
 
+  it('counts deleting the last statement of an indentation-delimited function as touching it', () => {
+    const wide = 'def calculate(a, b, c, d, e, f, g, h):\n    print(a)\n    return a\n';
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('src/wide.py', wide);
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'wide']);
+    writeSource('src/wide.py', wide.replace('    return a\n', ''));
+    const result = runCheck(['--base', 'HEAD']);
+    runGit(['checkout', '-q', '-f', 'main']);
+    runGit(['branch', '-q', '-D', 'feature']);
+    expect(result.stdout).toContain('src/wide.py:1-2 calculate: parameters 8 (<= 7)\n');
+  });
+
   it('reports a file-level violation only for a changed file', () => {
     writeSource('src/calc.ts', `${calc}export const offset = 1;\n`);
     const result = runCheck(['--base', 'main', '--max-file-ncss', '5', '--json']);

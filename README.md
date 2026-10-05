@@ -110,7 +110,8 @@ disables it. The command line wins over the whole config file, per-language over
 With `--base <ref>`, the check covers only what the working tree changed since the merge-base of
 `<ref>` and `HEAD` (committed, staged, unstaged, and untracked changes; nothing is checked out):
 
-- a function, when a diff hunk touches its span; deleting lines inside the span counts;
+- a function, when a diff hunk touches its span; deleting lines inside the span counts, and so does
+  deleting lines right after the last line of a Python function, which may have been its tail;
 - a file-level threshold, when the change adds or deletes lines of the file (a rename or a mode
   change alone does not count);
 - a duplicated block, when it overlaps lines the change added.
