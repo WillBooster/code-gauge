@@ -375,8 +375,8 @@ supporting arbitrary grammars would mean shipping incomplete metrics for them.
 
 Parsing and every metric pass run in a Rust addon (tree-sitter); the thin TypeScript layer handles
 the CLI, cross-file matching, and the Halstead float derivations. Releases include prebuilt addons
-for Linux x64/arm64 (glibc and musl), macOS x64/arm64, and Windows x64. The package runs no
-install script. On other platforms, build the addon from the bundled sources inside the installed
+for Linux x64/arm64 (glibc and musl), macOS x64/arm64, and Windows x64, and a release that
+includes them runs no install script. On other platforms, build the addon from the bundled sources inside the installed
 package, which requires a [Rust toolchain](https://rustup.rs) (the runtime error message points
 here too):
 
