@@ -356,8 +356,11 @@ describe('code-gauge check --base', () => {
     expect(runCheck(['--base', 'main']).status).toBe(0);
   });
 
-  it('counts deleting the last statement of an indentation-delimited function as touching it', () => {
-    const wide = 'def calculate(a, b, c, d, e, f, g, h):\n    print(a)\n    return a\n';
+  it.each([
+    ['right after the remaining statements', ''],
+    ['after a blank line', '\n'],
+  ])('counts deleting the last statement of a Python function %s as touching it', (_, gap) => {
+    const wide = `def calculate(a, b, c, d, e, f, g, h):\n    print(a)\n${gap}    return a\n`;
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource('src/wide.py', wide);
     runGit(['add', '-A']);

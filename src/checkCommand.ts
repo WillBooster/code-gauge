@@ -192,9 +192,27 @@ async function attachHunks(
       changed.basePath === undefined
         ? [wholeFile]
         : await listLineHunks(repoRoot, mergeBase, changed.basePath, changed.headPath);
+    if (metrics.language === 'python' && hunks.some(({ headCount }) => headCount === 0)) {
+      anchorDeletionsToCode(hunks, await readFile(path.join(repoRoot, changed.headPath), 'utf8'));
+    }
     return [{ file: changed.headPath, metrics, hunks }];
   });
   return files.flat();
+}
+
+/**
+ * Moves each pure deletion up to the last non-blank line before it. A Python function ends at its
+ * last statement, so the blank lines left above a deleted tail lie outside the span the deletion
+ * shortened; anchored to that statement, the deletion counts as touching the function.
+ */
+function anchorDeletionsToCode(hunks: LineHunk[], content: string): void {
+  const lines = content.split(/\r\n|\n|\r/u);
+  for (const hunk of hunks) {
+    if (hunk.headCount > 0) continue;
+    while (hunk.headStart > 0 && lines[hunk.headStart - 1]?.trim() === '') {
+      hunk.headStart -= 1;
+    }
+  }
 }
 
 /** A run-wide failure (a missing target or native addon) leaves nothing to check. */
