@@ -354,7 +354,6 @@ function formatViolation(violation: Violation): string {
     .map(({ metric, value, level, limit }) => {
       // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
       const roundedValue = Math.ceil(value * 10) / 10;
-      // A limit milder than the line's level names its own, so an error line shows which limits make it an error.
       const levelPrefix = level === violation.level ? '' : `${level} `;
       // A duplicated block violates from its limit on, so the largest allowed span is the last whole
       // line count below it; a limit of 0 allows none.
