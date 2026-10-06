@@ -352,11 +352,12 @@ function formatViolation(violation: Violation): string {
   const labelByMetric = new Map(thresholds.map((threshold) => [metricNameOf(threshold), threshold.label]));
   const exceeded = violation.exceeded
     .map(
-      ({ metric, value, limit }) =>
+      ({ metric, value, level, limit }) =>
         // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
         // A duplicated block violates from its limit on, so the largest allowed span is the last
-        // whole line count below it; a limit of 0 allows none.
-        `${labelByMetric.get(metric)} ${Math.ceil(value * 10) / 10} (max ${violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit})`
+        // whole line count below it; a limit of 0 allows none. A limit milder than the line's level
+        // names its own, so an error line shows which limits make it an error.
+        `${labelByMetric.get(metric)} ${Math.ceil(value * 10) / 10} (${level === violation.level ? '' : `${level} `}max ${violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit})`
     )
     .join(', ');
   return `${violation.level}: ${describeViolation(violation, exceeded)}`;
