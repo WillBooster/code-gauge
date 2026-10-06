@@ -157,7 +157,7 @@ one remediation hint per violated metric:
 
 ```
 Threshold violations: 1 errors, 2 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-21 decide: cognitive complexity 34 (max 30), nesting depth 5 (max 4)
+error: src/legacy.ts:1-21 decide: cognitive complexity 34 (max 30), nesting depth 5 (warning max 4)
 warning: src/report.ts:1-12: duplicated lines 12 (max 9), also at src/summary.ts:1-12
 warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12
 
@@ -168,7 +168,8 @@ How to fix:
 ```
 
 A violation's level is that of its most severe limit. A function gets one line listing every
-threshold it exceeds, each with the largest value its violated limit allows; a file-level violation
+threshold it exceeds, each with the largest value its violated limit allows and, when that limit is
+milder than the line's level, the limit's own level; a file-level violation
 prints the path without a line span, and a duplicated block lists up to three of its other copies.
 Paths are relative to the repository root, or to the target directory outside a git repository.
 

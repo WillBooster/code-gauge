@@ -183,7 +183,7 @@ How to fix:
     expect(result.status).toBe(1);
     expect(result.stdout)
       .toContain(`Threshold violations: 3 errors, 0 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15), nesting depth 5 (max 3)
+error: src/legacy.ts:1-21 decide: cognitive complexity 24 (warning max 15), nesting depth 5 (max 3)
 error: src/report.ts:1-12: duplicated lines 12 (max 11), also at src/summary.ts:1-12
 error: src/summary.ts:1-12: duplicated lines 12 (max 11), also at src/report.ts:1-12
 `);

@@ -351,13 +351,15 @@ function countViolations(violations: readonly Violation[]): {
 function formatViolation(violation: Violation): string {
   const labelByMetric = new Map(thresholds.map((threshold) => [metricNameOf(threshold), threshold.label]));
   const exceeded = violation.exceeded
-    .map(
-      ({ metric, value, limit }) =>
-        // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
-        // A duplicated block violates from its limit on, so the largest allowed span is the last
-        // whole line count below it; a limit of 0 allows none.
-        `${labelByMetric.get(metric)} ${Math.ceil(value * 10) / 10} (max ${violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit})`
-    )
+    .map(({ metric, value, level, limit }) => {
+      // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
+      const roundedValue = Math.ceil(value * 10) / 10;
+      const levelPrefix = level === violation.level ? '' : `${level} `;
+      // A duplicated block violates from its limit on, so the largest allowed span is the last whole
+      // line count below it; a limit of 0 allows none.
+      const maxAllowed = violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit;
+      return `${labelByMetric.get(metric)} ${roundedValue} (${levelPrefix}max ${maxAllowed})`;
+    })
     .join(', ');
   return `${violation.level}: ${describeViolation(violation, exceeded)}`;
 }
