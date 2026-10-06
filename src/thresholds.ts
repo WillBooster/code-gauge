@@ -48,7 +48,7 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
   {
     key: 'maxFunctionNcss',
     label: 'NCSS',
-    defaultLimits: { warning: 60, error: 100 },
+    defaultLimits: { warning: 30, error: 60 },
     hint: 'split the function into smaller functions that each do one step.',
     measure: (fn) => fn.ncss,
     includesNestedFunctions: true,
@@ -56,14 +56,14 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
   {
     key: 'maxFunctionNestingDepth',
     label: 'nesting depth',
-    defaultLimits: { warning: 4, error: 5 },
+    defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'replace nested conditions with guard clauses or move inner blocks into functions.',
     measure: (fn) => fn.nestingDepth,
   },
   {
     key: 'maxFunctionParameterCount',
     label: 'parameters',
-    defaultLimits: { warning: 7, error: Infinity },
+    defaultLimits: { warning: 6, error: Infinity },
     hint: 'group related parameters into one object or split the function.',
     measure: (fn) => fn.parameterCount,
   },
@@ -103,7 +103,7 @@ export const fileThresholds: readonly Threshold<CodeMetrics>[] = [
   {
     key: 'maxFileNcss',
     label: 'file NCSS',
-    defaultLimits: { warning: 500, error: 1000 },
+    defaultLimits: { warning: 400, error: 1000 },
     hint: 'split the file into smaller modules with one responsibility each.',
     measure: (file) => file.ncssCount,
   },
@@ -113,7 +113,7 @@ export const fileThresholds: readonly Threshold<CodeMetrics>[] = [
 export const duplicationThreshold: Threshold<{ startLine: number; endLine: number }> = {
   key: 'minDuplicateLines',
   label: 'duplicated lines',
-  defaultLimits: { warning: 10, error: 20 },
+  defaultLimits: { warning: 15, error: Infinity },
   hint: 'extract the repeated code into one shared function or module and call it from every location.',
   measure: (block) => block.endLine - block.startLine + 1,
 };

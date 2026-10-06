@@ -97,27 +97,28 @@ like the ranking command. The thresholds:
 | --------------------------------- | ------------------------------------------------- | ------- | ----- |
 | `maxFunctionCognitiveComplexity`  | a function's cognitive complexity is above it     | 15      | 30    |
 | `maxFunctionCyclomaticComplexity` | a function's cyclomatic complexity is above it    | off     | off   |
-| `maxFunctionNcss`                 | a function's NCSS is above it                     | 60      | 100   |
-| `maxFunctionNestingDepth`         | a function's nesting depth is above it            | 4       | 5     |
-| `maxFunctionParameterCount`       | a function's parameter count is above it          | 7       | off   |
+| `maxFunctionNcss`                 | a function's NCSS is above it                     | 30      | 60    |
+| `maxFunctionNestingDepth`         | a function's nesting depth is above it            | off     | off   |
+| `maxFunctionParameterCount`       | a function's parameter count is above it          | 6       | off   |
 | `maxFunctionHalsteadVolume`       | a function's Halstead volume is above it          | off     | off   |
 | `maxFunctionHalsteadDifficulty`   | a function's Halstead difficulty is above it      | off     | off   |
 | `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it          | off     | off   |
 | `maxFunctionDepDegree`            | a function's DepDegree is above it                | off     | off   |
-| `maxFileNcss`                     | a file's NCSS is above it                         | 500     | 1000  |
-| `minDuplicateLines`               | a duplicated block spans at least this many lines | 10      | 20    |
+| `maxFileNcss`                     | a file's NCSS is above it                         | 400     | 1000  |
+| `minDuplicateLines`               | a duplicated block spans at least this many lines | 15      | off   |
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
 mark code to fix, and only errors fail the check (exit code 1).
 
-The warning limits follow common conventions. The error limits and the thresholds that are off
-were set from the 2139 functions of [WillBooster/shared](https://github.com/WillBooster/shared)
-(TypeScript, October 2026): a cognitive complexity above 15 flags 5% of them and one above 30 flags
-1.5%, and the functions sampled above 30 each had a part that reads better extracted, while those
-between 15 and 30 were mixed. Cyclomatic complexity, the Halstead metrics, and DepDegree are off
-because, at limits of 10, 2000, 20, 30000, and 50, all but 24 of the 107 functions they flagged
-there also exceeded the cognitive-complexity limit.
+The defaults come from the 44,447 functions that the repositories of the WillBooster organization
+hold, and from ratings of 225 of those functions and 60 of their duplicated blocks: a warning limit
+sits where most rated functions were worth refactoring or borderline, an error limit where nearly
+all were worth refactoring. Cognitive complexity above 15 flags 3.1% of the functions and above 30
+flags 1.0%; NCSS above 30 flags 2.5% and above 60 flags 0.6%. The thresholds that are off flagged
+few functions the others miss, and those were rated like unflagged ones.
+[How the default thresholds were calibrated](docs/threshold-calibration.md) holds the corpus, the
+distributions per language, the ratings, and the reasoning per threshold.
 
 Cognitive complexity, NCSS, Halstead volume, and DepDegree of a function cover the functions nested
 in it, so a limit of these that a function and a function nested in it both violate is reported
@@ -157,13 +158,13 @@ one remediation hint per violated metric:
 
 ```
 Threshold violations: 1 errors, 2 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-21 decide: cognitive complexity 34 (max 30), nesting depth 5 (warning max 4)
-warning: src/report.ts:1-12: duplicated lines 12 (max 9), also at src/summary.ts:1-12
-warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12
+error: src/legacy.ts:1-48 decide: cognitive complexity 34 (max 30), NCSS 36 (warning max 30)
+warning: src/report.ts:1-18: duplicated lines 18 (max 14), also at src/summary.ts:1-18
+warning: src/summary.ts:1-18: duplicated lines 18 (max 14), also at src/report.ts:1-18
 
 How to fix:
 - cognitive complexity: flatten nested branching with early returns and extract nested blocks into named functions.
-- nesting depth: replace nested conditions with guard clauses or move inner blocks into functions.
+- NCSS: split the function into smaller functions that each do one step.
 - duplicated lines: extract the repeated code into one shared function or module and call it from every location.
 ```
 
@@ -211,10 +212,10 @@ ranking command.
       "level": "error",
       "file": "src/legacy.ts",
       "startLine": 1,
-      "endLine": 21,
+      "endLine": 48,
       "exceeded": [
         { "metric": "functionCognitiveComplexity", "value": 34, "level": "error", "limit": 30 },
-        { "metric": "functionNestingDepth", "value": 5, "level": "warning", "limit": 4 }
+        { "metric": "functionNcss", "value": 36, "level": "warning", "limit": 30 }
       ],
       "name": "decide"
     },
@@ -223,9 +224,9 @@ ranking command.
       "level": "warning",
       "file": "src/pasted.ts",
       "startLine": 1,
-      "endLine": 12,
-      "exceeded": [{ "metric": "duplicateLines", "value": 12, "level": "warning", "limit": 10 }],
-      "partners": [{ "file": "src/report.ts", "startLine": 1, "endLine": 12 }]
+      "endLine": 18,
+      "exceeded": [{ "metric": "duplicateLines", "value": 18, "level": "warning", "limit": 15 }],
+      "partners": [{ "file": "src/report.ts", "startLine": 1, "endLine": 18 }]
     }
   ],
   "errors": [],
@@ -272,29 +273,29 @@ with `--config`). The following config reproduces every built-in default:
     "warning": {
       "maxFunctionCognitiveComplexity": 15,
       "maxFunctionCyclomaticComplexity": null,
-      "maxFunctionNcss": 60,
-      "maxFunctionNestingDepth": 4,
-      "maxFunctionParameterCount": 7,
+      "maxFunctionNcss": 30,
+      "maxFunctionNestingDepth": null,
+      "maxFunctionParameterCount": 6,
       "maxFunctionHalsteadVolume": null,
       "maxFunctionHalsteadDifficulty": null,
       "maxFunctionHalsteadEffort": null,
       "maxFunctionDepDegree": null,
-      "maxFileNcss": 500,
-      "minDuplicateLines": 10,
+      "maxFileNcss": 400,
+      "minDuplicateLines": 15,
       "languages": {}
     },
     "error": {
       "maxFunctionCognitiveComplexity": 30,
       "maxFunctionCyclomaticComplexity": null,
-      "maxFunctionNcss": 100,
-      "maxFunctionNestingDepth": 5,
+      "maxFunctionNcss": 60,
+      "maxFunctionNestingDepth": null,
       "maxFunctionParameterCount": null,
       "maxFunctionHalsteadVolume": null,
       "maxFunctionHalsteadDifficulty": null,
       "maxFunctionHalsteadEffort": null,
       "maxFunctionDepDegree": null,
       "maxFileNcss": 1000,
-      "minDuplicateLines": 20,
+      "minDuplicateLines": null,
       "languages": {}
     }
   },
@@ -316,10 +317,10 @@ differ for its files; a limit it leaves out keeps the value set outside `languag
 {
   "thresholds": {
     "warning": {
-      "maxFunctionNcss": 60,
+      "maxFunctionNcss": 30,
       "maxFunctionParameterCount": 5,
       "languages": {
-        "tsx": { "maxFunctionNcss": 100 },
+        "tsx": { "maxFunctionNcss": 50 },
         "python": { "maxFunctionParameterCount": null }
       }
     }
