@@ -121,8 +121,9 @@ function listCheckedFunctions({ metrics, hunks }: CheckedFile): FunctionMetrics[
 }
 
 /**
- * Whether a function enclosing `fn` exceeds the same limit at the same or a more severe level with
- * a value that covers `fn`, so reporting it for `fn` too would count the same code twice.
+ * Whether a function enclosing `fn` exceeds the same limit with a value that covers `fn`, so
+ * reporting it for `fn` too would count the same code twice. The enclosing value is at least that
+ * of `fn` and both share the file's limits, so its level is never milder.
  */
 function isReportedByEnclosingFunction(
   limit: ExceededLimit,
@@ -133,12 +134,7 @@ function isReportedByEnclosingFunction(
     return false;
   }
   return exceedingFunctions.some(
-    (outer) =>
-      outer.fn !== fn &&
-      encloses(outer.fn, fn) &&
-      outer.exceeded.some(
-        ({ metric, level }) => metric === limit.metric && levels.indexOf(level) >= levels.indexOf(limit.level)
-      )
+    (outer) => outer.fn !== fn && encloses(outer.fn, fn) && outer.exceeded.some(({ metric }) => metric === limit.metric)
   );
 }
 

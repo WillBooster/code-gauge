@@ -120,8 +120,10 @@ because, at limits of 10, 2000, 20, 30000, and 50, all but 24 of the 107 functio
 there also exceeded the cognitive-complexity limit.
 
 Cognitive complexity, NCSS, Halstead volume, and DepDegree of a function cover the functions nested
-in it. A limit that a function and a function nested in it both violate is reported for the outer
-function only, unless the nested one violates it at a more severe level.
+in it, so a limit of these that a function and a function nested in it both violate is reported
+for the outer function only. The other limits measure a function's own body (or, for Halstead
+difficulty and effort, a ratio that can be higher for the nested function alone) and are reported
+for each function.
 
 A duplicated block is one occurrence of a within-file or cross-file clone, found with the
 [duplication detection settings](#duplication-detection-settings); its span runs from its first to
