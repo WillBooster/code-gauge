@@ -217,6 +217,10 @@ warning: src/legacy.ts:1-21 decide:`);
     expect(runCheck(['src/copies']).stdout).toContain(
       'src/copies/a.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12, src/summary.ts:1-12\n'
     );
+    // A fractional limit allows the whole line counts below it.
+    expect(runCheck(['src/copies', '--warning-min-duplicate-lines', '11.5']).stdout).toContain(
+      'duplicated lines 12 (max 11)'
+    );
     writeSource('src/copies/b.ts', reportFunction('copyB'));
     writeSource('src/copies/c.ts', reportFunction('copyC'));
     expect(runCheck(['src/copies']).stdout).toContain(

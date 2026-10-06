@@ -18,7 +18,10 @@ export interface Threshold<Subject = never> {
   /** What to change in the code when the limit is exceeded. */
   hint: string;
   measure: (subject: Subject) => number;
-  /** The value of a function covers the functions nested in it, so theirs repeats a part of it. */
+  /**
+   * The value of a function is at least that of each function nested in it, whose code it counts
+   * too. Not so for Halstead difficulty and effort: a ratio can be higher for the nested part alone.
+   */
   includesNestedFunctions?: true;
 }
 
@@ -78,7 +81,6 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'the function reuses the same operands many times; split it so each part handles fewer values.',
     measure: (fn) => fn.halstead.difficulty,
-    includesNestedFunctions: true,
   },
   {
     key: 'maxFunctionHalsteadEffort',
@@ -86,7 +88,6 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'the function is both large and dense; split it into smaller functions with fewer values each.',
     measure: (fn) => fn.halstead.effort,
-    includesNestedFunctions: true,
   },
   {
     key: 'maxFunctionDepDegree',
