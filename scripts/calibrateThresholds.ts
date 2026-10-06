@@ -59,7 +59,7 @@ if (failed) {
 if (rowsFile) {
   writeFileSync(rowsFile, rows.map((row) => `${JSON.stringify(row)}\n`).join(''));
 }
-printTables(rows);
+printTables(rows, projectDirectories.length);
 // The native worker pool keeps the event loop alive.
 process.exit(0);
 
@@ -140,17 +140,15 @@ function measureAll<Subject>(
   );
 }
 
-function printTables(allRows: readonly Row[]): void {
+function printTables(allRows: readonly Row[], projectCount: number): void {
+  // Ordered by function count; a language whose files hold no function still has file rows.
   const functionCountByLanguage = new Map<string, number>();
   for (const { kind, language } of allRows) {
-    if (kind === 'function') {
-      functionCountByLanguage.set(language, (functionCountByLanguage.get(language) ?? 0) + 1);
-    }
+    functionCountByLanguage.set(language, (functionCountByLanguage.get(language) ?? 0) + Number(kind === 'function'));
   }
   const languages = [...functionCountByLanguage]
     .toSorted(([, left], [, right]) => right - left)
     .map(([language]) => language);
-  const projectCount = new Set(allRows.map(({ project }) => project)).size;
   console.info(`Measured ${projectCount} projects.\n`);
 
   const thresholdsByKind = { function: functionThresholds, file: fileThresholds };
