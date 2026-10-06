@@ -49,6 +49,7 @@
     "build": "build-ts lib -i src/index.ts -i src/cli.ts -i src/worker.ts --external ../native/code-gauge.wasm",
     "build-native": "node scripts/buildNative.mjs",
     "build-wasm": "node scripts/buildWasm.mjs",
+    "calibrate-thresholds": "bun scripts/calibrateThresholds.ts",
     "cleanup": "bun wb lint --fix --format",
     "format": "bun wb lint --format",
     "postinstall": "node scripts/installNative.mjs",

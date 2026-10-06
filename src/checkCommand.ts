@@ -43,7 +43,7 @@ export interface CheckCliOptions extends CliOptions {
 }
 
 /** The measured files a check covers and the duplication they take part in. */
-interface CheckScope {
+export interface CheckScope {
   files: CheckedFile[];
   crossFileDuplication?: CrossFileDuplicationMetrics;
   /** Measurement failures of files the check covers. */
@@ -71,7 +71,7 @@ export async function runCheckCommand(
     const resolvedTarget = resolveTarget(target);
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
-    const scope = await scanScope(resolvedTarget, cliOptions.base, options);
+    const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options);
     const result = checkThresholds(
       scope.files,
       scope.crossFileDuplication,
@@ -117,7 +117,7 @@ async function endFileViolationsAtLastLine(violations: readonly Violation[], roo
  * duplication is detected against all of them; `base` only narrows the scope to what changed.
  * Outside a repository, where there is no change to narrow to, the target directory is walked.
  */
-async function scanScope(
+export async function scanCheckScope(
   resolvedTarget: string,
   base: string | undefined,
   options: ResolvedOptions

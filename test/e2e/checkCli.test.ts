@@ -46,6 +46,8 @@ function writeSource(relativePath: string, content: string): void {
   writeFileSync(path.join(repoDir, relativePath), content);
 }
 
+const baseConfig = { thresholds: { warning: { minDuplicateLines: 10, maxFunctionNestingDepth: 4 } } };
+
 function writeConfig(config: unknown): void {
   writeSource('code-gauge.config.json', JSON.stringify(config));
 }
@@ -59,8 +61,8 @@ const calc = `export function total(items: number[]): number {
 }
 `;
 
-// `decide` (lines 1-21) exceeds the default warning limits of cognitive complexity and nesting
-// depth; `identity` (lines 23-26) exceeds none.
+// `decide` (lines 1-21) exceeds the warning limits of cognitive complexity and, under `baseConfig`,
+// nesting depth; `identity` (lines 23-26) exceeds none.
 const legacy = `export function decide(a: number, b: number, c: number, d: number): number {
   if (a > 0) {
     if (b > 0) {
@@ -89,7 +91,7 @@ export function identity(value: number): number {
 }
 `;
 
-// A 12-line function, long enough for a copy to be a duplicated block under the default warning limit.
+// A 12-line function, long enough for a copy to be a duplicated block under `baseConfig`.
 function reportFunction(name: string): string {
   return `export function ${name}(items: number[]): number {
   let sum = 0;
@@ -139,8 +141,9 @@ beforeAll(() => {
   runGit(['config', 'user.name', 'test']);
   // git init records whether the filesystem keeps the executable bit; the mode-change case needs it.
   runGit(['config', 'core.fileMode', 'true']);
-  // A config at the repo root bounds the ancestor config search.
-  writeConfig({});
+  // A config at the repo root bounds the ancestor config search; its limits let the small fixtures
+  // below violate.
+  writeConfig(baseConfig);
   writeSource('src/calc.ts', calc);
   writeSource('src/legacy.ts', legacy);
   writeSource('src/report.ts', reportFunction('reportTotal'));
@@ -327,7 +330,9 @@ describe('code-gauge check: thresholds', () => {
 
   it('disables a threshold with null in the config file or "off" on the command line', () => {
     writeConfig({
-      thresholds: { warning: { maxFunctionCognitiveComplexity: disabled, minDuplicateLines: disabled } },
+      thresholds: {
+        warning: { maxFunctionNestingDepth: 4, maxFunctionCognitiveComplexity: disabled, minDuplicateLines: disabled },
+      },
     });
     const result = runCheck([]);
     expect(result.stdout).toContain('1 warnings (1 functions, 0 files, 0 duplicated blocks)');
@@ -440,7 +445,7 @@ describe('code-gauge check --base', () => {
     runGit(['commit', '-q', '-m', 'wide']);
     writeSource('src/wide.py', wide.replace('    return a\n', ''));
     const result = runCheck(['--base', 'HEAD']);
-    expect(result.stdout).toContain('src/wide.py:1-2 calculate: parameters 8 (max 7)\n');
+    expect(result.stdout).toContain('src/wide.py:1-2 calculate: parameters 8 (max 6)\n');
   });
 
   it('keeps a function whose name spans lines on one line', () => {
@@ -448,7 +453,7 @@ describe('code-gauge check --base', () => {
       'src/holder.ts',
       'export class Holder {\n  [`foo\nbar`](a, b, c, d, e, f, g, h) {\n    return a;\n  }\n}\n'
     );
-    expect(runCheck(['src/holder.ts']).stdout).toContain('src/holder.ts:2-5 [`foo bar`]: parameters 8 (max 7)\n');
+    expect(runCheck(['src/holder.ts']).stdout).toContain('src/holder.ts:2-5 [`foo bar`]: parameters 8 (max 6)\n');
   });
 
   it('reports a file-level violation only for a changed file', () => {
