@@ -10,7 +10,14 @@ import path from 'node:path';
 import { scanCheckScope } from '../src/checkCommand.js';
 import { loadConfig, resolveOptions } from '../src/cliConfig.js';
 import { configSearchDirectory, resolveTarget } from '../src/scan.js';
-import { duplicationThreshold, fileThresholds, functionThresholds, metricNameOf } from '../src/thresholds.js';
+import { checkThresholds } from '../src/thresholdCheck.js';
+import {
+  duplicationThreshold,
+  fileThresholds,
+  functionThresholds,
+  metricNameOf,
+  thresholds,
+} from '../src/thresholds.js';
 
 interface Row {
   kind: 'function' | 'file' | 'duplication';
@@ -19,14 +26,18 @@ interface Row {
   file: string;
   startLine: number;
   endLine: number;
-  /** Identifies the clone group of a duplicated block within its project. */
-  group?: number;
+  /** The other copies of a duplicated block, as `file:startLine-endLine`. */
+  partners?: string[];
   values: Record<string, number>;
 }
 
-const quantiles = [0.5, 0.75, 0.9, 0.95, 0.97, 0.98, 0.99, 0.995];
+const quantiles = [0.5, 0.75, 0.9, 0.95, 0.97, 0.98, 0.99, 0.995, 0.999];
 /** Languages with fewer measured functions are folded into `all` only: their tails are noise. */
 const minFunctionsPerLanguage = 1000;
+
+const noLimits = Object.fromEntries(thresholds.map(({ key }) => [key, Infinity]));
+/** Limits under which `checkThresholds` reports every duplicated block and nothing else. */
+const everyDuplicatedBlock = { warning: { ...noLimits, [duplicationThreshold.key]: 1 }, error: noLimits };
 
 const { rowsFile, projectDirectories } = parseArguments(process.argv.slice(2));
 const rows: Row[] = [];
@@ -62,9 +73,8 @@ async function measureProject(projectDirectory: string): Promise<Row[]> {
   }
 
   const project = path.basename(target);
-  const languageByFile = new Map<string, string>();
   const projectRows: Row[] = [];
-  let groupCount = 0;
+  const languageByFile = new Map<string, string>();
   for (const { file, metrics } of scope.files) {
     const { language } = metrics;
     languageByFile.set(file, language);
@@ -85,22 +95,20 @@ async function measureProject(projectDirectory: string): Promise<Row[]> {
         values: measureAll(functionThresholds, fn),
       });
     }
-    for (const group of metrics.duplication.duplicateBlockGroups) {
-      groupCount += 1;
-      for (const block of group) {
-        projectRows.push(toDuplicationRow(base, block, groupCount));
-      }
-    }
   }
-  for (const group of scope.crossFileDuplication?.groups ?? []) {
-    groupCount += 1;
-    for (const block of group.occurrences) {
-      const language = languageByFile.get(block.file);
-      // An occurrence in a file outside the target has no row of its own.
-      if (language !== undefined) {
-        projectRows.push(toDuplicationRow({ project, language, file: block.file }, block, groupCount));
-      }
-    }
+  // The duplicated blocks are the regions `check` reports: a file's overlapping clone occurrences merged.
+  const { violations } = checkThresholds(scope.files, scope.crossFileDuplication, () => everyDuplicatedBlock);
+  for (const { file, startLine, endLine, exceeded, partners } of violations) {
+    projectRows.push({
+      kind: 'duplication',
+      project,
+      language: languageByFile.get(file) ?? '',
+      file,
+      startLine,
+      endLine,
+      partners: partners?.map((partner) => `${partner.file}:${partner.startLine}-${partner.endLine}`),
+      values: Object.fromEntries(exceeded.map(({ metric, value }) => [metric, value])),
+    });
   }
   return projectRows;
 }
@@ -112,21 +120,6 @@ function measureAll<Subject>(
   return Object.fromEntries(
     thresholds.map((threshold) => [metricNameOf(threshold as never), threshold.measure(subject)])
   );
-}
-
-function toDuplicationRow(
-  base: Pick<Row, 'project' | 'language' | 'file'>,
-  block: { startLine: number; endLine: number },
-  group: number
-): Row {
-  return {
-    ...base,
-    kind: 'duplication',
-    startLine: block.startLine,
-    endLine: block.endLine,
-    group,
-    values: { [metricNameOf(duplicationThreshold)]: duplicationThreshold.measure(block) },
-  };
 }
 
 function printTables(allRows: readonly Row[]): void {

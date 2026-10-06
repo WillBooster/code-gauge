@@ -112,11 +112,14 @@ it violates. The warning limits mark code worth simplifying when it is touched; 
 mark code to fix, and only errors fail the check (exit code 1).
 
 The defaults come from the 45,123 functions that the repositories of the WillBooster organization
-hold, and from ratings of 225 of those functions and 60 of their duplicated blocks: a warning limit
-sits where most rated functions were worth refactoring or borderline, an error limit where nearly
-all were worth refactoring. Cognitive complexity above 15 flags 3.1% of the functions and above 30
-flags 1.0%; NCSS above 30 flags 2.6% and above 60 flags 0.6%. The thresholds that are off flagged
-few functions the others miss, and those were rated like unflagged ones.
+hold, and from ratings of 225 of those functions, 47 of their files, and 60 of their duplicated
+blocks: a warning limit sits where most rated items were worth changing or borderline, an error
+limit where nearly all were worth changing. Cognitive complexity above 15 flags 3.1% of the
+functions and above 30 flags 1.0%; NCSS above 30 flags 2.6% and above 60 flags 0.6%. Of the
+thresholds that are off, nesting depth flags no function that cognitive complexity misses, and
+cyclomatic complexity and Halstead difficulty flag functions rated like unflagged ones; Halstead
+volume, Halstead effort, and DepDegree are high mostly where a function is long or takes many
+parameters, which the limits above already flag.
 [How the default thresholds were calibrated](docs/threshold-calibration.md) holds the corpus, the
 distributions per language, the ratings, and the reasoning per threshold.
 

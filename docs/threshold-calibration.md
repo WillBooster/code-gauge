@@ -16,8 +16,7 @@ records the corpus, the measurements, and the reasoning behind each limit.
   copies of third-party projects kept in an organization repository (80,721 functions, e.g.
   inference engines, parser generators and their grammars, bundled libraries) and course material
   (27,927 functions of exercise and sample code).
-- What remains is the calibration corpus: 45,123 functions, 6,603 files, and 7,835 duplicated
-  blocks in the 105 repositories that hold source files, 31 of them public. Private repositories
+- What remains is the calibration corpus: 45,123 functions, 6,603 files, and 6,493 duplicated blocks in the 105 repositories that hold source files, 31 of them public. Private repositories
   hold 87% of the functions, so the full tables below cannot be reproduced outside the
   organization; those of the [public part](#public-part-of-the-corpus) can.
 
@@ -36,150 +35,151 @@ records the corpus, the measurements, and the reasoning behind each limit.
 ## Distributions
 
 Nearest-rank quantiles over the calibration corpus, as `scripts/calibrateThresholds.ts` prints
-them. A language is listed when the corpus holds at least 1,000 of its functions.
+them. A language is listed when the corpus holds at least 1,000 of its functions. A duplicated block
+is a region `check` reports: a file's overlapping clone occurrences merged into one.
 
 #### cognitive complexity (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        | 45123 |   0 |   2 |   6 |  11 |  16 |  20 |  31 |    45 | 355 |
-| typescript | 26726 |   0 |   2 |   6 |  12 |  17 |  22 |  33 |    47 | 355 |
-| tsx        |  6857 |   0 |   2 |   5 |  11 |  16 |  21 |  33 |    51 | 338 |
-| kotlin     |  3765 |   0 |   1 |   3 |   6 |   8 |  10 |  14 |    19 |  49 |
-| python     |  3521 |   1 |   4 |   9 |  14 |  19 |  23 |  29 |    43 | 199 |
-| rust       |  1449 |   0 |   2 |   6 |  12 |  17 |  23 |  37 |    48 | 129 |
-| ruby       |  1159 |   0 |   1 |   3 |   5 |   6 |   8 |  12 |    16 |  30 |
-| java       |  1046 |   0 |   1 |   3 |   6 |   8 |  11 |  20 |    27 | 134 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        | 45123 |   0 |   2 |   6 |  11 |  16 |  20 |  31 |    45 |    92 | 355 |
+| typescript | 26726 |   0 |   2 |   6 |  12 |  17 |  22 |  33 |    47 |   105 | 355 |
+| tsx        |  6857 |   0 |   2 |   5 |  11 |  16 |  21 |  33 |    51 |   120 | 338 |
+| kotlin     |  3765 |   0 |   1 |   3 |   6 |   8 |  10 |  14 |    19 |    35 |  49 |
+| python     |  3521 |   1 |   4 |   9 |  14 |  19 |  23 |  29 |    43 |    71 | 199 |
+| rust       |  1449 |   0 |   2 |   6 |  12 |  17 |  23 |  37 |    48 |   106 | 129 |
+| ruby       |  1159 |   0 |   1 |   3 |   5 |   6 |   8 |  12 |    16 |    28 |  30 |
+| java       |  1046 |   0 |   1 |   3 |   6 |   8 |  11 |  20 |    27 |    92 | 134 |
 
 #### cyclomatic complexity (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        | 45123 |   1 |   3 |   5 |   7 |  10 |  12 |  17 |    22 | 144 |
-| typescript | 26726 |   1 |   3 |   5 |   8 |  11 |  13 |  18 |    24 | 144 |
-| tsx        |  6857 |   1 |   2 |   4 |   6 |   9 |  11 |  15 |    21 |  54 |
-| kotlin     |  3765 |   1 |   2 |   3 |   5 |   6 |   7 |   8 |    13 |  42 |
-| python     |  3521 |   2 |   4 |   7 |  10 |  12 |  14 |  17 |    23 |  63 |
-| rust       |  1449 |   1 |   3 |   5 |   8 |  11 |  14 |  21 |    30 |  44 |
-| ruby       |  1159 |   1 |   2 |   3 |   4 |   4 |   5 |   7 |     8 |  12 |
-| java       |  1046 |   1 |   2 |   4 |   5 |   6 |   9 |  12 |    17 |  52 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        | 45123 |   1 |   3 |   5 |   7 |  10 |  12 |  17 |    22 |    42 | 144 |
+| typescript | 26726 |   1 |   3 |   5 |   8 |  11 |  13 |  18 |    24 |    46 | 144 |
+| tsx        |  6857 |   1 |   2 |   4 |   6 |   9 |  11 |  15 |    21 |    42 |  54 |
+| kotlin     |  3765 |   1 |   2 |   3 |   5 |   6 |   7 |   8 |    13 |    31 |  42 |
+| python     |  3521 |   2 |   4 |   7 |  10 |  12 |  14 |  17 |    23 |    37 |  63 |
+| rust       |  1449 |   1 |   3 |   5 |   8 |  11 |  14 |  21 |    30 |    43 |  44 |
+| ruby       |  1159 |   1 |   2 |   3 |   4 |   4 |   5 |   7 |     8 |    10 |  12 |
+| java       |  1046 |   1 |   2 |   4 |   5 |   6 |   9 |  12 |    17 |    44 |  52 |
 
 #### NCSS (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        | 45123 |   3 |   7 |  14 |  21 |  29 |  35 |  48 |    66 | 484 |
-| typescript | 26726 |   2 |   6 |  13 |  21 |  28 |  34 |  48 |    66 | 414 |
-| tsx        |  6857 |   2 |   5 |  11 |  18 |  25 |  32 |  47 |    70 | 484 |
-| kotlin     |  3765 |   2 |   6 |  13 |  19 |  24 |  30 |  36 |    48 | 131 |
-| python     |  3521 |   6 |  13 |  23 |  32 |  39 |  46 |  57 |    78 | 382 |
-| rust       |  1449 |   2 |   8 |  18 |  26 |  34 |  41 |  59 |    79 | 173 |
-| ruby       |  1159 |   3 |   7 |  12 |  17 |  24 |  27 |  38 |    40 | 188 |
-| java       |  1046 |   5 |   8 |  12 |  17 |  20 |  24 |  27 |    38 | 111 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        | 45123 |   3 |   7 |  14 |  21 |  29 |  35 |  48 |    66 |   123 | 484 |
+| typescript | 26726 |   2 |   6 |  13 |  21 |  28 |  34 |  48 |    66 |   119 | 414 |
+| tsx        |  6857 |   2 |   5 |  11 |  18 |  25 |  32 |  47 |    70 |   149 | 484 |
+| kotlin     |  3765 |   2 |   6 |  13 |  19 |  24 |  30 |  36 |    48 |   110 | 131 |
+| python     |  3521 |   6 |  13 |  23 |  32 |  39 |  46 |  57 |    78 |   127 | 382 |
+| rust       |  1449 |   2 |   8 |  18 |  26 |  34 |  41 |  59 |    79 |   123 | 173 |
+| ruby       |  1159 |   3 |   7 |  12 |  17 |  24 |  27 |  38 |    40 |    91 | 188 |
+| java       |  1046 |   5 |   8 |  12 |  17 |  20 |  24 |  27 |    38 |    93 | 111 |
 
 #### nesting depth (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        | 45123 |   0 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |  11 |
-| typescript | 26726 |   0 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |  11 |
-| tsx        |  6857 |   0 |   1 |   1 |   2 |   2 |   2 |   3 |     3 |   8 |
-| kotlin     |  3765 |   0 |   0 |   1 |   1 |   1 |   2 |   2 |     2 |   3 |
-| python     |  3521 |   1 |   1 |   2 |   3 |   3 |   4 |   4 |     4 |   6 |
-| rust       |  1449 |   0 |   1 |   2 |   3 |   3 |   3 |   4 |     5 |   7 |
-| ruby       |  1159 |   0 |   0 |   1 |   1 |   1 |   2 |   2 |     2 |   3 |
-| java       |  1046 |   0 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |   5 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        | 45123 |   0 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |     5 |  11 |
+| typescript | 26726 |   0 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |     5 |  11 |
+| tsx        |  6857 |   0 |   1 |   1 |   2 |   2 |   2 |   3 |     3 |     5 |   8 |
+| kotlin     |  3765 |   0 |   0 |   1 |   1 |   1 |   2 |   2 |     2 |     3 |   3 |
+| python     |  3521 |   1 |   1 |   2 |   3 |   3 |   4 |   4 |     4 |     5 |   6 |
+| rust       |  1449 |   0 |   1 |   2 |   3 |   3 |   3 |   4 |     5 |     7 |   7 |
+| ruby       |  1159 |   0 |   0 |   1 |   1 |   1 |   2 |   2 |     2 |     3 |   3 |
+| java       |  1046 |   0 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |     4 |   5 |
 
 #### parameters (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        | 45123 |   1 |   1 |   2 |   3 |   4 |   4 |   5 |     6 |  41 |
-| typescript | 26726 |   1 |   2 |   2 |   3 |   4 |   4 |   5 |     6 |  14 |
-| tsx        |  6857 |   1 |   1 |   1 |   2 |   2 |   2 |   2 |     3 |   5 |
-| kotlin     |  3765 |   0 |   1 |   2 |   2 |   3 |   4 |   5 |     6 |  18 |
-| python     |  3521 |   2 |   3 |   4 |   6 |   7 |   8 |  11 |    16 |  41 |
-| rust       |  1449 |   1 |   2 |   3 |   3 |   4 |   4 |   5 |     7 |   9 |
-| ruby       |  1159 |   1 |   1 |   2 |   3 |   3 |   3 |   4 |     5 |   8 |
-| java       |  1046 |   1 |   1 |   1 |   2 |   3 |   3 |   3 |     4 |   5 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        | 45123 |   1 |   1 |   2 |   3 |   4 |   4 |   5 |     6 |    11 |  41 |
+| typescript | 26726 |   1 |   2 |   2 |   3 |   4 |   4 |   5 |     6 |     8 |  14 |
+| tsx        |  6857 |   1 |   1 |   1 |   2 |   2 |   2 |   2 |     3 |     4 |   5 |
+| kotlin     |  3765 |   0 |   1 |   2 |   2 |   3 |   4 |   5 |     6 |    10 |  18 |
+| python     |  3521 |   2 |   3 |   4 |   6 |   7 |   8 |  11 |    16 |    23 |  41 |
+| rust       |  1449 |   1 |   2 |   3 |   3 |   4 |   4 |   5 |     7 |     8 |   9 |
+| ruby       |  1159 |   1 |   1 |   2 |   3 |   3 |   3 |   4 |     5 |     6 |   8 |
+| java       |  1046 |   1 |   1 |   1 |   2 |   3 |   3 |   3 |     4 |     4 |   5 |
 
 #### Halstead volume (function)
 
-| Language   | Count |   p50 |   p75 |   p90 |    p95 |    p97 |    p98 |    p99 |  p99.5 |     Max |
-| ---------- | ----: | ----: | ----: | ----: | -----: | -----: | -----: | -----: | -----: | ------: |
-| all        | 45123 |  75.3 | 242.5 | 626.1 | 1085.2 | 1541.2 | 1982.2 | 3025.1 | 4332.1 | 35330.1 |
-| typescript | 26726 |  74.2 | 237.7 | 591.0 |  992.7 | 1363.1 | 1737.6 | 2472.4 | 3593.3 | 34736.5 |
-| tsx        |  6857 |  66.6 | 272.0 | 968.7 | 1923.0 | 3045.5 | 3771.1 | 5576.9 | 8818.5 | 35330.1 |
-| kotlin     |  3765 |  38.0 | 140.6 | 396.3 |  596.1 |  795.0 | 1010.9 | 1474.9 | 2033.1 |  6123.6 |
-| python     |  3521 | 188.0 | 446.2 |   954 | 1500.5 | 1955.0 | 2316.6 | 2998.3 | 3758.2 | 23213.7 |
-| rust       |  1449 |  75.3 | 272.0 | 704.3 | 1181.0 | 1479.3 | 2082.6 | 3023.0 | 3853.0 |  9977.0 |
-| ruby       |  1159 |    48 | 155.6 | 379.6 |  577.7 |  741.2 |  905.9 | 1416.4 | 2093.1 |  6963.2 |
-| java       |  1046 |  83.8 | 122.6 | 198.8 |  304.2 |  428.1 |  587.6 |  794.2 |  977.8 |  1690.4 |
+| Language   | Count |   p50 |   p75 |   p90 |    p95 |    p97 |    p98 |    p99 |  p99.5 |   p99.9 |     Max |
+| ---------- | ----: | ----: | ----: | ----: | -----: | -----: | -----: | -----: | -----: | ------: | ------: |
+| all        | 45123 |  75.3 | 242.5 | 626.1 | 1085.2 | 1541.2 | 1982.2 | 3025.1 | 4332.1 |  9466.5 | 35330.1 |
+| typescript | 26726 |  74.2 | 237.7 | 591.0 |  992.7 | 1363.1 | 1737.6 | 2472.4 | 3593.3 |  7655.2 | 34736.5 |
+| tsx        |  6857 |  66.6 | 272.0 | 968.7 | 1923.0 | 3045.5 | 3771.1 | 5576.9 | 8818.5 | 15470.5 | 35330.1 |
+| kotlin     |  3765 |  38.0 | 140.6 | 396.3 |  596.1 |  795.0 | 1010.9 | 1474.9 | 2033.1 |  4115.9 |  6123.6 |
+| python     |  3521 | 188.0 | 446.2 |   954 | 1500.5 | 1955.0 | 2316.6 | 2998.3 | 3758.2 |  6747.8 | 23213.7 |
+| rust       |  1449 |  75.3 | 272.0 | 704.3 | 1181.0 | 1479.3 | 2082.6 | 3023.0 | 3853.0 |  6158.2 |  9977.0 |
+| ruby       |  1159 |    48 | 155.6 | 379.6 |  577.7 |  741.2 |  905.9 | 1416.4 | 2093.1 |  3523.5 |  6963.2 |
+| java       |  1046 |  83.8 | 122.6 | 198.8 |  304.2 |  428.1 |  587.6 |  794.2 |  977.8 |  1497.9 |  1690.4 |
 
 #### Halstead difficulty (function)
 
-| Language   | Count | p50 | p75 |  p90 |  p95 |  p97 |  p98 |  p99 | p99.5 |  Max |
-| ---------- | ----: | --: | --: | ---: | ---: | ---: | ---: | ---: | ----: | ---: |
-| all        | 45123 |   3 | 6.2 | 10.9 | 14.7 | 17.9 | 20.7 | 25.6 |  31.0 | 73.7 |
-| typescript | 26726 | 3.2 | 6.7 | 11.7 | 15.7 | 19.0 | 21.8 | 27.1 |  32.9 | 73.7 |
-| tsx        |  6857 |   3 |   6 | 10.5 | 14.5 | 18.3 | 20.7 | 25.9 |  30.5 | 63.8 |
-| kotlin     |  3765 | 1.5 | 3.2 |  5.8 |  8.0 |  9.8 |   11 | 14.1 |  17.2 | 31.5 |
-| python     |  3521 | 4.3 | 7.2 | 11.4 | 14.4 | 17.1 | 19.0 | 22.6 |  26.0 | 54.9 |
-| rust       |  1449 | 3.3 |   8 | 13.9 | 18.9 | 22.2 | 26.8 | 33.6 |  41.8 | 67.1 |
-| ruby       |  1159 | 1.7 |   3 |    5 |  7.0 |  8.7 | 11.1 | 13.6 |  16.8 | 24.2 |
-| java       |  1046 | 2.2 | 3.7 |  5.5 |  6.9 |    8 |  9.3 | 13.9 |  15.1 | 24.1 |
+| Language   | Count | p50 | p75 |  p90 |  p95 |  p97 |  p98 |  p99 | p99.5 | p99.9 |  Max |
+| ---------- | ----: | --: | --: | ---: | ---: | ---: | ---: | ---: | ----: | ----: | ---: |
+| all        | 45123 |   3 | 6.2 | 10.9 | 14.7 | 17.9 | 20.7 | 25.6 |  31.0 |  44.4 | 73.7 |
+| typescript | 26726 | 3.2 | 6.7 | 11.7 | 15.7 | 19.0 | 21.8 | 27.1 |  32.9 |  45.9 | 73.7 |
+| tsx        |  6857 |   3 |   6 | 10.5 | 14.5 | 18.3 | 20.7 | 25.9 |  30.5 |  44.1 | 63.8 |
+| kotlin     |  3765 | 1.5 | 3.2 |  5.8 |  8.0 |  9.8 |   11 | 14.1 |  17.2 |  28.4 | 31.5 |
+| python     |  3521 | 4.3 | 7.2 | 11.4 | 14.4 | 17.1 | 19.0 | 22.6 |  26.0 |  37.4 | 54.9 |
+| rust       |  1449 | 3.3 |   8 | 13.9 | 18.9 | 22.2 | 26.8 | 33.6 |  41.8 |  50.4 | 67.1 |
+| ruby       |  1159 | 1.7 |   3 |    5 |  7.0 |  8.7 | 11.1 | 13.6 |  16.8 |  24.1 | 24.2 |
+| java       |  1046 | 2.2 | 3.7 |  5.5 |  6.9 |    8 |  9.3 | 13.9 |  15.1 |  22.1 | 24.1 |
 
 #### Halstead effort (function)
 
-| Language   | Count |   p50 |    p75 |     p90 |     p95 |     p97 |     p98 |      p99 |    p99.5 |       Max |
-| ---------- | ----: | ----: | -----: | ------: | ------: | ------: | ------: | -------: | -------: | --------: |
-| all        | 45123 | 221.0 | 1457.3 |  6335.6 | 14734.1 | 24712.1 | 36682.9 |  66223.5 | 117025.2 | 2254618.7 |
-| typescript | 26726 |   230 | 1564.6 |  6511.4 | 14485.2 | 24519.8 | 34843.2 |  59407.6 | 108420.4 | 1394084.5 |
-| tsx        |  6857 | 207.6 | 1584.7 |  9391.5 | 25128.5 | 50318.2 | 74880.1 | 131517.7 | 244356.9 | 2254618.7 |
-| kotlin     |  3765 |  57.1 |  446.8 |  2023.0 |  4234.9 |  6954.7 | 10306.8 |  17782.1 |  24374.8 |  187032.2 |
-| python     |  3521 | 833.5 | 3082.6 | 10052.0 | 18791.9 | 29063.6 | 37427.8 |  61949.5 |  81535.2 | 1275314.9 |
-| rust       |  1449 | 250.6 | 2262.0 |  9157.4 |   21280 | 31926.1 | 49353.1 |  94190.8 | 150684.6 |  502966.7 |
-| ruby       |  1159 |  80.0 |  444.1 |  1638.9 |  3459.8 |  5304.4 |  7441.3 |  18676.1 |  26266.1 |   84820.9 |
-| java       |  1046 | 198.2 |  476.9 |  1076.3 |  1730.8 |  3043.1 |  5211.3 |   7356.7 |  18218.7 |   36151.1 |
+| Language   | Count |   p50 |    p75 |     p90 |     p95 |     p97 |     p98 |      p99 |    p99.5 |    p99.9 |       Max |
+| ---------- | ----: | ----: | -----: | ------: | ------: | ------: | ------: | -------: | -------: | -------: | --------: |
+| all        | 45123 | 221.0 | 1457.3 |  6335.6 | 14734.1 | 24712.1 | 36682.9 |  66223.5 | 117025.2 | 357298.0 | 2254618.7 |
+| typescript | 26726 |   230 | 1564.6 |  6511.4 | 14485.2 | 24519.8 | 34843.2 |  59407.6 | 108420.4 | 328440.8 | 1394084.5 |
+| tsx        |  6857 | 207.6 | 1584.7 |  9391.5 | 25128.5 | 50318.2 | 74880.1 | 131517.7 | 244356.9 | 609534.7 | 2254618.7 |
+| kotlin     |  3765 |  57.1 |  446.8 |  2023.0 |  4234.9 |  6954.7 | 10306.8 |  17782.1 |  24374.8 |  92582.3 |  187032.2 |
+| python     |  3521 | 833.5 | 3082.6 | 10052.0 | 18791.9 | 29063.6 | 37427.8 |  61949.5 |  81535.2 | 232183.1 | 1275314.9 |
+| rust       |  1449 | 250.6 | 2262.0 |  9157.4 |   21280 | 31926.1 | 49353.1 |  94190.8 | 150684.6 | 389800.3 |  502966.7 |
+| ruby       |  1159 |  80.0 |  444.1 |  1638.9 |  3459.8 |  5304.4 |  7441.3 |  18676.1 |  26266.1 |  82140.7 |   84820.9 |
+| java       |  1046 | 198.2 |  476.9 |  1076.3 |  1730.8 |  3043.1 |  5211.3 |   7356.7 |  18218.7 |  24203.2 |   36151.1 |
 
 #### DepDegree (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        | 45123 |   2 |   7 |  17 |  28 |  38 |  48 |  68 |    99 | 727 |
-| typescript | 26726 |   2 |   7 |  17 |  28 |  37 |  47 |  66 |    95 | 727 |
-| tsx        |  6857 |   1 |   5 |  12 |  22 |  32 |  43 |  66 |    92 | 676 |
-| kotlin     |  3765 |   1 |   3 |  10 |  16 |  22 |  26 |  37 |    47 | 171 |
-| python     |  3521 |   7 |  18 |  35 |  51 |  67 |  82 | 106 |   124 | 640 |
-| rust       |  1449 |   2 |   8 |  20 |  33 |  42 |  57 |  78 |   101 | 252 |
-| ruby       |  1159 |   2 |   6 |  14 |  21 |  26 |  34 |  54 |    66 | 158 |
-| java       |  1046 |   3 |   5 |   8 |  13 |  17 |  20 |  28 |    35 |  59 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        | 45123 |   2 |   7 |  17 |  28 |  38 |  48 |  68 |    99 |   183 | 727 |
+| typescript | 26726 |   2 |   7 |  17 |  28 |  37 |  47 |  66 |    95 |   192 | 727 |
+| tsx        |  6857 |   1 |   5 |  12 |  22 |  32 |  43 |  66 |    92 |   199 | 676 |
+| kotlin     |  3765 |   1 |   3 |  10 |  16 |  22 |  26 |  37 |    47 |    97 | 171 |
+| python     |  3521 |   7 |  18 |  35 |  51 |  67 |  82 | 106 |   124 |   213 | 640 |
+| rust       |  1449 |   2 |   8 |  20 |  33 |  42 |  57 |  78 |   101 |   205 | 252 |
+| ruby       |  1159 |   2 |   6 |  14 |  21 |  26 |  34 |  54 |    66 |   128 | 158 |
+| java       |  1046 |   3 |   5 |   8 |  13 |  17 |  20 |  28 |    35 |    45 |  59 |
 
 #### file NCSS (file)
 
-| Language   | Count | p50 | p75 | p90 | p95 |  p97 |  p98 |  p99 | p99.5 |  Max |
-| ---------- | ----: | --: | --: | --: | --: | ---: | ---: | ---: | ----: | ---: |
-| all        |  6603 |  18 |  45 | 104 | 165 |  210 |  268 |  377 |   536 | 1978 |
-| typescript |  3529 |  20 |  52 | 115 | 179 |  225 |  281 |  400 |   595 | 1978 |
-| tsx        |  1183 |  18 |  32 |  59 |  86 |  118 |  144 |  188 |   288 |  640 |
-| kotlin     |   226 |  42 |  84 | 158 | 285 |  343 |  414 |  561 |   615 | 1447 |
-| python     |   568 |  38 |  94 | 177 | 256 |  303 |  423 |  556 |   842 | 1260 |
-| rust       |    60 |  55 | 179 | 332 | 607 | 1042 | 1042 | 1314 |  1314 | 1314 |
-| ruby       |   232 |   7 |  23 |  62 | 100 |  120 |  143 |  188 |   206 |  309 |
-| java       |   622 |  11 |  15 |  23 |  28 |   34 |   44 |  102 |   146 |  194 |
+| Language   | Count | p50 | p75 | p90 | p95 |  p97 |  p98 |  p99 | p99.5 | p99.9 |  Max |
+| ---------- | ----: | --: | --: | --: | --: | ---: | ---: | ---: | ----: | ----: | ---: |
+| all        |  6603 |  18 |  45 | 104 | 165 |  210 |  268 |  377 |   536 |  1042 | 1978 |
+| typescript |  3529 |  20 |  52 | 115 | 179 |  225 |  281 |  400 |   595 |   886 | 1978 |
+| tsx        |  1183 |  18 |  32 |  59 |  86 |  118 |  144 |  188 |   288 |   398 |  640 |
+| kotlin     |   226 |  42 |  84 | 158 | 285 |  343 |  414 |  561 |   615 |  1447 | 1447 |
+| python     |   568 |  38 |  94 | 177 | 256 |  303 |  423 |  556 |   842 |  1260 | 1260 |
+| rust       |    60 |  55 | 179 | 332 | 607 | 1042 | 1042 | 1314 |  1314 |  1314 | 1314 |
+| ruby       |   232 |   7 |  23 |  62 | 100 |  120 |  143 |  188 |   206 |   309 |  309 |
+| java       |   622 |  11 |  15 |  23 |  28 |   34 |   44 |  102 |   146 |   194 |  194 |
 
 #### duplicated lines (duplicated block)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        |  7835 |   9 |  14 |  19 |  26 |  29 |  34 |  43 |    53 | 276 |
-| typescript |  3645 |   8 |  12 |  17 |  21 |  26 |  30 |  39 |    47 | 276 |
-| tsx        |  1828 |   9 |  13 |  20 |  25 |  28 |  31 |  42 |    51 |  67 |
-| kotlin     |   169 |  10 |  14 |  18 |  25 |  29 |  36 |  39 |    46 |  46 |
-| python     |   962 |   9 |  15 |  25 |  31 |  39 |  45 |  55 |    64 | 115 |
-| rust       |   222 |   7 |  10 |  13 |  16 |  21 |  22 |  26 |    30 |  30 |
-| ruby       |    97 |   9 |  12 |  19 |  25 |  28 |  86 |  86 |    86 |  86 |
-| java       |   822 |  15 |  19 |  28 |  31 |  35 |  39 |  44 |    57 |  62 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        |  6493 |   9 |  14 |  20 |  27 |  31 |  36 |  46 |    57 |    72 | 276 |
+| typescript |  3121 |   8 |  12 |  17 |  23 |  27 |  34 |  43 |    56 |    71 | 276 |
+| tsx        |  1541 |  10 |  14 |  21 |  26 |  29 |  33 |  43 |    51 |    61 |  67 |
+| kotlin     |   161 |  10 |  14 |  18 |  26 |  33 |  36 |  39 |    46 |    46 |  46 |
+| python     |   804 |  10 |  16 |  25 |  33 |  41 |  48 |  55 |    64 |   115 | 115 |
+| rust       |   188 |   8 |  10 |  15 |  18 |  22 |  24 |  30 |    30 |    30 |  30 |
+| ruby       |    87 |   9 |  12 |  19 |  25 |  28 |  86 |  86 |    86 |    86 |  86 |
+| java       |   534 |  16 |  19 |  28 |  34 |  39 |  44 |  57 |    62 |    62 |  62 |
 
 The distributions barely move between subsets: the 99th percentile of cognitive complexity is 31
 for active and 30 for archived repositories, and 29 for private and 38 for public ones (the public
@@ -190,14 +190,21 @@ repositories are mostly tools). Across the 42 repositories with at least 200 fun
 ## Ratings
 
 A quantile says how rare a value is, not whether the code is a problem, so the limits were placed
-with ratings. 225 functions were drawn at random from 15 strata of metric values (15 each, at most
-two per repository and stratum; TypeScript, TSX, Python, Kotlin, and Rust), and 60 clone groups
-from five strata of block length (12 each). The draw preceded the fetch of one of the two data
-repositories, so its 675 Python functions could not be drawn. LLM reviewers that saw the code but neither the metric
-values nor the strata rated each function A (should be refactored: a natural restructuring makes it
-clearly easier to read), B (borderline), or C (fine as is: a split would be mechanical), and each
-pair of duplicated blocks A (should be shared), B (borderline), or C (not worth sharing). Each item
-was rated once, so a stratum's share carries the uncertainty of 12 to 15 ratings.
+with ratings. Drawn at random, at most two per repository and stratum, from TypeScript, TSX, Python,
+Kotlin, and Rust code:
+
+- 225 functions from 15 strata of metric values, 15 each;
+- 47 files from five strata of file NCSS, 10 each and all 7 above 1000;
+- 60 clone groups from five strata of block length, 12 each, regrouped below by the length of the
+  duplicated block `check` reports for them.
+
+The draw preceded the fetch of one of the two data repositories, so its 675 Python functions could
+not be drawn. LLM reviewers that saw the code but neither the metric values nor the strata rated
+each item once: a function A (should be refactored: a natural restructuring makes it clearly easier
+to read), B (borderline), or C (fine as is: a split would be mechanical); a file A (should be
+split: it holds clearly separable responsibilities), B, or C (cohesive); a pair of duplicated blocks
+A (should be shared), B, or C (not worth sharing). A stratum's share therefore carries the
+uncertainty of 7 to 15 ratings.
 
 | Stratum                                               | Rated |   A | A or B |
 | ----------------------------------------------------- | ----: | --: | -----: |
@@ -216,11 +223,16 @@ was rated once, so a stratum's share carries the uncertainty of 12 to 15 ratings
 | Halstead volume > 2000, cognitive complexity ≤ 15     |    15 | 27% |    80% |
 | Halstead difficulty > 20, cognitive complexity ≤ 15   |    15 |  7% |    53% |
 | DepDegree > 50, cognitive complexity ≤ 15             |    15 | 47% |    93% |
-| duplicated block of 6–9 lines                         |    12 |  8% |    50% |
-| duplicated block of 10–14 lines                       |    12 | 17% |    58% |
+| file NCSS 151–250                                     |    10 | 10% |    40% |
+| file NCSS 251–400                                     |    10 | 30% |    60% |
+| file NCSS 401–600                                     |    10 | 40% |    90% |
+| file NCSS 601–1000                                    |    10 | 70% |   100% |
+| file NCSS above 1000                                  |     7 | 86% |   100% |
+| duplicated block of 6–9 lines                         |    10 | 10% |    50% |
+| duplicated block of 10–14 lines                       |    13 | 15% |    54% |
 | duplicated block of 15–19 lines                       |    12 | 25% |    58% |
 | duplicated block of 20–29 lines                       |    12 | 25% |    83% |
-| duplicated block of 30 lines or more                  |    12 | 33% |    67% |
+| duplicated block of 30 lines or more                  |    13 | 31% |    69% |
 
 Regrouping all 225 rated functions by the limits chosen below: of the 89 under every warning limit,
 11% were rated A and 55% A or B; of the 92 that only exceed a warning limit, 47% A and 87% A or B;
@@ -237,7 +249,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
 | `maxFunctionNcss`                |      30 |    60 | 2.62% and 0.59% of functions         |
 | `maxFunctionParameterCount`      |       6 |   off | 0.48% of functions                   |
 | `maxFileNcss`                    |     400 |  1000 | 0.89% and 0.11% of files             |
-| `minDuplicateLines`              |      15 |   off | 22% of duplicated blocks             |
+| `minDuplicateLines`              |      15 |   off | 24% of duplicated blocks             |
 
 - **Cognitive complexity, 15 and 30.** The share of A rises steadily with the value and the
   conventional limit of 15 is where B takes over from C. Above 30, 27 of 30 functions were A;
@@ -250,21 +262,25 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
 - **Parameters, 6, no error.** Of the rated functions with seven or more parameters that exceed no
   other limit, 6 of 12 were A and 10 of 12 A or B; of those with exactly six, one of seven was A.
   No count separated A from B well enough for an error.
-- **File NCSS, 400 and 1000.** Files were not rated, so only the tail is flagged: the 99th and
-  99.9th percentiles are 377 and 1042.
-- **Duplicated lines, 15, no error.** Length separates duplicated blocks poorly: a third of the
-  blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
+- **File NCSS, 400 and 1000.** Nine of ten rated files between 401 and 600 were A or B, against
+  six of ten between 251 and 400, and six of the seven files above 1000 should be split, against
+  seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
+  percentiles are 377 and 1042.
+- **Duplicated lines, 15, no error.** Length separates duplicated blocks poorly: under a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
   of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines on the corpus
-  holds 3,789 blocks, more than every function violation together.
+  holds 3,234 blocks, more than every function violation together.
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
   more often than others of their cognitive complexity.
 - **Cyclomatic complexity and Halstead difficulty, off.** Functions they flag alone were rated like
   unflagged ones (13% and 7% A).
 - **Halstead volume, Halstead effort, and DepDegree, off.** Their strata were rated higher, but
-  mostly because their functions are long or take many parameters: of the 820 functions with a DepDegree above 50, the limits above leave 72 unflagged, and one of the nine rated among those
-  was A. Of the 890 functions with a Halstead volume above 2000, they leave 198 unflagged, 26% of
-  the rated ones A.
+  mostly because their functions are long or take many parameters. Of the 820 functions with a
+  DepDegree above 50, the limits above leave 72 unflagged, and one of the nine rated among those
+  was A. Of the 890 functions with a Halstead volume above 2000, they leave 198 unflagged; 5 of the
+  19 rated among those were A, against 11% of the functions under every limit, a weak signal for
+  which the metric names no change to make. Halstead effort is the product of volume and
+  difficulty and was not rated on its own.
 
 With these limits, `check` reports 464 errors and 2,799 warnings in the calibration corpus, and 45 of its 105 repositories have no error.
 
@@ -301,43 +317,43 @@ prints, among the other tables:
 
 #### cognitive complexity (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        |  5851 |   1 |   3 |   8 |  13 |  19 |  25 |  38 |    54 | 183 |
-| typescript |  4471 |   1 |   3 |   8 |  15 |  21 |  27 |  40 |    59 | 183 |
-| rust       |  1159 |   0 |   2 |   6 |  11 |  15 |  19 |  29 |    47 | 129 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        |  5851 |   1 |   3 |   8 |  13 |  19 |  25 |  38 |    54 |   108 | 183 |
+| typescript |  4471 |   1 |   3 |   8 |  15 |  21 |  27 |  40 |    59 |   108 | 183 |
+| rust       |  1159 |   0 |   2 |   6 |  11 |  15 |  19 |  29 |    47 |    92 | 129 |
 
 #### NCSS (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        |  5851 |   2 |   8 |  16 |  24 |  32 |  40 |  62 |    78 | 337 |
-| typescript |  4471 |   3 |   8 |  16 |  24 |  33 |  42 |  64 |    79 | 337 |
-| rust       |  1159 |   2 |   6 |  16 |  24 |  30 |  36 |  51 |    78 | 173 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        |  5851 |   2 |   8 |  16 |  24 |  32 |  40 |  62 |    78 |   172 | 337 |
+| typescript |  4471 |   3 |   8 |  16 |  24 |  33 |  42 |  64 |    79 |   157 | 337 |
+| rust       |  1159 |   2 |   6 |  16 |  24 |  30 |  36 |  51 |    78 |   121 | 173 |
 
 #### parameters (function)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        |  5851 |   1 |   2 |   2 |   3 |   4 |   4 |   5 |     5 |   9 |
-| typescript |  4471 |   1 |   2 |   2 |   3 |   4 |   4 |   5 |     5 |   9 |
-| rust       |  1159 |   1 |   2 |   3 |   3 |   4 |   5 |   6 |     7 |   9 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        |  5851 |   1 |   2 |   2 |   3 |   4 |   4 |   5 |     5 |     7 |   9 |
+| typescript |  4471 |   1 |   2 |   2 |   3 |   4 |   4 |   5 |     5 |     6 |   9 |
+| rust       |  1159 |   1 |   2 |   3 |   3 |   4 |   5 |   6 |     7 |     8 |   9 |
 
 #### file NCSS (file)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 |  p98 |  p99 | p99.5 |  Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | ---: | ---: | ----: | ---: |
-| all        |   759 |  21 |  59 | 135 | 215 | 281 |  333 |  412 |   607 | 1042 |
-| typescript |   610 |  22 |  62 | 134 | 209 | 280 |  310 |  376 |   413 |  695 |
-| rust       |    49 |  55 | 157 | 332 | 607 | 964 | 1042 | 1042 |  1042 | 1042 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 |  p98 |  p99 | p99.5 | p99.9 |  Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | ---: | ---: | ----: | ----: | ---: |
+| all        |   759 |  21 |  59 | 135 | 215 | 281 |  333 |  412 |   607 |  1042 | 1042 |
+| typescript |   610 |  22 |  62 | 134 | 209 | 280 |  310 |  376 |   413 |   695 |  695 |
+| rust       |    49 |  55 | 157 | 332 | 607 | 964 | 1042 | 1042 |  1042 |  1042 | 1042 |
 
 #### duplicated lines (duplicated block)
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | --: |
-| all        |   586 |   7 |  10 |  14 |  16 |  21 |  26 |  38 |    57 |  57 |
-| typescript |   478 |   7 |  10 |  14 |  18 |  24 |  28 |  44 |    57 |  57 |
-| rust       |    93 |   6 |   8 |  10 |  13 |  13 |  16 |  16 |    16 |  16 |
+| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
+| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
+| all        |   525 |   7 |  10 |  14 |  18 |  23 |  27 |  38 |    57 |    57 |  57 |
+| typescript |   429 |   7 |  11 |  14 |  19 |  25 |  28 |  44 |    57 |    57 |  57 |
+| rust       |    81 |   7 |   9 |  11 |  13 |  16 |  16 |  16 |    16 |    16 |  16 |
 
 | Repository                                                                                            | Commit                                     |
 | ----------------------------------------------------------------------------------------------------- | ------------------------------------------ |
