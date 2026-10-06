@@ -36,7 +36,9 @@ records the corpus, the measurements, and the reasoning behind each limit.
 
 Nearest-rank quantiles over the calibration corpus, as `scripts/calibrateThresholds.ts` prints
 them. A language is listed when the corpus holds at least 1,000 of its functions. A duplicated block
-is a region `check` reports: a file's overlapping clone occurrences merged into one.
+is a file's overlapping clone occurrences merged into one region, whatever their length. `check`
+merges only the occurrences that reach a limit, so at a given limit it reports slightly fewer blocks
+than this table holds: 1,506 from 15 lines, where the table holds 1,535.
 
 #### cognitive complexity (function)
 
@@ -249,7 +251,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
 | `maxFunctionNcss`                |      30 |    60 | 2.62% and 0.59% of functions         |
 | `maxFunctionParameterCount`      |       6 |   off | 0.48% of functions                   |
 | `maxFileNcss`                    |     400 |  1000 | 0.89% and 0.11% of files             |
-| `minDuplicateLines`              |      15 |   off | 24% of duplicated blocks             |
+| `minDuplicateLines`              |      15 |   off | 1,506 duplicated blocks              |
 
 - **Cognitive complexity, 15 and 30.** The share of A rises steadily with the value and the
   conventional limit of 15 is where B takes over from C. Above 30, 27 of 30 functions were A;
@@ -267,8 +269,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
   percentiles are 377 and 1042.
 - **Duplicated lines, 15, no error.** Length separates duplicated blocks poorly: under a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
-  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines on the corpus
-  holds 3,234 blocks, more than every function violation together.
+  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines on `check` reports 3,209 blocks in the corpus, nearly twice its 1,698 function violations.
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
   more often than others of their cognitive complexity.

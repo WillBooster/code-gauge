@@ -96,7 +96,8 @@ async function measureProject(projectDirectory: string): Promise<Row[]> {
       });
     }
   }
-  // The duplicated blocks are the regions `check` reports: a file's overlapping clone occurrences merged.
+  // A duplicated block is a file's overlapping clone occurrences merged, whatever their length. `check`
+  // merges only those reaching a limit, so it reports slightly fewer blocks at a given limit.
   const { violations } = checkThresholds(scope.files, scope.crossFileDuplication, () => everyDuplicatedBlock);
   for (const { file, startLine, endLine, exceeded, partners } of violations) {
     projectRows.push({
