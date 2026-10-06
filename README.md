@@ -111,9 +111,9 @@ Every threshold has a limit per level, and a value is reported at the most sever
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
 mark code to fix, and only errors fail the check (exit code 1).
 
-The defaults come from the 45,123 functions that the repositories of the WillBooster organization
-hold, and from ratings of 225 of those functions, 47 of their files, and 60 of their duplicated
-blocks: a warning limit sits where most rated items were worth changing or borderline, an error
+The defaults come from the 45,123 functions the WillBooster organization wrote in its repositories
+(of 153,771 measured; copies of third-party projects and course material are left out), and from
+ratings of 225 of those functions, 47 of their files, and 60 of their duplicated blocks: a warning limit sits where most rated items were worth changing or borderline, an error
 limit where nearly all were worth changing. Cognitive complexity above 15 flags 3.1% of the
 functions and above 30 flags 1.0%; NCSS above 30 flags 2.6% and above 60 flags 0.6%. Of the
 thresholds that are off, nesting depth flags no function that cognitive complexity misses, and

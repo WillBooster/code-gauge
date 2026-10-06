@@ -29,6 +29,7 @@ records the corpus, the measurements, and the reasoning behind each limit.
 | Rust       |     1,449 |            6 |
 | Ruby       |     1,159 |            4 |
 | Java       |     1,046 |            6 |
+| JavaScript |     2.31% |        0.18% | 1.42% | 0.36% | 0.18% |
 | JavaScript |       562 |           39 |
 | C and C++  |        38 |            5 |
 
@@ -320,7 +321,8 @@ With these limits, `check` reports 464 errors and 2,799 warnings in the calibrat
 
 ## Languages
 
-The limits are the same for every language. Under them the languages differ:
+The limits are the same for every language. Under them the languages differ (C and C++, with 38
+functions together, are left out):
 
 | Language   | Cognitive > 15 | Cognitive > 30 | NCSS > 30 | NCSS > 60 | Parameters > 6 |
 | ---------- | -------------: | -------------: | --------: | --------: | -------------: |
