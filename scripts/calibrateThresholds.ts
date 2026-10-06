@@ -36,8 +36,6 @@ interface Row {
 }
 
 const quantiles = [0.5, 0.75, 0.9, 0.95, 0.97, 0.98, 0.99, 0.995, 0.999];
-/** Languages with fewer measured functions are folded into `all` only: their tails are noise. */
-const minFunctionsPerLanguage = 1000;
 
 /**
  * `check` merges the clone occurrences that reach its limit, so the blocks it reports at one limit
@@ -150,7 +148,6 @@ function printTables(allRows: readonly Row[]): void {
     }
   }
   const languages = [...functionCountByLanguage]
-    .filter(([, count]) => count >= minFunctionsPerLanguage)
     .toSorted(([, left], [, right]) => right - left)
     .map(([language]) => language);
   const projectCount = new Set(allRows.map(({ project }) => project)).size;

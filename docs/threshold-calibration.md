@@ -35,9 +35,10 @@ records the corpus, the measurements, and the reasoning behind each limit.
 ## Distributions
 
 Nearest-rank quantiles over the calibration corpus, as `scripts/calibrateThresholds.ts` prints
-them. A language is listed when the corpus holds at least 1,000 of its functions. Duplicated blocks
-have no distribution of their own: `check` merges the clone occurrences that reach its limit, so
-the blocks it reports depend on the limit, and the last table counts them at several limits.
+them, per language; the tail quantiles of a language with few functions or files are those of a
+handful of items. Duplicated blocks have no distribution of their own: `check` merges the clone
+occurrences that reach its limit, so the blocks it reports depend on the limit, and the last table
+counts them at several limits.
 
 #### cognitive complexity (function)
 
@@ -51,6 +52,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 |   0 |   2 |   6 |  12 |  17 |  23 |  37 |    48 |   106 | 129 |
 | ruby       |  1159 |   0 |   1 |   3 |   5 |   6 |   8 |  12 |    16 |    28 |  30 |
 | java       |  1046 |   0 |   1 |   3 |   6 |   8 |  11 |  20 |    27 |    92 | 134 |
+| javascript |   562 |   0 |   2 |   5 |   9 |  15 |  16 |  20 |    24 |   108 | 108 |
+| cpp        |    35 |   0 |   2 |   5 |   7 |   7 |   7 |   7 |     7 |     7 |   7 |
+| c          |     3 |   0 |   0 |   0 |   0 |   0 |   0 |   0 |     0 |     0 |   0 |
 
 #### cyclomatic complexity (function)
 
@@ -64,6 +68,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 |   1 |   3 |   5 |   8 |  11 |  14 |  21 |    30 |    43 |  44 |
 | ruby       |  1159 |   1 |   2 |   3 |   4 |   4 |   5 |   7 |     8 |    10 |  12 |
 | java       |  1046 |   1 |   2 |   4 |   5 |   6 |   9 |  12 |    17 |    44 |  52 |
+| javascript |   562 |   1 |   2 |   4 |   6 |   8 |   9 |  11 |    11 |    18 |  18 |
+| cpp        |    35 |   1 |   3 |   5 |   5 |   5 |   8 |   8 |     8 |     8 |   8 |
+| c          |     3 |   1 |   1 |   1 |   1 |   1 |   1 |   1 |     1 |     1 |   1 |
 
 #### NCSS (function)
 
@@ -77,6 +84,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 |   2 |   8 |  18 |  26 |  34 |  41 |  59 |    79 |   123 | 173 |
 | ruby       |  1159 |   3 |   7 |  12 |  17 |  24 |  27 |  38 |    40 |    91 | 188 |
 | java       |  1046 |   5 |   8 |  12 |  17 |  20 |  24 |  27 |    38 |    93 | 111 |
+| javascript |   562 |   2 |   7 |  13 |  20 |  26 |  28 |  34 |    45 |   203 | 203 |
+| cpp        |    35 |   4 |  10 |  19 |  24 |  24 |  24 |  24 |    24 |    24 |  24 |
+| c          |     3 |   4 |   6 |   6 |   6 |   6 |   6 |   6 |     6 |     6 |   6 |
 
 #### nesting depth (function)
 
@@ -90,6 +100,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 |   0 |   1 |   2 |   3 |   3 |   3 |   4 |     5 |     7 |   7 |
 | ruby       |  1159 |   0 |   0 |   1 |   1 |   1 |   2 |   2 |     2 |     3 |   3 |
 | java       |  1046 |   0 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |     4 |   5 |
+| javascript |   562 |   0 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |     4 |   4 |
+| cpp        |    35 |   0 |   1 |   2 |   2 |   2 |   2 |   2 |     2 |     2 |   2 |
+| c          |     3 |   0 |   0 |   0 |   0 |   0 |   0 |   0 |     0 |     0 |   0 |
 
 #### parameters (function)
 
@@ -103,6 +116,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 |   1 |   2 |   3 |   3 |   4 |   4 |   5 |     7 |     8 |   9 |
 | ruby       |  1159 |   1 |   1 |   2 |   3 |   3 |   3 |   4 |     5 |     6 |   8 |
 | java       |  1046 |   1 |   1 |   1 |   2 |   3 |   3 |   3 |     4 |     4 |   5 |
+| javascript |   562 |   1 |   1 |   2 |   2 |   3 |   4 |   5 |     6 |     8 |   8 |
+| cpp        |    35 |   1 |   2 |   4 |   4 |   4 |   5 |   5 |     5 |     5 |   5 |
+| c          |     3 |   0 |   1 |   1 |   1 |   1 |   1 |   1 |     1 |     1 |   1 |
 
 #### Halstead volume (function)
 
@@ -116,6 +132,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 |  75.3 | 272.0 | 704.3 | 1181.0 | 1479.3 | 2082.6 | 3023.0 | 3853.0 |  6158.2 |  9977.0 |
 | ruby       |  1159 |    48 | 155.6 | 379.6 |  577.7 |  741.2 |  905.9 | 1416.4 | 2093.1 |  3523.5 |  6963.2 |
 | java       |  1046 |  83.8 | 122.6 | 198.8 |  304.2 |  428.1 |  587.6 |  794.2 |  977.8 |  1497.9 |  1690.4 |
+| javascript |   562 |  48.4 | 186.9 | 406.3 |  647.1 |  904.1 | 1049.4 |   1182 | 2249.0 | 16405.6 | 16405.6 |
+| cpp        |    35 |  59.2 | 260.1 | 546.7 |  580.0 |  580.0 |  629.6 |  629.6 |  629.6 |   629.6 |   629.6 |
+| c          |     3 |    33 |  53.8 |  53.8 |   53.8 |   53.8 |   53.8 |   53.8 |   53.8 |    53.8 |    53.8 |
 
 #### Halstead difficulty (function)
 
@@ -129,6 +148,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 | 3.3 |   8 | 13.9 | 18.9 | 22.2 | 26.8 | 33.6 |  41.8 |  50.4 | 67.1 |
 | ruby       |  1159 | 1.7 |   3 |    5 |  7.0 |  8.7 | 11.1 | 13.6 |  16.8 |  24.1 | 24.2 |
 | java       |  1046 | 2.2 | 3.7 |  5.5 |  6.9 |    8 |  9.3 | 13.9 |  15.1 |  22.1 | 24.1 |
+| javascript |   562 | 2.3 | 4.7 |    8 | 10.8 | 13.7 | 14.7 | 17.7 |  23.4 |  31.1 | 31.1 |
+| cpp        |    35 | 3.2 | 7.2 |   10 | 11.4 | 11.4 | 11.4 | 11.4 |  11.4 |  11.4 | 11.4 |
+| c          |     3 |   2 | 2.1 |  2.1 |  2.1 |  2.1 |  2.1 |  2.1 |   2.1 |   2.1 |  2.1 |
 
 #### Halstead effort (function)
 
@@ -142,6 +164,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 | 250.6 | 2262.0 |  9157.4 |   21280 | 31926.1 | 49353.1 |  94190.8 | 150684.6 | 389800.3 |  502966.7 |
 | ruby       |  1159 |  80.0 |  444.1 |  1638.9 |  3459.8 |  5304.4 |  7441.3 |  18676.1 |  26266.1 |  82140.7 |   84820.9 |
 | java       |  1046 | 198.2 |  476.9 |  1076.3 |  1730.8 |  3043.1 |  5211.3 |   7356.7 |  18218.7 |  24203.2 |   36151.1 |
+| javascript |   562 | 121.9 |  909.8 |  3319.8 |  5742.0 |  9828.9 | 12804.7 |  22050.5 |  39762.4 | 258449.8 |  258449.8 |
+| cpp        |    35 | 172.8 | 2276.8 |  5076.6 |  6605.3 |  6605.3 |  6752.9 |   6752.9 |   6752.9 |   6752.9 |    6752.9 |
+| c          |     3 |  69.3 |  107.5 |   107.5 |   107.5 |   107.5 |   107.5 |    107.5 |    107.5 |    107.5 |     107.5 |
 
 #### DepDegree (function)
 
@@ -155,6 +180,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |  1449 |   2 |   8 |  20 |  33 |  42 |  57 |  78 |   101 |   205 | 252 |
 | ruby       |  1159 |   2 |   6 |  14 |  21 |  26 |  34 |  54 |    66 |   128 | 158 |
 | java       |  1046 |   3 |   5 |   8 |  13 |  17 |  20 |  28 |    35 |    45 |  59 |
+| javascript |   562 |   2 |   6 |  15 |  22 |  28 |  30 |  46 |    60 |   194 | 194 |
+| cpp        |    35 |   2 |   8 |  18 |  29 |  29 |  29 |  29 |    29 |    29 |  29 |
+| c          |     3 |   1 |   1 |   1 |   1 |   1 |   1 |   1 |     1 |     1 |   1 |
 
 #### file NCSS (file)
 
@@ -168,6 +196,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |    60 |  55 | 179 | 332 | 607 | 1042 | 1042 | 1314 |  1314 |  1314 | 1314 |
 | ruby       |   232 |   7 |  23 |  62 | 100 |  120 |  143 |  188 |   206 |   309 |  309 |
 | java       |   622 |  11 |  15 |  23 |  28 |   34 |   44 |  102 |   146 |   194 |  194 |
+| javascript |   156 |   9 |  19 |  48 |  88 |  139 |  171 |  210 |   520 |   520 |  520 |
+| cpp        |    25 |   4 |  25 |  34 |  37 |  126 |  126 |  126 |   126 |   126 |  126 |
+| c          |     2 |   6 |  11 |  11 |  11 |   11 |   11 |   11 |    11 |    11 |   11 |
 
 #### duplicated blocks reported from a line count
 
@@ -181,6 +212,9 @@ the blocks it reports depend on the limit, and the last table counts them at sev
 | rust       |    148 |      56 |      17 |       7 |       2 |       0 |
 | ruby       |     78 |      40 |      15 |       8 |       2 |       2 |
 | java       |    525 |     499 |     340 |     126 |      40 |       8 |
+| javascript |     54 |      39 |      15 |       9 |       4 |       0 |
+| cpp        |      0 |       0 |       0 |       0 |       0 |       0 |
+| c          |      0 |       0 |       0 |       0 |       0 |       0 |
 
 The distributions barely move between subsets: the 99th percentile of cognitive complexity is 31
 for active and 30 for archived repositories, and 29 for private and 38 for public ones (the public
@@ -322,6 +356,11 @@ prints, among the other tables:
 | all        |  5851 |   1 |   3 |   8 |  13 |  19 |  25 |  38 |    54 |   108 | 183 |
 | typescript |  4471 |   1 |   3 |   8 |  15 |  21 |  27 |  40 |    59 |   108 | 183 |
 | rust       |  1159 |   0 |   2 |   6 |  11 |  15 |  19 |  29 |    47 |    92 | 129 |
+| javascript |   158 |   0 |   2 |   8 |  13 |  16 |  19 |  28 |   108 |   108 | 108 |
+| tsx        |    36 |   0 |   1 |   2 |   3 |   3 |   5 |   5 |     5 |     5 |   5 |
+| python     |    24 |   0 |   2 |   6 |   7 |  11 |  11 |  11 |    11 |    11 |  11 |
+| java       |     2 |   0 |   0 |   0 |   0 |   0 |   0 |   0 |     0 |     0 |   0 |
+| kotlin     |     1 |   0 |   0 |   0 |   0 |   0 |   0 |   0 |     0 |     0 |   0 |
 
 #### NCSS (function)
 
@@ -330,6 +369,11 @@ prints, among the other tables:
 | all        |  5851 |   2 |   8 |  16 |  24 |  32 |  40 |  62 |    78 |   172 | 337 |
 | typescript |  4471 |   3 |   8 |  16 |  24 |  33 |  42 |  64 |    79 |   157 | 337 |
 | rust       |  1159 |   2 |   6 |  16 |  24 |  30 |  36 |  51 |    78 |   121 | 173 |
+| javascript |   158 |   2 |   7 |  18 |  27 |  30 |  32 |  43 |   203 |   203 | 203 |
+| tsx        |    36 |   2 |   4 |   6 |   8 |   8 |  25 |  25 |    25 |    25 |  25 |
+| python     |    24 |   6 |  13 |  18 |  21 |  34 |  34 |  34 |    34 |    34 |  34 |
+| java       |     2 |   6 |   6 |   6 |   6 |   6 |   6 |   6 |     6 |     6 |   6 |
+| kotlin     |     1 |   3 |   3 |   3 |   3 |   3 |   3 |   3 |     3 |     3 |   3 |
 
 #### parameters (function)
 
@@ -338,6 +382,11 @@ prints, among the other tables:
 | all        |  5851 |   1 |   2 |   2 |   3 |   4 |   4 |   5 |     5 |     7 |   9 |
 | typescript |  4471 |   1 |   2 |   2 |   3 |   4 |   4 |   5 |     5 |     6 |   9 |
 | rust       |  1159 |   1 |   2 |   3 |   3 |   4 |   5 |   6 |     7 |     8 |   9 |
+| javascript |   158 |   1 |   1 |   2 |   2 |   3 |   3 |   3 |     4 |     4 |   4 |
+| tsx        |    36 |   0 |   0 |   1 |   1 |   1 |   1 |   1 |     1 |     1 |   1 |
+| python     |    24 |   1 |   2 |   5 |   6 |   7 |   7 |   7 |     7 |     7 |   7 |
+| java       |     2 |   1 |   1 |   1 |   1 |   1 |   1 |   1 |     1 |     1 |   1 |
+| kotlin     |     1 |   0 |   0 |   0 |   0 |   0 |   0 |   0 |     0 |     0 |   0 |
 
 #### file NCSS (file)
 
@@ -346,6 +395,11 @@ prints, among the other tables:
 | all        |   759 |  21 |  59 | 135 | 215 | 281 |  333 |  412 |   607 |  1042 | 1042 |
 | typescript |   610 |  22 |  62 | 134 | 209 | 280 |  310 |  376 |   413 |   695 |  695 |
 | rust       |    49 |  55 | 157 | 332 | 607 | 964 | 1042 | 1042 |  1042 |  1042 | 1042 |
+| javascript |    56 |   5 |  21 |  50 |  96 | 139 |  139 |  203 |   203 |   203 |  203 |
+| tsx        |    18 |   6 |   8 |  13 |  73 |  73 |   73 |   73 |    73 |    73 |   73 |
+| python     |    22 |   5 |  23 |  53 |  68 |  71 |   71 |   71 |    71 |    71 |   71 |
+| java       |     2 |   8 |   8 |   8 |   8 |   8 |    8 |    8 |     8 |     8 |    8 |
+| kotlin     |     2 |   1 |   3 |   3 |   3 |   3 |    3 |    3 |     3 |     3 |    3 |
 
 #### duplicated blocks reported from a line count
 
@@ -354,6 +408,11 @@ prints, among the other tables:
 | all        |    428 |     167 |      41 |      19 |       8 |       3 |
 | typescript |    360 |     142 |      39 |      19 |       8 |       3 |
 | rust       |     54 |      16 |       2 |       0 |       0 |       0 |
+| javascript |      8 |       7 |       0 |       0 |       0 |       0 |
+| tsx        |      2 |       0 |       0 |       0 |       0 |       0 |
+| python     |      2 |       0 |       0 |       0 |       0 |       0 |
+| java       |      2 |       2 |       0 |       0 |       0 |       0 |
+| kotlin     |      0 |       0 |       0 |       0 |       0 |       0 |
 
 | Repository                                                                                            | Commit                                     |
 | ----------------------------------------------------------------------------------------------------- | ------------------------------------------ |
