@@ -18,7 +18,15 @@ import {
   type FileMetrics,
   type ScanResult,
 } from './scan.js';
-import { duplicationThreshold, fileThresholds, functionThresholds, thresholds } from './thresholds.js';
+import {
+  duplicationThreshold,
+  fileThresholds,
+  functionThresholds,
+  levels,
+  thresholds,
+  type Level,
+  type Limits,
+} from './thresholds.js';
 import type { FunctionMetrics } from './types.js';
 
 /** The worst (highest-cognitive-complexity) function of a file, reported as the ranking evidence. */
@@ -79,24 +87,31 @@ async function main(): Promise<void> {
     program
       .command('check')
       .description(
-        'Report every exceeded threshold (exit 1 on violations, 2 when files cannot be measured); with --base, only in what the change touches'
+        'Report every exceeded threshold as a warning or an error (exit 1 on errors, 2 when files cannot be measured); with --base, only in what the change touches'
       )
       .argument('[target]', 'file or directory to check', '.')
   ).option('--base <ref>', 'check only what the working tree changed since the merge-base of this git ref and HEAD');
-  for (const { key, defaultLimit } of thresholds) {
-    check.option(
-      `--${toKebabCase(key)} <number>`,
-      `${describeLimit(key)} (default ${defaultLimit}); "off" disables it`,
-      parseLimit
-    );
+  for (const level of levels) {
+    for (const { key, defaultLimits } of thresholds) {
+      const defaultLimit = defaultLimits[level];
+      check.option(
+        `--${level}-${toKebabCase(key)} <number>`,
+        `${describeLimit(key, level)} (default ${Number.isFinite(defaultLimit) ? defaultLimit : 'off'}); "off" disables it`,
+        parseLimit
+      );
+    }
   }
   // Exit code 1 means violations, so a rejected command line must not use it.
   check.exitOverride((error) => process.exit(error.exitCode === 0 ? 0 : 2));
   check.action(async (target: string, cliOptions: CheckCliOptions & Record<string, unknown>) => {
-    const cliLimits = Object.fromEntries(
-      thresholds.flatMap(({ key }) => (cliOptions[key] === undefined ? [] : [[key, cliOptions[key] as number]]))
-    );
-    await runCheckCommand(target, cliOptions, cliLimits);
+    const readLimits = (level: Level): Limits =>
+      Object.fromEntries(
+        thresholds.flatMap(({ key }) => {
+          const limit = cliOptions[`${level}${key.charAt(0).toUpperCase()}${key.slice(1)}`];
+          return limit === undefined ? [] : [[key, limit as number]];
+        })
+      );
+    await runCheckCommand(target, cliOptions, { warning: readLimits('warning'), error: readLimits('error') });
   });
 
   await program.parseAsync();
@@ -125,14 +140,15 @@ function addSharedOptions(command: Command): Command {
     .option('--json', 'print JSON output');
 }
 
-function describeLimit(key: string): string {
+function describeLimit(key: string, level: Level): string {
   if (key === duplicationThreshold.key) {
-    return 'line count from which a duplicated block is a violation';
+    return `line count from which a duplicated block is ${level === 'error' ? 'an error' : 'a warning'}`;
   }
   const fileThreshold = fileThresholds.find((threshold) => threshold.key === key);
-  return fileThreshold
-    ? `maximum ${fileThreshold.label}`
-    : `maximum ${functionThresholds.find((threshold) => threshold.key === key)?.label} of a function`;
+  const subject = fileThreshold
+    ? fileThreshold.label
+    : `${functionThresholds.find((threshold) => threshold.key === key)?.label} of a function`;
+  return `maximum ${subject} without ${level === 'error' ? 'an error' : 'a warning'}`;
 }
 
 function toKebabCase(key: string): string {

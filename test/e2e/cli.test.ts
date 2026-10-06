@@ -92,6 +92,9 @@ afterAll(() => {
   }
 });
 
+// oxlint-disable-next-line unicorn/no-null -- the config file disables a limit with JSON null.
+const disabled = null;
+
 describe('cli: text report', () => {
   it('summarizes a directory and skips node_modules and test files', () => {
     const { status, stdout } = runCli([projectDir]);
@@ -819,18 +822,34 @@ describe('cli: configuration discovery and validation', () => {
         duplication: { minTokens: 40, maxGapTokens: 30, minSimilarityPercent: 70 },
         rank: { top: 10 },
         thresholds: {
-          maxFunctionCognitiveComplexity: 15,
-          maxFunctionCyclomaticComplexity: 10,
-          maxFunctionNcss: 60,
-          maxFunctionNestingDepth: 4,
-          maxFunctionParameterCount: 7,
-          maxFunctionHalsteadVolume: 2000,
-          maxFunctionHalsteadDifficulty: 20,
-          maxFunctionHalsteadEffort: 30_000,
-          maxFunctionDepDegree: 50,
-          maxFileNcss: 500,
-          minDuplicateLines: 10,
-          languages: {},
+          warning: {
+            maxFunctionCognitiveComplexity: 15,
+            maxFunctionCyclomaticComplexity: disabled,
+            maxFunctionNcss: 60,
+            maxFunctionNestingDepth: 4,
+            maxFunctionParameterCount: 7,
+            maxFunctionHalsteadVolume: disabled,
+            maxFunctionHalsteadDifficulty: disabled,
+            maxFunctionHalsteadEffort: disabled,
+            maxFunctionDepDegree: disabled,
+            maxFileNcss: 500,
+            minDuplicateLines: 10,
+            languages: {},
+          },
+          error: {
+            maxFunctionCognitiveComplexity: 30,
+            maxFunctionCyclomaticComplexity: disabled,
+            maxFunctionNcss: 100,
+            maxFunctionNestingDepth: 5,
+            maxFunctionParameterCount: disabled,
+            maxFunctionHalsteadVolume: disabled,
+            maxFunctionHalsteadDifficulty: disabled,
+            maxFunctionHalsteadEffort: disabled,
+            maxFunctionDepDegree: disabled,
+            maxFileNcss: 1000,
+            minDuplicateLines: 20,
+            languages: {},
+          },
         },
         exclude: [],
         includeTests: false,
