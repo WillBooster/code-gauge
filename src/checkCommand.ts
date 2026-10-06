@@ -35,7 +35,7 @@ import {
   type CheckResult,
   type Violation,
 } from './thresholdCheck.js';
-import { metricNameOf, resolveLimits, thresholds, type Limits } from './thresholds.js';
+import { metricNameOf, resolveLimits, thresholds, type LimitsByLevel } from './thresholds.js';
 
 /** Raw options of the `check` subcommand; every field is undefined unless the flag was passed. */
 export interface CheckCliOptions extends CliOptions {
@@ -59,10 +59,14 @@ const maxListedPartners = 3;
 
 /**
  * Reports every exceeded threshold of the target or, with `base`, of what the working tree changed
- * under it since the merge-base with that ref. Exit codes: 0 no violations, 1 violations, 2 files the check
- * covers could not be measured.
+ * under it since the merge-base with that ref. Exit codes: 0 no error-level violations, 1 error-level
+ * violations, 2 files the check covers could not be measured.
  */
-export async function runCheckCommand(target: string, cliOptions: CheckCliOptions, cliLimits: Limits): Promise<void> {
+export async function runCheckCommand(
+  target: string,
+  cliOptions: CheckCliOptions,
+  cliLimits: LimitsByLevel
+): Promise<void> {
   try {
     const resolvedTarget = resolveTarget(target);
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
@@ -82,13 +86,17 @@ export async function runCheckCommand(target: string, cliOptions: CheckCliOption
     }
     if (scope.errors.length > 0) {
       process.exitCode = 2;
-    } else if (result.violations.length > 0) {
+    } else if (hasErrors(result.violations)) {
       process.exitCode = 1;
     }
   } catch (error) {
     writeStderr(`Error: ${getErrorMessage(error)}\n`);
     process.exitCode = 2;
   }
+}
+
+function hasErrors(violations: readonly Violation[]): boolean {
+  return violations.some(({ level }) => level === 'error');
 }
 
 /**
@@ -316,34 +324,45 @@ function describeBase(cliOptions: CheckCliOptions, scope: CheckScope): string {
 
 function describeCounts(violations: readonly Violation[]): string {
   const counts = countViolations(violations);
-  return `${counts.violationCount} violations (${counts.functionViolationCount} functions, ${counts.fileViolationCount} files, ${counts.duplicationViolationCount} duplicated blocks)`;
+  return `${counts.errorViolationCount} errors, ${counts.warningViolationCount} warnings (${counts.functionViolationCount} functions, ${counts.fileViolationCount} files, ${counts.duplicationViolationCount} duplicated blocks)`;
 }
 
 function countViolations(violations: readonly Violation[]): {
   violationCount: number;
+  errorViolationCount: number;
+  warningViolationCount: number;
   functionViolationCount: number;
   fileViolationCount: number;
   duplicationViolationCount: number;
 } {
   const count = (kind: Violation['kind']): number => violations.filter((violation) => violation.kind === kind).length;
+  const errorViolationCount = violations.filter(({ level }) => level === 'error').length;
   return {
     violationCount: violations.length,
+    errorViolationCount,
+    warningViolationCount: violations.length - errorViolationCount,
     functionViolationCount: count('function'),
     fileViolationCount: count('file'),
     duplicationViolationCount: count('duplication'),
   };
 }
 
-/** One violation as a single line: the location, then every limit it exceeds. */
+/** One violation as a single line: its level, the location, then every limit it exceeds. */
 function formatViolation(violation: Violation): string {
   const labelByMetric = new Map(thresholds.map((threshold) => [metricNameOf(threshold), threshold.label]));
   const exceeded = violation.exceeded
     .map(
       ({ metric, value, limit }) =>
-        // Halstead values are fractional; rounding up keeps a violating value above the printed limit.
-        `${labelByMetric.get(metric)} ${Math.ceil(value * 10) / 10} (${violation.kind === 'duplication' ? '<' : '<='} ${limit})`
+        // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
+        // A duplicated block violates from its limit on, so the largest allowed span is the last
+        // whole line count below it; a limit of 0 allows none.
+        `${labelByMetric.get(metric)} ${Math.ceil(value * 10) / 10} (max ${violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit})`
     )
     .join(', ');
+  return `${violation.level}: ${describeViolation(violation, exceeded)}`;
+}
+
+function describeViolation(violation: Violation, exceeded: string): string {
   switch (violation.kind) {
     case 'file': {
       return `${violation.file}: ${exceeded}`;
@@ -368,7 +387,7 @@ function printJsonReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   writeStdout(
     JSON.stringify(
       {
-        passed: result.violations.length === 0 && scope.errors.length === 0,
+        passed: !hasErrors(result.violations) && scope.errors.length === 0,
         base: cliOptions.base,
         mergeBase: scope.mergeBase,
         summary: {

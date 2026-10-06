@@ -80,7 +80,8 @@ code-gauge check --base main         # only violations in what the working tree 
 code-gauge check --base main src/api # the same, for the changed files under src/api
 ```
 
-`code-gauge check [target]` reports every violation of the thresholds below in the files under
+`code-gauge check [target]` reports every violation of the thresholds below, as a warning or as an
+error, in the files under
 the target. Inside a git repository it measures the repository's git-visible files (tracked, or
 untracked and not ignored), so a block copied from a file outside the target is reported with that
 file as its partner, and a copy that exists only in a git-ignored file is not duplication. The
@@ -92,28 +93,47 @@ ignore passes as a check of zero files when it holds no git-visible source file,
 its only sources are ignored build output. Outside a git repository it walks the target directory
 like the ranking command. The thresholds:
 
-| Config key                        | Violation                                         | Default |
-| --------------------------------- | ------------------------------------------------- | ------- |
-| `maxFunctionCognitiveComplexity`  | a function's cognitive complexity is above it     | 15      |
-| `maxFunctionCyclomaticComplexity` | a function's cyclomatic complexity is above it    | 10      |
-| `maxFunctionNcss`                 | a function's NCSS is above it                     | 60      |
-| `maxFunctionNestingDepth`         | a function's nesting depth is above it            | 4       |
-| `maxFunctionParameterCount`       | a function's parameter count is above it          | 7       |
-| `maxFunctionHalsteadVolume`       | a function's Halstead volume is above it          | 2000    |
-| `maxFunctionHalsteadDifficulty`   | a function's Halstead difficulty is above it      | 20      |
-| `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it          | 30000   |
-| `maxFunctionDepDegree`            | a function's DepDegree is above it                | 50      |
-| `maxFileNcss`                     | a file's NCSS is above it                         | 500     |
-| `minDuplicateLines`               | a duplicated block spans at least this many lines | 10      |
+| Config key                        | Violation                                         | Warning | Error |
+| --------------------------------- | ------------------------------------------------- | ------- | ----- |
+| `maxFunctionCognitiveComplexity`  | a function's cognitive complexity is above it     | 15      | 30    |
+| `maxFunctionCyclomaticComplexity` | a function's cyclomatic complexity is above it    | off     | off   |
+| `maxFunctionNcss`                 | a function's NCSS is above it                     | 60      | 100   |
+| `maxFunctionNestingDepth`         | a function's nesting depth is above it            | 4       | 5     |
+| `maxFunctionParameterCount`       | a function's parameter count is above it          | 7       | off   |
+| `maxFunctionHalsteadVolume`       | a function's Halstead volume is above it          | off     | off   |
+| `maxFunctionHalsteadDifficulty`   | a function's Halstead difficulty is above it      | off     | off   |
+| `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it          | off     | off   |
+| `maxFunctionDepDegree`            | a function's DepDegree is above it                | off     | off   |
+| `maxFileNcss`                     | a file's NCSS is above it                         | 500     | 1000  |
+| `minDuplicateLines`               | a duplicated block spans at least this many lines | 10      | 20    |
+
+Every threshold has a limit per level, and a value is reported at the most severe level whose limit
+it violates. The warning limits mark code worth simplifying when it is touched; the error limits
+mark code to fix, and only errors fail the check (exit code 1).
+
+The warning limits follow common conventions. The error limits and the thresholds that are off
+were set from the 2139 functions of [WillBooster/shared](https://github.com/WillBooster/shared)
+(TypeScript, October 2026): a cognitive complexity above 15 flags 5% of them and one above 30 flags
+1.5%, and the functions sampled above 30 each had a part that reads better extracted, while those
+between 15 and 30 were mixed. Cyclomatic complexity, the Halstead metrics, and DepDegree are off
+because, at limits of 10, 2000, 20, 30000, and 50, all but 24 of the 107 functions they flagged
+there also exceeded the cognitive-complexity limit.
+
+Cognitive complexity, NCSS, Halstead volume, and DepDegree of a function cover the functions nested
+in it, so a limit of these that a function and a function nested in it both violate is reported
+for the outer function only. The other limits measure a function's own body (or, for Halstead
+difficulty and effort, a ratio that can be higher for the nested function alone) and are reported
+for each function.
 
 A duplicated block is one occurrence of a within-file or cross-file clone, found with the
 [duplication detection settings](#duplication-detection-settings); its span runs from its first to
-its last line. Occurrences of at least `minDuplicateLines` lines that overlap in a file are
-reported as one block covering all of them.
+its last line. Occurrences of at least the warning or the error `minDuplicateLines` that overlap in a
+file are reported as one block covering all of them, at the level its whole span reaches.
 
-Each threshold is set in the [`thresholds` config section](#configuration), where `null` disables
-it and `languages` overrides thresholds for the files of one language, or with the command-line
-option of the same name (`--max-function-ncss 80`, `--min-duplicate-lines off`), where `off`
+Each limit is set in the `warning` or `error` part of the
+[`thresholds` config section](#configuration), where `null` disables it and `languages` overrides
+limits for the files of one language, or with the command-line option named after the level and
+the config key (`--warning-max-function-ncss 80`, `--error-min-duplicate-lines off`), where `off`
 disables it. The command line wins over the whole config file, per-language overrides included.
 
 With `--base <ref>`, the check covers only what the working tree changed since the merge-base of
@@ -132,30 +152,30 @@ violation the change did not introduce is reported too once the change touches i
 or duplicated block. `--base` requires a git repository.
 
 When nothing violates a threshold, `check` prints a single line. Otherwise it prints a header with
-the counts, one line per violation ordered by path and line, and one remediation hint per violated
-metric:
+the counts, one line per violation with the errors first, each level ordered by path and line, and
+one remediation hint per violated metric:
 
 ```
-Threshold violations: 3 violations (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), cyclomatic complexity 15 (<= 10), nesting depth 5 (<= 4)
-src/report.ts:1-12: duplicated lines 12 (< 10), also at src/summary.ts:1-12
-src/summary.ts:1-12: duplicated lines 12 (< 10), also at src/report.ts:1-12
+Threshold violations: 1 errors, 2 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
+error: src/legacy.ts:1-21 decide: cognitive complexity 34 (max 30), nesting depth 5 (max 4)
+warning: src/report.ts:1-12: duplicated lines 12 (max 9), also at src/summary.ts:1-12
+warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12
 
 How to fix:
 - cognitive complexity: flatten nested branching with early returns and extract nested blocks into named functions.
-- cyclomatic complexity: the function has too many independent paths; split it by decision or replace condition chains with a lookup table.
 - nesting depth: replace nested conditions with guard clauses or move inner blocks into functions.
 - duplicated lines: extract the repeated code into one shared function or module and call it from every location.
 ```
 
-A function gets one line listing every threshold it exceeds, a file-level violation prints the path
-without a line span, and a duplicated block lists up to three of its other copies. Paths are
-relative to the repository root, or to the target directory outside a git repository.
+A violation's level is that of its most severe limit. A function gets one line listing every
+threshold it exceeds, each with the largest value its violated limit allows; a file-level violation
+prints the path without a line span, and a duplicated block lists up to three of its other copies.
+Paths are relative to the repository root, or to the target directory outside a git repository.
 
 | Exit code | Meaning                                                                                                                          |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| 0         | No violations.                                                                                                                   |
-| 1         | Violations. Whether they are warnings or errors is up to the caller.                                                             |
+| 0         | No errors; warnings do not fail the check.                                                                                       |
+| 1         | Errors.                                                                                                                          |
 | 2         | The check is incomplete: a file it covers could not be measured, or the arguments, config file, target, or base ref are invalid. |
 
 A file that cannot be measured causes exit code 2 only when the check covers it: a file under the
@@ -176,6 +196,8 @@ ranking command.
   "mergeBase": "9f624517156db3290e189b9fd0b8ed38de39a04c",
   "summary": {
     "violationCount": 2,
+    "errorViolationCount": 1,
+    "warningViolationCount": 1,
     "functionViolationCount": 1,
     "fileViolationCount": 0,
     "duplicationViolationCount": 1,
@@ -185,22 +207,23 @@ ranking command.
   "violations": [
     {
       "kind": "function",
+      "level": "error",
       "file": "src/legacy.ts",
       "startLine": 1,
       "endLine": 21,
-      "name": "decide",
       "exceeded": [
-        { "metric": "functionCognitiveComplexity", "value": 24, "limit": 15 },
-        { "metric": "functionCyclomaticComplexity", "value": 15, "limit": 10 },
-        { "metric": "functionNestingDepth", "value": 5, "limit": 4 }
-      ]
+        { "metric": "functionCognitiveComplexity", "value": 34, "level": "error", "limit": 30 },
+        { "metric": "functionNestingDepth", "value": 5, "level": "warning", "limit": 4 }
+      ],
+      "name": "decide"
     },
     {
       "kind": "duplication",
+      "level": "warning",
       "file": "src/pasted.ts",
       "startLine": 1,
       "endLine": 12,
-      "exceeded": [{ "metric": "duplicateLines", "value": 12, "limit": 10 }],
+      "exceeded": [{ "metric": "duplicateLines", "value": 12, "level": "warning", "limit": 10 }],
       "partners": [{ "file": "src/report.ts", "startLine": 1, "endLine": 12 }]
     }
   ],
@@ -209,23 +232,25 @@ ranking command.
 }
 ```
 
-- `passed`: `true` when there are no violations and no errors (exit code 0).
+- `passed`: `true` when no violation is an error and every covered file was measured (exit code 0).
 - `base`, `mergeBase`: the `--base` ref and the commit compared against; absent without `--base`.
-- `summary`: the violation counts in total and per kind, and the number of files and functions
-  checked: those under the target or, with `--base`, the changed files under it and the functions
-  the change touches.
-- `violations`: ordered by `file`, then `startLine`. Each has
+- `summary`: the violation counts in total, per level, and per kind, and the number of files and
+  functions checked: those under the target or, with `--base`, the changed files under it and the
+  functions the change touches.
+- `violations`: the errors first, each level ordered by `file`, then `startLine`. Each has
   - `kind`: `function`, `file`, or `duplication`;
+  - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
     kind `file`, the first and last line of the file;
   - `name`: only for kind `function`; `<anonymous>` for a function without a name;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
-    `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, and the `limit`
-    in force. A value violates when it is above the limit; `duplicateLines` violates from the limit
-    on;
+    `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe
+    `level` whose limit the value violates, and that `limit`. A value violates when it is above the
+    limit; `duplicateLines` violates from the limit on;
   - `partners`: only for kind `duplication`; every other copy of the block, ordered by `file`, then
     `startLine`.
-- `errors`: the files the check covers that could not be measured (exit code 2).
+- `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
+  `error` level of a violation.
 - `warnings`: files measured without cross-file duplication data, and unmeasured files of the
   repository the check does not cover.
 
@@ -243,18 +268,34 @@ with `--config`). The following config reproduces every built-in default:
   },
   "rank": { "top": 10 },
   "thresholds": {
-    "maxFunctionCognitiveComplexity": 15,
-    "maxFunctionCyclomaticComplexity": 10,
-    "maxFunctionNcss": 60,
-    "maxFunctionNestingDepth": 4,
-    "maxFunctionParameterCount": 7,
-    "maxFunctionHalsteadVolume": 2000,
-    "maxFunctionHalsteadDifficulty": 20,
-    "maxFunctionHalsteadEffort": 30000,
-    "maxFunctionDepDegree": 50,
-    "maxFileNcss": 500,
-    "minDuplicateLines": 10,
-    "languages": {}
+    "warning": {
+      "maxFunctionCognitiveComplexity": 15,
+      "maxFunctionCyclomaticComplexity": null,
+      "maxFunctionNcss": 60,
+      "maxFunctionNestingDepth": 4,
+      "maxFunctionParameterCount": 7,
+      "maxFunctionHalsteadVolume": null,
+      "maxFunctionHalsteadDifficulty": null,
+      "maxFunctionHalsteadEffort": null,
+      "maxFunctionDepDegree": null,
+      "maxFileNcss": 500,
+      "minDuplicateLines": 10,
+      "languages": {}
+    },
+    "error": {
+      "maxFunctionCognitiveComplexity": 30,
+      "maxFunctionCyclomaticComplexity": null,
+      "maxFunctionNcss": 100,
+      "maxFunctionNestingDepth": 5,
+      "maxFunctionParameterCount": null,
+      "maxFunctionHalsteadVolume": null,
+      "maxFunctionHalsteadDifficulty": null,
+      "maxFunctionHalsteadEffort": null,
+      "maxFunctionDepDegree": null,
+      "maxFileNcss": 1000,
+      "minDuplicateLines": 20,
+      "languages": {}
+    }
   },
   "exclude": [],
   "includeTests": false,
@@ -266,18 +307,20 @@ The command line wins over the config file, which wins over the defaults. Unknow
 rejected so stale configuration fails loudly. `rank.top` and `failOnError` apply to the ranking
 command only.
 
-`thresholds.languages` maps a language name (`javascript`, `jsx`, `typescript`, `tsx`, `python`,
-`go`, `rust`, `java`, `ruby`, `c`, `cpp`, `csharp`, `kotlin`) to the thresholds that differ for its
-files; a threshold it leaves out keeps the value set outside `languages`:
+`languages` in a level of `thresholds` maps a language name (`javascript`, `jsx`, `typescript`,
+`tsx`, `python`, `go`, `rust`, `java`, `ruby`, `c`, `cpp`, `csharp`, `kotlin`) to the limits that
+differ for its files; a limit it leaves out keeps the value set outside `languages`:
 
 ```json
 {
   "thresholds": {
-    "maxFunctionNcss": 60,
-    "maxFunctionHalsteadVolume": null,
-    "languages": {
-      "tsx": { "maxFunctionNcss": 100 },
-      "python": { "maxFunctionParameterCount": null }
+    "warning": {
+      "maxFunctionNcss": 60,
+      "maxFunctionParameterCount": 5,
+      "languages": {
+        "tsx": { "maxFunctionNcss": 100 },
+        "python": { "maxFunctionParameterCount": null }
+      }
     }
   }
 }

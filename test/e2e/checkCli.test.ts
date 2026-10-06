@@ -27,6 +27,13 @@ function runCheck(args: string[], cwd = repoDir): CliResult {
   return { status: result.status ?? -1, stdout: result.stdout, stderr: result.stderr };
 }
 
+/** Whether the check reports a violation of either level; the exit code only tells errors. */
+function hasViolations(args: string[]): boolean {
+  const { status, stdout } = runCheck(args);
+  expect([0, 1]).toContain(status);
+  return stdout.startsWith('Threshold violations');
+}
+
 function runGit(args: string[]): void {
   const result = spawnSync('git', args, { cwd: repoDir, encoding: 'utf8', timeout: 30_000 });
   if (result.status !== 0) {
@@ -52,8 +59,8 @@ const calc = `export function total(items: number[]): number {
 }
 `;
 
-// `decide` (lines 1-21) exceeds the default cognitive-complexity, cyclomatic-complexity, and
-// nesting-depth limits; `identity` (lines 23-26) exceeds none.
+// `decide` (lines 1-21) exceeds the default warning limits of cognitive complexity and nesting
+// depth; `identity` (lines 23-26) exceeds none.
 const legacy = `export function decide(a: number, b: number, c: number, d: number): number {
   if (a > 0) {
     if (b > 0) {
@@ -82,7 +89,7 @@ export function identity(value: number): number {
 }
 `;
 
-// A 12-line function, long enough for a copy to be a duplicated block under the default limit.
+// A 12-line function, long enough for a copy to be a duplicated block under the default warning limit.
 function reportFunction(name: string): string {
   return `export function ${name}(items: number[]): number {
   let sum = 0;
@@ -157,19 +164,48 @@ afterAll(() => {
 describe('code-gauge check', () => {
   it('reports every violation of the project, one line each, with one hint per violated metric', () => {
     const result = runCheck([]);
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(0);
     expect(result.stdout)
-      .toBe(`Threshold violations: 3 violations (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), cyclomatic complexity 15 (<= 10), nesting depth 5 (<= 4)
-src/report.ts:1-12: duplicated lines 12 (< 10), also at src/summary.ts:1-12
-src/summary.ts:1-12: duplicated lines 12 (< 10), also at src/report.ts:1-12
+      .toBe(`Threshold violations: 0 errors, 3 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
+warning: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15), nesting depth 5 (max 4)
+warning: src/report.ts:1-12: duplicated lines 12 (max 9), also at src/summary.ts:1-12
+warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12
 
 How to fix:
 - cognitive complexity: flatten nested branching with early returns and extract nested blocks into named functions.
-- cyclomatic complexity: the function has too many independent paths; split it by decision or replace condition chains with a lookup table.
 - nesting depth: replace nested conditions with guard clauses or move inner blocks into functions.
 - duplicated lines: extract the repeated code into one shared function or module and call it from every location.
 `);
+  });
+
+  it('exits 1 and lists the errors first when a value exceeds an error limit', () => {
+    const result = runCheck(['--error-min-duplicate-lines', '12', '--error-max-function-nesting-depth', '3']);
+    expect(result.status).toBe(1);
+    expect(result.stdout)
+      .toContain(`Threshold violations: 3 errors, 0 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
+error: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15), nesting depth 5 (max 3)
+error: src/report.ts:1-12: duplicated lines 12 (max 11), also at src/summary.ts:1-12
+error: src/summary.ts:1-12: duplicated lines 12 (max 11), also at src/report.ts:1-12
+`);
+    expect(runCheck(['--error-min-duplicate-lines', '12']).stdout)
+      .toContain(`2 errors, 1 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
+error: src/report.ts:1-12: duplicated lines 12 (max 11), also at src/summary.ts:1-12
+error: src/summary.ts:1-12: duplicated lines 12 (max 11), also at src/report.ts:1-12
+warning: src/legacy.ts:1-21 decide:`);
+  });
+
+  it('reports a limit that a function and a function nested in it both exceed only for the outer one', () => {
+    writeSource(
+      'src/wrapped.ts',
+      legacy.replace(
+        /^export function decide\(([^)]*)\): number \{\n([\s\S]*?)\n\}\n/u,
+        'export function wrapped($1): number {\n  return [0].map(() => {\n$2\n  })[0]!;\n}\n'
+      )
+    );
+    const { stdout } = runCheck(['src/wrapped.ts']);
+    expect(stdout).toMatch(/ wrapped: cognitive complexity \d+ \(max \d+\)\n/u);
+    // Nesting depth covers a function's own body only, so the nested function alone exceeds its limit.
+    expect(stdout).toMatch(/ <anonymous>: nesting depth 5 \(max 4\)\n/u);
   });
 
   it('prints a single line and exits 0 when nothing exceeds a threshold', () => {
@@ -181,12 +217,16 @@ How to fix:
   it('lists at most three partner locations of a duplicated block', () => {
     writeSource('src/copies/a.ts', reportFunction('copyA'));
     expect(runCheck(['src/copies']).stdout).toContain(
-      'src/copies/a.ts:1-12: duplicated lines 12 (< 10), also at src/report.ts:1-12, src/summary.ts:1-12\n'
+      'src/copies/a.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12, src/summary.ts:1-12\n'
+    );
+    // A fractional limit allows the whole line counts below it.
+    expect(runCheck(['src/copies', '--warning-min-duplicate-lines', '11.5']).stdout).toContain(
+      'duplicated lines 12 (max 11)'
     );
     writeSource('src/copies/b.ts', reportFunction('copyB'));
     writeSource('src/copies/c.ts', reportFunction('copyC'));
     expect(runCheck(['src/copies']).stdout).toContain(
-      'src/copies/a.ts:1-12: duplicated lines 12 (< 10), also at src/copies/b.ts:1-12, src/copies/c.ts:1-12, src/report.ts:1-12, ...\n'
+      'src/copies/a.ts:1-12: duplicated lines 12 (max 9), also at src/copies/b.ts:1-12, src/copies/c.ts:1-12, src/report.ts:1-12, ...\n'
     );
   });
 
@@ -195,12 +235,12 @@ How to fix:
     writeSource('build/generated.ts', otherFunction('generated'));
     writeSource('src2/fresh.ts', otherFunction('fresh'));
     // The only other copy is git-ignored, so neither mode sees duplication.
-    expect(runCheck(['src2']).status).toBe(0);
-    expect(runCheck(['--base', 'main', 'src2']).status).toBe(0);
+    expect(hasViolations(['src2'])).toBe(false);
+    expect(hasViolations(['--base', 'main', 'src2'])).toBe(false);
 
     writeSource('lib/origin.ts', otherFunction('origin'));
     // A copy outside the target is a partner in both modes, under its repository-relative path.
-    const line = 'src2/fresh.ts:1-13: duplicated lines 13 (< 10), also at lib/origin.ts:1-13\n';
+    const line = 'src2/fresh.ts:1-13: duplicated lines 13 (max 9), also at lib/origin.ts:1-13\n';
     expect(runCheck(['src2']).stdout).toContain(line);
     expect(runCheck(['--base', 'main', 'src2']).stdout).toContain(line);
     expect(runCheck(['src2']).stdout).toContain('(1 files, 2 functions checked)');
@@ -208,11 +248,13 @@ How to fix:
 
   it('prints a JSON report with --json', () => {
     const result = runCheck(['--json']);
-    expect(result.status).toBe(1);
+    expect(result.status).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
-      passed: false,
+      passed: true,
       summary: {
         violationCount: 3,
+        errorViolationCount: 0,
+        warningViolationCount: 3,
         functionViolationCount: 1,
         fileViolationCount: 0,
         duplicationViolationCount: 2,
@@ -222,30 +264,32 @@ How to fix:
       violations: [
         {
           kind: 'function',
+          level: 'warning',
           file: 'src/legacy.ts',
           startLine: 1,
           endLine: 21,
           name: 'decide',
           exceeded: [
-            { metric: 'functionCognitiveComplexity', value: 24, limit: 15 },
-            { metric: 'functionCyclomaticComplexity', value: 15, limit: 10 },
-            { metric: 'functionNestingDepth', value: 5, limit: 4 },
+            { metric: 'functionCognitiveComplexity', value: 24, level: 'warning', limit: 15 },
+            { metric: 'functionNestingDepth', value: 5, level: 'warning', limit: 4 },
           ],
         },
         {
           kind: 'duplication',
+          level: 'warning',
           file: 'src/report.ts',
           startLine: 1,
           endLine: 12,
-          exceeded: [{ metric: 'duplicateLines', value: 12, limit: 10 }],
+          exceeded: [{ metric: 'duplicateLines', value: 12, level: 'warning', limit: 10 }],
           partners: [{ file: 'src/summary.ts', startLine: 1, endLine: 12 }],
         },
         {
           kind: 'duplication',
+          level: 'warning',
           file: 'src/summary.ts',
           startLine: 1,
           endLine: 12,
-          exceeded: [{ metric: 'duplicateLines', value: 12, limit: 10 }],
+          exceeded: [{ metric: 'duplicateLines', value: 12, level: 'warning', limit: 10 }],
           partners: [{ file: 'src/report.ts', startLine: 1, endLine: 12 }],
         },
       ],
@@ -255,39 +299,40 @@ How to fix:
   });
 
   it('reports a file-level violation with the file as its span', () => {
-    const result = runCheck(['--json', '--max-file-ncss', '4', 'src/calc.ts']);
+    const result = runCheck(['--json', '--warning-max-file-ncss', '4', 'src/calc.ts']);
     expect((JSON.parse(result.stdout) as { violations: unknown[] }).violations).toEqual([
       {
         kind: 'file',
+        level: 'warning',
         file: 'src/calc.ts',
         startLine: 1,
         endLine: 7,
-        exceeded: [{ metric: 'fileNcss', value: 5, limit: 4 }],
+        exceeded: [{ metric: 'fileNcss', value: 5, level: 'warning', limit: 4 }],
       },
     ]);
-    expect(runCheck(['--max-file-ncss', '4', 'src/calc.ts']).stdout).toContain('\nsrc/calc.ts: file NCSS 5 (<= 4)\n');
+    expect(runCheck(['--warning-max-file-ncss', '4', 'src/calc.ts']).stdout).toContain(
+      '\nwarning: src/calc.ts: file NCSS 5 (max 4)\n'
+    );
   });
 });
 
 describe('code-gauge check: thresholds', () => {
   it('applies the config file over the defaults and the command line over the config file', () => {
-    expect(runCheck(['src/calc.ts']).status).toBe(0);
-    writeConfig({ thresholds: { maxFunctionNcss: 3 } });
-    expect(runCheck(['src/calc.ts']).stdout).toContain('calc.ts:1-7 total: NCSS 5 (<= 3)\n');
-    expect(runCheck(['src/calc.ts', '--max-function-ncss', '5']).status).toBe(0);
-    expect(runCheck(['src/calc.ts', '--max-function-ncss', '4']).stdout).toContain('NCSS 5 (<= 4)');
+    expect(hasViolations(['src/calc.ts'])).toBe(false);
+    writeConfig({ thresholds: { warning: { maxFunctionNcss: 3 } } });
+    expect(runCheck(['src/calc.ts']).stdout).toContain('calc.ts:1-7 total: NCSS 5 (max 3)\n');
+    expect(hasViolations(['src/calc.ts', '--warning-max-function-ncss', '5'])).toBe(false);
+    expect(runCheck(['src/calc.ts', '--warning-max-function-ncss', '4']).stdout).toContain('NCSS 5 (max 4)');
   });
 
   it('disables a threshold with null in the config file or "off" on the command line', () => {
-    writeConfig({ thresholds: { maxFunctionCognitiveComplexity: disabled, minDuplicateLines: disabled } });
+    writeConfig({
+      thresholds: { warning: { maxFunctionCognitiveComplexity: disabled, minDuplicateLines: disabled } },
+    });
     const result = runCheck([]);
-    expect(result.stdout).toContain('1 violations (1 functions, 0 files, 0 duplicated blocks)');
-    expect(result.stdout).toContain(
-      'src/legacy.ts:1-21 decide: cyclomatic complexity 15 (<= 10), nesting depth 5 (<= 4)\n'
-    );
-    expect(
-      runCheck(['--max-function-nesting-depth', 'off', '--max-function-cyclomatic-complexity', 'off']).status
-    ).toBe(0);
+    expect(result.stdout).toContain('1 warnings (1 functions, 0 files, 0 duplicated blocks)');
+    expect(result.stdout).toContain('src/legacy.ts:1-21 decide: nesting depth 5 (max 4)\n');
+    expect(hasViolations(['--warning-max-function-nesting-depth', 'off'])).toBe(false);
   });
 
   it('overrides thresholds per language', () => {
@@ -297,41 +342,48 @@ describe('code-gauge check: thresholds', () => {
     );
     writeConfig({
       thresholds: {
-        maxFunctionNcss: 3,
-        minDuplicateLines: disabled,
-        maxFunctionCognitiveComplexity: disabled,
-        maxFunctionNestingDepth: disabled,
-        languages: { python: { maxFunctionNcss: disabled }, typescript: { maxFunctionNcss: 4 } },
+        warning: {
+          maxFunctionNcss: 3,
+          minDuplicateLines: disabled,
+          maxFunctionCognitiveComplexity: disabled,
+          maxFunctionNestingDepth: disabled,
+          languages: { python: { maxFunctionNcss: disabled }, typescript: { maxFunctionNcss: 4 } },
+        },
       },
     });
     const result = runCheck([]);
-    expect(result.stdout).toContain('src/calc.ts:1-7 total: NCSS 5 (<= 4)\n');
+    expect(result.stdout).toContain('src/calc.ts:1-7 total: NCSS 5 (max 4)\n');
     expect(result.stdout).not.toContain('calc.py');
     // The command line wins over the per-language overrides too.
-    expect(runCheck(['--max-function-ncss', '3']).stdout).toContain('src/calc.py:1-5 total: NCSS 5 (<= 3)\n');
+    expect(runCheck(['--warning-max-function-ncss', '3']).stdout).toContain('src/calc.py:1-5 total: NCSS 5 (max 3)\n');
   });
 
   it.each([
     [
+      'an unknown level',
+      { thresholds: { maxFunctionNcss: 1 } },
+      'unknown setting "maxFunctionNcss" in "thresholds" (expected warning, error)',
+    ],
+    [
       'an unknown threshold',
-      { thresholds: { maxFunctionLines: 1 } },
-      'unknown setting "maxFunctionLines" in "thresholds"',
+      { thresholds: { error: { maxFunctionLines: 1 } } },
+      'unknown setting "maxFunctionLines" in "thresholds.error"',
     ],
     ['a removed section', { gate: {} }, 'unknown setting "gate"'],
     [
       'a negative limit',
-      { thresholds: { maxFileNcss: -1 } },
-      '"thresholds.maxFileNcss" must be a non-negative number or null',
+      { thresholds: { warning: { maxFileNcss: -1 } } },
+      '"thresholds.warning.maxFileNcss" must be a non-negative number or null',
     ],
     [
       'an unknown language',
-      { thresholds: { languages: { cobol: {} } } },
-      'unknown language "cobol" in "thresholds.languages"',
+      { thresholds: { warning: { languages: { cobol: {} } } } },
+      'unknown language "cobol" in "thresholds.warning.languages"',
     ],
     [
       'an unknown per-language setting',
-      { thresholds: { languages: { python: { languages: {} } } } },
-      'unknown setting "languages" in "thresholds.languages.python"',
+      { thresholds: { warning: { languages: { python: { languages: {} } } } } },
+      'unknown setting "languages" in "thresholds.warning.languages.python"',
     ],
   ])('rejects %s in the config file', (_, config, message) => {
     writeConfig(config);
@@ -341,7 +393,7 @@ describe('code-gauge check: thresholds', () => {
   });
 
   it('rejects a threshold option that is neither a number nor "off"', () => {
-    const result = runCheck(['--max-function-ncss', 'none']);
+    const result = runCheck(['--warning-max-function-ncss', 'none']);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('Expected a non-negative number or "off".');
   });
@@ -358,15 +410,13 @@ describe('code-gauge check --base', () => {
 
   it('reports a violating function only when the change touches its span', () => {
     writeSource('src/legacy.ts', legacy.replace('const same = value;', 'const same = value + 0;'));
-    const untouched = runCheck(['--base', 'main']);
-    expect(untouched.status).toBe(0);
-    expect(untouched.stdout).toContain('1 changed files, 1 functions checked');
+    expect(runCheck(['--base', 'main']).stdout).toMatch(
+      /^No threshold violations: 1 changed files, 1 functions checked/u
+    );
 
     writeSource('src/legacy.ts', legacy.replace('return fallback;', 'return fallback + 0;'));
-    const touched = runCheck(['--base', 'main']);
-    expect(touched.status).toBe(1);
-    expect(touched.stdout).toContain(
-      'src/legacy.ts:1-21 decide: cognitive complexity 24 (<= 15), cyclomatic complexity 15 (<= 10), nesting depth 5 (<= 4)\n'
+    expect(runCheck(['--base', 'main']).stdout).toContain(
+      'src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15), nesting depth 5 (max 4)\n'
     );
   });
 
@@ -375,7 +425,7 @@ describe('code-gauge check --base', () => {
     expect(runCheck(['--base', 'main']).stdout).toContain('src/legacy.ts:1-20 decide:');
 
     writeSource('src/legacy.ts', legacy.replace('}\n\nexport function identity', '}\nexport function identity'));
-    expect(runCheck(['--base', 'main']).status).toBe(0);
+    expect(hasViolations(['--base', 'main'])).toBe(false);
   });
 
   it.each([
@@ -390,7 +440,7 @@ describe('code-gauge check --base', () => {
     runGit(['commit', '-q', '-m', 'wide']);
     writeSource('src/wide.py', wide.replace('    return a\n', ''));
     const result = runCheck(['--base', 'HEAD']);
-    expect(result.stdout).toContain('src/wide.py:1-2 calculate: parameters 8 (<= 7)\n');
+    expect(result.stdout).toContain('src/wide.py:1-2 calculate: parameters 8 (max 7)\n');
   });
 
   it('keeps a function whose name spans lines on one line', () => {
@@ -398,12 +448,12 @@ describe('code-gauge check --base', () => {
       'src/holder.ts',
       'export class Holder {\n  [`foo\nbar`](a, b, c, d, e, f, g, h) {\n    return a;\n  }\n}\n'
     );
-    expect(runCheck(['src/holder.ts']).stdout).toContain('src/holder.ts:2-5 [`foo bar`]: parameters 8 (<= 7)\n');
+    expect(runCheck(['src/holder.ts']).stdout).toContain('src/holder.ts:2-5 [`foo bar`]: parameters 8 (max 7)\n');
   });
 
   it('reports a file-level violation only for a changed file', () => {
     writeSource('src/calc.ts', `${calc}export const offset = 1;\n`);
-    const result = runCheck(['--base', 'main', '--max-file-ncss', '5', '--json']);
+    const result = runCheck(['--base', 'main', '--warning-max-file-ncss', '5', '--json']);
     const report = JSON.parse(result.stdout) as { base: string; mergeBase: string; violations: { file: string }[] };
     expect(report.violations.map(({ file }) => file)).toEqual(['src/calc.ts']);
     expect(report.base).toBe('main');
@@ -412,18 +462,17 @@ describe('code-gauge check --base', () => {
 
   it('reports no file-level violation for a file whose lines did not change', () => {
     chmodSync(path.join(repoDir, 'src', 'calc.ts'), 0o755);
-    const result = runCheck(['--base', 'main', '--max-file-ncss', '1']);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('1 changed files, 0 functions checked');
+    expect(runCheck(['--base', 'main', '--warning-max-file-ncss', '1']).stdout).toMatch(
+      /^No threshold violations: 1 changed files, 0 functions checked/u
+    );
   });
 
   it('reports the duplicated block a change added, with the unchanged code it copies as its partners', () => {
     writeSource('src/pasted.ts', reportFunction('pasted'));
     const result = runCheck(['--base', 'main']);
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain('1 violations (0 functions, 0 files, 1 duplicated blocks)');
+    expect(result.stdout).toContain('1 warnings (0 functions, 0 files, 1 duplicated blocks)');
     expect(result.stdout).toContain(
-      'src/pasted.ts:1-12: duplicated lines 12 (< 10), also at src/report.ts:1-12, src/summary.ts:1-12\n'
+      'src/pasted.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12, src/summary.ts:1-12\n'
     );
   });
 
@@ -431,14 +480,14 @@ describe('code-gauge check --base', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource('src/pasted.ts', reportFunction('pasted'));
     runGit(['add', '-A']);
-    expect(runCheck(['--base', 'main']).status).toBe(1);
+    expect(hasViolations(['--base', 'main'])).toBe(true);
     runGit(['commit', '-q', '-m', 'paste']);
-    expect(runCheck(['--base', 'main']).status).toBe(1);
+    expect(hasViolations(['--base', 'main'])).toBe(true);
   });
 
   it('limits the check to the changed files under the target', () => {
     writeSource('lib/pasted.ts', reportFunction('pasted'));
-    expect(runCheck(['--base', 'main', 'src']).status).toBe(0);
+    expect(hasViolations(['--base', 'main', 'src'])).toBe(false);
     expect(runCheck(['--base', 'main', 'lib']).stdout).toContain('lib/pasted.ts:1-12: duplicated lines 12');
   });
 });
@@ -464,11 +513,11 @@ describe('code-gauge check outside a git repository', () => {
   });
 
   it('walks the target directory and reports overlapping duplicated ranges of a file as one block', () => {
-    const result = runCheck(['--min-duplicate-lines', '5', plainDir], plainDir);
+    const result = runCheck(['--warning-min-duplicate-lines', '5', plainDir], plainDir);
     expect(result.stdout).toContain(`
-a.ts:1-12: duplicated lines 12 (< 5), also at a.ts:14-25, b.ts:3-11
-a.ts:14-25: duplicated lines 12 (< 5), also at a.ts:1-12, b.ts:3-11
-b.ts:3-11: duplicated lines 9 (< 5), also at a.ts:2-10, a.ts:15-23
+warning: a.ts:1-12: duplicated lines 12 (max 4), also at a.ts:14-25, b.ts:3-11
+warning: a.ts:14-25: duplicated lines 12 (max 4), also at a.ts:1-12, b.ts:3-11
+warning: b.ts:3-11: duplicated lines 9 (max 4), also at a.ts:2-10, a.ts:15-23
 `);
   });
 

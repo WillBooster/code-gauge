@@ -4,7 +4,14 @@ import { getErrorMessage, isRecord } from '@willbooster/shared-lib';
 import { defaultDuplicationOptions } from './duplication.js';
 import type { ExcludePatterns } from './exclusion.js';
 import { supportedLanguages } from './languages.js';
-import { thresholds, type Limits, type ThresholdsConfig } from './thresholds.js';
+import {
+  levels,
+  thresholds,
+  type Level,
+  type LevelThresholdsConfig,
+  type Limits,
+  type ThresholdsConfig,
+} from './thresholds.js';
 import type { DuplicationOptions } from './types.js';
 
 export const configFileName = 'code-gauge.config.json';
@@ -189,21 +196,35 @@ function validateRankObject(value: unknown, configFile: string): { top?: number 
 }
 
 function validateThresholdsObject(value: unknown, configFile: string): ThresholdsConfig {
-  const { languages, ...limits } = requireRecord(value, 'thresholds', configFile);
+  return Object.fromEntries(
+    Object.entries(requireRecord(value, 'thresholds', configFile)).map(([level, levelThresholds]) => {
+      if (!levels.includes(level as Level)) {
+        throw new Error(
+          `Config file "${configFile}": unknown setting "${level}" in "thresholds" (expected ${levels.join(', ')}).`
+        );
+      }
+      return [level, validateLevelThresholds(levelThresholds, `thresholds.${level}`, configFile)];
+    })
+  );
+}
+
+function validateLevelThresholds(value: unknown, settingName: string, configFile: string): LevelThresholdsConfig {
+  const { languages, ...limits } = requireRecord(value, settingName, configFile);
+  const languagesName = `${settingName}.languages`;
   return {
-    limits: validateLimits(limits, 'thresholds', ['languages'], configFile),
+    limits: validateLimits(limits, settingName, ['languages'], configFile),
     languages: Object.fromEntries(
-      Object.entries(languages === undefined ? {} : requireRecord(languages, 'thresholds.languages', configFile)).map(
+      Object.entries(languages === undefined ? {} : requireRecord(languages, languagesName, configFile)).map(
         ([language, overrides]) => {
           if (!supportedLanguages.includes(language)) {
             throw new Error(
-              `Config file "${configFile}": unknown language "${language}" in "thresholds.languages" (expected ${supportedLanguages.join(', ')}).`
+              `Config file "${configFile}": unknown language "${language}" in "${languagesName}" (expected ${supportedLanguages.join(', ')}).`
             );
           }
-          const settingName = `thresholds.languages.${language}`;
+          const languageName = `${languagesName}.${language}`;
           return [
             language,
-            validateLimits(requireRecord(overrides, settingName, configFile), settingName, [], configFile),
+            validateLimits(requireRecord(overrides, languageName, configFile), languageName, [], configFile),
           ];
         }
       )
