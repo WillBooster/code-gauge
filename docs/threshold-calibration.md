@@ -2,7 +2,7 @@
 
 The default limits of `code-gauge check` were set in October 2026 from the repositories of the
 [WillBooster](https://github.com/WillBooster) organization: from the distribution of every
-thresholded metric, and from ratings of sampled functions and duplicated blocks. This document
+thresholded metric, and from ratings of sampled functions, files, and duplicated blocks. This document
 records the corpus, the measurements, and the reasoning behind each limit.
 
 ## Corpus
@@ -16,7 +16,7 @@ records the corpus, the measurements, and the reasoning behind each limit.
   copies of third-party projects kept in an organization repository (80,721 functions, e.g.
   inference engines, parser generators and their grammars, bundled libraries) and course material
   (27,927 functions of exercise and sample code).
-- What remains is the calibration corpus: 45,123 functions, 6,603 files, and 6,493 duplicated blocks in the 105 repositories that hold source files, 31 of them public. Private repositories
+- What remains is the calibration corpus: 45,123 functions and 6,603 files in the 105 repositories that hold source files, 31 of them public. Private repositories
   hold 87% of the functions, so the full tables below cannot be reproduced outside the
   organization; those of the [public part](#public-part-of-the-corpus) can.
 
@@ -35,10 +35,9 @@ records the corpus, the measurements, and the reasoning behind each limit.
 ## Distributions
 
 Nearest-rank quantiles over the calibration corpus, as `scripts/calibrateThresholds.ts` prints
-them. A language is listed when the corpus holds at least 1,000 of its functions. A duplicated block
-is a file's overlapping clone occurrences merged into one region, whatever their length. `check`
-merges only the occurrences that reach a limit, so at a given limit it reports slightly fewer blocks
-than this table holds: 1,506 from 15 lines, where the table holds 1,535.
+them. A language is listed when the corpus holds at least 1,000 of its functions. Duplicated blocks
+have no distribution of their own: `check` merges the clone occurrences that reach its limit, so
+the blocks it reports depend on the limit, and the last table counts them at several limits.
 
 #### cognitive complexity (function)
 
@@ -170,18 +169,18 @@ than this table holds: 1,506 from 15 lines, where the table holds 1,535.
 | ruby       |   232 |   7 |  23 |  62 | 100 |  120 |  143 |  188 |   206 |   309 |  309 |
 | java       |   622 |  11 |  15 |  23 |  28 |   34 |   44 |  102 |   146 |   194 |  194 |
 
-#### duplicated lines (duplicated block)
+#### duplicated blocks reported from a line count
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
-| all        |  6493 |   9 |  14 |  20 |  27 |  31 |  36 |  46 |    57 |    72 | 276 |
-| typescript |  3121 |   8 |  12 |  17 |  23 |  27 |  34 |  43 |    56 |    71 | 276 |
-| tsx        |  1541 |  10 |  14 |  21 |  26 |  29 |  33 |  43 |    51 |    61 |  67 |
-| kotlin     |   161 |  10 |  14 |  18 |  26 |  33 |  36 |  39 |    46 |    46 |  46 |
-| python     |   804 |  10 |  16 |  25 |  33 |  41 |  48 |  55 |    64 |   115 | 115 |
-| rust       |   188 |   8 |  10 |  15 |  18 |  22 |  24 |  30 |    30 |    30 |  30 |
-| ruby       |    87 |   9 |  12 |  19 |  25 |  28 |  86 |  86 |    86 |    86 |  86 |
-| java       |   534 |  16 |  19 |  28 |  34 |  39 |  44 |  57 |    62 |    62 |  62 |
+| Language   | From 5 | From 10 | From 15 | From 20 | From 30 | From 50 |
+| ---------- | -----: | ------: | ------: | ------: | ------: | ------: |
+| all        |   5805 |    3209 |    1506 |     696 |     223 |      50 |
+| typescript |   2704 |    1259 |     483 |     218 |      75 |      17 |
+| tsx        |   1416 |     808 |     362 |     189 |      44 |      11 |
+| kotlin     |    147 |      86 |      37 |      14 |       5 |       0 |
+| python     |    733 |     422 |     237 |     125 |      51 |      12 |
+| rust       |    148 |      56 |      17 |       7 |       2 |       0 |
+| ruby       |     78 |      40 |      15 |       8 |       2 |       2 |
+| java       |    525 |     499 |     340 |     126 |      40 |       8 |
 
 The distributions barely move between subsets: the 99th percentile of cognitive complexity is 31
 for active and 30 for archived repositories, and 29 for private and 38 for public ones (the public
@@ -197,8 +196,8 @@ Kotlin, and Rust code:
 
 - 225 functions from 15 strata of metric values, 15 each;
 - 47 files from five strata of file NCSS, 10 each and all 7 above 1000;
-- 60 clone groups from five strata of block length, 12 each, regrouped below by the length of the
-  duplicated block `check` reports for them.
+- 60 clone groups from five strata of the length of their longest block, 12 each; the block `check`
+  reports for a group is at least that long.
 
 The draw preceded the fetch of one of the two data repositories, so its 675 Python functions could
 not be drawn. LLM reviewers that saw the code but neither the metric values nor the strata rated
@@ -230,11 +229,11 @@ uncertainty of 7 to 15 ratings.
 | file NCSS 401–600                                     |    10 | 40% |    90% |
 | file NCSS 601–1000                                    |    10 | 70% |   100% |
 | file NCSS above 1000                                  |     7 | 86% |   100% |
-| duplicated block of 6–9 lines                         |    10 | 10% |    50% |
-| duplicated block of 10–14 lines                       |    13 | 15% |    54% |
-| duplicated block of 15–19 lines                       |    12 | 25% |    58% |
-| duplicated block of 20–29 lines                       |    12 | 25% |    83% |
-| duplicated block of 30 lines or more                  |    13 | 31% |    69% |
+| clone group, longest block of 6–9 lines               |    12 |  8% |    50% |
+| clone group, longest block of 10–14 lines             |    12 | 17% |    58% |
+| clone group, longest block of 15–19 lines             |    12 | 25% |    58% |
+| clone group, longest block of 20–29 lines             |    12 | 25% |    83% |
+| clone group, longest block of 30 lines or more        |    12 | 33% |    67% |
 
 Regrouping all 225 rated functions by the limits chosen below: of the 89 under every warning limit,
 11% were rated A and 55% A or B; of the 92 that only exceed a warning limit, 47% A and 87% A or B;
@@ -268,7 +267,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   six of ten between 251 and 400, and six of the seven files above 1000 should be split, against
   seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
   percentiles are 377 and 1042.
-- **Duplicated lines, 15, no error.** Length separates duplicated blocks poorly: under a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
+- **Duplicated lines, 15, no error.** Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
   of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines on `check` reports 3,209 blocks in the corpus, nearly twice its 1,698 function violations.
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
@@ -348,13 +347,13 @@ prints, among the other tables:
 | typescript |   610 |  22 |  62 | 134 | 209 | 280 |  310 |  376 |   413 |   695 |  695 |
 | rust       |    49 |  55 | 157 | 332 | 607 | 964 | 1042 | 1042 |  1042 |  1042 | 1042 |
 
-#### duplicated lines (duplicated block)
+#### duplicated blocks reported from a line count
 
-| Language   | Count | p50 | p75 | p90 | p95 | p97 | p98 | p99 | p99.5 | p99.9 | Max |
-| ---------- | ----: | --: | --: | --: | --: | --: | --: | --: | ----: | ----: | --: |
-| all        |   525 |   7 |  10 |  14 |  18 |  23 |  27 |  38 |    57 |    57 |  57 |
-| typescript |   429 |   7 |  11 |  14 |  19 |  25 |  28 |  44 |    57 |    57 |  57 |
-| rust       |    81 |   7 |   9 |  11 |  13 |  16 |  16 |  16 |    16 |    16 |  16 |
+| Language   | From 5 | From 10 | From 15 | From 20 | From 30 | From 50 |
+| ---------- | -----: | ------: | ------: | ------: | ------: | ------: |
+| all        |    428 |     167 |      41 |      19 |       8 |       3 |
+| typescript |    360 |     142 |      39 |      19 |       8 |       3 |
+| rust       |     54 |      16 |       2 |       0 |       0 |       0 |
 
 | Repository                                                                                            | Commit                                     |
 | ----------------------------------------------------------------------------------------------------- | ------------------------------------------ |
