@@ -5,9 +5,9 @@ export const levels = ['warning', 'error'] as const;
 export type Level = (typeof levels)[number];
 
 /**
- * One limit of `code-gauge check`. Its `key` is the config setting, the per-language override
- * setting, and (kebab-cased) the command-line option, so a new entry here is all a new thresholded
- * metric needs.
+ * One threshold of `code-gauge check`. Its `key` is the config setting, the per-language override
+ * setting, and (kebab-cased after a level prefix) the command-line options, so a new entry here is
+ * all a new thresholded metric needs.
  */
 export interface Threshold<Subject = never> {
   key: string;

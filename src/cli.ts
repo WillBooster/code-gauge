@@ -101,7 +101,7 @@ async function main(): Promise<void> {
       );
     }
   }
-  // Exit code 1 means violations, so a rejected command line must not use it.
+  // Exit code 1 means error-level violations, so a rejected command line must not use it.
   check.exitOverride((error) => process.exit(error.exitCode === 0 ? 0 : 2));
   check.action(async (target: string, cliOptions: CheckCliOptions & Record<string, unknown>) => {
     const readLimits = (level: Level): Limits =>
