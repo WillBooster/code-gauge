@@ -29,7 +29,6 @@ records the corpus, the measurements, and the reasoning behind each limit.
 | Rust       |     1,449 |            6 |
 | Ruby       |     1,159 |            4 |
 | Java       |     1,046 |            6 |
-| JavaScript |     2.31% |        0.18% | 1.42% | 0.36% | 0.18% |
 | JavaScript |       562 |           39 |
 | C and C++  |        38 |            5 |
 
@@ -333,6 +332,7 @@ functions together, are left out):
 | Rust       |          3.52% |          1.31% |     3.52% |     0.90% |          0.62% |
 | Ruby       |          0.52% |          0.00% |     1.55% |     0.35% |          0.09% |
 | Java       |          1.34% |          0.38% |     0.67% |     0.19% |          0.00% |
+| JavaScript |          2.31% |          0.18% |     1.42% |     0.36% |          0.18% |
 
 Python functions exceed the parameter limit several times as often as the others, partly because the
 count includes `self`. No per-language default was set from this: outside TypeScript and TSX, one
