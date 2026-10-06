@@ -355,8 +355,8 @@ function formatViolation(violation: Violation): string {
       ({ metric, value, limit }) =>
         // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
         // A duplicated block violates from its limit on, so the largest allowed span is the last
-        // whole line count below it.
-        `${labelByMetric.get(metric)} ${Math.ceil(value * 10) / 10} (max ${violation.kind === 'duplication' ? Math.ceil(limit) - 1 : limit})`
+        // whole line count below it; a limit of 0 allows none.
+        `${labelByMetric.get(metric)} ${Math.ceil(value * 10) / 10} (max ${violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit})`
     )
     .join(', ');
   return `${violation.level}: ${describeViolation(violation, exceeded)}`;

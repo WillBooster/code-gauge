@@ -29,7 +29,9 @@ function runCheck(args: string[], cwd = repoDir): CliResult {
 
 /** Whether the check reports a violation of either level; the exit code only tells errors. */
 function hasViolations(args: string[]): boolean {
-  return !runCheck(args).stdout.startsWith('No threshold violations');
+  const { status, stdout } = runCheck(args);
+  expect([0, 1]).toContain(status);
+  return stdout.startsWith('Threshold violations');
 }
 
 function runGit(args: string[]): void {
