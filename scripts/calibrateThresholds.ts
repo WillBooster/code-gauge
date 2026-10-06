@@ -1,15 +1,15 @@
 #!/usr/bin/env bun
 // Prints the distribution of every thresholded metric over the given projects, per language, as the
-// Markdown tables the README's threshold derivation quotes. Run `bun run build-native` first.
+// Markdown tables docs/threshold-calibration.md quotes. Run `bun run build-native` first.
 // Usage: bun scripts/calibrateThresholds.ts [--rows <file>] <project directory>...
 // `--rows` also writes one JSON line per measured function, file, and duplicated block.
 
 import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
+import { scanCheckScope } from '../src/checkCommand.js';
 import { loadConfig, resolveOptions } from '../src/cliConfig.js';
-import { loadExclusion } from '../src/exclusion.js';
-import { addCrossFileDuplication, configSearchDirectory, formatPath, resolveTarget, scanTarget } from '../src/scan.js';
+import { configSearchDirectory, resolveTarget } from '../src/scan.js';
 import { duplicationThreshold, fileThresholds, functionThresholds, metricNameOf } from '../src/thresholds.js';
 
 interface Row {
@@ -51,32 +51,24 @@ function parseArguments(args: string[]): { rowsFile?: string; projectDirectories
   return { rowsFile, projectDirectories };
 }
 
-/** Measures what `code-gauge check` would check in the project: its config and exclusions apply. */
+/** Measures the files `code-gauge check` checks in the project, with its config and exclusions. */
 async function measureProject(projectDirectory: string): Promise<Row[]> {
   const target = resolveTarget(projectDirectory);
-  const searchDirectory = await configSearchDirectory(target);
-  const options = resolveOptions({}, await loadConfig(undefined, searchDirectory));
-  const scan = await scanTarget(target, {
-    ...options,
-    loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
-  });
-  if (scan.fatalError) {
-    throw new Error(`${projectDirectory}: ${scan.fatalError}`);
+  const options = resolveOptions({}, await loadConfig(undefined, await configSearchDirectory(target)));
+  const scope = await scanCheckScope(target, undefined, options);
+  // A warning names a file measured without cross-file duplication data, so its clones are missing below.
+  for (const message of [...scope.errors, ...scope.warnings]) {
+    console.error(`${projectDirectory}: ${message}`);
   }
-  for (const error of scan.errors) {
-    console.error(`Skipped: ${error}`);
-  }
-  addCrossFileDuplication(scan, options);
 
   const project = path.basename(target);
   const languageByFile = new Map<string, string>();
   const projectRows: Row[] = [];
   let groupCount = 0;
-  for (const { file, metrics } of scan.files) {
-    const displayFile = formatPath(file, scan.displayRoot);
+  for (const { file, metrics } of scope.files) {
     const { language } = metrics;
-    languageByFile.set(displayFile, language);
-    const base = { project, language, file: displayFile };
+    languageByFile.set(file, language);
+    const base = { project, language, file };
     projectRows.push({
       ...base,
       kind: 'file',
@@ -100,10 +92,11 @@ async function measureProject(projectDirectory: string): Promise<Row[]> {
       }
     }
   }
-  for (const group of scan.crossFileDuplication?.groups ?? []) {
+  for (const group of scope.crossFileDuplication?.groups ?? []) {
     groupCount += 1;
     for (const block of group.occurrences) {
       const language = languageByFile.get(block.file);
+      // An occurrence in a file outside the target has no row of its own.
       if (language !== undefined) {
         projectRows.push(toDuplicationRow({ project, language, file: block.file }, block, groupCount));
       }
