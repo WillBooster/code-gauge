@@ -95,6 +95,7 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'too many values flow between the variables of the function; split it so each part works on fewer variables.',
     measure: (fn) => fn.depDegree,
+    includesNestedFunctions: true,
   },
 ];
 

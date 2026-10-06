@@ -119,8 +119,8 @@ between 15 and 30 were mixed. Cyclomatic complexity, the Halstead metrics, and D
 because, at limits of 10, 2000, 20, 30000, and 50, all but 24 of the 107 functions they flagged
 there also exceeded the cognitive-complexity limit.
 
-Cognitive complexity, NCSS, and the Halstead volume of a function cover the functions nested in
-it. A limit that a function and a function nested in it both violate is reported for the outer
+Cognitive complexity, NCSS, Halstead volume, and DepDegree of a function cover the functions nested
+in it. A limit that a function and a function nested in it both violate is reported for the outer
 function only, unless the nested one violates it at a more severe level.
 
 A duplicated block is one occurrence of a within-file or cross-file clone, found with the
