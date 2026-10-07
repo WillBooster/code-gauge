@@ -301,7 +301,7 @@ ep\`](value: number): number {
     // `namespace a::b` names two scopes, and template arguments add nothing.
     writeSource(
       'src/more.cpp',
-      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\nnamespace values { auto bound = [](int a, int b, int c, int d, int e, int f, int g) { return a; }; }\nstruct Holder { union Inner { void member(int a, int b, int c, int d, int e, int f, int g) {} }; };\ntemplate <> class ns::Box<int> { void put(int a, int b, int c, int d, int e, int f, int g) {} };\n'
+      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\nnamespace values { auto bound = [](int a, int b, int c, int d, int e, int f, int g) { return a; }; }\nstruct Holder { union Inner { void member(int a, int b, int c, int d, int e, int f, int g) {} }; };\nnamespace ns { template <> class ns::Box<int> { void put(int a, int b, int c, int d, int e, int f, int g) {} }; }\n'
     );
     const more = runCheck(['src/more.cpp']).stdout;
     expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');

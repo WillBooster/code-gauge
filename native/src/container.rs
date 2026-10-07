@@ -162,19 +162,24 @@ fn cpp_spelled_owner(
     }
     // A definition inside `namespace ns { ... }` belongs to that namespace too, which it may also
     // spell out (`ns::Rules::decide` inside `namespace ns`).
-    let mut owner = if is_absolute {
+    let owner = if is_absolute {
         Vec::new()
     } else {
         enclosing_cpp_scopes(node, function_nodes, code, false)
     };
-    // The spelled scopes take over from the innermost enclosing one they start with, as name
-    // lookup finds that one first.
-    let restart = owner
+    join_cpp_scopes(owner, scopes)
+}
+
+/// The enclosing scopes followed by the spelled ones, which take over from the innermost
+/// enclosing scope they start with, as name lookup finds that one first: `ns::Rules` spelled
+/// inside `namespace ns` is `ns::Rules`.
+fn join_cpp_scopes<'s>(mut enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> Option<String> {
+    let restart = enclosing
         .iter()
-        .rposition(|scope| Some(scope) == scopes.first());
-    owner.truncate(restart.unwrap_or(owner.len()));
-    owner.extend(scopes);
-    (!owner.is_empty()).then(|| owner.join("::"))
+        .rposition(|scope| Some(scope) == spelled.first());
+    enclosing.truncate(restart.unwrap_or(enclosing.len()));
+    enclosing.extend(spelled);
+    (!enclosing.is_empty()).then(|| enclosing.join("::"))
 }
 
 /// The nearest class-like declaration around the function, unless something between them makes
@@ -221,16 +226,13 @@ fn spell_owner(
     }
     // C++ spells an owner with the namespaces and classes around it (`ns::Rules`), as a definition
     // outside them has to.
-    let mut owner = if CPP_SCOPE_NODE_TYPES.contains(&container.kind_name()) {
+    let owner = if CPP_SCOPE_NODE_TYPES.contains(&container.kind_name()) {
         // A friend has namespace scope, whatever classes its declaring class is nested in.
         enclosing_cpp_scopes(container, function_nodes, code, is_friend)
     } else {
         Vec::new()
     };
-    if !is_friend {
-        owner.extend(name);
-    }
-    (!owner.is_empty()).then(|| owner.join("::"))
+    join_cpp_scopes(owner, if is_friend { Vec::new() } else { name })
 }
 
 /// A function local to an initializer block, or a member of an object literal or of an anonymous
