@@ -364,8 +364,8 @@ function formatViolation(violation: Violation): string {
       // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
       const roundedValue = Math.ceil(value * 10) / 10;
       const levelPrefix = level === violation.level ? '' : `${level} `;
-      // A duplicated block violates from its limit on, so the largest allowed span is the last whole
-      // line count below it; a limit of 0 allows none.
+      // A duplicated block violates from its limit on, so the largest allowed code-line count is
+      // the last whole number below it; a limit of 0 allows none.
       const maxAllowed = violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit;
       const blocks = metric === 'functionCognitiveComplexity' ? describeLargestBlocks(violation) : '';
       return `${labelByMetric.get(metric)} ${roundedValue} (${levelPrefix}max ${maxAllowed}${blocks})`;

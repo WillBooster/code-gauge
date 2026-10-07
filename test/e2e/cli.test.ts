@@ -114,6 +114,18 @@ describe('cli: text report', () => {
     );
   });
 
+  it('names the worst function with the class it is a member of', () => {
+    const dir = makeProject('qualified', {
+      'src/rules.ts':
+        'export class Rules {\n  decide(a: number): number {\n    if (a > 0) return 1;\n    return 0;\n  }\n}\n',
+    });
+    try {
+      expect(runCli([dir]).stdout).toContain('worst function Rules.decide (L2-5)');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('includes test files with --include-tests', () => {
     const { stdout } = runCli([projectDir, '--include-tests']);
 
@@ -485,7 +497,7 @@ describe('cli: ranking details', () => {
 describe('cli: file discovery', () => {
   it('maps every supported extension, including alternate and uppercase spellings, and skips generated names', () => {
     // Content only the C++ grammar accepts: parsed as C it yields two functions (`n`, `A`), as
-    // C++ the single function `f`, so the reported worst function reveals which grammar ran.
+    // C++ the single method `A.f`, so the reported worst function reveals which grammar ran.
     const cppOnly = 'namespace n { class A { public: int f() { return 1; } }; }\n';
     const cppSpellings = [
       'impl.cc',
@@ -532,7 +544,7 @@ describe('cli: file discovery', () => {
           .toSorted()
       );
       for (const file of cppSpellings) {
-        expect(report.files.find((entry) => entry.file === file)?.worstFunction?.name, file).toBe('f');
+        expect(report.files.find((entry) => entry.file === file)?.worstFunction?.name, file).toBe('A.f');
       }
       expect(report.files.find((entry) => entry.file === 'base.c')?.worstFunction?.name).toBe('f');
     } finally {

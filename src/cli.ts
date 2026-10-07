@@ -27,6 +27,7 @@ import {
   type Level,
   type Limits,
 } from './thresholds.js';
+import { qualifyFunctionName } from './thresholdCheck.js';
 import type { FunctionMetrics } from './types.js';
 
 /** The worst (highest-cognitive-complexity) function of a file, reported as the ranking evidence. */
@@ -281,7 +282,7 @@ function findWorstFunction(functions: FunctionMetrics[]): WorstFunction | undefi
     return undefined;
   }
   return {
-    name: worst.name ?? '<anonymous>',
+    name: qualifyFunctionName(worst),
     startLine: worst.startLine,
     endLine: worst.endLine,
     cognitiveComplexity: worst.cognitiveComplexity,

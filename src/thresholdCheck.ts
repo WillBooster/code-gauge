@@ -156,13 +156,17 @@ function encloses(outer: FunctionMetrics, inner: FunctionMetrics): boolean {
 
 function toFunctionViolation(file: string, fn: FunctionMetrics, exceeded: ExceededLimit[]): Violation {
   const { startLine, endLine } = fn;
-  const name = fn.name ?? '<anonymous>';
   const exceedsCognitiveComplexity = exceeded.some(({ metric }) => metric === cognitiveComplexityMetric);
   return {
     ...toViolation({ file, startLine, endLine }, 'function', exceeded),
-    name: fn.containerName ? `${fn.containerName}.${name}` : name,
+    name: qualifyFunctionName(fn),
     ...(exceedsCognitiveComplexity && fn.cognitiveBlocks.length > 0 && { largestBlocks: fn.cognitiveBlocks }),
   };
+}
+
+/** How reports name a function: with the type or module it is a member of, so that it can be found. */
+export function qualifyFunctionName({ name = '<anonymous>', containerName }: FunctionMetrics): string {
+  return containerName ? `${containerName}.${name}` : name;
 }
 
 function toViolation(location: BlockLocation, kind: Violation['kind'], exceeded: ExceededLimit[]): Violation {
@@ -225,7 +229,7 @@ function indexGroupsByFile(
 
 /**
  * One violation per duplicated region of the file: its clone occurrences, within-file and
- * cross-file, that span at least the line count of a level (with `hunks`, only those overlapping
+ * cross-file, that hold at least the code lines of a level (with `hunks`, only those overlapping
  * added lines), with overlapping occurrences merged into one region.
  */
 function collectDuplicationViolations(
