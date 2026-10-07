@@ -89,13 +89,6 @@ fn explicit_ruby_owner(object: Option<Node<'_>>, code: &Source<'_>) -> Option<St
     (text != "self").then(|| text.to_string())
 }
 
-const CONTAINER_NAME_NODE_TYPES: &[&str] = &[
-    "constant",
-    "identifier",
-    "simple_identifier",
-    "type_identifier",
-];
-
 /// The name of the declaration whose member a declared function is: the nearest class-like
 /// declaration enclosing it, or the owner the function names itself (a Go receiver, a C++ qualified
 /// declarator, the object of a Ruby singleton method).
@@ -283,18 +276,11 @@ fn scope_names<'s>(name: Node<'_>, code: &Source<'s>) -> Vec<&'s str> {
 
 fn container_name_node(container: Node<'_>) -> Option<Node<'_>> {
     // A Rust `impl` names its type in the `type` field, where `Pass<'a>` in turn wraps the name in
-    // a `generic_type`; Kotlin names a class in a child.
-    container
-        .child_by_field_name("name")
-        .or_else(|| {
-            let implemented = container.child_by_field_name("type")?;
-            implemented
-                .child_by_field_name("type")
-                .or(Some(implemented))
-        })
-        .or_else(|| {
-            named_children(container)
-                .into_iter()
-                .find(|child| CONTAINER_NAME_NODE_TYPES.contains(&child.kind_name()))
-        })
+    // a `generic_type`.
+    container.child_by_field_name("name").or_else(|| {
+        let implemented = container.child_by_field_name("type")?;
+        implemented
+            .child_by_field_name("type")
+            .or(Some(implemented))
+    })
 }
