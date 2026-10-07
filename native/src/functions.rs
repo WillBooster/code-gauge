@@ -366,6 +366,8 @@ pub fn find_container_name(
             // to the innermost name are the owner. The name itself may hold `::` too (`operator
             // std::string`), so the text is not split.
             let mut scopes = Vec::new();
+            // `::ns::Rules::decide` starts at the global namespace, whatever encloses it.
+            let is_absolute = inner.child_by_field_name("scope").is_none();
             let mut qualified = inner;
             while qualified.kind_name() == "qualified_identifier" {
                 if let Some(scope) = qualified.child_by_field_name("scope") {
@@ -373,8 +375,19 @@ pub fn find_container_name(
                 }
                 qualified = qualified.child_by_field_name("name")?;
             }
-            // A definition inside `namespace ns { ... }` belongs to that namespace too.
-            let mut owner = enclosing_cpp_scopes(node, function_nodes, code);
+            // A definition inside `namespace ns { ... }` belongs to that namespace too, which it
+            // may also spell out (`ns::Rules::decide` inside `namespace ns`).
+            let mut owner = if is_absolute {
+                Vec::new()
+            } else {
+                enclosing_cpp_scopes(node, function_nodes, code)
+            };
+            // The spelled scopes take over from the innermost enclosing one they start with, as
+            // name lookup finds that one first.
+            let restart = owner
+                .iter()
+                .rposition(|scope| Some(scope) == scopes.first());
+            owner.truncate(restart.unwrap_or(owner.len()));
             owner.extend(scopes);
             return (!owner.is_empty()).then(|| owner.join("::"));
         }
