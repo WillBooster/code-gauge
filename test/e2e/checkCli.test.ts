@@ -305,6 +305,14 @@ ep\`](value: number): number {
     expect(runCheck(['src/registered.ts']).stdout).toContain('src/registered.ts:2-4 callback: parameters 7 (max 6)\n');
   });
 
+  it('leaves a callback passed to an enum constant unqualified', () => {
+    writeSource(
+      'src/Kind.java',
+      'enum Kind {\n  ONE((a, b, c, d, e, f, g) -> a);\n  Kind(Seven seven) {}\n}\ninterface Seven { int apply(int a, int b, int c, int d, int e, int f, int g); }\n'
+    );
+    expect(runCheck(['src/Kind.java']).stdout).toContain('src/Kind.java:2-2 <anonymous>: parameters 7 (max 6)\n');
+  });
+
   it('leaves a method of an object literal in a class unqualified', () => {
     writeSource(
       'src/outer.ts',

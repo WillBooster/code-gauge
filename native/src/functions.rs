@@ -282,6 +282,9 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
 /// the call's argument rather than a member.
 const CALL_NODE_TYPES: &[&str] = &[
     "annotated_lambda",
+    // Argument lists too: an enum constant's constructor arguments hang off no call node.
+    "argument_list",
+    "arguments",
     "call",
     "call_expression",
     "invocation_expression",
@@ -289,6 +292,7 @@ const CALL_NODE_TYPES: &[&str] = &[
     "method_invocation",
     "new_expression",
     "object_creation_expression",
+    "value_arguments",
 ];
 
 const CPP_SCOPE_NODE_TYPES: &[&str] = &[
