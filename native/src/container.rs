@@ -26,14 +26,15 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
 ];
 /// Whether a function below `ancestor` is a value inside an expression rather than what a member
 /// is bound to: passed to a call (`field = register(() => { ... })`), held in a collection
-/// (`field = [() => { ... }]`), or chosen by an operator. Grammars name such nodes
-/// `..._expression`; the listed kinds are those named otherwise.
+/// (`field = [() => { ... }]`), or an operand of an operator. Grammars name such nodes
+/// `..._expression` or `..._operator`; the listed kinds are those named otherwise.
 fn is_enclosing_expression(ancestor: Node<'_>) -> bool {
     const OTHER_EXPRESSION_NODE_TYPES: &[&str] = &[
         "annotated_lambda",
         "argument_list",
         "arguments",
         "array",
+        "binary",
         "call",
         "collection_literal",
         "dictionary",
@@ -44,10 +45,13 @@ fn is_enclosing_expression(ancestor: Node<'_>) -> bool {
         "method_invocation",
         "set",
         "tuple",
+        "unary",
         "value_arguments",
     ];
     let kind = ancestor.kind_name();
-    kind.ends_with("_expression") || OTHER_EXPRESSION_NODE_TYPES.contains(&kind)
+    kind.ends_with("_expression")
+        || kind.ends_with("_operator")
+        || OTHER_EXPRESSION_NODE_TYPES.contains(&kind)
 }
 
 const CPP_SCOPE_NODE_TYPES: &[&str] = &[
@@ -72,7 +76,7 @@ fn enclosing_cpp_scopes<'s>(
         if CPP_SCOPE_NODE_TYPES.contains(&ancestor.kind_name()) {
             match ancestor.child_by_field_name("name") {
                 // `namespace a::b` names two scopes at once.
-                Some(name) => scopes.extend(node_text(name, code).rsplit("::")),
+                Some(name) => scopes.extend(scope_names(name, code).into_iter().rev()),
                 // An unnamed namespace adds nothing; an unnamed class ends the owner, as its
                 // members are reached through no name.
                 None if ancestor.kind_name() == "namespace_definition" => {}
@@ -222,7 +226,10 @@ fn spell_owner(
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
 ) -> Option<String> {
-    let name = container_name(container, code)?;
+    let name = scope_names(container_name_node(container)?, code);
+    if name.iter().any(|part| part.is_empty()) {
+        return None;
+    }
     // C++ spells an owner with the namespaces and classes around it (`ns::Rules`), as a definition
     // outside them has to.
     let mut owner = if CPP_SCOPE_NODE_TYPES.contains(&container.kind_name()) {
@@ -231,7 +238,7 @@ fn spell_owner(
         Vec::new()
     };
     if !is_friend {
-        owner.extend(name.split("::"));
+        owner.extend(name);
     }
     (!owner.is_empty()).then(|| owner.join("::"))
 }
@@ -262,10 +269,26 @@ fn is_named_container(ancestor: Node<'_>) -> bool {
         && CONTAINER_NODE_TYPES.contains(&ancestor.kind_name())
 }
 
-fn container_name<'s>(container: Node<'_>, code: &Source<'s>) -> Option<&'s str> {
+/// The identifiers a name consists of: one, or those of a C++ `a::b`, whose separators, spacing,
+/// and comments are no part of it.
+fn scope_names<'s>(name: Node<'_>, code: &Source<'s>) -> Vec<&'s str> {
+    let parts: Vec<Node<'_>> = named_children(name)
+        .into_iter()
+        .filter(|part| !part.is_extra())
+        .collect();
+    if name.kind_name() != "nested_namespace_specifier" || parts.is_empty() {
+        return vec![node_text(name, code)];
+    }
+    parts
+        .into_iter()
+        .flat_map(|part| scope_names(part, code))
+        .collect()
+}
+
+fn container_name_node(container: Node<'_>) -> Option<Node<'_>> {
     // A Rust `impl` names its type in the `type` field, where `Pass<'a>` in turn wraps the name in
     // a `generic_type`; Kotlin names a class in a child.
-    let name_node = container
+    container
         .child_by_field_name("name")
         .or_else(|| {
             let implemented = container.child_by_field_name("type")?;
@@ -277,6 +300,5 @@ fn container_name<'s>(container: Node<'_>, code: &Source<'s>) -> Option<&'s str>
             named_children(container)
                 .into_iter()
                 .find(|child| CONTAINER_NAME_NODE_TYPES.contains(&child.kind_name()))
-        })?;
-    Some(node_text(name_node, code)).filter(|name| !name.is_empty())
+        })
 }

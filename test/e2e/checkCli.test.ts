@@ -293,7 +293,7 @@ ep\`](value: number): number {
     // template arguments add nothing.
     writeSource(
       'src/more.cpp',
-      'namespace a::b { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\n'
+      'namespace a :: b { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\n'
     );
     const more = runCheck(['src/more.cpp']).stdout;
     expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');

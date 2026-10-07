@@ -35,7 +35,7 @@ C++ files. By default it skips generated, vendor, test, and tool directories as 
 Measured 123 files under /path/to/project (code LOC 45678, NCSS 23456, functions 1789)
 
 Refactoring candidates (top 10 of 123):
-1. src/metrics.ts (score 2.87): worst function measure (L120-310) cognitive 42, NCSS 220, nesting 6; duplicated lines 180 (20%, shared with src/other.ts); file NCSS 1240
+1. src/metrics.ts (score 2.87): worst function TreeMeasurer.measure (L120-310) cognitive 42, NCSS 220, nesting 6; duplicated lines 180 (20%, shared with src/other.ts); file NCSS 1240
 ...
 ```
 
@@ -55,7 +55,8 @@ Ranking is relative to the scanned project and ignores the
 [thresholds](#threshold-check-code-gauge-check): the top of the list is worth refactoring first
 regardless of where any cutoff would sit. Each reported file carries
 the concrete evidence (worst function with location, duplication with partner files, file size) so
-an agent can act on it directly.
+an agent can act on it directly. A method is named with the type or module it belongs to
+(`TreeMeasurer.measure`), as in the threshold check.
 
 ## Options
 
