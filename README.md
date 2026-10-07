@@ -175,8 +175,8 @@ How to fix:
 
 A violation's level is that of its most severe limit. A function gets one line listing every
 threshold it exceeds, each with the largest value its violated limit allows and, when that limit is
-milder than the line's level, the limit's own level; a method is named with the class, struct,
-interface, trait, or module it belongs to (`Rules.decide`). A cognitive-complexity violation also names up to three parts of the function
+milder than the line's level, the limit's own level; a method is named with the type or
+module it belongs to (`Rules.decide`). A cognitive-complexity violation also names up to three parts of the function
 adding the most to it, largest first, each with its lines, its name when it is a nested function,
 and what it adds: the outermost branching constructs and nested functions of the body or, where one
 of them merely wraps most of the function (a loop or an unnamed callback around the whole body),
@@ -259,8 +259,7 @@ ranking command.
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
     kind `file`, the first and last line of the file;
-  - `name`: only for kind `function`; a method's name follows the class, struct, interface, trait, or module it belongs to
-    (`Rules.decide`), and a
+  - `name`: only for kind `function`; a method's name follows the type or module it belongs to (`Rules.decide`), and a
     function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
     `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe
