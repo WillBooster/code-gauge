@@ -52,7 +52,9 @@ function roundFloats(metrics: CodeMetrics): RoundedAggregates {
     duplication: {
       duplicateBlockCount: metrics.duplication.duplicateBlockCount,
       duplicateBlockGroupCount: metrics.duplication.duplicateBlockGroupCount,
-      duplicateBlockGroups: metrics.duplication.duplicateBlockGroups,
+      duplicateBlockGroups: metrics.duplication.duplicateBlockGroups.map((group) =>
+        group.map(({ lineNumbers, ...occurrence }) => ({ ...occurrence, lineCount: lineNumbers.length }))
+      ),
       duplicateLineCount: metrics.duplication.duplicateLineCount,
       duplicationRatio: round(metrics.duplication.duplicationRatio),
       maxDuplicateBlockSize: metrics.duplication.maxDuplicateBlockSize,

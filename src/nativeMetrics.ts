@@ -61,7 +61,7 @@ export interface NativeBinding {
  * `git pull` untouched, so without this handshake it would silently return payloads missing
  * newer fields, or lack newer binding functions, instead of failing with a clear rebuild message.
  */
-export const expectedPayloadVersion = 11;
+export const expectedPayloadVersion = 12;
 
 /**
  * Measures one file via the native addon, returning the raw payload for assembly in metrics.ts;

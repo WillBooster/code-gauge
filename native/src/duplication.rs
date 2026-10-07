@@ -2465,10 +2465,12 @@ fn summarize_duplicates(
                 max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
                 let lines = collect_matched_lines(occurrence, code_line_numbers, tokens);
                 duplicated_lines.extend(&lines);
+                let mut line_numbers: Vec<usize> = lines.into_iter().collect();
+                line_numbers.sort_unstable();
                 DuplicateBlockOccurrence {
                     start_line: occurrence.start_line,
                     end_line: occurrence.end_line,
-                    line_count: lines.len(),
+                    line_numbers,
                     token_count: occurrence.token_count,
                 }
             })

@@ -16,7 +16,6 @@ import {
 } from './git.js';
 import {
   addCrossFileDuplication,
-  collectDuplicatedLineNumbers,
   configSearchDirectory,
   formatPath,
   getLanguage,
@@ -145,7 +144,7 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
   });
   return {
     files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
-    duplication: measureDuplication(scan, scan.displayRoot, options),
+    duplication: measureDuplication(scan, options),
     errors: scan.errors,
     warnings: scan.warnings,
     root: scan.displayRoot,
@@ -196,7 +195,7 @@ async function scanRepository(
     explicitFiles,
     targetFile === undefined && canonicalTarget !== repoRoot ? targetPath : ''
   );
-  const duplication = measureDuplication(scan, repoRoot, options);
+  const duplication = measureDuplication(scan, options);
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
@@ -279,20 +278,13 @@ function anchorDeletionsToCode(hunks: LineHunk[], content: string): void {
 }
 
 /** A run-wide failure (a missing target or native addon) leaves nothing to check. */
-function measureDuplication(scan: ScanResult, root: string, options: ResolvedOptions): CheckedDuplication {
+function measureDuplication(scan: ScanResult, options: ResolvedOptions): CheckedDuplication {
   if (scan.fatalError) {
     throw new Error(scan.fatalError);
   }
   addCrossFileDuplication(scan, options);
-  const crossFile = scan.crossFileDuplication;
   return {
-    crossFile,
-    lineNumbersByFile: new Map(
-      scan.files.map(({ file, metrics }) => {
-        const formattedFile = formatPath(file, root);
-        return [formattedFile, collectDuplicatedLineNumbers(metrics, crossFile, formattedFile)];
-      })
-    ),
+    crossFile: scan.crossFileDuplication,
     minSimilarityPercent: options.duplication.minSimilarityPercent,
   };
 }

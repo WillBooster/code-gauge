@@ -80,8 +80,8 @@ pub struct CognitiveBlock {
 #[serde(rename_all = "camelCase")]
 pub struct DuplicateBlockOccurrence {
     pub end_line: usize,
-    /// Code lines carrying the occurrence's matched tokens.
-    pub line_count: usize,
+    /// The 1-based code lines carrying the occurrence's matched tokens, sorted ascending.
+    pub line_numbers: Vec<usize>,
     pub start_line: usize,
     pub token_count: usize,
 }

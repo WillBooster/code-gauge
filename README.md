@@ -421,11 +421,11 @@ The `duplication` section tunes how clones are detected:
   match; dependency declarations such as imports, package clauses, `#include`s, re-exports, and
   `require`s carry no tokens, since every module must spell out its own), with adjacent matches around a small edit merged into gapped (Type-3) clone groups and
   near-miss (Type-3) clones matched by token-LCS similarity (tolerating reordered statements and
-  copies embedded in added code), each copy with its line span and its matched lines and tokens,
+  copies embedded in added code), each copy with its line span, its matched lines, and its matched token count,
   plus duplicated line count and ratio
 - Cross-file duplication (via `measureCrossFileDuplication`): copy-pasted blocks shared between
   files, matched with the same normalization (exact, gapped, and near-miss clones) and reported as
-  groups with the file location and the matched lines and tokens of each copy
+  groups with the file location, the matched lines, and the matched token count of each copy
 - Halstead base counts, vocabulary, length, volume, difficulty (half the distinct operators times
   the total operands per distinct operand; 0 without operands), and effort (difficulty times
   volume), per function and per file

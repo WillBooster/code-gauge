@@ -23,11 +23,11 @@ export interface CrossFileDuplicateOccurrence {
   endLine: number;
   file: string;
   /**
-   * Code lines carrying the occurrence's matched tokens (see DuplicateBlockOccurrence.lineCount).
-   * Absent for a file that supplied only candidates (no `tokens`), whose matched lines are
-   * unknowable.
+   * The code lines carrying the occurrence's matched tokens (see
+   * DuplicateBlockOccurrence.lineNumbers). Absent for a file that supplied only candidates (no
+   * `tokens`), whose matched lines are unknowable.
    */
-  lineCount?: number;
+  lineNumbers?: number[];
   startLine: number;
   /** Matched tokens; the group's `tokenCount` is the smallest of its occurrences'. */
   tokenCount: number;
@@ -258,8 +258,8 @@ function summarize(
     const occurrences = group
       .map((occurrence) => {
         const { file, startLine, endLine, tokenCount } = occurrence;
-        const lineCount = collectOccurrenceLines(occurrence, fileDataByName, lineNumbersByFile);
-        return { file, startLine, endLine, ...(lineCount !== undefined && { lineCount }), tokenCount };
+        const lineNumbers = collectOccurrenceLines(occurrence, fileDataByName, lineNumbersByFile);
+        return { file, startLine, endLine, ...(lineNumbers && { lineNumbers }), tokenCount };
       })
       .toSorted((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);
     const files = [...new Set(occurrences.map(({ file }) => file))];
@@ -287,7 +287,7 @@ function summarize(
 /**
  * Adds the code lines an occurrence's segment tokens cover (matched tokens of an exact or gapped
  * occurrence, the whole block or matched cores of a near-miss one) to its file's line set, mapping the
- * project-wide token segments back into the file's own token stream, and returns how many they are.
+ * project-wide token segments back into the file's own token stream, and returns them in order.
  * A file that supplied only candidates (no token stream) is skipped rather than approximated from
  * the bounding line range, which would include gap and comment/blank lines and break the field's
  * exactness contract.
@@ -299,7 +299,7 @@ function collectOccurrenceLines(
     { tokens?: CrossFileDuplicationSourceFile['tokens']; codeLineNumbers?: Set<number>; offset: number }
   >,
   lineNumbersByFile: Map<string, Set<number>>
-): number | undefined {
+): number[] | undefined {
   const fileData = fileDataByName.get(occurrence.file);
   if (!fileData?.tokens) {
     return undefined;
@@ -324,5 +324,5 @@ function collectOccurrenceLines(
   for (const line of lines) {
     fileLines.add(line);
   }
-  return lines.size;
+  return [...lines].toSorted((left, right) => left - right);
 }
