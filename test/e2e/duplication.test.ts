@@ -824,8 +824,8 @@ describe('duplication: cross-file clones', () => {
 
     expect(metrics.groups.length).toBe(1);
     expect(metrics.groups[0]?.occurrences).toEqual([
-      { file: 'a.js', startLine: 1, endLine: expect.any(Number) },
-      { file: 'b.js', startLine: 1, endLine: expect.any(Number) },
+      { file: 'a.js', startLine: 1, endLine: expect.any(Number), lineNumbers: expect.any(Array), tokenCount: 117 },
+      { file: 'b.js', startLine: 1, endLine: expect.any(Number), lineNumbers: expect.any(Array), tokenCount: 117 },
     ]);
   });
 
@@ -943,8 +943,8 @@ describe('duplication: invariants over the per-language fixtures', () => {
     ]);
     expect(metrics.duplication.duplicateBlockGroups).toEqual([
       [
-        { startLine: 2, endLine: 13 },
-        { startLine: 15, endLine: 26 },
+        { startLine: 2, endLine: 13, lineNumbers: [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13], tokenCount: 65 },
+        { startLine: 15, endLine: 26, lineNumbers: [15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26], tokenCount: 65 },
       ],
     ]);
   });
@@ -1260,8 +1260,8 @@ describe('duplication: within-file statement runs and containers', () => {
     // The matched region is the embedded run (lines 3-10 and 15-22), not either whole function.
     expect(metrics.duplication.duplicateBlockGroups).toEqual([
       [
-        { startLine: 3, endLine: 10 },
-        { startLine: 15, endLine: 22 },
+        { startLine: 3, endLine: 10, lineNumbers: [3, 4, 5, 6, 7, 8, 9, 10], tokenCount: 54 },
+        { startLine: 15, endLine: 22, lineNumbers: [15, 16, 17, 18, 19, 20, 21, 22], tokenCount: 54 },
       ],
     ]);
     expect(metrics.duplication.duplicateLineNumbers).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 17, 18, 19, 20, 21, 22]);

@@ -22,7 +22,18 @@ export interface CrossFileDuplicationSourceFile extends Partial<CrossFileDuplica
 export interface CrossFileDuplicateOccurrence {
   endLine: number;
   file: string;
+  /**
+   * The code lines carrying the occurrence's matched tokens (see
+   * DuplicateBlockOccurrence.lineNumbers). Absent for a file that supplied only candidates (no
+   * `tokens`), whose matched lines are unknowable.
+   */
+  lineNumbers?: number[];
   startLine: number;
+  /**
+   * The tokens of its matched runs, or of a near-miss block or its matched cores with the edited
+   * tokens among them; the group's `tokenCount` is the smallest of its occurrences'.
+   */
+  tokenCount: number;
 }
 
 export interface CrossFileDuplicateBlockGroup {
@@ -247,11 +258,12 @@ function summarize(
     // fragment, gapped merging consolidates the grouping without halving the count, and spans a
     // partial merge shares between a retained group and the merged group count once.
     duplicateBlockCount += countRedundantFragments(group);
-    for (const occurrence of group) {
-      collectOccurrenceLines(occurrence, fileDataByName, lineNumbersByFile);
-    }
     const occurrences = group
-      .map(({ file, startLine, endLine }) => ({ file, startLine, endLine }))
+      .map((occurrence) => {
+        const { file, startLine, endLine, tokenCount } = occurrence;
+        const lineNumbers = collectOccurrenceLines(occurrence, fileDataByName, lineNumbersByFile);
+        return { file, startLine, endLine, ...(lineNumbers && { lineNumbers }), tokenCount };
+      })
       .toSorted((left, right) => left.file.localeCompare(right.file) || left.startLine - right.startLine);
     const files = [...new Set(occurrences.map(({ file }) => file))];
     for (const file of files) {
@@ -278,9 +290,10 @@ function summarize(
 /**
  * Adds the code lines an occurrence's segment tokens cover (matched tokens of an exact or gapped
  * occurrence, the whole block or matched cores of a near-miss one) to its file's line set, mapping the
- * project-wide token segments back into the file's own token stream. A file that supplied only
- * candidates (no token stream) is skipped rather than approximated from the bounding line range,
- * which would include gap and comment/blank lines and break the field's exactness contract.
+ * project-wide token segments back into the file's own token stream, and returns them in order.
+ * A file that supplied only candidates (no token stream) is skipped rather than approximated from
+ * the bounding line range, which would include gap and comment/blank lines and break the field's
+ * exactness contract.
  */
 function collectOccurrenceLines(
   occurrence: CrossFileOccurrence,
@@ -289,16 +302,17 @@ function collectOccurrenceLines(
     { tokens?: CrossFileDuplicationSourceFile['tokens']; codeLineNumbers?: Set<number>; offset: number }
   >,
   lineNumbersByFile: Map<string, Set<number>>
-): void {
+): number[] | undefined {
   const fileData = fileDataByName.get(occurrence.file);
   if (!fileData?.tokens) {
-    return;
+    return undefined;
   }
-  let lines = lineNumbersByFile.get(occurrence.file);
-  if (!lines) {
-    lines = new Set();
-    lineNumbersByFile.set(occurrence.file, lines);
+  let fileLines = lineNumbersByFile.get(occurrence.file);
+  if (!fileLines) {
+    fileLines = new Set();
+    lineNumbersByFile.set(occurrence.file, fileLines);
   }
+  const lines = new Set<number>();
   for (const segment of occurrence.segments) {
     collectSegmentLines(
       {
@@ -310,4 +324,8 @@ function collectOccurrenceLines(
       lines
     );
   }
+  for (const line of lines) {
+    fileLines.add(line);
+  }
+  return [...lines].toSorted((left, right) => left - right);
 }

@@ -94,19 +94,19 @@ ignore passes as a check of zero files when it holds no git-visible source file,
 its only sources are ignored build output. Outside a git repository it walks the target directory
 like the ranking command. The thresholds:
 
-| Config key                        | Violation                                         | Warning | Error |
-| --------------------------------- | ------------------------------------------------- | ------- | ----- |
-| `maxFunctionCognitiveComplexity`  | a function's cognitive complexity is above it     | 15      | 30    |
-| `maxFunctionCyclomaticComplexity` | a function's cyclomatic complexity is above it    | off     | off   |
-| `maxFunctionNcss`                 | a function's NCSS is above it                     | 30      | 60    |
-| `maxFunctionNestingDepth`         | a function's nesting depth is above it            | off     | off   |
-| `maxFunctionParameterCount`       | a function's parameter count is above it          | 6       | off   |
-| `maxFunctionHalsteadVolume`       | a function's Halstead volume is above it          | off     | off   |
-| `maxFunctionHalsteadDifficulty`   | a function's Halstead difficulty is above it      | off     | off   |
-| `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it          | off     | off   |
-| `maxFunctionDepDegree`            | a function's DepDegree is above it                | off     | off   |
-| `maxFileNcss`                     | a file's NCSS is above it                         | 400     | 1000  |
-| `minDuplicateLines`               | a duplicated block holds at least this many lines | 15      | off   |
+| Config key                        | Violation                                                           | Warning | Error |
+| --------------------------------- | ------------------------------------------------------------------- | ------- | ----- |
+| `maxFunctionCognitiveComplexity`  | a function's cognitive complexity is above it                       | 15      | 30    |
+| `maxFunctionCyclomaticComplexity` | a function's cyclomatic complexity is above it                      | off     | off   |
+| `maxFunctionNcss`                 | a function's NCSS is above it                                       | 30      | 60    |
+| `maxFunctionNestingDepth`         | a function's nesting depth is above it                              | off     | off   |
+| `maxFunctionParameterCount`       | a function's parameter count is above it                            | 6       | off   |
+| `maxFunctionHalsteadVolume`       | a function's Halstead volume is above it                            | off     | off   |
+| `maxFunctionHalsteadDifficulty`   | a function's Halstead difficulty is above it                        | off     | off   |
+| `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it                            | off     | off   |
+| `maxFunctionDepDegree`            | a function's DepDegree is above it                                  | off     | off   |
+| `maxFileNcss`                     | a file's NCSS is above it                                           | 400     | 1000  |
+| `minDuplicateLines`               | a duplicated block holds at least this many lines matched in a copy | 15      | off   |
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
@@ -132,10 +132,13 @@ for each function.
 
 A duplicated block is one occurrence of a within-file or cross-file clone, found with the
 [duplication detection settings](#duplication-detection-settings); its span runs from its first to
-its last line, and its length is the number of lines of that span that are neither blank nor
-comment-only, so that a copy has the same length whether or not it is commented. Occurrences of at least the warning or the error `minDuplicateLines` that overlap in a
-file are reported as one block covering all of them, at the level the code lines of its whole span
-reach.
+its last line, and its length is the number of lines of that span matched in another copy. Lines
+that are blank or comment-only do not count, so that a copy has the same length whether or not it
+is commented, and neither do the lines between the matched parts of an edited copy, which the copies do not
+share. A block that resembles another as a whole (a near-miss clone, at least
+`minSimilarityPercent` similar) counts all its code lines, its edited ones included. Occurrences of at least the warning or the error
+`minDuplicateLines` that overlap in a file are reported as one block covering all of them, at the
+level its duplicated lines reach, each line counted once.
 
 Each limit is set in the `warning` or `error` part of the
 [`thresholds` config section](#configuration), where `null` disables it and `languages` overrides
@@ -184,7 +187,7 @@ branching construct, which add to the score without being such a part), largest 
 and what it adds: the outermost branching constructs and nested functions of the body or, where one
 of them merely wraps most of the function (a loop or an unnamed callback around the whole body),
 the ones inside it. A file-level violation prints the path without a line span, and a duplicated block lists
-up to three of its other copies, those with the most code lines first.
+up to three of its other copies, the largest first.
 Paths are relative to the repository root, or to the target directory outside a git repository.
 
 | Exit code | Meaning                                                                                                                          |
@@ -267,15 +270,14 @@ ranking command.
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
     `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe
     `level` whose limit the value violates, and that `limit`. A value violates when it is above the
-    limit; `duplicateLines`, the code lines of the block, violates from the limit on;
+    limit; `duplicateLines`, the lines of the block matched in another copy, violates from the limit on;
   - `largestBlocks`: only for a function exceeding a cognitive-complexity limit that has a
     branching construct or a nested function adding to it; the parts the
     text report names, each with its line span, the `cognitiveComplexity` it adds to the function,
     and its `name` when it is a named nested function;
-  - `partners`: only for kind `duplication`; every other copy of the block, most code lines
-    first: the
-    block merges every clone overlapping it, so its copies range from whole copies of it to a few
-    lines matching one fragment.
+  - `partners`: only for kind `duplication`; every other copy of the block, largest first. A
+    place repeating only a part of the block (less than `minSimilarityPercent` of its tokens) is
+    not a copy of it, and is listed only when no copy is known.
 - `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
   `error` level of a violation.
 - `warnings`: files measured without cross-file duplication data, and unmeasured files of the
@@ -420,10 +422,11 @@ The `duplication` section tunes how clones are detected:
   match; dependency declarations such as imports, package clauses, `#include`s, re-exports, and
   `require`s carry no tokens, since every module must spell out its own), with adjacent matches around a small edit merged into gapped (Type-3) clone groups and
   near-miss (Type-3) clones matched by token-LCS similarity (tolerating reordered statements and
-  copies embedded in added code), plus duplicated line count and ratio
+  copies embedded in added code), each copy with its line span, its matched lines, and its matched token count,
+  plus duplicated line count and ratio
 - Cross-file duplication (via `measureCrossFileDuplication`): copy-pasted blocks shared between
   files, matched with the same normalization (exact, gapped, and near-miss clones) and reported as
-  groups with their file locations
+  groups with the file location, the matched lines, and the matched token count of each copy
 - Halstead base counts, vocabulary, length, volume, difficulty (half the distinct operators times
   the total operands per distinct operand; 0 without operands), and effort (difficulty times
   volume), per function and per file

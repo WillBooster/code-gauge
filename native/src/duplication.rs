@@ -2428,6 +2428,26 @@ fn count_redundant_fragments(group: &[CountedOccurrence]) -> usize {
     }
 }
 
+/// Only CODE lines carrying matched tokens count; the unmatched gap of a merged clone stays out
+/// of line coverage.
+fn collect_matched_lines(
+    occurrence: &CountedOccurrence,
+    code_line_numbers: &FxHashSet<usize>,
+    tokens: &[Token<'_>],
+) -> FxHashSet<usize> {
+    let mut lines: FxHashSet<usize> = FxHashSet::default();
+    for &(segment_start, segment_end) in &occurrence.segments {
+        for token in &tokens[segment_start..segment_end.min(tokens.len())] {
+            for row in token.start_row..=token.end_row {
+                if code_line_numbers.contains(&(row + 1)) {
+                    lines.insert(row + 1);
+                }
+            }
+        }
+    }
+    lines
+}
+
 fn summarize_duplicates(
     groups: &[Vec<CountedOccurrence>],
     code_line_numbers: &FxHashSet<usize>,
@@ -2439,25 +2459,20 @@ fn summarize_duplicates(
     let mut duplicated_lines: FxHashSet<usize> = FxHashSet::default();
     for group in groups {
         duplicate_block_count += count_redundant_fragments(group);
-        for occurrence in group {
-            max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
-            // Only CODE lines carrying matched tokens count; the unmatched gap of a merged clone
-            // stays out of line coverage.
-            for &(segment_start, segment_end) in &occurrence.segments {
-                for token in &tokens[segment_start..segment_end.min(tokens.len())] {
-                    for row in token.start_row..=token.end_row {
-                        if code_line_numbers.contains(&(row + 1)) {
-                            duplicated_lines.insert(row + 1);
-                        }
-                    }
-                }
-            }
-        }
         let mut occurrences: Vec<DuplicateBlockOccurrence> = group
             .iter()
-            .map(|occurrence| DuplicateBlockOccurrence {
-                start_line: occurrence.start_line,
-                end_line: occurrence.end_line,
+            .map(|occurrence| {
+                max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
+                let lines = collect_matched_lines(occurrence, code_line_numbers, tokens);
+                duplicated_lines.extend(&lines);
+                let mut line_numbers: Vec<usize> = lines.into_iter().collect();
+                line_numbers.sort_unstable();
+                DuplicateBlockOccurrence {
+                    start_line: occurrence.start_line,
+                    end_line: occurrence.end_line,
+                    line_numbers,
+                    token_count: occurrence.token_count,
+                }
             })
             .collect();
         occurrences.sort_by_key(|occurrence| occurrence.start_line);

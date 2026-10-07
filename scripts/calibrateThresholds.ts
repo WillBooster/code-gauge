@@ -113,12 +113,7 @@ async function measureProject(projectDirectory: string): Promise<Row[] | undefin
   }
   for (const limit of duplicateLineLimits) {
     const limits = { warning: { ...noLimits, [duplicationThreshold.key]: limit }, error: noLimits };
-    const { violations } = checkThresholds(
-      scope.files,
-      scope.crossFileDuplication,
-      () => limits,
-      scope.codeLineNumbersByFile
-    );
+    const { violations } = checkThresholds(scope.files, scope.duplication, () => limits);
     for (const { file, startLine, endLine, exceeded, partners } of violations) {
       projectRows.push({
         kind: 'duplication',

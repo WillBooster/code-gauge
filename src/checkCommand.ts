@@ -3,7 +3,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 import { loadConfig, resolveOptions, type CliOptions, type ResolvedOptions } from './cliConfig.js';
-import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
   isIgnored,
@@ -32,7 +31,7 @@ import {
   checkThresholds,
   type BlockLocation,
   type CheckedFile,
-  type CodeLineNumbersByFile,
+  type CheckedDuplication,
   type CheckResult,
   type Violation,
 } from './thresholdCheck.js';
@@ -46,9 +45,7 @@ export interface CheckCliOptions extends CliOptions {
 /** The measured files a check covers and the duplication they take part in. */
 export interface CheckScope {
   files: CheckedFile[];
-  crossFileDuplication?: CrossFileDuplicationMetrics;
-  /** Of every measured file, so that a copy outside the files the check covers is sized like one inside. */
-  codeLineNumbersByFile: CodeLineNumbersByFile;
+  duplication: CheckedDuplication;
   /** Measurement failures of files the check covers. */
   errors: string[];
   warnings: string[];
@@ -75,12 +72,7 @@ export async function runCheckCommand(
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
     const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options);
-    const result = checkThresholds(
-      scope.files,
-      scope.crossFileDuplication,
-      resolveLimits(cliLimits, config.config.thresholds),
-      scope.codeLineNumbersByFile
-    );
+    const result = checkThresholds(scope.files, scope.duplication, resolveLimits(cliLimits, config.config.thresholds));
     await endFileViolationsAtLastLine(result.violations, scope.root);
 
     if (options.json) {
@@ -150,11 +142,9 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
     ...options,
     loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
   });
-  const crossFileDuplication = measureDuplication(scan, options);
   return {
     files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
-    codeLineNumbersByFile: indexCodeLineNumbers(scan, scan.displayRoot),
-    crossFileDuplication,
+    duplication: measureDuplication(scan, options),
     errors: scan.errors,
     warnings: scan.warnings,
     root: scan.displayRoot,
@@ -205,7 +195,7 @@ async function scanRepository(
     explicitFiles,
     targetFile === undefined && canonicalTarget !== repoRoot ? targetPath : ''
   );
-  const crossFileDuplication = measureDuplication(scan, options);
+  const duplication = measureDuplication(scan, options);
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
@@ -226,16 +216,11 @@ async function scanRepository(
   }
   return {
     files,
-    crossFileDuplication,
-    codeLineNumbersByFile: indexCodeLineNumbers(scan, repoRoot),
+    duplication,
     ...partitionErrors(scan, isCovered),
     root: repoRoot,
     mergeBase,
   };
-}
-
-function indexCodeLineNumbers(scan: ScanResult, root: string): CodeLineNumbersByFile {
-  return new Map(scan.files.map(({ file, metrics }) => [formatPath(file, root), new Set(metrics.codeLineNumbers)]));
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
@@ -293,12 +278,15 @@ function anchorDeletionsToCode(hunks: LineHunk[], content: string): void {
 }
 
 /** A run-wide failure (a missing target or native addon) leaves nothing to check. */
-function measureDuplication(scan: ScanResult, options: ResolvedOptions): CrossFileDuplicationMetrics | undefined {
+function measureDuplication(scan: ScanResult, options: ResolvedOptions): CheckedDuplication {
   if (scan.fatalError) {
     throw new Error(scan.fatalError);
   }
   addCrossFileDuplication(scan, options);
-  return scan.crossFileDuplication;
+  return {
+    crossFile: scan.crossFileDuplication,
+    minSimilarityPercent: options.duplication.minSimilarityPercent,
+  };
 }
 
 function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result: CheckResult): void {

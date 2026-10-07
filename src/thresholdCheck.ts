@@ -1,5 +1,9 @@
 import assert from 'node:assert';
-import type { CrossFileDuplicateBlockGroup, CrossFileDuplicationMetrics } from './crossFileDuplication.js';
+import type {
+  CrossFileDuplicateBlockGroup,
+  CrossFileDuplicateOccurrence,
+  CrossFileDuplicationMetrics,
+} from './crossFileDuplication.js';
 import type { LineHunk } from './git.js';
 import {
   duplicationThreshold,
@@ -21,12 +25,12 @@ export interface CheckedFile {
   hunks?: readonly LineHunk[];
 }
 
-/**
- * By file path, the 1-based lines that are neither blank nor comment-only, by which duplicated
- * blocks are measured and their copies ranked: of the checked files and of every other measured
- * file a copy may lie in.
- */
-export type CodeLineNumbersByFile = ReadonlyMap<string, ReadonlySet<number>>;
+/** The duplication of the measured files, in which duplicated blocks and their copies are found. */
+export interface CheckedDuplication {
+  crossFile?: CrossFileDuplicationMetrics;
+  /** The detection's `minSimilarityPercent`, the share of a block a copy of it holds at least. */
+  minSimilarityPercent: number;
+}
 
 export interface ExceededLimit {
   metric: string;
@@ -43,6 +47,17 @@ export interface BlockLocation {
   endLine: number;
 }
 
+/** One copy of a clone group. */
+interface CloneOccurrence extends BlockLocation {
+  /**
+   * Its code lines matched in another copy, whose number is the length of a duplicated block. Its
+   * line span would also count the lines between the matched parts of one copy, which the copies
+   * do not share; a block matched as a whole by a near-miss copy holds all its code lines.
+   */
+  lineNumbers: readonly number[];
+  tokenCount: number;
+}
+
 export interface Violation extends BlockLocation {
   kind: 'function' | 'file' | 'duplication';
   /** The most severe level among `exceeded`. */
@@ -56,7 +71,7 @@ export interface Violation extends BlockLocation {
    * construct add to the complexity without being one.
    */
   largestBlocks?: CognitiveBlock[];
-  /** The other copies of the block, most code lines first, for kind `duplication`. */
+  /** The other copies of the block, most matched tokens first, for kind `duplication`. */
   partners?: BlockLocation[];
 }
 
@@ -78,11 +93,10 @@ const nestedInclusiveMetrics = new Set(
 /** Every limit the files exceed, errors first, then ordered by path, then line. */
 export function checkThresholds(
   files: readonly CheckedFile[],
-  crossFileDuplication: CrossFileDuplicationMetrics | undefined,
-  limitsOf: (language: string) => LimitsByLevel,
-  codeLineNumbersByFile: CodeLineNumbersByFile
+  duplication: CheckedDuplication,
+  limitsOf: (language: string) => LimitsByLevel
 ): CheckResult {
-  const crossFileGroupsByFile = indexGroupsByFile(crossFileDuplication, new Set(files.map(({ file }) => file)));
+  const crossFileGroupsByFile = indexGroupsByFile(duplication.crossFile, new Set(files.map(({ file }) => file)));
   const violations: Violation[] = [];
   let checkedFunctionCount = 0;
   for (const checkedFile of files) {
@@ -105,7 +119,7 @@ export function checkThresholds(
       }
     }
     violations.push(
-      ...collectDuplicationViolations(checkedFile, crossFileGroupsByFile.get(file) ?? [], limits, codeLineNumbersByFile)
+      ...collectDuplicationViolations(checkedFile, crossFileGroupsByFile.get(file) ?? [], limits, duplication)
     );
   }
   return { violations: violations.toSorted(compareViolations), checkedFunctionCount };
@@ -235,53 +249,86 @@ function indexGroupsByFile(
 
 /**
  * One violation per duplicated region of the file: its clone occurrences, within-file and
- * cross-file, that hold at least the code lines of a level (with `hunks`, only those overlapping
- * added lines), with overlapping occurrences merged into one region.
+ * cross-file, that hold at least the duplicated lines of a level (with `hunks`, only those
+ * overlapping added lines), with overlapping occurrences merged into one region.
  */
 function collectDuplicationViolations(
   { file, metrics, hunks }: CheckedFile,
   crossFileGroups: readonly CrossFileDuplicateBlockGroup[],
   limits: LimitsByLevel,
-  codeLineNumbersByFile: CodeLineNumbersByFile
+  { minSimilarityPercent }: CheckedDuplication
 ): Violation[] {
-  const findExceededLines = (block: BlockLocation): ExceededLimit[] =>
-    findExceeded(
-      duplicationThreshold,
-      { codeLineCount: countCodeLines(block, codeLineNumbersByFile) },
-      limits,
-      (value, limit) => value >= limit
-    );
-  const groups: BlockLocation[][] = [
+  const findExceededLines = (duplicatedLineCount: number): ExceededLimit[] =>
+    findExceeded(duplicationThreshold, { duplicatedLineCount }, limits, (value, limit) => value >= limit);
+  const groups: CloneOccurrence[][] = [
     ...metrics.duplication.duplicateBlockGroups.map((group) => group.map((occurrence) => ({ ...occurrence, file }))),
-    ...crossFileGroups.map((group) => group.occurrences),
+    ...crossFileGroups.map((group) => group.occurrences.map((occurrence) => toCloneOccurrence(occurrence))),
   ];
-  const isReported = (block: BlockLocation): boolean =>
+  const isReported = (block: CloneOccurrence): boolean =>
     block.file === file &&
-    findExceededLines(block).length > 0 &&
+    findExceededLines(block.lineNumbers.length).length > 0 &&
     (!hunks || hunks.some((hunk) => hunk.headCount > 0 && touchesSpan(hunk, block.startLine, block.endLine)));
-  const copiesByBlock = new Map<BlockLocation, BlockLocation[]>();
+  const groupByBlock = new Map<CloneOccurrence, CloneOccurrence[]>();
   for (const group of groups) {
     for (const block of group.filter((occurrence) => isReported(occurrence))) {
-      copiesByBlock.set(block, group);
+      groupByBlock.set(block, group);
     }
   }
-  return mergeOverlapping([...copiesByBlock.keys()]).map(({ merged, sources }) => ({
-    ...toViolation(merged, 'duplication', findExceededLines(merged)),
-    // The region's own occurrences are among the copies of the groups it belongs to.
-    // The region merges every clone that overlaps it, so its copies range from whole copies of it
-    // to a few lines matching one fragment; the largest say the most about what to share.
-    partners: mergeOverlapping(sources.flatMap((source) => copiesByBlock.get(source) ?? []))
-      .map((partner) => partner.merged)
-      .filter((partner) => !overlaps(partner, merged))
-      .toSorted(
-        (left, right) => countCodeLines(right, codeLineNumbersByFile) - countCodeLines(left, codeLineNumbersByFile)
+  return mergeOverlapping([...groupByBlock.keys()]).map(({ merged, sources }) => {
+    const listCopies = (minTokenPercent: number): BlockLocation[] =>
+      mergeOverlapping(
+        sources.flatMap((source) => {
+          // The region merges every clone that overlaps it, so a copy of an occurrence lying
+          // within a larger one is measured against the larger one.
+          const tokenCount = Math.max(
+            ...sources.filter((outer) => contains(outer, source)).map((outer) => outer.tokenCount)
+          );
+          return (groupByBlock.get(source) ?? []).filter(
+            (copy) => copy.tokenCount * 100 >= tokenCount * minTokenPercent
+          );
+        })
+      )
+        // The region's own occurrences are among the copies of the groups it belongs to.
+        .filter((partner) => !overlaps(partner.merged, merged))
+        // The largest say the most about what to share.
+        .toSorted((left, right) => sumTokens(right.sources) - sumTokens(left.sources))
+        .map((partner) => partner.merged);
+    // A group joins a block with every place repeating a part of it: a function another file
+    // copies whole is grouped with each file holding a few of its lines. Such a fragment is not a
+    // copy of the block: sharing it would not remove the block, and a report listing it reads as
+    // one more copy. Sizes are compared in tokens, since the same code may be laid out over any
+    // number of lines.
+    const copies = listCopies(minSimilarityPercent);
+    return {
+      ...toViolation(
+        merged,
+        'duplication',
+        // Occurrences that overlap share lines, which count once.
+        findExceededLines(new Set(sources.flatMap((source) => source.lineNumbers)).size)
       ),
-  }));
+      // A group does not always hold the copy a block was matched with as a whole: within a file,
+      // a copy that already belongs to an exact group is listed as its part in that group. The
+      // fragments then are all that locates the block's copies.
+      partners: copies.length > 0 ? copies : listCopies(0),
+    };
+  });
+}
+
+function toCloneOccurrence(occurrence: CrossFileDuplicateOccurrence): CloneOccurrence {
+  const { lineNumbers } = occurrence;
+  assert.ok(lineNumbers, `No matched lines for ${occurrence.file}, a scanned file.`);
+  return { ...occurrence, lineNumbers };
+}
+
+function sumTokens(occurrences: readonly CloneOccurrence[]): number {
+  return occurrences.reduce((sum, occurrence) => sum + occurrence.tokenCount, 0);
 }
 
 /** The locations with those overlapping in the same file merged, ordered by file, then line. */
-function mergeOverlapping(locations: readonly BlockLocation[]): { merged: BlockLocation; sources: BlockLocation[] }[] {
-  const regions: { merged: BlockLocation; sources: BlockLocation[] }[] = [];
+function mergeOverlapping(
+  locations: readonly CloneOccurrence[]
+): { merged: BlockLocation; sources: CloneOccurrence[] }[] {
+  const regions: { merged: BlockLocation; sources: CloneOccurrence[] }[] = [];
   const ordered = locations.toSorted(
     (left, right) => compareStrings(left.file, right.file) || left.startLine - right.startLine
   );
@@ -298,15 +345,9 @@ function mergeOverlapping(locations: readonly BlockLocation[]): { merged: BlockL
   return regions;
 }
 
-/** The length of a duplicated block. */
-function countCodeLines(block: BlockLocation, codeLineNumbersByFile: CodeLineNumbersByFile): number {
-  const codeLineNumbers = codeLineNumbersByFile.get(block.file);
-  assert.ok(codeLineNumbers, `No code lines for ${block.file}, which holds a duplicated block.`);
-  let count = 0;
-  for (let line = block.startLine; line <= block.endLine; line++) {
-    if (codeLineNumbers.has(line)) count += 1;
-  }
-  return count;
+/** Whether `outer` spans every line of `inner`; a block contains itself. */
+function contains(outer: BlockLocation, inner: BlockLocation): boolean {
+  return outer.file === inner.file && outer.startLine <= inner.startLine && inner.endLine <= outer.endLine;
 }
 
 function overlaps(left: BlockLocation, right: BlockLocation): boolean {

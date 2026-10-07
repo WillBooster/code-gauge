@@ -129,6 +129,95 @@ function otherFunction(name: string): string {
 `;
 }
 
+/** Three wrappers: the first two share their middle lines exactly, the last two resemble each other as wholes. */
+const wrapperFunctions = `export function withFrame(Frame: FrameComponent, options?: { staff: boolean }): FrameHandler {
+  return async function HandleFrame(request) {
+    const session = await readSessionOrRedirect();
+    const owner = session.owner;
+    const route = await request.route;
+    const account = { id: owner.id, name: owner.name };
+    const text = translate(pickLocale(route.locale));
+    if (options?.staff && !isStaff(session)) {
+      return text.errors.staffOnly();
+    }
+
+    const teamId = 'teamId' in route && typeof route.teamId === 'string' ? route.teamId : undefined;
+    const role = await queryRole(session.owner, teamId);
+
+    return (
+      <Frame account={account} role={role} route={route} session={session} text={text}>
+        {request.children}
+      </Frame>
+    );
+  };
+}
+
+export function withMember(View: ViewComponent, options?: { staff: boolean }): Handler {
+  return async function HandleMember(request) {
+    const session = await readSessionOrRedirect();
+    const owner = session.owner;
+    const [route, query] = await Promise.all([request.route, request.query]);
+    const account = { id: owner.id, name: owner.name };
+    const text = translate(pickLocale(route.locale));
+    if (options?.staff && !isStaff(session)) {
+      return text.errors.staffOnly();
+    }
+
+    const teamId = 'teamId' in route && typeof route.teamId === 'string' ? route.teamId : undefined;
+    const role = await queryRole(session.owner, teamId);
+
+    return (
+      <View
+        account={account}
+        query={query}
+        role={role}
+        route={route}
+        session={session}
+        text={text}
+      />
+    );
+  };
+}
+
+export function withVisitor(View: VisitorViewComponent): VisitorHandler {
+  return async function HandleVisitor(request) {
+    const session = (await readSession()) ?? undefined;
+    const owner = session?.owner;
+    const [route, query] = await Promise.all([request.route, request.query]);
+    const account = owner ? { id: owner.id, name: owner.name } : undefined;
+    const text = translate(pickLocale(route.locale));
+
+    const teamId = 'teamId' in route && typeof route.teamId === 'string' ? route.teamId : undefined;
+    const role = owner ? await queryRole(owner, teamId) : Role.None;
+
+    return (
+      <View
+        account={account ?? undefined}
+        query={query}
+        role={role}
+        route={route}
+        session={session}
+        text={text}
+      />
+    );
+  };
+}
+`;
+
+/** The report of a check of a directory outside a git repository that holds the given files. */
+function checkProject(args: string[], files: Record<string, string>): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-project-'));
+  try {
+    writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(path.join(dir, name), content);
+    }
+    return runCheck([...args, dir], dir).stdout;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 let repoDir: string;
 
 // chmod 000 does not stop root from reading, so the unreadable-file case is skipped there.
@@ -425,7 +514,7 @@ ep\`](value: number): number {
     expect(runCheck(['src2']).stdout).toContain('(1 files, 2 functions checked)');
   });
 
-  it('ranks a copy outside the target by its code lines like one inside', () => {
+  it('ranks a copy outside the target by its size like one inside', () => {
     // A copy of the statements only, which comments stretch over more lines than a full copy.
     const statements = reportFunction('partial').split('\n').slice(1, 10).join('\n  // A step.\n\n');
     writeSource(
@@ -730,24 +819,51 @@ warning: b.ts:3-11: duplicated lines 9 (max 4), also at a.ts:2-10, a.ts:15-23
     expect(result.stdout).toBe('No threshold violations: 1 files, 2 functions checked.\n');
   });
 
-  it('lists the copies of a duplicated block with the most code lines first', () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-copies-'));
-    try {
-      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
-      // A copy of the statements only, which comments stretch over more lines than a full copy.
-      const statements = reportFunction('partial').split('\n').slice(1, 10).join('\n  // A step.\n\n');
-      writeFileSync(
-        path.join(dir, 'a.ts'),
-        `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
-      );
-      writeFileSync(path.join(dir, 'm.ts'), reportFunction('middle'));
-      writeFileSync(path.join(dir, 'z.ts'), reportFunction('last'));
-      expect(runCheck(['--warning-min-duplicate-lines', '5', dir], dir).stdout).toContain(
-        'm.ts:1-12: duplicated lines 12 (max 4), also at z.ts:1-12, a.ts:3-27\n'
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it('lists the copies of a duplicated block largest first', () => {
+    // A copy of the statements only, which comments stretch over more lines than a full copy.
+    const statements = reportFunction('partial').split('\n').slice(1, 10).join('\n  // A step.\n\n');
+    const stdout = checkProject(['--warning-min-duplicate-lines', '5'], {
+      'a.ts': `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`,
+      'm.ts': reportFunction('middle'),
+      'z.ts': reportFunction('last'),
+    });
+    expect(stdout).toContain('m.ts:1-12: duplicated lines 12 (max 4), also at z.ts:1-12, a.ts:3-27\n');
+  });
+
+  it('does not list a place repeating only a part of a duplicated block among its copies', () => {
+    const firstStatements = reportFunction('part').split('\n').slice(1, 7).join('\n');
+    const stdout = checkProject(['--warning-min-duplicate-lines', '5'], {
+      'part.ts': `export function head(items: number[], label: string): string {\n${firstStatements}\n  return \`\${label}: \${shifted}\`;\n}\n`,
+      'twin.ts': reportFunction('twin'),
+      'whole.ts': reportFunction('whole'),
+    });
+    expect(stdout).toContain(`
+warning: part.ts:2-7: duplicated lines 6 (max 4), also at twin.ts:2-7, whole.ts:2-7
+warning: twin.ts:1-12: duplicated lines 12 (max 4), also at whole.ts:1-12
+warning: whole.ts:1-12: duplicated lines 12 (max 4), also at twin.ts:1-12
+`);
+  });
+
+  it('measures a duplicated block by the lines its copy matches, not by a line only one of them holds', () => {
+    const files = {
+      'edited.ts': reportFunction('edited').replace('  const clamped =', '  console.log(shifted);\n  const clamped ='),
+      'original.ts': reportFunction('original'),
+    };
+    expect(checkProject(['--warning-min-duplicate-lines', '5'], files)).toContain(`
+warning: edited.ts:2-12: duplicated lines 10 (max 4), also at original.ts:2-11
+warning: original.ts:2-11: duplicated lines 10 (max 4), also at edited.ts:2-12
+`);
+    expect(checkProject(['--warning-min-duplicate-lines', '11'], files)).toBe(
+      'No threshold violations: 2 files, 2 functions checked.\n'
+    );
+  });
+
+  it('locates a block by the parts of its copies when the copy matched as a whole is not known', () => {
+    // withVisitor resembles withMember as a whole, but withMember is listed as the lines it shares
+    // exactly with withFrame, the only copies the block's clone group names.
+    expect(checkProject([], { 'wrappers.tsx': wrapperFunctions })).toContain(
+      'warning: wrappers.tsx:50-72: duplicated lines 21 (max 14), also at wrappers.tsx:6-13, wrappers.tsx:28-35\n'
+    );
   });
 
   it('exits 2 with --base', () => {
