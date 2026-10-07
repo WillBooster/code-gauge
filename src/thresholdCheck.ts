@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import type { CrossFileDuplicateBlockGroup, CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { LineHunk } from './git.js';
 import {
@@ -297,10 +298,10 @@ function mergeOverlapping(locations: readonly BlockLocation[]): { merged: BlockL
   return regions;
 }
 
-/** The length of a duplicated block. A copy in a file that could not be measured counts every line. */
+/** The length of a duplicated block. */
 function countCodeLines(block: BlockLocation, codeLineNumbersByFile: CodeLineNumbersByFile): number {
   const codeLineNumbers = codeLineNumbersByFile.get(block.file);
-  if (!codeLineNumbers) return block.endLine - block.startLine + 1;
+  assert.ok(codeLineNumbers, `No code lines for ${block.file}, which holds a duplicated block.`);
   let count = 0;
   for (let line = block.startLine; line <= block.endLine; line++) {
     if (codeLineNumbers.has(line)) count += 1;
