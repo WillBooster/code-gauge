@@ -94,7 +94,7 @@ export interface FunctionMetrics {
    * defined inside them or outside as `ns::Rules::decide`; an unnamed namespace adds nothing. Absent when another function lies
    * between the two, so a member of a class declared inside a function has it and a closure inside
    * a method does not, and absent for a member of an anonymous class or of an object literal, a
-   * callback passed to a call in a member's initializer, and a function local to a static block,
+   * function passed to a call or held in a collection in a member's initializer, and a function local to a static block,
    * which are no members of the named type around them.
    */
   containerName?: string;

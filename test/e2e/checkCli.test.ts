@@ -302,9 +302,11 @@ ep\`](value: number): number {
   it('leaves a callback in the initializer of a class field unqualified', () => {
     writeSource(
       'src/registered.ts',
-      'export class Registered {\n  field = register(function callback(a: number, b: number, c: number, d: number, e: number, f: number, g: number) {\n    return a;\n  });\n}\n'
+      'export class Registered {\n  field = register(function callback(a: number, b: number, c: number, d: number, e: number, f: number, g: number) {\n    return a;\n  });\n  list = [function element(a: number, b: number, c: number, d: number, e: number, f: number, g: number) {}];\n}\n'
     );
-    expect(runCheck(['src/registered.ts']).stdout).toContain('src/registered.ts:2-4 callback: parameters 7 (max 6)\n');
+    const { stdout } = runCheck(['src/registered.ts']);
+    expect(stdout).toContain('src/registered.ts:2-4 callback: parameters 7 (max 6)\n');
+    expect(stdout).toContain('src/registered.ts:5-5 element: parameters 7 (max 6)\n');
   });
 
   it('leaves a callback passed to an enum constant unqualified', () => {

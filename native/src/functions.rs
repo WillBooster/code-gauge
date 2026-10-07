@@ -278,10 +278,21 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "struct_specifier",
     "trait_item",
 ];
-/// A function passed to a call, as in a member's initializer `field = register(() => { ... })`, is
-/// the call's argument rather than a member.
+/// A function passed to a call or held in a collection, as in a member's initializer
+/// `field = register(() => { ... })` or `field = [() => { ... }]`, is the call's argument or the
+/// collection's element rather than a member.
 const CALL_NODE_TYPES: &[&str] = &[
     "annotated_lambda",
+    "array",
+    "array_creation_expression",
+    "array_expression",
+    "collection_literal",
+    "dictionary",
+    "hash",
+    "initializer_list",
+    "list",
+    "set",
+    "tuple",
     // Argument lists too: an enum constant's constructor arguments hang off no call node.
     "argument_list",
     "arguments",
@@ -315,8 +326,12 @@ fn enclosing_cpp_scopes<'s>(
             break;
         }
         if CPP_SCOPE_NODE_TYPES.contains(&ancestor.kind_name()) {
-            if let Some(name) = ancestor.child_by_field_name("name") {
-                scopes.push(node_text(name, code));
+            match ancestor.child_by_field_name("name") {
+                Some(name) => scopes.push(node_text(name, code)),
+                // An unnamed namespace adds nothing; an unnamed class ends the owner, as its
+                // members are reached through no name.
+                None if ancestor.kind_name() == "namespace_definition" => {}
+                None => break,
             }
         }
         current = ancestor.parent_node();
