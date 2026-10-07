@@ -27,6 +27,7 @@ import {
   type Level,
   type Limits,
 } from './thresholds.js';
+import { qualifyFunctionName } from './thresholdCheck.js';
 import type { FunctionMetrics } from './types.js';
 
 /** The worst (highest-cognitive-complexity) function of a file, reported as the ranking evidence. */
@@ -142,7 +143,7 @@ function addSharedOptions(command: Command): Command {
 
 function describeLimit(key: string, level: Level): string {
   if (key === duplicationThreshold.key) {
-    return `line count from which a duplicated block is ${level === 'error' ? 'an error' : 'a warning'}`;
+    return `code-line count from which a duplicated block is ${level === 'error' ? 'an error' : 'a warning'}`;
   }
   const fileThreshold = fileThresholds.find((threshold) => threshold.key === key);
   const subject = fileThreshold
@@ -281,7 +282,7 @@ function findWorstFunction(functions: FunctionMetrics[]): WorstFunction | undefi
     return undefined;
   }
   return {
-    name: worst.name ?? '<anonymous>',
+    name: qualifyFunctionName(worst),
     startLine: worst.startLine,
     endLine: worst.endLine,
     cognitiveComplexity: worst.cognitiveComplexity,

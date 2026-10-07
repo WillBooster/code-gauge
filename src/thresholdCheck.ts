@@ -1,3 +1,4 @@
+import assert from 'node:assert';
 import type { CrossFileDuplicateBlockGroup, CrossFileDuplicationMetrics } from './crossFileDuplication.js';
 import type { LineHunk } from './git.js';
 import {
@@ -10,7 +11,7 @@ import {
   type LimitsByLevel,
   type Threshold,
 } from './thresholds.js';
-import type { CodeMetrics, FunctionMetrics } from './types.js';
+import type { CodeMetrics, CognitiveBlock, FunctionMetrics } from './types.js';
 
 /** A measured file to check, under the path cross-file duplication knows it by. */
 export interface CheckedFile {
@@ -19,6 +20,13 @@ export interface CheckedFile {
   /** The change to the file; when set, only what the change touches is checked. */
   hunks?: readonly LineHunk[];
 }
+
+/**
+ * By file path, the 1-based lines that are neither blank nor comment-only, by which duplicated
+ * blocks are measured and their copies ranked: of the checked files and of every other measured
+ * file a copy may lie in.
+ */
+export type CodeLineNumbersByFile = ReadonlyMap<string, ReadonlySet<number>>;
 
 export interface ExceededLimit {
   metric: string;
@@ -39,10 +47,16 @@ export interface Violation extends BlockLocation {
   kind: 'function' | 'file' | 'duplication';
   /** The most severe level among `exceeded`. */
   level: Level;
-  /** The function's name, for kind `function`. */
+  /** The function's name, qualified with the class it is a member of, for kind `function`. */
   name?: string;
   exceeded: ExceededLimit[];
-  /** The other copies of the block, for kind `duplication`. */
+  /**
+   * The parts adding the most to the cognitive complexity, largest first, for a function that
+   * exceeds a limit of it and has such parts: operator sequences and jumps outside any branching
+   * construct add to the complexity without being one.
+   */
+  largestBlocks?: CognitiveBlock[];
+  /** The other copies of the block, most code lines first, for kind `duplication`. */
   partners?: BlockLocation[];
 }
 
@@ -52,6 +66,8 @@ export interface CheckResult {
 }
 
 const violationKinds: readonly Violation['kind'][] = ['file', 'function', 'duplication'];
+
+const cognitiveComplexityMetric = 'functionCognitiveComplexity';
 
 const nestedInclusiveMetrics = new Set(
   functionThresholds
@@ -63,7 +79,8 @@ const nestedInclusiveMetrics = new Set(
 export function checkThresholds(
   files: readonly CheckedFile[],
   crossFileDuplication: CrossFileDuplicationMetrics | undefined,
-  limitsOf: (language: string) => LimitsByLevel
+  limitsOf: (language: string) => LimitsByLevel,
+  codeLineNumbersByFile: CodeLineNumbersByFile
 ): CheckResult {
   const crossFileGroupsByFile = indexGroupsByFile(crossFileDuplication, new Set(files.map(({ file }) => file)));
   const violations: Violation[] = [];
@@ -84,15 +101,11 @@ export function checkThresholds(
     for (const { fn, exceeded } of exceedingFunctions) {
       const ownExceeded = exceeded.filter((limit) => !isReportedByEnclosingFunction(limit, fn, exceedingFunctions));
       if (ownExceeded.length > 0) {
-        const { startLine, endLine } = fn;
-        violations.push({
-          ...toViolation({ file, startLine, endLine }, 'function', ownExceeded),
-          name: fn.name ?? '<anonymous>',
-        });
+        violations.push(toFunctionViolation(file, fn, ownExceeded));
       }
     }
     violations.push(
-      ...collectDuplicationViolations(file, metrics, crossFileGroupsByFile.get(file) ?? [], hunks, limits)
+      ...collectDuplicationViolations(checkedFile, crossFileGroupsByFile.get(file) ?? [], limits, codeLineNumbersByFile)
     );
   }
   return { violations: violations.toSorted(compareViolations), checkedFunctionCount };
@@ -145,6 +158,21 @@ function encloses(outer: FunctionMetrics, inner: FunctionMetrics): boolean {
   const endsAfter =
     outer.endLine > inner.endLine || (outer.endLine === inner.endLine && outer.endColumn >= inner.endColumn);
   return startsBefore && endsAfter;
+}
+
+function toFunctionViolation(file: string, fn: FunctionMetrics, exceeded: ExceededLimit[]): Violation {
+  const { startLine, endLine } = fn;
+  const exceedsCognitiveComplexity = exceeded.some(({ metric }) => metric === cognitiveComplexityMetric);
+  return {
+    ...toViolation({ file, startLine, endLine }, 'function', exceeded),
+    name: qualifyFunctionName(fn),
+    ...(exceedsCognitiveComplexity && fn.cognitiveBlocks.length > 0 && { largestBlocks: fn.cognitiveBlocks }),
+  };
+}
+
+/** How reports name a function: with the type or module it is a member of, so that it can be found. */
+export function qualifyFunctionName({ name = '<anonymous>', containerName }: FunctionMetrics): string {
+  return containerName ? `${containerName}.${name}` : name;
 }
 
 function toViolation(location: BlockLocation, kind: Violation['kind'], exceeded: ExceededLimit[]): Violation {
@@ -207,18 +235,22 @@ function indexGroupsByFile(
 
 /**
  * One violation per duplicated region of the file: its clone occurrences, within-file and
- * cross-file, that span at least the line count of a level (with `hunks`, only those overlapping
+ * cross-file, that hold at least the code lines of a level (with `hunks`, only those overlapping
  * added lines), with overlapping occurrences merged into one region.
  */
 function collectDuplicationViolations(
-  file: string,
-  metrics: CodeMetrics,
+  { file, metrics, hunks }: CheckedFile,
   crossFileGroups: readonly CrossFileDuplicateBlockGroup[],
-  hunks: readonly LineHunk[] | undefined,
-  limits: LimitsByLevel
+  limits: LimitsByLevel,
+  codeLineNumbersByFile: CodeLineNumbersByFile
 ): Violation[] {
   const findExceededLines = (block: BlockLocation): ExceededLimit[] =>
-    findExceeded(duplicationThreshold, block, limits, (value, limit) => value >= limit);
+    findExceeded(
+      duplicationThreshold,
+      { codeLineCount: countCodeLines(block, codeLineNumbersByFile) },
+      limits,
+      (value, limit) => value >= limit
+    );
   const groups: BlockLocation[][] = [
     ...metrics.duplication.duplicateBlockGroups.map((group) => group.map((occurrence) => ({ ...occurrence, file }))),
     ...crossFileGroups.map((group) => group.occurrences),
@@ -236,9 +268,14 @@ function collectDuplicationViolations(
   return mergeOverlapping([...copiesByBlock.keys()]).map(({ merged, sources }) => ({
     ...toViolation(merged, 'duplication', findExceededLines(merged)),
     // The region's own occurrences are among the copies of the groups it belongs to.
+    // The region merges every clone that overlaps it, so its copies range from whole copies of it
+    // to a few lines matching one fragment; the largest say the most about what to share.
     partners: mergeOverlapping(sources.flatMap((source) => copiesByBlock.get(source) ?? []))
       .map((partner) => partner.merged)
-      .filter((partner) => !overlaps(partner, merged)),
+      .filter((partner) => !overlaps(partner, merged))
+      .toSorted(
+        (left, right) => countCodeLines(right, codeLineNumbersByFile) - countCodeLines(left, codeLineNumbersByFile)
+      ),
   }));
 }
 
@@ -259,6 +296,17 @@ function mergeOverlapping(locations: readonly BlockLocation[]): { merged: BlockL
     }
   }
   return regions;
+}
+
+/** The length of a duplicated block. */
+function countCodeLines(block: BlockLocation, codeLineNumbersByFile: CodeLineNumbersByFile): number {
+  const codeLineNumbers = codeLineNumbersByFile.get(block.file);
+  assert.ok(codeLineNumbers, `No code lines for ${block.file}, which holds a duplicated block.`);
+  let count = 0;
+  for (let line = block.startLine; line <= block.endLine; line++) {
+    if (codeLineNumbers.has(line)) count += 1;
+  }
+  return count;
 }
 
 function overlaps(left: BlockLocation, right: BlockLocation): boolean {

@@ -977,10 +977,7 @@ fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
             .child(index)
             .is_some_and(|child| child.id() == node.id())
         {
-            return matches!(
-                parent.field_name_for_child(index),
-                None | Some("value")
-            );
+            return matches!(parent.field_name_for_child(index), None | Some("value"));
         }
     }
     false
@@ -1312,7 +1309,7 @@ fn unwrap_declarator_name(declarator: Option<Node<'_>>, code: &Source<'_>) -> Op
 
 /// Steps into the inner declarator; `reference_declarator` and `parenthesized_declarator` do not
 /// expose a `declarator` field in tree-sitter-cpp, so their sole named child is the inner node.
-fn next_declarator(node: Node<'_>) -> Option<Node<'_>> {
+pub(crate) fn next_declarator(node: Node<'_>) -> Option<Node<'_>> {
     if let Some(direct) = node.child_by_field_name("declarator") {
         return Some(direct);
     }

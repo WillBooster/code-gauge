@@ -76,8 +76,36 @@ export interface HalsteadMetrics {
   effort: number;
 }
 
+export interface CognitiveBlock {
+  /** The name of the nested function the block is, when it is one with a name. */
+  name?: string;
+  startLine: number;
+  endLine: number;
+  cognitiveComplexity: number;
+}
+
 export interface FunctionMetrics {
   name?: string;
+  /**
+   * The name of the declaration whose member a declared function (a method, an accessor, a
+   * constructor, a function of a namespace or module) is, read from the syntax alone: a class,
+   * struct, union, interface, enum, record, object, trait, namespace or module, or Rust `impl`
+   * enclosing it, the receiver type of a Go method, or the object a Ruby singleton method or
+   * singleton class names. A C++ owner is spelled with the namespaces and classes around it
+   * (`ns::Rules`), whether the function is defined inside them or outside as `ns::Rules::decide`;
+   * an unnamed or inline namespace and template arguments add nothing, and a friend defined in a class
+   * belongs to the namespace around that class. Names are not looked up: a scope a definition
+   * spells is taken as the enclosing scope of that name when there is one, also where C++ would
+   * find a like-named member of it (`void gauge::f()` inside `namespace gauge` holding a
+   * `struct gauge`).
+   *
+   * Absent for a function written as a value (a lambda, a closure, a function expression), which
+   * keeps the name of what it is bound to, for a function nested in another function, for a
+   * member of an anonymous class or of an object literal, and for a function local to an
+   * initializer block. So a method of a class declared inside a function has it, and a closure
+   * inside a method does not.
+   */
+  containerName?: string;
   /**
    * The tree-sitter node type of the function (e.g. `method_declaration`, `arrow_function`,
    * `lambda_expression`), letting consumers distinguish declared methods from lambdas — e.g. to
@@ -101,6 +129,14 @@ export interface FunctionMetrics {
    */
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
+  /**
+   * The parts of the function adding the most cognitive complexity, largest first (at most 3),
+   * each with the complexity its span adds to this function: the outermost branching constructs
+   * and nested functions of its body, where one that merely wraps most of the function (it holds
+   * more than half of the function's complexity, and the blocks inside it hold at least three
+   * quarters of its own) is replaced by the blocks inside it, unless it is a named function.
+   */
+  cognitiveBlocks: CognitiveBlock[];
   nestingDepth: number;
   /**
    * Non-commenting source statements in the function, PMD-style: the declaration itself, each
@@ -168,6 +204,8 @@ export interface CodeMetrics {
   language: LanguageName;
   bytes: number;
   lines: LineMetrics;
+  /** The 1-based lines counted in `lines.code` (neither blank nor comment-only), sorted ascending. */
+  codeLineNumbers: number[];
   functions: FunctionMetrics[];
   /**
    * The file's cyclomatic complexity as McCabe's v = e - n + 2p over its components: the sum of

@@ -35,7 +35,7 @@ C++ files. By default it skips generated, vendor, test, and tool directories as 
 Measured 123 files under /path/to/project (code LOC 45678, NCSS 23456, functions 1789)
 
 Refactoring candidates (top 10 of 123):
-1. src/metrics.ts (score 2.87): worst function measure (L120-310) cognitive 42, NCSS 220, nesting 6; duplicated lines 180 (20%, shared with src/other.ts); file NCSS 1240
+1. src/metrics.ts (score 2.87): worst function TreeMeasurer.measure (L120-310) cognitive 42, NCSS 220, nesting 6; duplicated lines 180 (20%, shared with src/other.ts); file NCSS 1240
 ...
 ```
 
@@ -55,7 +55,8 @@ Ranking is relative to the scanned project and ignores the
 [thresholds](#threshold-check-code-gauge-check): the top of the list is worth refactoring first
 regardless of where any cutoff would sit. Each reported file carries
 the concrete evidence (worst function with location, duplication with partner files, file size) so
-an agent can act on it directly.
+an agent can act on it directly. A method is named with the type or module it belongs to
+(`TreeMeasurer.measure`), as in the threshold check.
 
 ## Options
 
@@ -105,7 +106,7 @@ like the ranking command. The thresholds:
 | `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it          | off     | off   |
 | `maxFunctionDepDegree`            | a function's DepDegree is above it                | off     | off   |
 | `maxFileNcss`                     | a file's NCSS is above it                         | 400     | 1000  |
-| `minDuplicateLines`               | a duplicated block spans at least this many lines | 15      | off   |
+| `minDuplicateLines`               | a duplicated block holds at least this many lines | 15      | off   |
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
@@ -131,8 +132,10 @@ for each function.
 
 A duplicated block is one occurrence of a within-file or cross-file clone, found with the
 [duplication detection settings](#duplication-detection-settings); its span runs from its first to
-its last line. Occurrences of at least the warning or the error `minDuplicateLines` that overlap in a
-file are reported as one block covering all of them, at the level its whole span reaches.
+its last line, and its length is the number of lines of that span that are neither blank nor
+comment-only, so that a copy has the same length whether or not it is commented. Occurrences of at least the warning or the error `minDuplicateLines` that overlap in a
+file are reported as one block covering all of them, at the level the code lines of its whole span
+reach.
 
 Each limit is set in the `warning` or `error` part of the
 [`thresholds` config section](#configuration), where `null` disables it and `languages` overrides
@@ -161,20 +164,27 @@ one remediation hint per violated metric:
 
 ```
 Threshold violations: 1 errors, 2 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-48 decide: cognitive complexity 34 (max 30), NCSS 36 (warning max 30)
+error: src/legacy.ts:1-48 Rules.decide: cognitive complexity 34 (max 30; largest parts L12-31 19, L33-40 isLegacy 8, L44 2), NCSS 36 (warning max 30)
 warning: src/report.ts:1-18: duplicated lines 18 (max 14), also at src/summary.ts:1-18
 warning: src/summary.ts:1-18: duplicated lines 18 (max 14), also at src/report.ts:1-18
 
 How to fix:
 - cognitive complexity: flatten nested branching with early returns and extract nested blocks into named functions.
-- NCSS: split the function into smaller functions that each do one step.
+- NCSS: move each group of statements that forms one step into a named function.
 - duplicated lines: extract the repeated code into one shared function or module and call it from every location.
 ```
 
 A violation's level is that of its most severe limit. A function gets one line listing every
 threshold it exceeds, each with the largest value its violated limit allows and, when that limit is
-milder than the line's level, the limit's own level; a file-level violation
-prints the path without a line span, and a duplicated block lists up to three of its other copies.
+milder than the line's level, the limit's own level; a method is named with the type or
+module it belongs to (`Rules.decide`), while a function written as a value, such as a lambda
+assigned to a field, keeps the bare name of what it is bound to. A cognitive-complexity violation also names up to three parts of the function
+adding the most to it (none when all of it comes from operator sequences and jumps outside any
+branching construct, which add to the score without being such a part), largest first, each with its lines, its name when it is a nested function,
+and what it adds: the outermost branching constructs and nested functions of the body or, where one
+of them merely wraps most of the function (a loop or an unnamed callback around the whole body),
+the ones inside it. A file-level violation prints the path without a line span, and a duplicated block lists
+up to three of its other copies, those with the most code lines first.
 Paths are relative to the repository root, or to the target directory outside a git repository.
 
 | Exit code | Meaning                                                                                                                          |
@@ -220,7 +230,12 @@ ranking command.
         { "metric": "functionCognitiveComplexity", "value": 34, "level": "error", "limit": 30 },
         { "metric": "functionNcss", "value": 36, "level": "warning", "limit": 30 }
       ],
-      "name": "decide"
+      "name": "Rules.decide",
+      "largestBlocks": [
+        { "startLine": 12, "endLine": 31, "cognitiveComplexity": 19 },
+        { "startLine": 33, "endLine": 40, "cognitiveComplexity": 8, "name": "isLegacy" },
+        { "startLine": 44, "endLine": 44, "cognitiveComplexity": 2 }
+      ]
     },
     {
       "kind": "duplication",
@@ -247,13 +262,20 @@ ranking command.
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
     kind `file`, the first and last line of the file;
-  - `name`: only for kind `function`; `<anonymous>` for a function without a name;
+  - `name`: only for kind `function`; a method's name follows the type or module it belongs to (`Rules.decide`), and a
+    function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
     `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe
     `level` whose limit the value violates, and that `limit`. A value violates when it is above the
-    limit; `duplicateLines` violates from the limit on;
-  - `partners`: only for kind `duplication`; every other copy of the block, ordered by `file`, then
-    `startLine`.
+    limit; `duplicateLines`, the code lines of the block, violates from the limit on;
+  - `largestBlocks`: only for a function exceeding a cognitive-complexity limit that has a
+    branching construct or a nested function adding to it; the parts the
+    text report names, each with its line span, the `cognitiveComplexity` it adds to the function,
+    and its `name` when it is a named nested function;
+  - `partners`: only for kind `duplication`; every other copy of the block, most code lines
+    first: the
+    block merges every clone overlapping it, so its copies range from whole copies of it to a few
+    lines matching one fragment.
 - `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
   `error` level of a violation.
 - `warnings`: files measured without cross-file duplication data, and unmeasured files of the
@@ -378,10 +400,10 @@ The `duplication` section tunes how clones are detected:
 
 `measureCode` reports, per file:
 
-- Physical LOC, code lines, comment-only lines, and blank lines
+- Physical LOC, code lines (with their line numbers), comment-only lines, and blank lines
 - Per-function cognitive complexity (following the SonarSource specification, except its recursion
-  increment, which is not counted; cross-validated against PMD's Java rules), plus the file-level
-  total and maximum
+  increment, which is not counted; cross-validated against PMD's Java rules) with the up to three
+  parts of the function adding the most to it, plus the file-level total and maximum
 - Per-function and per-file NCSS (non-commenting source statements), calibrated against PMD's
   `NcssCount` rule for Java and generalized to every supported language; unlike PMD, package and
   import declarations count, and statement-shaped content is counted uniformly in expression
@@ -391,7 +413,8 @@ The `duplication` section tunes how clones are detected:
   every decision and short-circuit operator adds one, one per case-labelled statement, plus the
   file total over McCabe's components (every function, every initializer block, decisions outside
   functions, and the module body of a file that runs top-level code)
-- Per-function parameter counts and locations (name, node type, line span)
+- Per-function parameter counts and locations (name, the type or module a declared function is a
+  member of, node type, line span)
 - Within-file duplication: copy-pasted blocks matched on normalized tokens (identifiers anonymized
   consistently, literals by kind, and literal-dense data tables excluded unless their values also
   match; dependency declarations such as imports, package clauses, `#include`s, re-exports, and

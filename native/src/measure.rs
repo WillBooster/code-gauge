@@ -49,6 +49,7 @@ pub fn measure(
         .collect();
 
     let body_metrics = measure_function_body_metrics(root, &sets, code);
+    let inline_namespaces = crate::container::find_inline_namespaces(root, code);
     let function_metrics: Vec<FunctionMetrics> = functions
         .iter()
         .map(|node| {
@@ -58,6 +59,12 @@ pub fn measure(
                 .expect("every collected function node opens a frame in the body-metrics pass");
             FunctionMetrics {
                 name: find_function_name(*node, code),
+                container_name: crate::container::find_container_name(
+                    *node,
+                    &sets.function_nodes,
+                    code,
+                    &inline_namespaces,
+                ),
                 node_type: node.kind_name().to_string(),
                 start_line: node.start_position().row + 1,
                 // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving
@@ -70,6 +77,7 @@ pub fn measure(
                 // cycle, but this is intentionally not implemented (issue #22): mainstream
                 // implementations (PMD, SonarQube analyzers) omit it.
                 cognitive_complexity: body_metrics.cognitive_complexity,
+                cognitive_blocks: body_metrics.cognitive_blocks.clone(),
                 nesting_depth: body_metrics.nesting_depth,
                 ncss: body_metrics.ncss,
                 parameter_count: count_parameters(*node, code),
@@ -87,6 +95,11 @@ pub fn measure(
         language: language.name.to_string(),
         bytes: code.code.len(),
         lines,
+        code_line_numbers: {
+            let mut sorted: Vec<usize> = code_line_numbers.iter().copied().collect();
+            sorted.sort_unstable();
+            sorted
+        },
         // McCabe's v = e - n + 2p over the file's components: every function, every initializer
         // block, and the module body when the file runs top-level code; decisions outside functions
         // belong to the file.
@@ -133,17 +146,20 @@ const INITIALIZER_NODE_TYPES: &[&str] = &[
     "block",
 ];
 
+/// A block of a class that runs when the class or an instance is initialized.
+pub fn is_initializer_block(node: Node<'_>) -> bool {
+    INITIALIZER_NODE_TYPES.contains(&node.kind_name())
+        // A bare block is an initializer only as a direct member of a Java class or enum body.
+        && (node.kind_name() != "block"
+            || node.parent_node().is_some_and(|parent| {
+                matches!(parent.kind_name(), "class_body" | "enum_body_declarations")
+            }))
+}
+
 fn count_initializer_blocks(candidates: &[Node<'_>]) -> u64 {
     candidates
         .iter()
-        .filter(|node| INITIALIZER_NODE_TYPES.contains(&node.kind_name()))
-        .filter(|node| {
-            // A bare block is an initializer only as a direct member of a Java class or enum body.
-            node.kind_name() != "block"
-                || node.parent_node().is_some_and(|parent| {
-                    matches!(parent.kind_name(), "class_body" | "enum_body_declarations")
-                })
-        })
+        .filter(|node| is_initializer_block(**node))
         .count() as u64
 }
 

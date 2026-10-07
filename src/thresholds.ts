@@ -49,7 +49,7 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     key: 'maxFunctionNcss',
     label: 'NCSS',
     defaultLimits: { warning: 30, error: 60 },
-    hint: 'split the function into smaller functions that each do one step.',
+    hint: 'move each group of statements that forms one step into a named function.',
     measure: (fn) => fn.ncss,
     includesNestedFunctions: true,
   },
@@ -104,18 +104,21 @@ export const fileThresholds: readonly Threshold<CodeMetrics>[] = [
     key: 'maxFileNcss',
     label: 'file NCSS',
     defaultLimits: { warning: 400, error: 1000 },
-    hint: 'split the file into smaller modules with one responsibility each.',
+    hint: 'split the file into modules with one responsibility each, for example by moving a class or the helpers that serve only one function into a file of their own.',
     measure: (file) => file.ncssCount,
   },
 ];
 
-/** A duplicated block violates when it spans at least this many lines. */
-export const duplicationThreshold: Threshold<{ startLine: number; endLine: number }> = {
+/**
+ * A duplicated block violates when it holds at least this many code lines: comment-only and blank
+ * lines do not count, so a copy reads the same length whether or not it is commented.
+ */
+export const duplicationThreshold: Threshold<{ codeLineCount: number }> = {
   key: 'minDuplicateLines',
   label: 'duplicated lines',
   defaultLimits: { warning: 15, error: Infinity },
   hint: 'extract the repeated code into one shared function or module and call it from every location.',
-  measure: (block) => block.endLine - block.startLine + 1,
+  measure: (block) => block.codeLineCount,
 };
 
 export const thresholds: readonly Threshold[] = [...functionThresholds, ...fileThresholds, duplicationThreshold];

@@ -17,6 +17,7 @@ export {
 } from './metrics.js';
 export type {
   CodeMetrics,
+  CognitiveBlock,
   DuplicationMetrics,
   DuplicationOptions,
   FunctionMetrics,

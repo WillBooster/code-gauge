@@ -32,6 +32,7 @@ import {
   checkThresholds,
   type BlockLocation,
   type CheckedFile,
+  type CodeLineNumbersByFile,
   type CheckResult,
   type Violation,
 } from './thresholdCheck.js';
@@ -46,6 +47,8 @@ export interface CheckCliOptions extends CliOptions {
 export interface CheckScope {
   files: CheckedFile[];
   crossFileDuplication?: CrossFileDuplicationMetrics;
+  /** Of every measured file, so that a copy outside the files the check covers is sized like one inside. */
+  codeLineNumbersByFile: CodeLineNumbersByFile;
   /** Measurement failures of files the check covers. */
   errors: string[];
   warnings: string[];
@@ -75,7 +78,8 @@ export async function runCheckCommand(
     const result = checkThresholds(
       scope.files,
       scope.crossFileDuplication,
-      resolveLimits(cliLimits, config.config.thresholds)
+      resolveLimits(cliLimits, config.config.thresholds),
+      scope.codeLineNumbersByFile
     );
     await endFileViolationsAtLastLine(result.violations, scope.root);
 
@@ -149,6 +153,7 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
   const crossFileDuplication = measureDuplication(scan, options);
   return {
     files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
+    codeLineNumbersByFile: indexCodeLineNumbers(scan, scan.displayRoot),
     crossFileDuplication,
     errors: scan.errors,
     warnings: scan.warnings,
@@ -219,7 +224,18 @@ async function scanRepository(
     files = await attachHunks(measuredFiles, changesInTarget, repoRoot, mergeBase);
     isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
   }
-  return { files, crossFileDuplication, ...partitionErrors(scan, isCovered), root: repoRoot, mergeBase };
+  return {
+    files,
+    crossFileDuplication,
+    codeLineNumbersByFile: indexCodeLineNumbers(scan, repoRoot),
+    ...partitionErrors(scan, isCovered),
+    root: repoRoot,
+    mergeBase,
+  };
+}
+
+function indexCodeLineNumbers(scan: ScanResult, root: string): CodeLineNumbersByFile {
+  return new Map(scan.files.map(({ file, metrics }) => [formatPath(file, root), new Set(metrics.codeLineNumbers)]));
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
@@ -240,13 +256,14 @@ async function attachHunks(
   repoRoot: string,
   mergeBase: string
 ): Promise<CheckedFile[]> {
-  const metricsByPath = new Map(measuredFiles.map(({ file, metrics }) => [file, metrics]));
+  const measuredByPath = new Map(measuredFiles.map((measured) => [measured.file, measured]));
   const files = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
-    const metrics = metricsByPath.get(changed.headPath);
+    const measured = measuredByPath.get(changed.headPath);
     // A changed file the scan left out (unsupported, excluded, or failed) has nothing to check.
-    if (metrics === undefined) {
+    if (measured === undefined) {
       return [];
     }
+    const { metrics } = measured;
     const wholeFile: LineHunk = { headStart: 1, headCount: metrics.lines.total };
     const hunks =
       changed.basePath === undefined
@@ -255,7 +272,7 @@ async function attachHunks(
     if (metrics.language === 'python' && hunks.some(({ headCount }) => headCount === 0)) {
       anchorDeletionsToCode(hunks, await readFile(path.join(repoRoot, changed.headPath), 'utf8'));
     }
-    return [{ file: changed.headPath, metrics, hunks }];
+    return [{ ...measured, hunks }];
   });
   return files.flat();
 }
@@ -355,13 +372,22 @@ function formatViolation(violation: Violation): string {
       // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
       const roundedValue = Math.ceil(value * 10) / 10;
       const levelPrefix = level === violation.level ? '' : `${level} `;
-      // A duplicated block violates from its limit on, so the largest allowed span is the last whole
-      // line count below it; a limit of 0 allows none.
+      // A duplicated block violates from its limit on, so the largest allowed code-line count is
+      // the last whole number below it; a limit of 0 allows none.
       const maxAllowed = violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit;
-      return `${labelByMetric.get(metric)} ${roundedValue} (${levelPrefix}max ${maxAllowed})`;
+      const blocks = metric === 'functionCognitiveComplexity' ? describeLargestBlocks(violation) : '';
+      return `${labelByMetric.get(metric)} ${roundedValue} (${levelPrefix}max ${maxAllowed}${blocks})`;
     })
     .join(', ');
   return `${violation.level}: ${describeViolation(violation, exceeded)}`;
+}
+
+function describeLargestBlocks({ largestBlocks = [] }: Violation): string {
+  const blocks = largestBlocks.map(
+    ({ startLine, endLine, name, cognitiveComplexity }) =>
+      `L${startLine}${endLine === startLine ? '' : `-${endLine}`}${name ? ` ${toOneLine(name)}` : ''} ${cognitiveComplexity}`
+  );
+  return blocks.length > 0 ? `; largest parts ${blocks.join(', ')}` : '';
 }
 
 function describeViolation(violation: Violation, exceeded: string): string {
@@ -370,8 +396,7 @@ function describeViolation(violation: Violation, exceeded: string): string {
       return `${violation.file}: ${exceeded}`;
     }
     case 'function': {
-      // A computed name can span lines in the source; the report keeps one line per function.
-      return `${formatLocation(violation)} ${violation.name?.replaceAll(/\s*[\n\r]\s*/gu, ' ')}: ${exceeded}`;
+      return `${formatLocation(violation)} ${toOneLine(violation.name ?? '')}: ${exceeded}`;
     }
     case 'duplication': {
       const partners = (violation.partners ?? []).map((partner) => formatLocation(partner));
@@ -379,6 +404,11 @@ function describeViolation(violation: Violation, exceeded: string): string {
       return `${formatLocation(violation)}: ${exceeded}${listed.length > 0 ? `, also at ${listed.join(', ')}` : ''}`;
     }
   }
+}
+
+/** A computed name can span lines in the source; the report keeps one line per function. */
+function toOneLine(name: string): string {
+  return name.replaceAll(/\s*[\n\r]\s*/gu, ' ');
 }
 
 function formatLocation({ file, startLine, endLine }: BlockLocation): string {

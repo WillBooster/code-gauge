@@ -170,7 +170,7 @@ describe('code-gauge check', () => {
     expect(result.status).toBe(0);
     expect(result.stdout)
       .toBe(`Threshold violations: 0 errors, 3 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-warning: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15), nesting depth 5 (max 4)
+warning: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; largest parts L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)
 warning: src/report.ts:1-12: duplicated lines 12 (max 9), also at src/summary.ts:1-12
 warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12
 
@@ -186,7 +186,7 @@ How to fix:
     expect(result.status).toBe(1);
     expect(result.stdout)
       .toContain(`Threshold violations: 3 errors, 0 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-21 decide: cognitive complexity 24 (warning max 15), nesting depth 5 (max 3)
+error: src/legacy.ts:1-21 decide: cognitive complexity 24 (warning max 15; largest parts L4-10 12, L16 2, L17 2), nesting depth 5 (max 3)
 error: src/report.ts:1-12: duplicated lines 12 (max 11), also at src/summary.ts:1-12
 error: src/summary.ts:1-12: duplicated lines 12 (max 11), also at src/report.ts:1-12
 `);
@@ -206,9 +206,176 @@ warning: src/legacy.ts:1-21 decide:`);
       )
     );
     const { stdout } = runCheck(['src/wrapped.ts']);
-    expect(stdout).toMatch(/ wrapped: cognitive complexity \d+ \(max \d+\)\n/u);
+    // The callback holds all of the complexity, so the parts named are those inside it.
+    expect(stdout).toContain(' wrapped: cognitive complexity 35 (max 30; largest parts L5-11 15, L17 3, L18 3)\n');
     // Nesting depth covers a function's own body only, so the nested function alone exceeds its limit.
     expect(stdout).toMatch(/ <anonymous>: nesting depth 5 \(max 4\)\n/u);
+  });
+
+  it('names the nested functions among the parts adding the most cognitive complexity', () => {
+    writeSource(
+      'src/factory.ts',
+      `export function createCounter(limit: number): { step: () => number; reset: () => void } {
+  let count = 0;
+  const step = (): number => {
+    for (let index = 0; index < limit; index++) {
+      if (index % 2 === 0) count += 1;
+    }
+    return count;
+  };
+  const reset = (): void => {
+    if (count > limit) {
+      if (limit > 0) count = 0;
+    }
+  };
+  if (limit < 0) count = limit;
+  return { step, reset };
+}
+`
+    );
+    expect(runCheck(['src/factory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
+      ' createCounter: cognitive complexity 11 (max 5; largest parts L3-8 step 5, L9-13 reset 5, L14 1)\n'
+    );
+    // Two functions on one line are told apart.
+    writeSource(
+      'src/oneLine.ts',
+      'export function pair(a: boolean, b: boolean): void { const first = () => { if (a) pair(b, a); }; const second = () => { if (b) pair(a, b); }; first(); second(); }\n'
+    );
+    expect(runCheck(['src/oneLine.ts', '--warning-max-function-cognitive-complexity', '3']).stdout).toContain(
+      'largest parts L1 first 2, L1 second 2)'
+    );
+    // Also when a wrapper around one of them is replaced by what it holds.
+    writeSource(
+      'src/oneLineWrapped.ts',
+      'export function wrappedPair(xs: number[], a: boolean, b: boolean): number { for (const it of xs) { const first = () => { if (a) { wrappedPair([it], b, a); } }; } const second = () => { const both = a && b; if (both) { wrappedPair(xs, b, a); } }; return 0; }\n'
+    );
+    expect(runCheck(['src/oneLineWrapped.ts', '--warning-max-function-cognitive-complexity', '2']).stdout).toContain(
+      'largest parts L1 first 3, L1 second 3)'
+    );
+  });
+
+  it('keeps a named nested function holding most of the complexity as the part to act on', () => {
+    writeSource(
+      'src/holderFactory.ts',
+      `export function createHolder(limit: number): unknown {
+  const holder = {
+    [\`st
+ep\`](value: number): number {
+      for (let index = 0; index < limit; index++) {
+        if (index % 2 === 0) {
+          if (value > index) return index;
+        }
+      }
+      return value;
+    },
+  };
+  return holder;
+}
+`
+    );
+    expect(runCheck(['src/holderFactory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
+      ' createHolder: cognitive complexity 9 (max 5; largest parts L3-11 [`st ep`] 9)\n'
+    );
+  });
+
+  it('leaves a member of an anonymous class unqualified', () => {
+    writeSource(
+      'src/Outer.java',
+      'class Outer {\n  Runnable r = new Runnable() {\n    public void run(int a, int b, int c, int d, int e, int f, int g) {}\n  };\n}\n'
+    );
+    expect(runCheck(['src/Outer.java']).stdout).toContain('src/Outer.java:3-3 run: parameters 7 (max 6)\n');
+  });
+
+  it('names a C++ method defined outside its class with the scope it names', () => {
+    writeSource(
+      'src/rules.cpp',
+      'class Rules {}; namespace ns { class Rules {}; }\nint ns::Rules::decide(int a, int b, int c, int d, int e, int f, int g) { return a; }\nint& Rules::ref(int& a, int b, int c, int d, int e, int f, int g) { return a; }\nRules::operator std::string() { if (flag) return {}; return {}; }\nnamespace ns { int inside(int a, int b, int c, int d, int e, int f, int g) { return a; } int Rules::other(int a, int b, int c, int d, int e, int f, int g) { return a; } }\nnamespace ns { int ns::Rules::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; } }\nnamespace ns { namespace { int local(int a, int b, int c, int d, int e, int f, int g) { return a; } } }\n'
+    );
+    const { stdout } = runCheck(['src/rules.cpp']);
+    expect(stdout).toContain('src/rules.cpp:2-2 ns::Rules.decide: parameters 7 (max 6)\n');
+    expect(stdout).toContain('src/rules.cpp:3-3 Rules.ref: parameters 7 (max 6)\n');
+    expect(stdout).toContain('src/rules.cpp:5-5 ns.inside: parameters 7 (max 6)\n');
+    // An unnamed namespace adds nothing to the name.
+    expect(stdout).toContain('src/rules.cpp:7-7 ns.local: parameters 7 (max 6)\n');
+    // A friend belongs to the namespace around its class, however nested the class,
+    // `namespace a::b` names two scopes, and template arguments add nothing.
+    writeSource(
+      'src/more.cpp',
+      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\nnamespace values { auto bound = [](int a, int b, int c, int d, int e, int f, int g) { return a; }; }\nstruct Holder { union Inner { void member(int a, int b, int c, int d, int e, int f, int g) {} }; };\nnamespace ns { template <> class ns::Box<int> { void put(int a, int b, int c, int d, int e, int f, int g) {} }; }\nnamespace gauge { struct gauge { void same(int a, int b, int c, int d, int e, int f, int g) {} }; }\nnamespace lib { inline namespace v2 { struct Thing { void in(int a, int b, int c, int d, int e, int f, int g) {} }; } }\nvoid lib::v2::Thing::out(int a, int b, int c, int d, int e, int f, int g) {}\nvoid app::v2::Plain::keep(int a, int b, int c, int d, int e, int f, int g) {}\nnamespace lib { struct v2::Thing { void member(int a, int b, int c, int d, int e, int f, int g) {} }; }\nnamespace mod::inline /* since 3 */ v3 { struct Part { void nested(int a, int b, int c, int d, int e, int f, int g) {} }; }\n'
+    );
+    const more = runCheck(['src/more.cpp']).stdout;
+    expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');
+    expect(more).toContain('src/more.cpp:2-2 a::b::Plain.spelled: parameters 7 (max 6)\n');
+    // A lambda is a value: it keeps the name of what it is bound to and takes no owner.
+    expect(more).toContain('src/more.cpp:3-3 bound: parameters 7 (max 6)\n');
+    expect(more).toContain('src/more.cpp:5-5 ns::Box.put: parameters 7 (max 6)\n');
+    // An inline namespace adds nothing, as a definition outside it spells none.
+    expect(more).toContain('src/more.cpp:7-7 lib::Thing.in: parameters 7 (max 6)\n');
+    expect(more).toContain('src/more.cpp:8-8 lib::Thing.out: parameters 7 (max 6)\n');
+    expect(more).toContain('src/more.cpp:10-10 lib::Thing.member: parameters 7 (max 6)\n');
+    expect(more).toContain('src/more.cpp:11-11 mod::Part.nested: parameters 7 (max 6)\n');
+    // A plain namespace of the same name elsewhere stays.
+    expect(more).toContain('src/more.cpp:9-9 app::v2::Plain.keep: parameters 7 (max 6)\n');
+    // A class named like its namespace keeps both names.
+    expect(more).toContain('src/more.cpp:6-6 gauge::gauge.same: parameters 7 (max 6)\n');
+    // A union is a class like a struct.
+    expect(more).toContain('src/more.cpp:4-4 Holder::Inner.member: parameters 7 (max 6)\n');
+    // A namespace both enclosing and spelled out is counted once.
+    expect(stdout).toContain('src/rules.cpp:6-6 ns::Rules.spelled: parameters 7 (max 6)\n');
+    // The same method is named alike whether it is defined inside its namespace or outside.
+    expect(stdout).toContain('src/rules.cpp:5-5 ns::Rules.other: parameters 7 (max 6)\n');
+    // The `::` of the conversion type belongs to the name, not to the scope.
+    expect(runCheck(['src/rules.cpp', '--warning-max-function-cognitive-complexity', '0']).stdout).toContain(
+      'src/rules.cpp:4-4 Rules.operator std::string: cognitive complexity 1 (max 0; largest parts L4 1)\n'
+    );
+  });
+
+  it('names a function written as a value by what it is bound to, without an owner', () => {
+    writeSource(
+      'src/Values.java',
+      'class Values {\n  Seven member = (a, b, c, d, e, f, g) -> a;\n  int method(int a, int b, int c, int d, int e, int f, int g) { return a; }\n}\ninterface Seven { int apply(int a, int b, int c, int d, int e, int f, int g); }\n'
+    );
+    const { stdout } = runCheck(['src/Values.java']);
+    expect(stdout).toContain('src/Values.java:2-2 member: parameters 7 (max 6)\n');
+    expect(stdout).toContain('src/Values.java:3-3 Values.method: parameters 7 (max 6)\n');
+  });
+
+  it('leaves a method of an object literal in a class unqualified', () => {
+    writeSource(
+      'src/outer.ts',
+      'export class Outer {\n  value = {\n    run(a: number, b: number, c: number, d: number, e: number, f: number, g: number) {\n      return a;\n    },\n  };\n}\n'
+    );
+    expect(runCheck(['src/outer.ts']).stdout).toContain('src/outer.ts:3-5 run: parameters 7 (max 6)\n');
+  });
+
+  it('names a Ruby singleton method with the object it is defined on', () => {
+    writeSource(
+      'src/rules.rb',
+      'class Rules\n  class << Other\n    def decide(a, b, c, d, e, f, g)\n    end\n  end\n\n  def self.build(a, b, c, d, e, f, g)\n  end\n\n  private def hidden(a, b, c, d, e, f, g)\n  end\nend\n'
+    );
+    const { stdout } = runCheck(['src/rules.rb']);
+    expect(stdout).toContain(' Other.decide: parameters 7 (max 6)\n');
+    expect(stdout).toContain(' Rules.build: parameters 7 (max 6)\n');
+    // A definition passed to `private` is still a member.
+    expect(stdout).toContain(' Rules.hidden: parameters 7 (max 6)\n');
+  });
+
+  it('names a member of a Kotlin companion with the class it accompanies', () => {
+    writeSource(
+      'src/Companion.kt',
+      'class Companion {\n  companion object {\n    fun build(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int): Int { return a }\n  }\n}\n'
+    );
+    expect(runCheck(['src/Companion.kt']).stdout).toContain(
+      'src/Companion.kt:3-3 Companion.build: parameters 7 (max 6)\n'
+    );
+  });
+
+  it('names a Go method with its receiver type', () => {
+    writeSource(
+      'src/rules.go',
+      'package rules\n\nfunc (r *Rules) Decide(a, b, c, d, e, f, g int) int {\n\treturn a\n}\n'
+    );
+    expect(runCheck(['src/rules.go']).stdout).toContain('src/rules.go:3-5 Rules.Decide: parameters 7 (max 6)\n');
   });
 
   it('prints a single line and exits 0 when nothing exceeds a threshold', () => {
@@ -233,6 +400,15 @@ warning: src/legacy.ts:1-21 decide:`);
     );
   });
 
+  it('measures a duplicated block by its code lines, whatever comments and blank lines it holds', () => {
+    const commented = reportFunction('commented').replaceAll(/^ {2}const /gmu, '\n  // A step.\n  const ');
+    writeSource('src/commented.ts', commented);
+    expect(runCheck(['src/commented.ts']).stdout).toContain(
+      'src/commented.ts:1-22: duplicated lines 12 (max 9), also at src/report.ts:1-12'
+    );
+    expect(runCheck(['src/commented.ts', '--warning-min-duplicate-lines', '13']).stdout).not.toContain('duplicated');
+  });
+
   it('detects duplication against the git-visible files of the whole repository, with or without --base', () => {
     writeSource('.gitignore', 'build/\n');
     writeSource('build/generated.ts', otherFunction('generated'));
@@ -247,6 +423,19 @@ warning: src/legacy.ts:1-21 decide:`);
     expect(runCheck(['src2']).stdout).toContain(line);
     expect(runCheck(['--base', 'main', 'src2']).stdout).toContain(line);
     expect(runCheck(['src2']).stdout).toContain('(1 files, 2 functions checked)');
+  });
+
+  it('ranks a copy outside the target by its code lines like one inside', () => {
+    // A copy of the statements only, which comments stretch over more lines than a full copy.
+    const statements = reportFunction('partial').split('\n').slice(1, 10).join('\n  // A step.\n\n');
+    writeSource(
+      'src/padded.ts',
+      `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
+    );
+    writeSource('src/sub/full.ts', reportFunction('full'));
+    expect(runCheck(['src/sub', '--warning-min-duplicate-lines', '5']).stdout).toContain(
+      'src/sub/full.ts:1-12: duplicated lines 12 (max 4), also at src/report.ts:1-12, src/summary.ts:1-12, src/padded.ts:3-27\n'
+    );
   });
 
   it('prints a JSON report with --json', () => {
@@ -275,6 +464,11 @@ warning: src/legacy.ts:1-21 decide:`);
           exceeded: [
             { metric: 'functionCognitiveComplexity', value: 24, level: 'warning', limit: 15 },
             { metric: 'functionNestingDepth', value: 5, level: 'warning', limit: 4 },
+          ],
+          largestBlocks: [
+            { startLine: 4, endLine: 10, cognitiveComplexity: 12 },
+            { startLine: 16, endLine: 16, cognitiveComplexity: 2 },
+            { startLine: 17, endLine: 17, cognitiveComplexity: 2 },
           ],
         },
         {
@@ -421,7 +615,7 @@ describe('code-gauge check --base', () => {
 
     writeSource('src/legacy.ts', legacy.replace('return fallback;', 'return fallback + 0;'));
     expect(runCheck(['--base', 'main']).stdout).toContain(
-      'src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15), nesting depth 5 (max 4)\n'
+      'src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; largest parts L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)\n'
     );
   });
 
@@ -453,7 +647,9 @@ describe('code-gauge check --base', () => {
       'src/holder.ts',
       'export class Holder {\n  [`foo\nbar`](a, b, c, d, e, f, g, h) {\n    return a;\n  }\n}\n'
     );
-    expect(runCheck(['src/holder.ts']).stdout).toContain('src/holder.ts:2-5 [`foo bar`]: parameters 8 (max 6)\n');
+    expect(runCheck(['src/holder.ts']).stdout).toContain(
+      'src/holder.ts:2-5 Holder.[`foo bar`]: parameters 8 (max 6)\n'
+    );
   });
 
   it('reports a file-level violation only for a changed file', () => {
@@ -524,6 +720,34 @@ warning: a.ts:1-12: duplicated lines 12 (max 4), also at a.ts:14-25, b.ts:3-11
 warning: a.ts:14-25: duplicated lines 12 (max 4), also at a.ts:1-12, b.ts:3-11
 warning: b.ts:3-11: duplicated lines 9 (max 4), also at a.ts:2-10, a.ts:15-23
 `);
+  });
+
+  it('measures the duplicated blocks of a targeted file by their code lines too', () => {
+    const padded = reportFunction('second').replaceAll(/^ {2}const /gmu, '  // A step.\n  const ');
+    writeFileSync(path.join(plainDir, 'padded.ts'), `${reportFunction('first')}\n${padded}`);
+    const result = runCheck(['--warning-min-duplicate-lines', '13', 'padded.ts'], plainDir);
+    rmSync(path.join(plainDir, 'padded.ts'));
+    expect(result.stdout).toBe('No threshold violations: 1 files, 2 functions checked.\n');
+  });
+
+  it('lists the copies of a duplicated block with the most code lines first', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-copies-'));
+    try {
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
+      // A copy of the statements only, which comments stretch over more lines than a full copy.
+      const statements = reportFunction('partial').split('\n').slice(1, 10).join('\n  // A step.\n\n');
+      writeFileSync(
+        path.join(dir, 'a.ts'),
+        `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
+      );
+      writeFileSync(path.join(dir, 'm.ts'), reportFunction('middle'));
+      writeFileSync(path.join(dir, 'z.ts'), reportFunction('last'));
+      expect(runCheck(['--warning-min-duplicate-lines', '5', dir], dir).stdout).toContain(
+        'm.ts:1-12: duplicated lines 12 (max 4), also at z.ts:1-12, a.ts:3-27\n'
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('exits 2 with --base', () => {

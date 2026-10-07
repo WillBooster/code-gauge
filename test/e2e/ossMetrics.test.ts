@@ -31,9 +31,11 @@ const round = (value: number): number => Math.round(value * 10_000) / 10_000;
  * roundFloats' result — the return type makes forgetting a newly added metric a compile error,
  * including fields added to the hand-enumerated duplication/halstead groups.
  */
-type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree'>;
-// duplicateLineNumbers is asserted structurally (its length is the pinned duplicateLineCount and
-// the golden snapshots pin the exact arrays), so the aggregate expectations stay hand-readable.
+// duplicateLineNumbers is asserted structurally (its length is the pinned duplicateLineCount), and
+// codeLineNumbers is no aggregate: these files pin its length through `lines.code`, and the golden
+// snapshots pin its contents for the other fixtures. So the aggregate expectations stay
+// hand-readable.
+type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree' | 'codeLineNumbers'>;
 type RoundedAggregates = Omit<Record<AggregateKey, unknown>, 'duplication' | 'halstead'> & {
   duplication: Record<Exclude<keyof DuplicationMetrics, 'duplicateLineNumbers'>, unknown>;
   halstead: Record<keyof HalsteadMetrics, number>;
