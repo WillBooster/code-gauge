@@ -2546,7 +2546,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     {
       "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
-      "containerName": "Status",
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 7,
@@ -3612,7 +3612,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     {
       "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
-      "containerName": "Status",
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 40,
@@ -14132,7 +14132,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     {
       "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
-      "containerName": "Status",
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 7,
@@ -14885,7 +14885,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     {
       "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
-      "containerName": "Status",
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 40,

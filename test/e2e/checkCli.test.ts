@@ -270,6 +270,14 @@ ep\`](value: number): number {
     );
   });
 
+  it('leaves a member of an anonymous class unqualified', () => {
+    writeSource(
+      'src/Outer.java',
+      'class Outer {\n  Runnable r = new Runnable() {\n    public void run(int a, int b, int c, int d, int e, int f, int g) {}\n  };\n}\n'
+    );
+    expect(runCheck(['src/Outer.java']).stdout).toContain('src/Outer.java:3-3 run: parameters 7 (max 6)\n');
+  });
+
   it('names a Go method with its receiver type', () => {
     writeSource(
       'src/rules.go',

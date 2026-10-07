@@ -308,6 +308,22 @@ pub fn find_container_name(
         if crate::complexity::is_function_boundary(ancestor, function_nodes) {
             return None;
         }
+        // A function local to a static block, or a member of an anonymous class (a class body
+        // whose parent declares no type), is no member of the named type around it.
+        let is_unnamed_scope = matches!(
+            ancestor.kind_name(),
+            "class_static_block" | "static_initializer"
+        ) || (ancestor.kind_name() == "class_body"
+            && ancestor
+                .parent_node()
+                // A Kotlin companion's members are reached through the class it accompanies.
+                .is_none_or(|owner| {
+                    owner.kind_name() != "companion_object"
+                        && !CONTAINER_NODE_TYPES.contains(&owner.kind_name())
+                }));
+        if is_unnamed_scope {
+            return None;
+        }
         if ancestor.is_named() && CONTAINER_NODE_TYPES.contains(&ancestor.kind_name()) {
             // A Rust `impl` names its type in the `type` field, where `Pass<'a>` in turn wraps
             // the name in a `generic_type`; Kotlin names a class in a child.
