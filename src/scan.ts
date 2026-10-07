@@ -459,15 +459,14 @@ async function readAndMeasureFile(
   try {
     const code = await readFile(file, 'utf8');
     const measureOptions = { language, duplication: context.options.duplication };
-    // Only directory scans compare files against each other; a single-file target has no peers.
-    if (mode === 'single-file') {
-      return { file: { file, metrics: measureCode(code, measureOptions) } };
-    }
-    // Like path exclusion, either the scanned path or the real one can judge the code generated.
-    const exclusion = context.exclusion;
+    // A file targeted itself is measured even when its code looks generated. Like path exclusion,
+    // either the scanned path or the real one can judge the code generated.
+    const exclusion = mode === 'single-file' ? undefined : context.exclusion;
     if (exclusion && (exclusion.isGeneratedCode(file, code) || exclusion.isGeneratedCode(resolvedFile, code))) {
       return { generatedFile: file };
     }
+    // A single-file target has no peers to match, but `check` measures its duplicated blocks by the
+    // code lines this data carries.
     const { metrics, crossFileData, crossFileError } = await measureWithCrossFileData(code, measureOptions);
     return {
       file: { file, metrics, duplicationCandidates: crossFileData },

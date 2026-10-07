@@ -609,6 +609,14 @@ warning: b.ts:3-11: duplicated lines 9 (max 4), also at a.ts:2-10, a.ts:15-23
 `);
   });
 
+  it('measures the duplicated blocks of a targeted file by their code lines too', () => {
+    const padded = reportFunction('second').replaceAll(/^ {2}const /gmu, '  // A step.\n  const ');
+    writeFileSync(path.join(plainDir, 'padded.ts'), `${reportFunction('first')}\n${padded}`);
+    const result = runCheck(['--warning-min-duplicate-lines', '13', 'padded.ts'], plainDir);
+    rmSync(path.join(plainDir, 'padded.ts'));
+    expect(result.stdout).toBe('No threshold violations: 1 files, 2 functions checked.\n');
+  });
+
   it('exits 2 with --base', () => {
     const result = runCheck(['--base', 'main', plainDir], plainDir);
     expect(result.status).toBe(2);

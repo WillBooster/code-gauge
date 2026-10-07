@@ -18,7 +18,8 @@ export interface CheckedFile {
   metrics: CodeMetrics;
   /**
    * The file's 1-based lines that are neither blank nor comment-only, by which its duplicated
-   * blocks are measured; without it, every line of a block counts.
+   * blocks are measured. Without it (the file's cross-file data could not be collected, which the
+   * scan reports as a warning), every line of a block counts.
    */
   codeLineNumbers?: ReadonlySet<number>;
   /** The change to the file; when set, only what the change touches is checked. */
@@ -52,7 +53,7 @@ export interface Violation extends BlockLocation {
    * exceeds a limit of it.
    */
   largestBlocks?: CognitiveBlock[];
-  /** The other copies of the block, largest first, for kind `duplication`. */
+  /** The other copies of the block, longest line span first, for kind `duplication`. */
   partners?: BlockLocation[];
 }
 
