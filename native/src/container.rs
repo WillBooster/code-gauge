@@ -261,6 +261,12 @@ fn is_named_container(ancestor: Node<'_>) -> bool {
 /// The identifiers a name consists of: one, or those of a C++ `a::b`, whose separators, spacing,
 /// and comments are no part of it.
 fn scope_names<'s>(name: Node<'_>, code: &Source<'s>) -> Vec<&'s str> {
+    // A specialization `class Box<int>` is named by its template, as `Box<int>::get` is spelled.
+    if name.kind_name() == "template_type" {
+        if let Some(template) = name.child_by_field_name("name") {
+            return scope_names(template, code);
+        }
+    }
     let parts: Vec<Node<'_>> = named_children(name)
         .into_iter()
         .filter(|part| !part.is_extra())
