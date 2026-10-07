@@ -110,6 +110,7 @@ fn enclosing_cpp_scopes<'s>(
     node: Node<'_>,
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'s>,
+    namespaces_only: bool,
 ) -> Vec<&'s str> {
     let mut scopes = Vec::new();
     let mut current = node.parent_node();
@@ -117,13 +118,16 @@ fn enclosing_cpp_scopes<'s>(
         if crate::complexity::is_function_boundary(ancestor, function_nodes) {
             break;
         }
-        if CPP_SCOPE_NODE_TYPES.contains(&ancestor.kind_name()) {
+        let is_namespace = ancestor.kind_name() == "namespace_definition";
+        if CPP_SCOPE_NODE_TYPES.contains(&ancestor.kind_name())
+            && (is_namespace || !namespaces_only)
+        {
             match ancestor.child_by_field_name("name") {
                 // `namespace a::b` names two scopes at once.
                 Some(name) => scopes.extend(scope_names(name, code).into_iter().rev()),
                 // An unnamed namespace adds nothing; an unnamed class ends the owner, as its
                 // members are reached through no name.
-                None if ancestor.kind_name() == "namespace_definition" => {}
+                None if is_namespace => {}
                 None => break,
             }
         }
@@ -217,7 +221,7 @@ fn cpp_spelled_owner(
     let mut owner = if is_absolute {
         Vec::new()
     } else {
-        enclosing_cpp_scopes(node, function_nodes, code)
+        enclosing_cpp_scopes(node, function_nodes, code, false)
     };
     // The spelled scopes take over from the innermost enclosing one they start with, as name
     // lookup finds that one first.
@@ -284,7 +288,8 @@ fn spell_owner(
     // C++ spells an owner with the namespaces and classes around it (`ns::Rules`), as a definition
     // outside them has to.
     let mut owner = if CPP_SCOPE_NODE_TYPES.contains(&container.kind_name()) {
-        enclosing_cpp_scopes(container, function_nodes, code)
+        // A friend has namespace scope, whatever classes its declaring class is nested in.
+        enclosing_cpp_scopes(container, function_nodes, code, is_friend)
     } else {
         Vec::new()
     };

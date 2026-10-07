@@ -93,7 +93,7 @@ export interface FunctionMetrics {
    * singleton class names. A C++ owner is spelled with the namespaces and classes around it
    * (`ns::Rules`), whether the function is defined inside them or outside as `ns::Rules::decide`;
    * an unnamed namespace and template arguments add nothing, and a friend defined in a class
-   * belongs to the scopes around that class.
+   * belongs to the namespace around that class.
    *
    * Absent unless the function is the member itself or the value its member is bound to: a
    * function nested in another function, a value inside an expression of a member's initializer

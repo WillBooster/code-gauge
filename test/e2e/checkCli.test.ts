@@ -289,11 +289,11 @@ ep\`](value: number): number {
     expect(stdout).toContain('src/rules.cpp:5-5 ns.inside: parameters 7 (max 6)\n');
     // An unnamed namespace adds nothing to the name.
     expect(stdout).toContain('src/rules.cpp:7-7 ns.local: parameters 7 (max 6)\n');
-    // A friend belongs to the scopes around the class, `namespace a::b` names two scopes, and
-    // template arguments add nothing.
+    // A friend belongs to the namespace around its class, however nested the class,
+    // `namespace a::b` names two scopes, and template arguments add nothing.
     writeSource(
       'src/more.cpp',
-      'namespace a :: b { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\n'
+      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\n'
     );
     const more = runCheck(['src/more.cpp']).stdout;
     expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');
