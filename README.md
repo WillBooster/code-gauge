@@ -400,10 +400,10 @@ The `duplication` section tunes how clones are detected:
 
 `measureCode` reports, per file:
 
-- Physical LOC, code lines, comment-only lines, and blank lines
+- Physical LOC, code lines (with their line numbers), comment-only lines, and blank lines
 - Per-function cognitive complexity (following the SonarSource specification, except its recursion
-  increment, which is not counted; cross-validated against PMD's Java rules), plus the file-level
-  total and maximum
+  increment, which is not counted; cross-validated against PMD's Java rules) with the up to three
+  parts of the function adding the most to it, plus the file-level total and maximum
 - Per-function and per-file NCSS (non-commenting source statements), calibrated against PMD's
   `NcssCount` rule for Java and generalized to every supported language; unlike PMD, package and
   import declarations count, and statement-shaped content is counted uniformly in expression
@@ -413,7 +413,8 @@ The `duplication` section tunes how clones are detected:
   every decision and short-circuit operator adds one, one per case-labelled statement, plus the
   file total over McCabe's components (every function, every initializer block, decisions outside
   functions, and the module body of a file that runs top-level code)
-- Per-function parameter counts and locations (name, node type, line span)
+- Per-function parameter counts and locations (name, the type or module a declared function is a
+  member of, node type, line span)
 - Within-file duplication: copy-pasted blocks matched on normalized tokens (identifiers anonymized
   consistently, literals by kind, and literal-dense data tables excluded unless their values also
   match; dependency declarations such as imports, package clauses, `#include`s, re-exports, and
