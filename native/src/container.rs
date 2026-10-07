@@ -166,12 +166,16 @@ fn cpp_spelled_owner(
     } else {
         enclosing_cpp_scopes(node, function_nodes, code, false)
     };
-    // An inline namespace the file declares adds nothing when spelled either (`mylib::v2::Thing`
-    // is `mylib::Thing`), as it adds nothing around a definition; a plain namespace of the same
-    // name elsewhere stays.
+    spell_cpp_scopes(merge_cpp_scopes(owner, scopes), node, code)
+}
+
+/// The scopes as an owner, without the inline namespaces the file of `node` declares: one adds
+/// nothing when spelled (`mylib::v2::Thing` is `mylib::Thing`), as it adds nothing around a
+/// definition, while a plain namespace of the same name elsewhere stays.
+fn spell_cpp_scopes(scopes: Vec<&str>, node: Node<'_>, code: &Source<'_>) -> Option<String> {
     let inline = inline_namespaces(node, code);
     let mut resolved: Vec<&str> = Vec::new();
-    for scope in merge_cpp_scopes(owner, scopes) {
+    for scope in scopes {
         let is_inline = inline
             .iter()
             .any(|(path, name)| *name == scope && *path == resolved);
@@ -223,11 +227,6 @@ fn merge_cpp_scopes<'s>(mut enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> V
     enclosing
 }
 
-fn join_cpp_scopes<'s>(enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> Option<String> {
-    let scopes = merge_cpp_scopes(enclosing, spelled);
-    (!scopes.is_empty()).then(|| scopes.join("::"))
-}
-
 /// The nearest class-like declaration around the function, unless something between them makes
 /// the function no member of it.
 fn enclosing_owner(
@@ -270,26 +269,23 @@ fn spell_owner(
     if name.iter().any(|part| part.is_empty()) {
         return None;
     }
-    // C++ spells an owner with the namespaces and classes around it (`ns::Rules`), as a definition
-    // outside them has to.
-    let mut owner = if CPP_SCOPE_NODE_TYPES.contains(&container.kind_name()) {
-        // A friend has namespace scope, whatever classes its declaring class is nested in.
-        enclosing_cpp_scopes(container, function_nodes, code, is_friend)
-    } else {
-        Vec::new()
-    };
-    if is_friend {
-        return join_cpp_scopes(owner, Vec::new());
+    if !CPP_SCOPE_NODE_TYPES.contains(&container.kind_name()) {
+        return Some(name.join("::"));
     }
+    // C++ spells an owner with the namespaces and classes around it (`ns::Rules`), as a definition
+    // outside them has to. A friend has namespace scope, whatever classes its declaring class is
+    // nested in.
+    let mut owner = enclosing_cpp_scopes(container, function_nodes, code, is_friend);
     // Only a class spelled with a qualifier (`class ns::Box<int>`) refers to scopes that exist; a
     // plain name, or the parts of `namespace a::b`, declare new ones even when they repeat an
     // enclosing name.
     let is_qualified_class = name.len() > 1 && container.kind_name() != "namespace_definition";
-    if is_qualified_class {
-        return join_cpp_scopes(owner, name);
+    if is_qualified_class && !is_friend {
+        owner = merge_cpp_scopes(owner, name);
+    } else if !is_friend {
+        owner.extend(name);
     }
-    owner.extend(name);
-    Some(owner.join("::"))
+    spell_cpp_scopes(owner, container, code)
 }
 
 /// A function local to an initializer block, or a member of an object literal or of an anonymous

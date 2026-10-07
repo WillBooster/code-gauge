@@ -301,7 +301,7 @@ ep\`](value: number): number {
     // `namespace a::b` names two scopes, and template arguments add nothing.
     writeSource(
       'src/more.cpp',
-      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\nnamespace values { auto bound = [](int a, int b, int c, int d, int e, int f, int g) { return a; }; }\nstruct Holder { union Inner { void member(int a, int b, int c, int d, int e, int f, int g) {} }; };\nnamespace ns { template <> class ns::Box<int> { void put(int a, int b, int c, int d, int e, int f, int g) {} }; }\nnamespace gauge { struct gauge { void same(int a, int b, int c, int d, int e, int f, int g) {} }; }\nnamespace lib { inline namespace v2 { struct Thing { void in(int a, int b, int c, int d, int e, int f, int g) {} }; } }\nvoid lib::v2::Thing::out(int a, int b, int c, int d, int e, int f, int g) {}\nvoid app::v2::Plain::keep(int a, int b, int c, int d, int e, int f, int g) {}\n'
+      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\nnamespace values { auto bound = [](int a, int b, int c, int d, int e, int f, int g) { return a; }; }\nstruct Holder { union Inner { void member(int a, int b, int c, int d, int e, int f, int g) {} }; };\nnamespace ns { template <> class ns::Box<int> { void put(int a, int b, int c, int d, int e, int f, int g) {} }; }\nnamespace gauge { struct gauge { void same(int a, int b, int c, int d, int e, int f, int g) {} }; }\nnamespace lib { inline namespace v2 { struct Thing { void in(int a, int b, int c, int d, int e, int f, int g) {} }; } }\nvoid lib::v2::Thing::out(int a, int b, int c, int d, int e, int f, int g) {}\nvoid app::v2::Plain::keep(int a, int b, int c, int d, int e, int f, int g) {}\nnamespace lib { struct v2::Thing { void member(int a, int b, int c, int d, int e, int f, int g) {} }; }\n'
     );
     const more = runCheck(['src/more.cpp']).stdout;
     expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');
@@ -312,6 +312,7 @@ ep\`](value: number): number {
     // An inline namespace adds nothing, as a definition outside it spells none.
     expect(more).toContain('src/more.cpp:7-7 lib::Thing.in: parameters 7 (max 6)\n');
     expect(more).toContain('src/more.cpp:8-8 lib::Thing.out: parameters 7 (max 6)\n');
+    expect(more).toContain('src/more.cpp:10-10 lib::Thing.member: parameters 7 (max 6)\n');
     // A plain namespace of the same name elsewhere stays.
     expect(more).toContain('src/more.cpp:9-9 app::v2::Plain.keep: parameters 7 (max 6)\n');
     // A class named like its namespace keeps both names.
