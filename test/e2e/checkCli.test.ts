@@ -289,7 +289,7 @@ ep\`](value: number): number {
   it('names a C++ method defined outside its class with the scope it names', () => {
     writeSource(
       'src/rules.cpp',
-      'class Rules { public: int decide(int a, int b, int c, int d, int e, int f, int g); };\nint ns::Rules::decide(int a, int b, int c, int d, int e, int f, int g) { return a; }\nint& Rules::ref(int& a, int b, int c, int d, int e, int f, int g) { return a; }\nRules::operator std::string() { if (flag) return {}; return {}; }\nnamespace ns { int inside(int a, int b, int c, int d, int e, int f, int g) { return a; } int Rules::other(int a, int b, int c, int d, int e, int f, int g) { return a; } }\nnamespace ns { int ns::Rules::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; } }\nnamespace ns { namespace { int local(int a, int b, int c, int d, int e, int f, int g) { return a; } } }\n'
+      'class Rules {}; namespace ns { class Rules {}; }\nint ns::Rules::decide(int a, int b, int c, int d, int e, int f, int g) { return a; }\nint& Rules::ref(int& a, int b, int c, int d, int e, int f, int g) { return a; }\nRules::operator std::string() { if (flag) return {}; return {}; }\nnamespace ns { int inside(int a, int b, int c, int d, int e, int f, int g) { return a; } int Rules::other(int a, int b, int c, int d, int e, int f, int g) { return a; } }\nnamespace ns { int ns::Rules::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; } }\nnamespace ns { namespace { int local(int a, int b, int c, int d, int e, int f, int g) { return a; } } }\n'
     );
     const { stdout } = runCheck(['src/rules.cpp']);
     expect(stdout).toContain('src/rules.cpp:2-2 ns::Rules.decide: parameters 7 (max 6)\n');
