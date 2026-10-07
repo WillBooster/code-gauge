@@ -358,6 +358,16 @@ ep\`](value: number): number {
     expect(stdout).toContain(' Rules.hidden: parameters 7 (max 6)\n');
   });
 
+  it('keeps the class of a function value bound to a Kotlin companion property', () => {
+    writeSource(
+      'src/Companion.kt',
+      'class Companion {\n  companion object {\n    val bound = { a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int -> a }\n  }\n}\n'
+    );
+    expect(runCheck(['src/Companion.kt']).stdout).toContain(
+      'src/Companion.kt:3-3 Companion.bound: parameters 7 (max 6)\n'
+    );
+  });
+
   it('names a Go method with its receiver type', () => {
     writeSource(
       'src/rules.go',
