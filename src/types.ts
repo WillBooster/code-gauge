@@ -119,8 +119,8 @@ export interface FunctionMetrics {
    * The parts of the function adding the most cognitive complexity, largest first (at most 3),
    * each with the complexity its span adds to this function: the outermost branching constructs
    * and nested functions of its body, where one that merely wraps most of the function (it holds
-   * more than half of the function's complexity, three quarters of which lie in the blocks inside
-   * it) is replaced by the blocks inside it, unless it is a named function.
+   * more than half of the function's complexity, and the blocks inside it hold at least three
+   * quarters of its own) is replaced by the blocks inside it, unless it is a named function.
    */
   cognitiveBlocks: CognitiveBlock[];
   nestingDepth: number;

@@ -322,14 +322,13 @@ With these limits, `check` reports 464 errors and 2,799 warnings in the calibrat
 
 The tables above count a duplicated block by its line span, as `check` did when the limits were
 set. `check` now counts the lines of the span that are neither blank nor comment-only, so that a
-commented copy and its bare partner have the same length, and the limit was re-examined on the 117
-corpus repositories that could be exported again at their recorded commits (44,088 of the 45,123
-functions; the two repositories of data files are missing):
+commented copy and its bare partner have the same length, and the limit was re-examined on the
+same corpus, exported again at its recorded commits (the same 45,123 functions and 6,603 files):
 
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
-| line span            |   5,600 |    3,083 |    1,439 |      659 |      212 |       50 |
-| code lines           |   5,510 |    2,760 |    1,088 |      501 |      147 |       32 |
+| line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
+| code lines           |   5,735 |    2,869 |    1,143 |      524 |      153 |       32 |
 
 Regrouped by the code lines of their longest block, the 60 rated clone groups separate no better
 than by its span:
