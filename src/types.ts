@@ -90,7 +90,9 @@ export interface FunctionMetrics {
    * The name of the declaration whose member the function is: a class, struct, interface, enum,
    * record, object, trait, Rust `impl`, or Ruby module enclosing it, or the receiver type of a Go
    * method; absent when another function lies between the two, so a member of a class declared
-   * inside a function has it and a closure inside a method does not.
+   * inside a function has it and a closure inside a method does not, and absent for a member of
+   * an anonymous class and for a function local to a static block, which are no members of the
+   * named type around them.
    */
   containerName?: string;
   /**
