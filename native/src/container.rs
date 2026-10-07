@@ -7,7 +7,6 @@ use crate::util::{named_children, node_text, Source};
 
 const CONTAINER_NODE_TYPES: &[&str] = &[
     "abstract_class_declaration",
-    "annotation_type_declaration",
     "class",
     "class_declaration",
     "class_definition",
@@ -21,7 +20,6 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "namespace_definition",
     "object_declaration",
     "record_declaration",
-    "record_struct_declaration",
     "struct_declaration",
     "struct_specifier",
     "trait_item",
