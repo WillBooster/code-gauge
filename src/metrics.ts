@@ -123,6 +123,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
     lines: payload.lines,
     functions: payload.functions.map((fn) => ({
       name: fn.name,
+      containerName: fn.containerName,
       nodeType: fn.nodeType,
       startLine: fn.startLine,
       startColumn: fn.startColumn,
@@ -130,6 +131,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
       endColumn: fn.endColumn,
       cyclomaticComplexity: fn.cyclomaticComplexity,
       cognitiveComplexity: fn.cognitiveComplexity,
+      cognitiveBlocks: fn.cognitiveBlocks ?? [],
       nestingDepth: fn.nestingDepth,
       ncss: fn.ncss,
       parameterCount: fn.parameterCount,

@@ -39,6 +39,9 @@ pub struct LineMetrics {
 pub struct FunctionMetrics {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    /// The class-like declaration the function is a member of.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_name: Option<String>,
     /// The tree-sitter node type of the function node (e.g. `method_declaration`, `arrow_function`).
     pub node_type: String,
     pub start_line: usize,
@@ -47,12 +50,23 @@ pub struct FunctionMetrics {
     pub end_column: usize,
     pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
+    /// The blocks adding the most cognitive complexity, largest first.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub cognitive_blocks: Vec<CognitiveBlock>,
     pub nesting_depth: u64,
     pub ncss: u64,
     pub parameter_count: usize,
     /// Base counts of the function's whole subtree; derived floats are computed in TypeScript.
     pub halstead_counts: HalsteadCounts,
     pub dep_degree: u64,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CognitiveBlock {
+    pub start_line: usize,
+    pub end_line: usize,
+    pub cognitive_complexity: u64,
 }
 
 #[derive(Serialize)]

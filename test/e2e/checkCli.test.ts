@@ -170,7 +170,7 @@ describe('code-gauge check', () => {
     expect(result.status).toBe(0);
     expect(result.stdout)
       .toBe(`Threshold violations: 0 errors, 3 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-warning: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15), nesting depth 5 (max 4)
+warning: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; most from L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)
 warning: src/report.ts:1-12: duplicated lines 12 (max 9), also at src/summary.ts:1-12
 warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12
 
@@ -186,7 +186,7 @@ How to fix:
     expect(result.status).toBe(1);
     expect(result.stdout)
       .toContain(`Threshold violations: 3 errors, 0 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-21 decide: cognitive complexity 24 (warning max 15), nesting depth 5 (max 3)
+error: src/legacy.ts:1-21 decide: cognitive complexity 24 (warning max 15; most from L4-10 12, L16 2, L17 2), nesting depth 5 (max 3)
 error: src/report.ts:1-12: duplicated lines 12 (max 11), also at src/summary.ts:1-12
 error: src/summary.ts:1-12: duplicated lines 12 (max 11), also at src/report.ts:1-12
 `);
@@ -206,9 +206,36 @@ warning: src/legacy.ts:1-21 decide:`);
       )
     );
     const { stdout } = runCheck(['src/wrapped.ts']);
-    expect(stdout).toMatch(/ wrapped: cognitive complexity \d+ \(max \d+\)\n/u);
+    // The callback holds all of the complexity, so the blocks named are those inside it.
+    expect(stdout).toContain(' wrapped: cognitive complexity 35 (max 30; most from L5-11 15, L17 3, L18 3)\n');
     // Nesting depth covers a function's own body only, so the nested function alone exceeds its limit.
     expect(stdout).toMatch(/ <anonymous>: nesting depth 5 \(max 4\)\n/u);
+  });
+
+  it('names the nested functions among the parts adding the most cognitive complexity', () => {
+    writeSource(
+      'src/factory.ts',
+      `export function createCounter(limit: number): { step: () => number; reset: () => void } {
+  let count = 0;
+  const step = (): number => {
+    for (let index = 0; index < limit; index++) {
+      if (index % 2 === 0) count += 1;
+    }
+    return count;
+  };
+  const reset = (): void => {
+    if (count > limit) {
+      if (limit > 0) count = 0;
+    }
+  };
+  if (limit < 0) count = limit;
+  return { step, reset };
+}
+`
+    );
+    expect(runCheck(['src/factory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
+      ' createCounter: cognitive complexity 11 (max 5; most from L3-8 step 5, L9-13 reset 5, L14 1)\n'
+    );
   });
 
   it('prints a single line and exits 0 when nothing exceeds a threshold', () => {
@@ -275,6 +302,11 @@ warning: src/legacy.ts:1-21 decide:`);
           exceeded: [
             { metric: 'functionCognitiveComplexity', value: 24, level: 'warning', limit: 15 },
             { metric: 'functionNestingDepth', value: 5, level: 'warning', limit: 4 },
+          ],
+          largestBlocks: [
+            { startLine: 4, endLine: 10, cognitiveComplexity: 12 },
+            { startLine: 16, endLine: 16, cognitiveComplexity: 2 },
+            { startLine: 17, endLine: 17, cognitiveComplexity: 2 },
           ],
         },
         {
@@ -421,7 +453,7 @@ describe('code-gauge check --base', () => {
 
     writeSource('src/legacy.ts', legacy.replace('return fallback;', 'return fallback + 0;'));
     expect(runCheck(['--base', 'main']).stdout).toContain(
-      'src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15), nesting depth 5 (max 4)\n'
+      'src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; most from L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)\n'
     );
   });
 
@@ -453,7 +485,9 @@ describe('code-gauge check --base', () => {
       'src/holder.ts',
       'export class Holder {\n  [`foo\nbar`](a, b, c, d, e, f, g, h) {\n    return a;\n  }\n}\n'
     );
-    expect(runCheck(['src/holder.ts']).stdout).toContain('src/holder.ts:2-5 [`foo bar`]: parameters 8 (max 6)\n');
+    expect(runCheck(['src/holder.ts']).stdout).toContain(
+      'src/holder.ts:2-5 Holder.[`foo bar`]: parameters 8 (max 6)\n'
+    );
   });
 
   it('reports a file-level violation only for a changed file', () => {

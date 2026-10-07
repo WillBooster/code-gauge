@@ -15,7 +15,9 @@ export interface NativeHalsteadCounts {
   totalOperands: number;
 }
 
-export interface NativeFunctionMetricsPayload extends Omit<FunctionMetrics, 'halstead'> {
+export interface NativeFunctionMetricsPayload extends Omit<FunctionMetrics, 'halstead' | 'cognitiveBlocks'> {
+  /** Absent when the function has none. */
+  cognitiveBlocks?: FunctionMetrics['cognitiveBlocks'];
   halsteadCounts: NativeHalsteadCounts;
 }
 
@@ -59,7 +61,7 @@ export interface NativeBinding {
  * `git pull` untouched, so without this handshake it would silently return payloads missing
  * newer fields, or lack newer binding functions, instead of failing with a clear rebuild message.
  */
-export const expectedPayloadVersion = 8;
+export const expectedPayloadVersion = 9;
 
 /**
  * Measures one file via the native addon, returning the raw payload for assembly in metrics.ts;

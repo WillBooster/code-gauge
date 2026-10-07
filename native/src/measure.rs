@@ -58,6 +58,11 @@ pub fn measure(
                 .expect("every collected function node opens a frame in the body-metrics pass");
             FunctionMetrics {
                 name: find_function_name(*node, code),
+                container_name: crate::functions::find_container_name(
+                    *node,
+                    &sets.function_nodes,
+                    code,
+                ),
                 node_type: node.kind_name().to_string(),
                 start_line: node.start_position().row + 1,
                 // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving
@@ -70,6 +75,15 @@ pub fn measure(
                 // cycle, but this is intentionally not implemented (issue #22): mainstream
                 // implementations (PMD, SonarQube analyzers) omit it.
                 cognitive_complexity: body_metrics.cognitive_complexity,
+                cognitive_blocks: body_metrics
+                    .cognitive_blocks
+                    .iter()
+                    .map(|block| crate::types::CognitiveBlock {
+                        start_line: block.start_line,
+                        end_line: block.end_line,
+                        cognitive_complexity: block.cognitive_complexity,
+                    })
+                    .collect(),
                 nesting_depth: body_metrics.nesting_depth,
                 ncss: body_metrics.ncss,
                 parameter_count: count_parameters(*node, code),

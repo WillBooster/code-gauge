@@ -94,9 +94,89 @@ const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
 
 const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "unless"];
 
+/// A branching construct or nested function inside a function body, with the cognitive complexity
+/// its whole subtree adds to that function.
+pub struct CognitiveBlock {
+    pub start_line: usize,
+    pub end_line: usize,
+    pub cognitive_complexity: u64,
+}
+
+/// A block with the blocks directly inside it, as recorded while its function's frame is open.
+struct CognitiveBlockNode {
+    start_line: usize,
+    end_line: usize,
+    cognitive_complexity: u64,
+    /// Count of the subtree's `1 + nesting` increments, for re-basing on hoist like the frame's.
+    nesting_sensitive_count: u64,
+    children: Vec<CognitiveBlockNode>,
+}
+
+/// A block whose node is being visited: the frame's counters when it opened, and the blocks closed
+/// inside it so far.
+struct OpenCognitiveBlock {
+    node_id: usize,
+    cognitive_complexity_before: u64,
+    nesting_sensitive_count_before: u64,
+    children: Vec<CognitiveBlockNode>,
+}
+
+/// How many of a function's blocks are reported, largest first.
+const MAX_REPORTED_COGNITIVE_BLOCKS: usize = 3;
+
+/// The blocks that say where a function's complexity lies: its outermost blocks, with a block
+/// that merely wraps most of the function replaced by the blocks inside it, since a loop or
+/// callback around the whole body says nothing about what to extract. A block is such a wrapper
+/// when it holds more than half of the function's complexity and the blocks inside it hold at
+/// least three quarters of its own.
+fn select_reported_blocks(blocks: &[CognitiveBlockNode], total: u64) -> Vec<CognitiveBlock> {
+    let mut selected: Vec<&CognitiveBlockNode> = blocks.iter().collect();
+    while let Some(index) =
+        (0..selected.len()).max_by_key(|&index| selected[index].cognitive_complexity)
+    {
+        let largest = selected[index];
+        let inner: u64 = largest
+            .children
+            .iter()
+            .map(|child| child.cognitive_complexity)
+            .sum();
+        if largest.cognitive_complexity * 2 <= total || inner * 4 < largest.cognitive_complexity * 3
+        {
+            break;
+        }
+        selected.swap_remove(index);
+        selected.extend(largest.children.iter());
+    }
+    // Source order among equals keeps the report independent of the selection's bookkeeping.
+    selected.sort_by_key(|block| {
+        (
+            std::cmp::Reverse(block.cognitive_complexity),
+            block.start_line,
+        )
+    });
+    selected
+        .into_iter()
+        .take(MAX_REPORTED_COGNITIVE_BLOCKS)
+        .map(|block| CognitiveBlock {
+            start_line: block.start_line,
+            end_line: block.end_line,
+            cognitive_complexity: block.cognitive_complexity,
+        })
+        .collect()
+}
+
+/// Charges the blocks of a function hoisted `nesting_offset` levels deeper into its parent.
+fn rebase_blocks(blocks: &mut [CognitiveBlockNode], nesting_offset: u64) {
+    for block in blocks {
+        block.cognitive_complexity += block.nesting_sensitive_count * nesting_offset;
+        rebase_blocks(&mut block.children, nesting_offset);
+    }
+}
+
 pub struct FunctionBodyMetrics {
     pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,
+    pub cognitive_blocks: Vec<CognitiveBlock>,
     pub nesting_depth: u64,
     pub ncss: u64,
 }
@@ -114,6 +194,8 @@ struct FunctionBodyFrame {
     entry_cognitive_nesting: u64,
     /// Structural nesting carried into this body (bonuses excluded), for nesting depth.
     entry_structural_nesting: u64,
+    cognitive_blocks: Vec<CognitiveBlockNode>,
+    open_cognitive_blocks: Vec<OpenCognitiveBlock>,
 }
 
 impl FunctionBodyFrame {
@@ -127,6 +209,8 @@ impl FunctionBodyFrame {
             has_own_ncss_contribution: false,
             entry_cognitive_nesting,
             entry_structural_nesting,
+            cognitive_blocks: Vec::new(),
+            open_cognitive_blocks: Vec::new(),
         }
     }
 }
@@ -244,6 +328,16 @@ impl FunctionBodyPass<'_, '_, '_> {
         let is_boolean_operator = is_boolean_operator(current, parent, self.code);
         let is_pattern_guard = is_pattern_guard(current, parent);
 
+        let is_switch_like =
+            current.is_named() && SWITCH_LIKE_NODE_TYPES.contains(&current.kind_name());
+        // Opened before the node's own increments so that the block includes them. The sentinel
+        // frame's blocks would be those of top-level code, which no function reports.
+        if self.frames.len() > 1
+            && (opens_frame || is_switch_like || (is_nesting && !is_continuation))
+        {
+            self.open_cognitive_block(current);
+        }
+
         // Each branch, short-circuit operator, and pattern guard adds one path (McCabe; NIST SP
         // 500-235 §4); `else` adds none.
         if is_decision || is_boolean_operator || is_pattern_guard {
@@ -261,7 +355,7 @@ impl FunctionBodyPass<'_, '_, '_> {
                 self.top_frame().nesting_sensitive_count += 1;
             }
         }
-        if current.is_named() && SWITCH_LIKE_NODE_TYPES.contains(&current.kind_name()) {
+        if is_switch_like {
             self.top_frame().cognitive_complexity += 1 + relative_nesting;
             self.top_frame().nesting_sensitive_count += 1;
         }
@@ -338,24 +432,86 @@ impl FunctionBodyPass<'_, '_, '_> {
         }
 
         if opens_frame {
-            let closed = self.frames.pop().expect("frame opened above");
-            self.results.insert(
-                current.id(),
-                FunctionBodyMetrics {
-                    cyclomatic_complexity: closed.cyclomatic_complexity,
-                    cognitive_complexity: closed.cognitive_complexity,
-                    nesting_depth: closed.nesting_depth,
-                    // A function node without a countable declaration of its own (arrow functions,
-                    // lambdas, blocks) still counts 1 for the declaration itself.
-                    ncss: closed.ncss + u64::from(!closed.has_own_ncss_contribution),
-                },
-            );
-            let parent = self.top_frame();
-            parent.cognitive_complexity += closed.cognitive_complexity
-                + closed.nesting_sensitive_count
-                    * (closed.entry_cognitive_nesting - parent.entry_cognitive_nesting);
-            parent.nesting_sensitive_count += closed.nesting_sensitive_count;
-            parent.ncss += closed.ncss;
+            self.close_frame(current);
+        }
+        self.close_cognitive_block(current);
+    }
+
+    // The bookkeeping below is kept out of the recursive visit, whose frame size bounds the depth
+    // the Workers runtime's stack can measure.
+
+    #[inline(never)]
+    fn close_frame(&mut self, node: Node<'_>) {
+        let mut closed = self.frames.pop().expect("frame opened above");
+        self.results.insert(
+            node.id(),
+            FunctionBodyMetrics {
+                cyclomatic_complexity: closed.cyclomatic_complexity,
+                cognitive_complexity: closed.cognitive_complexity,
+                cognitive_blocks: select_reported_blocks(
+                    &closed.cognitive_blocks,
+                    closed.cognitive_complexity,
+                ),
+                nesting_depth: closed.nesting_depth,
+                // A function node without a countable declaration of its own (arrow functions,
+                // lambdas, blocks) still counts 1 for the declaration itself.
+                ncss: closed.ncss + u64::from(!closed.has_own_ncss_contribution),
+            },
+        );
+        let parent = self.top_frame();
+        let nesting_offset = closed.entry_cognitive_nesting - parent.entry_cognitive_nesting;
+        parent.cognitive_complexity +=
+            closed.cognitive_complexity + closed.nesting_sensitive_count * nesting_offset;
+        // The function's block is open in the parent, which is the sentinel for a top-level
+        // function: no function reports the sentinel's blocks.
+        if let Some(function_block) = parent.open_cognitive_blocks.last_mut() {
+            rebase_blocks(&mut closed.cognitive_blocks, nesting_offset);
+            function_block.children = closed.cognitive_blocks;
+        }
+        parent.nesting_sensitive_count += closed.nesting_sensitive_count;
+        parent.ncss += closed.ncss;
+    }
+
+    #[inline(never)]
+    fn open_cognitive_block(&mut self, node: Node<'_>) {
+        let frame = self.top_frame();
+        let open = OpenCognitiveBlock {
+            node_id: node.id(),
+            cognitive_complexity_before: frame.cognitive_complexity,
+            nesting_sensitive_count_before: frame.nesting_sensitive_count,
+            children: Vec::new(),
+        };
+        frame.open_cognitive_blocks.push(open);
+    }
+
+    /// Closes the block `node` opened, if any, in the top frame, which is the frame embedding the
+    /// node again once a frame the node opened has been hoisted.
+    #[inline(never)]
+    fn close_cognitive_block(&mut self, node: Node<'_>) {
+        let frame = self.top_frame();
+        if frame
+            .open_cognitive_blocks
+            .last()
+            .is_none_or(|open| open.node_id != node.id())
+        {
+            return;
+        }
+        let open = frame.open_cognitive_blocks.pop().expect("checked above");
+        let cognitive_complexity = frame.cognitive_complexity - open.cognitive_complexity_before;
+        if cognitive_complexity == 0 {
+            return;
+        }
+        let block = CognitiveBlockNode {
+            start_line: node.start_position().row + 1,
+            end_line: node.end_position().row + 1,
+            cognitive_complexity,
+            nesting_sensitive_count: frame.nesting_sensitive_count
+                - open.nesting_sensitive_count_before,
+            children: open.children,
+        };
+        match frame.open_cognitive_blocks.last_mut() {
+            Some(enclosing) => enclosing.children.push(block),
+            None => frame.cognitive_blocks.push(block),
         }
     }
 

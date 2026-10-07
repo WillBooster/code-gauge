@@ -358,10 +358,19 @@ function formatViolation(violation: Violation): string {
       // A duplicated block violates from its limit on, so the largest allowed span is the last whole
       // line count below it; a limit of 0 allows none.
       const maxAllowed = violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit;
-      return `${labelByMetric.get(metric)} ${roundedValue} (${levelPrefix}max ${maxAllowed})`;
+      const blocks = metric === 'functionCognitiveComplexity' ? describeLargestBlocks(violation) : '';
+      return `${labelByMetric.get(metric)} ${roundedValue} (${levelPrefix}max ${maxAllowed}${blocks})`;
     })
     .join(', ');
   return `${violation.level}: ${describeViolation(violation, exceeded)}`;
+}
+
+function describeLargestBlocks({ largestBlocks = [] }: Violation): string {
+  const blocks = largestBlocks.map(
+    ({ startLine, endLine, name, cognitiveComplexity }) =>
+      `L${startLine}${endLine === startLine ? '' : `-${endLine}`}${name ? ` ${name}` : ''} ${cognitiveComplexity}`
+  );
+  return blocks.length > 0 ? `; most from ${blocks.join(', ')}` : '';
 }
 
 function describeViolation(violation: Violation, exceeded: string): string {

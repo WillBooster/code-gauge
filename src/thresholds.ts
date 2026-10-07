@@ -49,7 +49,7 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     key: 'maxFunctionNcss',
     label: 'NCSS',
     defaultLimits: { warning: 30, error: 60 },
-    hint: 'split the function into smaller functions that each do one step.',
+    hint: 'move the statements that form one step into a named function; leave a flat list of independent one-line steps as it is.',
     measure: (fn) => fn.ncss,
     includesNestedFunctions: true,
   },
@@ -104,7 +104,7 @@ export const fileThresholds: readonly Threshold<CodeMetrics>[] = [
     key: 'maxFileNcss',
     label: 'file NCSS',
     defaultLimits: { warning: 400, error: 1000 },
-    hint: 'split the file into smaller modules with one responsibility each.',
+    hint: 'split the file into modules with one responsibility each, for example by moving a class or the helpers that serve only one function into a file of their own.',
     measure: (file) => file.ncssCount,
   },
 ];

@@ -98,7 +98,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -123,7 +125,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 1,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 3,
@@ -148,7 +152,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 5,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -173,7 +179,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 12,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -198,7 +206,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 17,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 3,
       "endColumn": 3,
@@ -223,7 +233,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 23,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -248,7 +260,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 25,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 36,
+          "startLine": 35,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 3,
@@ -273,7 +293,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 33,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 45,
+          "startLine": 40,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 2,
       "endColumn": 3,
@@ -298,7 +326,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 39,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -323,7 +353,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 50,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -348,7 +380,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 56,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 3,
@@ -373,7 +407,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 61,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 22,
@@ -398,7 +434,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 62,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 23,
@@ -423,7 +461,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 63,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -448,7 +488,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 67,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -473,7 +515,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 72,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -498,7 +542,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 76,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -523,7 +569,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 82,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -548,7 +596,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 87,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -573,7 +623,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 92,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 20,
@@ -598,7 +650,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 97,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "EndlessSelf",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -623,7 +677,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 100,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "EndlessSelf",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 31,
@@ -689,7 +745,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 2,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 1,
@@ -714,7 +778,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 1,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 4,
       "endColumn": 1,
@@ -739,7 +805,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 6,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -805,7 +873,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 7,
+          "endLine": 10,
+          "startLine": 4,
+        },
+      ],
       "cognitiveComplexity": 8,
+      "containerName": undefined,
       "cyclomaticComplexity": 5,
       "depDegree": 9,
       "endColumn": 1,
@@ -871,7 +947,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 61,
@@ -896,7 +974,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 32,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 39,
+          "startLine": 37,
+        },
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 46,
+          "startLine": 40,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 64,
+          "startLine": 56,
+        },
+      ],
       "cognitiveComplexity": 19,
+      "containerName": undefined,
       "cyclomaticComplexity": 14,
       "depDegree": 23,
       "endColumn": 1,
@@ -921,7 +1017,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 34,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 71,
+          "startLine": 69,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 7,
       "endColumn": 1,
@@ -946,7 +1050,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 67,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 76,
+          "startLine": 76,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 1,
@@ -971,7 +1083,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 75,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -996,7 +1110,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 79,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 93,
+          "startLine": 91,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 94,
+          "startLine": 94,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 5,
       "endColumn": 1,
@@ -1062,7 +1189,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Engine",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 42,
@@ -1087,7 +1216,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 21,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Engine",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 34,
@@ -1112,7 +1243,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 24,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 25,
@@ -1137,7 +1270,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 34,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 37,
+          "startLine": 36,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Widget",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 3,
@@ -1162,7 +1303,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 35,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 66,
@@ -1187,7 +1330,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 38,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 77,
@@ -1212,7 +1357,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 39,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 40,
@@ -1237,7 +1384,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 40,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 42,
@@ -1262,7 +1411,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 47,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 54,
+          "startLine": 52,
+        },
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 61,
+          "startLine": 55,
+        },
+        {
+          "cognitiveComplexity": 4,
+          "endLine": 67,
+          "startLine": 65,
+        },
+      ],
       "cognitiveComplexity": 22,
+      "containerName": undefined,
       "cyclomaticComplexity": 16,
       "depDegree": 20,
       "endColumn": 1,
@@ -1287,7 +1454,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 49,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 91,
+          "startLine": 89,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 87,
+          "startLine": 87,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 94,
+          "startLine": 92,
+        },
+      ],
       "cognitiveComplexity": 6,
+      "containerName": undefined,
       "cyclomaticComplexity": 5,
       "depDegree": 16,
       "endColumn": 1,
@@ -1312,7 +1497,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 85,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 52,
@@ -1337,7 +1524,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 86,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 109,
@@ -1362,7 +1551,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 87,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 99,
+          "startLine": 99,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 1,
@@ -1387,7 +1584,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 98,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 107,
+          "startLine": 105,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 110,
+          "startLine": 108,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 112,
+          "startLine": 110,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 1,
       "endColumn": 1,
@@ -1453,7 +1668,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 26,
@@ -1478,7 +1695,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 29,
@@ -1503,7 +1722,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 30,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 38,
+          "startLine": 35,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 5,
@@ -1528,7 +1755,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 33,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 26,
@@ -1553,7 +1782,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 41,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 35,
@@ -1578,7 +1809,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 45,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 40,
@@ -1603,7 +1836,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 46,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 44,
@@ -1628,7 +1863,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 50,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 50,
@@ -1653,7 +1890,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 51,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 10,
+          "endLine": 88,
+          "startLine": 65,
+        },
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 62,
+          "startLine": 59,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 100,
+          "startLine": 97,
+        },
+      ],
       "cognitiveComplexity": 20,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 14,
       "depDegree": 19,
       "endColumn": 5,
@@ -1678,7 +1933,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 53,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 123,
+          "startLine": 123,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 121,
+          "startLine": 121,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 7,
       "depDegree": 6,
       "endColumn": 6,
@@ -1703,7 +1971,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 119,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 132,
+          "startLine": 132,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 137,
+          "startLine": 134,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 8,
       "endColumn": 5,
@@ -1728,7 +2009,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 128,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 49,
@@ -1753,7 +2036,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 131,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 132,
+          "startLine": 132,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 76,
@@ -1778,7 +2069,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 132,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 58,
@@ -1803,7 +2096,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 133,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 141,
+          "startLine": 141,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 91,
@@ -1828,7 +2129,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 141,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 111,
@@ -1853,7 +2156,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 143,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 80,
@@ -1878,7 +2183,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 145,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -1944,7 +2251,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 31,
+          "startLine": 29,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 5,
       "endColumn": 1,
@@ -1969,7 +2284,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 27,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 38,
+          "startLine": 36,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 5,
       "endColumn": 1,
@@ -1994,7 +2317,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 35,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 49,
@@ -2019,7 +2344,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 42,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 9,
+          "endLine": 66,
+          "startLine": 53,
+        },
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 52,
+          "startLine": 48,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 72,
+          "startLine": 67,
+        },
+      ],
       "cognitiveComplexity": 20,
+      "containerName": undefined,
       "cyclomaticComplexity": 13,
       "depDegree": 23,
       "endColumn": 1,
@@ -2044,7 +2387,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 44,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 26,
@@ -2069,7 +2414,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 76,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 89,
+          "startLine": 87,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 1,
@@ -2094,7 +2447,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 86,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 47,
@@ -2160,7 +2515,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Shipment",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -2185,7 +2542,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 19,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Status",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 7,
@@ -2210,7 +2569,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 27,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Status",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -2235,7 +2596,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 33,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Auditor",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -2260,7 +2623,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 40,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -2285,7 +2650,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 49,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 57,
+          "startLine": 55,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 3,
@@ -2310,7 +2683,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 53,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 9,
+          "endLine": 79,
+          "startLine": 69,
+        },
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 67,
+          "startLine": 65,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 85,
+          "startLine": 83,
+        },
+      ],
       "cognitiveComplexity": 18,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 12,
       "depDegree": 12,
       "endColumn": 3,
@@ -2335,7 +2726,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 61,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 99,
+          "startLine": 99,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 97,
+          "startLine": 97,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 6,
       "depDegree": 2,
       "endColumn": 3,
@@ -2360,7 +2764,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 95,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 113,
+          "startLine": 110,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 116,
+          "startLine": 116,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 4,
       "endColumn": 3,
@@ -2385,7 +2802,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 107,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 112,
+          "startLine": 112,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 7,
@@ -2410,7 +2835,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 110,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 116,
+          "startLine": 116,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 103,
@@ -2435,7 +2868,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 116,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 121,
+          "startLine": 121,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 3,
@@ -2501,7 +2942,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Queue",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -2526,7 +2969,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 11,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Queue",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -2551,7 +2996,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 14,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Queue",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -2576,7 +3023,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 17,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 23,
+          "startLine": 21,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Queue",
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 3,
@@ -2601,7 +3056,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 20,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Queue",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 3,
@@ -2626,7 +3083,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 25,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 36,
+          "startLine": 34,
+        },
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 43,
+          "startLine": 37,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 61,
+          "startLine": 53,
+        },
+      ],
       "cognitiveComplexity": 20,
+      "containerName": undefined,
       "cyclomaticComplexity": 15,
       "depDegree": 25,
       "endColumn": 1,
@@ -2651,7 +3126,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 31,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 71,
+          "startLine": 71,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 6,
       "endColumn": 1,
@@ -2676,7 +3159,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 69,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 71,
+          "startLine": 71,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 67,
@@ -2701,7 +3192,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 71,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 75,
+          "startLine": 75,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 1,
@@ -2767,7 +3266,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Panel",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -2792,7 +3293,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 6,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 50,
@@ -2817,7 +3320,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 7,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 16,
+          "startLine": 16,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": "Panel",
       "cyclomaticComplexity": 3,
       "depDegree": 0,
       "endColumn": 3,
@@ -2842,7 +3353,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 10,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 30,
+          "startLine": 30,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 29,
+          "startLine": 29,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 7,
       "endColumn": 1,
@@ -2867,7 +3391,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 22,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 79,
@@ -2892,7 +3418,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 22,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 78,
@@ -2917,7 +3445,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 26,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 66,
@@ -2942,7 +3472,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 30,
+          "startLine": 30,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 89,
@@ -2967,7 +3505,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 30,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 36,
+          "startLine": 36,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 83,
@@ -2992,7 +3538,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 36,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -3058,7 +3606,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Status",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 40,
@@ -3083,7 +3633,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Status",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 31,
@@ -3108,7 +3660,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 32,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 26,
@@ -3133,7 +3687,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 47,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 33,
@@ -3158,7 +3714,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 51,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 9,
@@ -3183,7 +3741,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 52,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 5,
@@ -3208,7 +3768,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 63,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 9,
+          "endLine": 84,
+          "startLine": 74,
+        },
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 73,
+          "startLine": 71,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 89,
+          "startLine": 87,
+        },
+      ],
       "cognitiveComplexity": 19,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 13,
       "depDegree": 16,
       "endColumn": 5,
@@ -3233,7 +3811,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 67,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 44,
@@ -3258,7 +3838,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 91,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 106,
+          "startLine": 104,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 110,
+          "startLine": 107,
+        },
+      ],
       "cognitiveComplexity": 6,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 6,
       "depDegree": 6,
       "endColumn": 5,
@@ -3283,7 +3876,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 103,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 123,
+          "startLine": 123,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 120,
+          "startLine": 117,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 129,
+          "startLine": 129,
+        },
+      ],
       "cognitiveComplexity": 8,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 13,
       "endColumn": 5,
@@ -3308,7 +3919,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 115,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 118,
+          "startLine": 118,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 13,
@@ -3333,7 +3952,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 117,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 123,
+          "startLine": 123,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 80,
@@ -3358,7 +3985,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 123,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 88,
@@ -3383,7 +4012,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 124,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 49,
@@ -3408,7 +4039,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 125,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 43,
@@ -3433,7 +4066,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 126,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 56,
@@ -3458,7 +4093,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 126,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 79,
@@ -3483,7 +4120,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 134,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 136,
+          "startLine": 136,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 83,
@@ -3508,7 +4153,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 136,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 76,
@@ -3574,7 +4221,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Registry",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 24,
@@ -3599,7 +4248,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 14,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Registry",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 30,
@@ -3624,7 +4275,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 18,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 23,
+          "startLine": 23,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Registry",
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 69,
@@ -3649,7 +4308,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 22,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 28,
+          "startLine": 27,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Registry",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 26,
@@ -3674,7 +4341,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 25,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 8,
+          "endLine": 42,
+          "startLine": 34,
+        },
+        {
+          "cognitiveComplexity": 4,
+          "endLine": 48,
+          "startLine": 43,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 59,
+          "startLine": 51,
+        },
+      ],
       "cognitiveComplexity": 17,
+      "containerName": undefined,
       "cyclomaticComplexity": 15,
       "depDegree": 20,
       "endColumn": 44,
@@ -3699,7 +4384,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 31,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 74,
+          "startLine": 72,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 77,
+          "startLine": 77,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 11,
       "endColumn": 44,
@@ -3724,7 +4422,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 71,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 74,
+          "startLine": 74,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 51,
@@ -3749,7 +4455,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 72,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 77,
+          "startLine": 77,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 39,
@@ -3774,7 +4488,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 77,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 83,
+          "startLine": 82,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 27,
@@ -3840,7 +4562,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 17,
+          "startLine": 17,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 7,
@@ -3865,7 +4595,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 14,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 36,
@@ -3890,7 +4622,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 20,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 7,
@@ -3915,7 +4649,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 22,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 31,
+          "startLine": 27,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 41,
+          "startLine": 32,
+        },
+      ],
       "cognitiveComplexity": 6,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 9,
       "depDegree": 6,
       "endColumn": 7,
@@ -3940,7 +4687,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 26,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 11,
+          "endLine": 54,
+          "startLine": 45,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 59,
+          "startLine": 56,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 63,
+          "startLine": 61,
+        },
+      ],
       "cognitiveComplexity": 24,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 10,
       "depDegree": 16,
       "endColumn": 7,
@@ -3965,7 +4730,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 44,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 7,
+          "endLine": 53,
+          "startLine": 47,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 46,
+          "startLine": 46,
+        },
+      ],
       "cognitiveComplexity": 8,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 7,
       "endColumn": 9,
@@ -3990,7 +4768,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 45,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 40,
@@ -4015,7 +4795,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 73,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 7,
@@ -4040,7 +4822,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 80,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 32,
@@ -4065,7 +4849,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 86,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 88,
+          "startLine": 88,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 4,
       "endColumn": 3,
@@ -4090,7 +4882,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 87,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 88,
+          "startLine": 88,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 3,
       "endColumn": 81,
@@ -4115,7 +4915,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 88,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 92,
+          "startLine": 92,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 93,
+          "startLine": 93,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 94,
+          "startLine": 94,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 6,
       "endColumn": 3,
@@ -4181,7 +4999,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Auditable",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -4206,7 +5026,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 20,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Inventory",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -4231,7 +5053,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 26,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 10,
+          "endLine": 50,
+          "startLine": 38,
+        },
+        {
+          "cognitiveComplexity": 10,
+          "endLine": 62,
+          "startLine": 51,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 36,
+          "startLine": 32,
+        },
+      ],
       "cognitiveComplexity": 22,
+      "containerName": "Inventory",
       "cyclomaticComplexity": 14,
       "depDegree": 7,
       "endColumn": 5,
@@ -4256,7 +5096,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 30,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 46,
@@ -4281,7 +5123,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 64,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Inventory",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -4306,7 +5150,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 70,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 78,
+          "startLine": 78,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 8,
       "endColumn": 1,
@@ -4331,7 +5183,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 75,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 85,
+          "startLine": 85,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 1,
@@ -4397,7 +5257,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Base",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 6,
@@ -4422,7 +5284,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 23,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Base",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -4447,7 +5311,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 28,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 36,
+          "startLine": 34,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": "Impl",
       "cyclomaticComplexity": 3,
       "depDegree": 3,
       "endColumn": 3,
@@ -4472,7 +5344,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 33,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 56,
@@ -4497,7 +5371,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 35,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 28,
@@ -4522,7 +5398,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 37,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 4,
       "endColumn": 1,
@@ -4547,7 +5425,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 40,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 45,
+          "startLine": 45,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 49,
@@ -4572,7 +5458,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 44,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 50,
+          "startLine": 48,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 7,
       "endColumn": 1,
@@ -4638,7 +5532,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 12,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 1,
@@ -4663,7 +5565,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 11,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 12,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 73,
@@ -4688,7 +5598,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 12,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 21,
+          "startLine": 21,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 1,
@@ -4713,7 +5631,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 16,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 63,
@@ -4738,7 +5658,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 18,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 62,
@@ -4763,7 +5685,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 18,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 31,
+          "startLine": 31,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Table",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 3,
@@ -4788,7 +5718,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 39,
+          "startLine": 39,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": "Table",
       "cyclomaticComplexity": 1,
       "depDegree": 4,
       "endColumn": 3,
@@ -4813,7 +5751,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 34,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 39,
+          "startLine": 39,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 11,
@@ -4838,7 +5784,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 38,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 111,
@@ -4904,7 +5852,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -5006,7 +5956,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 9,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 10,
+          "startLine": 10,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 8,
       "endColumn": 1,
@@ -5031,7 +5994,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 1,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 22,
+          "startLine": 17,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 23,
+          "startLine": 23,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 8,
       "endColumn": 1,
@@ -5133,7 +6109,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 12,
+          "startLine": 7,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 13,
+          "startLine": 13,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 15,
       "endColumn": 1,
@@ -5158,7 +6147,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 4,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 25,
+          "startLine": 20,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 26,
+          "startLine": 26,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 15,
       "endColumn": 1,
@@ -5183,7 +6185,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 17,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -5208,7 +6212,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 31,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -5310,7 +6316,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 13,
+          "startLine": 8,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 14,
+          "startLine": 14,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 15,
       "endColumn": 1,
@@ -5335,7 +6354,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 5,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 26,
+          "startLine": 21,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 27,
+          "startLine": 27,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 15,
       "endColumn": 1,
@@ -5360,7 +6392,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 18,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -5385,7 +6419,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 32,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -5491,7 +6527,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 15,
+          "startLine": 8,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 16,
+          "startLine": 16,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Clones",
       "cyclomaticComplexity": 4,
       "depDegree": 15,
       "endColumn": 5,
@@ -5516,7 +6565,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 4,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 31,
+          "startLine": 24,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 32,
+          "startLine": 32,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Clones",
       "cyclomaticComplexity": 4,
       "depDegree": 15,
       "endColumn": 5,
@@ -5541,7 +6603,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 20,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Clones",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 5,
@@ -5566,7 +6630,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 37,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Clones",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 5,
@@ -5674,7 +6740,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 12,
+          "startLine": 7,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 16,
+          "startLine": 14,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 12,
       "endColumn": 1,
@@ -5699,7 +6778,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 4,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 28,
+          "startLine": 23,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 32,
+          "startLine": 30,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 12,
       "endColumn": 1,
@@ -5724,7 +6816,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 20,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -5749,7 +6843,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 37,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -5851,7 +6947,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 11,
+          "startLine": 6,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 12,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Clones",
       "cyclomaticComplexity": 4,
       "depDegree": 15,
       "endColumn": 3,
@@ -5876,7 +6985,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 3,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 24,
+          "startLine": 19,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 25,
+          "startLine": 25,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Clones",
       "cyclomaticComplexity": 4,
       "depDegree": 15,
       "endColumn": 3,
@@ -5901,7 +7023,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 16,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Clones",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 3,
@@ -5926,7 +7050,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 30,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Clones",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 3,
@@ -6028,7 +7154,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 10,
+          "startLine": 5,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 11,
+          "startLine": 11,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 1,
@@ -6053,7 +7192,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 23,
+          "startLine": 18,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 24,
+          "startLine": 24,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 1,
@@ -6078,7 +7230,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -6103,7 +7257,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -6237,7 +7393,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -6262,7 +7420,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -6287,7 +7447,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 14,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 35,
+          "startLine": 30,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 36,
+          "startLine": 36,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 1,
@@ -6312,7 +7485,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 27,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 48,
+          "startLine": 43,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 49,
+          "startLine": 49,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 1,
@@ -6414,7 +7600,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 11,
+          "startLine": 6,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 12,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 5,
+      "containerName": "Clones",
       "cyclomaticComplexity": 4,
       "depDegree": 13,
       "endColumn": 5,
@@ -6439,7 +7638,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 3,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 24,
+          "startLine": 19,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 25,
+          "startLine": 25,
+        },
+      ],
       "cognitiveComplexity": 5,
+      "containerName": "Clones",
       "cyclomaticComplexity": 4,
       "depDegree": 13,
       "endColumn": 5,
@@ -6464,7 +7676,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 16,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Clones",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 5,
@@ -6489,7 +7703,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 30,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Clones",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 5,
@@ -6583,7 +7799,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 8,
+          "startLine": 5,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 9,
+          "startLine": 9,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 34,
@@ -6608,7 +7837,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 19,
+          "startLine": 16,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 20,
+          "startLine": 20,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 34,
@@ -6633,7 +7875,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 13,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 24,
@@ -6658,7 +7902,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 25,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 24,
@@ -6756,7 +8002,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 9,
+          "startLine": 6,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 11,
+          "startLine": 11,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 11,
       "endColumn": 3,
@@ -6781,7 +8040,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 9,
+          "startLine": 6,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 5,
@@ -6806,7 +8073,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 5,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 22,
+          "startLine": 19,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 24,
+          "startLine": 24,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 11,
       "endColumn": 3,
@@ -6831,7 +8111,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 22,
+          "startLine": 19,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 5,
@@ -6856,7 +8144,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 18,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 3,
@@ -6881,7 +8171,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 3,
@@ -6983,7 +8275,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 10,
+          "startLine": 5,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 11,
+          "startLine": 11,
+        },
+      ],
       "cognitiveComplexity": 5,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 10,
       "endColumn": 1,
@@ -7008,7 +8313,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 23,
+          "startLine": 18,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 24,
+          "startLine": 24,
+        },
+      ],
       "cognitiveComplexity": 5,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 10,
       "endColumn": 1,
@@ -7033,7 +8351,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -7058,7 +8378,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -7160,7 +8482,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 10,
+          "startLine": 5,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 11,
+          "startLine": 11,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 1,
@@ -7185,7 +8520,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 23,
+          "startLine": 18,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 24,
+          "startLine": 24,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 1,
@@ -7210,7 +8558,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -7235,7 +8585,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -7369,7 +8721,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -7394,7 +8748,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 10,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -7419,7 +8775,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 22,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 43,
+          "startLine": 38,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 44,
+          "startLine": 44,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 1,
@@ -7444,7 +8813,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 35,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 56,
+          "startLine": 51,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 57,
+          "startLine": 57,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 11,
       "endColumn": 1,
@@ -7510,7 +8892,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 8,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 2,
       "endColumn": 21,
@@ -7576,7 +8966,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 5,
+          "startLine": 3,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 1,
@@ -7642,7 +9040,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 34,
@@ -7748,7 +9148,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 26,
@@ -7773,7 +9175,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 3,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 29,
@@ -7798,7 +9202,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 5,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 40,
@@ -7864,7 +9270,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 4,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 1,
@@ -7930,7 +9344,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 82,
@@ -7955,7 +9371,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 1,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 60,
@@ -7980,7 +9398,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 3,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 1,
@@ -8086,7 +9506,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -8111,7 +9533,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 1,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 8,
+          "startLine": 6,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 9,
+          "startLine": 9,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 4,
       "endColumn": 1,
@@ -8177,7 +9612,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Alpha",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 15,
@@ -8202,7 +9639,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Alpha",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 25,
@@ -8227,7 +9666,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 4,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Alpha",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -8252,7 +9693,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 6,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Beta",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 15,
@@ -8277,7 +9720,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 13,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Beta",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -8343,7 +9788,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 10,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 19,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 15,
       "endColumn": 1,
@@ -8409,7 +9867,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 13,
+          "startLine": 7,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 22,
+          "startLine": 15,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -8475,7 +9946,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 19,
+          "startLine": 8,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 29,
+          "startLine": 21,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": "Parity",
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 5,
@@ -8541,7 +10025,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 12,
+          "startLine": 6,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 21,
+          "startLine": 14,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -8607,7 +10104,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 11,
+          "startLine": 5,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 20,
+          "startLine": 13,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": "Parity",
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 3,
@@ -8673,7 +10183,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 10,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 19,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -8739,7 +10262,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 10,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 19,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -8805,7 +10341,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 10,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 16,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -8871,7 +10420,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 9,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 16,
+          "startLine": 10,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 26,
@@ -8937,7 +10499,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 10,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 19,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 3,
@@ -9003,7 +10578,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 10,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 16,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -9069,7 +10657,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 10,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 19,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -9135,7 +10736,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 10,
+          "startLine": 4,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 19,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -9201,7 +10815,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MainWindow",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -9226,7 +10842,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 13,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MainWindow",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -9251,7 +10869,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 17,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MainWindow",
       "cyclomaticComplexity": 1,
       "depDegree": 25,
       "endColumn": 5,
@@ -9276,7 +10896,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 27,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MouseListener",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -9301,7 +10923,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 71,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MouseListener",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -9326,7 +10950,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 75,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MouseListener",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -9351,7 +10977,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 79,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 92,
+          "startLine": 88,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": "MouseListener",
       "cyclomaticComplexity": 3,
       "depDegree": 8,
       "endColumn": 5,
@@ -9376,7 +11010,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 83,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 103,
+          "startLine": 97,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "MouseListener",
       "cyclomaticComplexity": 2,
       "depDegree": 6,
       "endColumn": 5,
@@ -9401,7 +11043,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 95,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MyPanel",
       "cyclomaticComplexity": 1,
       "depDegree": 6,
       "endColumn": 5,
@@ -9426,7 +11070,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 118,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MyPanel",
       "cyclomaticComplexity": 1,
       "depDegree": 6,
       "endColumn": 5,
@@ -9451,7 +11097,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 128,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 164,
+          "startLine": 157,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 139,
+          "startLine": 137,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 169,
+          "startLine": 167,
+        },
+      ],
       "cognitiveComplexity": 11,
+      "containerName": "MyPanel",
       "cyclomaticComplexity": 13,
       "depDegree": 36,
       "endColumn": 5,
@@ -9476,7 +11140,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 135,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "MyPanel",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -9542,7 +11208,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 2,
+      "containerName": "ProbeBooleanPaths",
       "cyclomaticComplexity": 3,
       "depDegree": 4,
       "endColumn": 3,
@@ -9567,7 +11235,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 10,
+          "startLine": 8,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": "ProbeBooleanPaths",
       "cyclomaticComplexity": 4,
       "depDegree": 4,
       "endColumn": 3,
@@ -9592,7 +11268,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 7,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 14,
+          "startLine": 14,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "ProbeBooleanPaths",
       "cyclomaticComplexity": 4,
       "depDegree": 4,
       "endColumn": 3,
@@ -9617,7 +11301,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 13,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 23,
+          "startLine": 18,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": "ProbeBooleanPaths",
       "cyclomaticComplexity": 4,
       "depDegree": 2,
       "endColumn": 3,
@@ -9642,7 +11334,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 17,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 37,
+          "startLine": 27,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": "ProbeBooleanPaths",
       "cyclomaticComplexity": 4,
       "depDegree": 1,
       "endColumn": 3,
@@ -9708,7 +11408,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 13,
+          "startLine": 3,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeBranches",
       "cyclomaticComplexity": 3,
       "depDegree": 3,
       "endColumn": 5,
@@ -9733,7 +11441,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 17,
+          "startLine": 17,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 16,
+          "startLine": 16,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "ProbeBranches",
       "cyclomaticComplexity": 4,
       "depDegree": 3,
       "endColumn": 5,
@@ -9758,7 +11479,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 22,
+          "startLine": 20,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 25,
+          "startLine": 23,
+        },
+      ],
       "cognitiveComplexity": 6,
+      "containerName": "ProbeBranches",
       "cyclomaticComplexity": 9,
       "depDegree": 8,
       "endColumn": 5,
@@ -9783,7 +11517,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 19,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 33,
+          "startLine": 29,
+        },
+      ],
       "cognitiveComplexity": 6,
+      "containerName": "ProbeBranches",
       "cyclomaticComplexity": 4,
       "depDegree": 6,
       "endColumn": 5,
@@ -9808,7 +11550,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 27,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 40,
+          "startLine": 38,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": "ProbeBranches",
       "cyclomaticComplexity": 1,
       "depDegree": 3,
       "endColumn": 5,
@@ -9833,7 +11583,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 36,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 40,
+          "startLine": 38,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 9,
@@ -9899,7 +11657,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 5,
+          "startLine": 3,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": "ProbeNestedDecisions",
       "cyclomaticComplexity": 4,
       "depDegree": 3,
       "endColumn": 5,
@@ -9924,7 +11690,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 10,
+          "startLine": 8,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": "ProbeNestedDecisions",
       "cyclomaticComplexity": 4,
       "depDegree": 3,
       "endColumn": 5,
@@ -9949,7 +11723,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 7,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 15,
+          "startLine": 13,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": "ProbeNestedDecisions",
       "cyclomaticComplexity": 5,
       "depDegree": 4,
       "endColumn": 5,
@@ -9974,7 +11756,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 12,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeNestedDecisions",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -9999,7 +11783,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 17,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 34,
+          "startLine": 30,
+        },
+      ],
       "cognitiveComplexity": 5,
+      "containerName": "ProbeNestedDecisions",
       "cyclomaticComplexity": 1,
       "depDegree": 6,
       "endColumn": 5,
@@ -10024,7 +11816,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 26,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 34,
+          "startLine": 30,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 4,
       "endColumn": 13,
@@ -10090,7 +11890,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Shape",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 9,
@@ -10115,7 +11917,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 4,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Base",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 9,
@@ -10140,7 +11944,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 10,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeSignatures",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -10165,7 +11971,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 14,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 20,
+          "startLine": 18,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeSignatures",
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 5,
@@ -10190,7 +12004,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 17,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeSignatures",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 5,
@@ -10256,7 +12072,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 9,
+          "startLine": 3,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": "ProbeStatements",
       "cyclomaticComplexity": 3,
       "depDegree": 4,
       "endColumn": 5,
@@ -10281,7 +12105,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 19,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeStatements",
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 5,
@@ -10306,7 +12138,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 11,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 26,
+          "startLine": 24,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeStatements",
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 5,
@@ -10331,7 +12171,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 21,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 36,
+          "startLine": 33,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": "ProbeStatements",
       "cyclomaticComplexity": 4,
       "depDegree": 7,
       "endColumn": 5,
@@ -10356,7 +12204,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 30,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeStatements",
       "cyclomaticComplexity": 1,
       "depDegree": 3,
       "endColumn": 5,
@@ -10381,7 +12231,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 41,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeStatements",
       "cyclomaticComplexity": 1,
       "depDegree": 4,
       "endColumn": 5,
@@ -10406,7 +12258,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 45,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 81,
@@ -10472,7 +12326,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 9,
+          "startLine": 3,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeSwitchAlternatives",
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 3,
@@ -10497,7 +12359,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 20,
+          "startLine": 13,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeSwitchAlternatives",
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 3,
@@ -10522,7 +12392,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 12,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 29,
+          "startLine": 24,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeSwitchAlternatives",
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 3,
@@ -10588,7 +12466,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 7,
+          "startLine": 5,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeTryForms",
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 5,
@@ -10613,7 +12499,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 2,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeTryForms",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -10638,7 +12526,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 9,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 21,
+          "startLine": 19,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "ProbeTryForms",
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 5,
@@ -10663,7 +12559,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 16,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeTryForms",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -10688,7 +12586,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 23,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeTryForms",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -10713,7 +12613,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 28,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "ProbeTryForms",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -10738,7 +12640,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 31,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 13,
@@ -10804,7 +12708,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 4,
+          "endLine": 30,
+          "startLine": 26,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 38,
+          "startLine": 31,
+        },
+      ],
       "cognitiveComplexity": 5,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 5,
       "endColumn": 1,
@@ -10829,7 +12746,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 25,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 45,
+          "startLine": 43,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 48,
+          "startLine": 46,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 51,
+          "startLine": 49,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 10,
       "endColumn": 1,
@@ -10854,7 +12789,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 41,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 56,
+          "startLine": 56,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 1,
@@ -10879,7 +12822,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 55,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -10904,7 +12849,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 59,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 72,
+          "startLine": 70,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 73,
+          "startLine": 73,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 5,
       "endColumn": 1,
@@ -10970,7 +12928,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Engine",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 42,
@@ -10995,7 +12955,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 16,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Engine",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -11020,7 +12982,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 18,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 25,
@@ -11045,7 +13009,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 28,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 44,
@@ -11070,7 +13036,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 36,
@@ -11095,7 +13063,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 32,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -11120,7 +13090,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 34,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 4,
+          "endLine": 47,
+          "startLine": 43,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 55,
+          "startLine": 48,
+        },
+      ],
       "cognitiveComplexity": 5,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 5,
       "endColumn": 1,
@@ -11145,7 +13128,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 42,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 4,
+          "endLine": 67,
+          "startLine": 65,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 63,
+          "startLine": 61,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 70,
+          "startLine": 68,
+        },
+      ],
       "cognitiveComplexity": 8,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 12,
       "endColumn": 1,
@@ -11170,7 +13171,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 58,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 52,
@@ -11195,7 +13198,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 59,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 75,
+          "startLine": 75,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 1,
@@ -11220,7 +13231,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 74,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 87,
+          "startLine": 85,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 90,
+          "startLine": 88,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 5,
       "endColumn": 1,
@@ -11286,7 +13310,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 32,
+          "startLine": 29,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 5,
@@ -11311,7 +13343,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 27,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 35,
@@ -11336,7 +13370,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 37,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 40,
@@ -11361,7 +13397,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 38,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 44,
@@ -11386,7 +13424,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 41,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 50,
@@ -11411,7 +13451,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 43,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 7,
+          "endLine": 72,
+          "startLine": 50,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 77,
+          "startLine": 74,
+        },
+      ],
       "cognitiveComplexity": 8,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 8,
       "depDegree": 8,
       "endColumn": 5,
@@ -11436,7 +13489,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 45,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 89,
+          "startLine": 89,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 87,
+          "startLine": 87,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 6,
       "depDegree": 6,
       "endColumn": 6,
@@ -11461,7 +13527,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 85,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 103,
+          "startLine": 96,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 115,
+          "startLine": 115,
+        },
+      ],
       "cognitiveComplexity": 5,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 4,
       "depDegree": 13,
       "endColumn": 5,
@@ -11486,7 +13565,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 93,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 9,
@@ -11511,7 +13592,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 104,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 57,
@@ -11536,7 +13619,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 109,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 9,
@@ -11561,7 +13646,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 110,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 52,
@@ -11586,7 +13673,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 114,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 123,
+          "startLine": 123,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 5,
@@ -11611,7 +13706,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 121,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 5,
@@ -11636,7 +13733,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 126,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -11702,7 +13801,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -11727,7 +13828,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 21,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 29,
+          "startLine": 27,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 5,
       "endColumn": 1,
@@ -11752,7 +13861,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 25,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 46,
+          "startLine": 35,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 10,
       "endColumn": 1,
@@ -11777,7 +13894,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 33,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 55,
+          "startLine": 53,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 5,
       "depDegree": 5,
       "endColumn": 1,
@@ -11802,7 +13927,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 50,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 73,
+          "startLine": 66,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 5,
       "endColumn": 1,
@@ -11827,7 +13960,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 64,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 79,
+          "startLine": 77,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 1,
@@ -11852,7 +13993,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 76,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 52,
@@ -11877,7 +14020,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 83,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 90,
+          "startLine": 88,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 1,
@@ -11943,7 +14094,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Shipment",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -11968,7 +14121,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Status",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 7,
@@ -11993,7 +14148,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 23,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Status",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -12018,7 +14175,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 37,
+          "startLine": 35,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 3,
@@ -12043,7 +14208,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 34,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 7,
+          "endLine": 53,
+          "startLine": 43,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 56,
+          "startLine": 54,
+        },
+      ],
       "cognitiveComplexity": 8,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 8,
       "depDegree": 7,
       "endColumn": 3,
@@ -12068,7 +14246,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 40,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 66,
+          "startLine": 66,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 64,
+          "startLine": 64,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 6,
       "depDegree": 1,
       "endColumn": 3,
@@ -12093,7 +14284,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 62,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 78,
+          "startLine": 73,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 3,
       "depDegree": 7,
       "endColumn": 3,
@@ -12118,7 +14317,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 71,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 7,
@@ -12143,7 +14344,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 80,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 65,
@@ -12168,7 +14371,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 86,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 91,
+          "startLine": 91,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 3,
@@ -12234,7 +14445,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Ledger",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -12259,7 +14472,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 12,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Ledger",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 3,
@@ -12284,7 +14499,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 17,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 29,
+          "startLine": 27,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 40,
+          "startLine": 31,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 44,
+          "startLine": 42,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": undefined,
       "cyclomaticComplexity": 7,
       "depDegree": 10,
       "endColumn": 1,
@@ -12309,7 +14542,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 22,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 54,
+          "startLine": 52,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 51,
+          "startLine": 49,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 5,
       "endColumn": 1,
@@ -12334,7 +14580,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 48,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 37,
@@ -12359,7 +14607,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 58,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 62,
+          "startLine": 62,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 1,
@@ -12425,7 +14681,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 16,
+          "startLine": 9,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 17,
+          "startLine": 17,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 4,
       "endColumn": 1,
@@ -12450,7 +14719,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 4,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 7,
@@ -12475,7 +14746,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 9,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 46,
@@ -12500,7 +14773,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 14,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 57,
@@ -12525,7 +14800,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 26,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 31,
+          "startLine": 29,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 1,
@@ -12591,7 +14874,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Status",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 40,
@@ -12616,7 +14901,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 22,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Status",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 31,
@@ -12641,7 +14928,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 25,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 26,
@@ -12666,7 +14955,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 41,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 5,
@@ -12691,7 +14982,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 52,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 7,
+          "endLine": 69,
+          "startLine": 59,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 72,
+          "startLine": 70,
+        },
+      ],
       "cognitiveComplexity": 8,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 8,
       "depDegree": 7,
       "endColumn": 5,
@@ -12716,7 +15020,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 56,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 81,
+          "startLine": 79,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 84,
+          "startLine": 82,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 6,
       "depDegree": 6,
       "endColumn": 5,
@@ -12741,7 +15058,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 78,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 6,
+          "endLine": 110,
+          "startLine": 108,
+        },
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 96,
+          "startLine": 91,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 106,
+          "startLine": 106,
+        },
+      ],
       "cognitiveComplexity": 12,
+      "containerName": "Warehouse",
       "cyclomaticComplexity": 7,
       "depDegree": 15,
       "endColumn": 5,
@@ -12766,7 +15101,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 89,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 13,
@@ -12791,7 +15128,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 98,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 55,
@@ -12816,7 +15155,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 103,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 49,
@@ -12841,7 +15182,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 104,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 43,
@@ -12866,7 +15209,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 105,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 51,
@@ -12891,7 +15236,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 117,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 119,
+          "startLine": 119,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 83,
@@ -12957,7 +15310,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Repository",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 40,
@@ -12982,7 +15337,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Repository",
       "cyclomaticComplexity": 1,
       "depDegree": 3,
       "endColumn": 41,
@@ -13007,7 +15364,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 18,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 12,
+          "endLine": 36,
+          "startLine": 28,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 26,
+          "startLine": 25,
+        },
+      ],
       "cognitiveComplexity": 14,
+      "containerName": "Repository",
       "cyclomaticComplexity": 8,
       "depDegree": 16,
       "endColumn": 32,
@@ -13032,7 +15402,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 21,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 47,
+          "startLine": 46,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 45,
+          "startLine": 44,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 6,
       "depDegree": 1,
       "endColumn": 26,
@@ -13057,7 +15440,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 40,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 56,
+          "startLine": 56,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 53,
+          "startLine": 53,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 55,
+          "startLine": 54,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 13,
       "endColumn": 25,
@@ -13082,7 +15483,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 52,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 56,
+          "startLine": 56,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 3,
       "endColumn": 55,
@@ -13107,7 +15516,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 56,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 66,
+          "startLine": 63,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 7,
       "endColumn": 16,
@@ -13132,7 +15549,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 60,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 76,
+          "startLine": 73,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 7,
       "endColumn": 16,
@@ -13198,7 +15623,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 7,
@@ -13223,7 +15650,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 1,
       "depDegree": 3,
       "endColumn": 7,
@@ -13248,7 +15677,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 20,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 7,
@@ -13273,7 +15704,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 26,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 7,
@@ -13298,7 +15731,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 30,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 39,
+          "startLine": 38,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 37,
+          "startLine": 36,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 6,
       "depDegree": 2,
       "endColumn": 7,
@@ -13323,7 +15769,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 34,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 7,
+          "endLine": 56,
+          "startLine": 50,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 49,
+          "startLine": 49,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 58,
+          "startLine": 58,
+        },
+      ],
       "cognitiveComplexity": 11,
+      "containerName": "Invoice",
       "cyclomaticComplexity": 3,
       "depDegree": 7,
       "endColumn": 7,
@@ -13348,7 +15812,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 47,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 5,
+          "endLine": 56,
+          "startLine": 50,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 49,
+          "startLine": 49,
+        },
+      ],
       "cognitiveComplexity": 6,
+      "containerName": undefined,
       "cyclomaticComplexity": 5,
       "depDegree": 5,
       "endColumn": 9,
@@ -13373,7 +15850,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 48,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 40,
@@ -13398,7 +15877,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 59,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 32,
@@ -13423,7 +15904,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 68,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 71,
+          "startLine": 71,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 6,
       "endColumn": 3,
@@ -13448,7 +15937,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 69,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 71,
+          "startLine": 71,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 3,
       "endColumn": 78,
@@ -13473,7 +15970,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 71,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 76,
+          "startLine": 76,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 77,
+          "startLine": 77,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 78,
+          "startLine": 78,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 6,
       "endColumn": 3,
@@ -13539,7 +16054,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Auditable",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -13564,7 +16081,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 22,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Inventory",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -13589,7 +16108,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 28,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 46,
+          "startLine": 40,
+        },
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 53,
+          "startLine": 47,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 38,
+          "startLine": 34,
+        },
+      ],
       "cognitiveComplexity": 7,
+      "containerName": "Inventory",
       "cyclomaticComplexity": 8,
       "depDegree": 2,
       "endColumn": 5,
@@ -13614,7 +16151,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 32,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Inventory",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -13639,7 +16178,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 59,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Inventory",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 5,
@@ -13664,7 +16205,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 65,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 71,
+          "startLine": 71,
+        },
+      ],
       "cognitiveComplexity": 2,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 1,
@@ -13689,7 +16238,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 70,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 4,
+          "endLine": 79,
+          "startLine": 77,
+        },
+        {
+          "cognitiveComplexity": 4,
+          "endLine": 86,
+          "startLine": 80,
+        },
+      ],
       "cognitiveComplexity": 8,
+      "containerName": undefined,
       "cyclomaticComplexity": 5,
       "depDegree": 11,
       "endColumn": 1,
@@ -13714,7 +16276,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 74,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 39,
@@ -13814,7 +16378,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Scheduler",
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,
@@ -13839,7 +16405,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 21,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 16,
+          "endLine": 51,
+          "startLine": 31,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 57,
+          "startLine": 55,
+        },
+      ],
       "cognitiveComplexity": 18,
+      "containerName": "Scheduler",
       "cyclomaticComplexity": 11,
       "depDegree": 17,
       "endColumn": 3,
@@ -13864,7 +16443,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 26,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 63,
+          "startLine": 63,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 1,
@@ -13889,7 +16476,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 62,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 6,
       "endColumn": 1,
@@ -13914,7 +16503,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 66,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 52,
@@ -13939,7 +16530,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 67,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 84,
+          "startLine": 80,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 7,
       "endColumn": 1,
@@ -13964,7 +16563,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 77,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 3,
+          "endLine": 96,
+          "startLine": 92,
+        },
+      ],
       "cognitiveComplexity": 4,
+      "containerName": undefined,
       "cyclomaticComplexity": 3,
       "depDegree": 7,
       "endColumn": 1,
@@ -14030,7 +16637,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 22,
+          "startLine": 22,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 7,
       "endColumn": 1,
@@ -14055,7 +16670,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 9,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 78,
@@ -14080,7 +16697,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 11,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 74,
@@ -14105,7 +16724,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 11,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 43,
@@ -14130,7 +16751,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 14,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 22,
+          "startLine": 22,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 4,
       "endColumn": 11,
@@ -14155,7 +16784,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 19,
     },
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 35,
+          "startLine": 33,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 1,
@@ -14180,7 +16817,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 32,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 1,
@@ -14205,7 +16844,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 39,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 3,
       "endColumn": 1,
@@ -14230,7 +16871,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 43,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 2,
       "endColumn": 3,
@@ -14296,7 +16939,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 4,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 1,
@@ -14362,7 +17013,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 6,
+          "startLine": 4,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Sample",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 3,
@@ -14428,7 +17087,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 8,
+          "startLine": 5,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Sample",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 5,
@@ -14494,7 +17161,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 6,
+          "startLine": 4,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 1,
@@ -14560,7 +17235,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 5,
+          "startLine": 3,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Sample",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 3,
@@ -14626,7 +17309,20 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 2,
+          "endLine": 7,
+          "startLine": 5,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 8,
+          "startLine": 8,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 4,
       "endColumn": 1,
@@ -14692,7 +17388,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 2,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 1,
@@ -14758,7 +17462,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 5,
+          "startLine": 3,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": "Sample",
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 5,
@@ -14824,7 +17536,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 3,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 16,
@@ -14890,7 +17610,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 4,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 3,
@@ -14956,7 +17684,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 4,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 2,
       "endColumn": 1,
@@ -15022,7 +17758,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 4,
+          "startLine": 2,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 1,
       "endColumn": 1,
@@ -15088,7 +17832,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 4,
+          "startLine": 4,
+        },
+      ],
       "cognitiveComplexity": 1,
+      "containerName": undefined,
       "cyclomaticComplexity": 2,
       "depDegree": 0,
       "endColumn": 1,
@@ -15154,7 +17906,25 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 8,
+          "startLine": 5,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 11,
+          "startLine": 9,
+        },
+        {
+          "cognitiveComplexity": 1,
+          "endLine": 14,
+          "startLine": 12,
+        },
+      ],
       "cognitiveComplexity": 3,
+      "containerName": undefined,
       "cyclomaticComplexity": 4,
       "depDegree": 6,
       "endColumn": 1,
@@ -15220,7 +17990,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 3,
       "endColumn": 1,
@@ -15286,7 +18058,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -15311,7 +18085,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 11,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -15336,7 +18112,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 15,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -15361,7 +18139,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 19,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -15427,7 +18207,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
   },
   "functions": [
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -15452,7 +18234,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 10,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -15477,7 +18261,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 14,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -15502,7 +18288,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 23,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -15527,7 +18315,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 29,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -15552,7 +18342,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 33,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Private",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -15577,7 +18369,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 41,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": "Widget",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -15602,7 +18396,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 47,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 1,
@@ -15627,7 +18423,9 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       "startLine": 52,
     },
     {
+      "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,

@@ -76,8 +76,19 @@ export interface HalsteadMetrics {
   effort: number;
 }
 
+export interface CognitiveBlock {
+  startLine: number;
+  endLine: number;
+  cognitiveComplexity: number;
+}
+
 export interface FunctionMetrics {
   name?: string;
+  /**
+   * The name of the class-like declaration (class, struct, interface, trait, Rust `impl`, Ruby
+   * module) whose member the function is; absent for a function nested in another function.
+   */
+  containerName?: string;
   /**
    * The tree-sitter node type of the function (e.g. `method_declaration`, `arrow_function`,
    * `lambda_expression`), letting consumers distinguish declared methods from lambdas — e.g. to
@@ -101,6 +112,12 @@ export interface FunctionMetrics {
    */
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
+  /**
+   * The parts of the function adding the most cognitive complexity, largest first (at most 3): its
+   * outermost branching constructs and the functions nested directly in its body, each with the
+   * complexity its whole span adds to this function.
+   */
+  cognitiveBlocks: CognitiveBlock[];
   nestingDepth: number;
   /**
    * Non-commenting source statements in the function, PMD-style: the declaration itself, each

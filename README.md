@@ -161,20 +161,25 @@ one remediation hint per violated metric:
 
 ```
 Threshold violations: 1 errors, 2 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-48 decide: cognitive complexity 34 (max 30), NCSS 36 (warning max 30)
+error: src/legacy.ts:1-48 Rules.decide: cognitive complexity 34 (max 30; most from L12-31 19, L33-40 isLegacy 8, L44 2), NCSS 36 (warning max 30)
 warning: src/report.ts:1-18: duplicated lines 18 (max 14), also at src/summary.ts:1-18
 warning: src/summary.ts:1-18: duplicated lines 18 (max 14), also at src/report.ts:1-18
 
 How to fix:
 - cognitive complexity: flatten nested branching with early returns and extract nested blocks into named functions.
-- NCSS: split the function into smaller functions that each do one step.
+- NCSS: move the statements that form one step into a named function; leave a flat list of independent one-line steps as it is.
 - duplicated lines: extract the repeated code into one shared function or module and call it from every location.
 ```
 
 A violation's level is that of its most severe limit. A function gets one line listing every
 threshold it exceeds, each with the largest value its violated limit allows and, when that limit is
-milder than the line's level, the limit's own level; a file-level violation
-prints the path without a line span, and a duplicated block lists up to three of its other copies.
+milder than the line's level, the limit's own level; a method is named with its class
+(`Rules.decide`). A cognitive-complexity violation also names up to three parts of the function
+adding the most to it, largest first, each with its lines, its name when it is a nested function,
+and what it adds: the outermost branching constructs and nested functions of the body or, where one
+of them merely wraps most of the function (a loop or a callback around the whole body), the ones
+inside it. A file-level violation prints the path without a line span, and a duplicated block lists
+up to three of its other copies, largest first.
 Paths are relative to the repository root, or to the target directory outside a git repository.
 
 | Exit code | Meaning                                                                                                                          |
@@ -220,7 +225,12 @@ ranking command.
         { "metric": "functionCognitiveComplexity", "value": 34, "level": "error", "limit": 30 },
         { "metric": "functionNcss", "value": 36, "level": "warning", "limit": 30 }
       ],
-      "name": "decide"
+      "name": "Rules.decide",
+      "largestBlocks": [
+        { "startLine": 12, "endLine": 31, "cognitiveComplexity": 19 },
+        { "startLine": 33, "endLine": 40, "cognitiveComplexity": 8, "name": "isLegacy" },
+        { "startLine": 44, "endLine": 44, "cognitiveComplexity": 2 }
+      ]
     },
     {
       "kind": "duplication",
@@ -247,13 +257,18 @@ ranking command.
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
     kind `file`, the first and last line of the file;
-  - `name`: only for kind `function`; `<anonymous>` for a function without a name;
+  - `name`: only for kind `function`; a method's name follows its class (`Rules.decide`), and a
+    function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
     `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe
     `level` whose limit the value violates, and that `limit`. A value violates when it is above the
     limit; `duplicateLines` violates from the limit on;
-  - `partners`: only for kind `duplication`; every other copy of the block, ordered by `file`, then
-    `startLine`.
+  - `largestBlocks`: only for a function exceeding a cognitive-complexity limit; the parts the
+    text report names, each with its line span, the `cognitiveComplexity` it adds to the function,
+    and its `name` when it is a named nested function;
+  - `partners`: only for kind `duplication`; every other copy of the block, largest first: the
+    block merges every clone overlapping it, so its copies range from whole copies of it to a few
+    lines matching one fragment.
 - `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
   `error` level of a violation.
 - `warnings`: files measured without cross-file duplication data, and unmeasured files of the

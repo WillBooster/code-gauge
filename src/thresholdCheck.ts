@@ -10,7 +10,7 @@ import {
   type LimitsByLevel,
   type Threshold,
 } from './thresholds.js';
-import type { CodeMetrics, FunctionMetrics } from './types.js';
+import type { CodeMetrics, CognitiveBlock, FunctionMetrics } from './types.js';
 
 /** A measured file to check, under the path cross-file duplication knows it by. */
 export interface CheckedFile {
@@ -35,14 +35,25 @@ export interface BlockLocation {
   endLine: number;
 }
 
+/** A part of a function with the cognitive complexity it adds to that function. */
+export interface ViolationBlock extends CognitiveBlock {
+  /** The nested function the block is, when it is one with a name. */
+  name?: string;
+}
+
 export interface Violation extends BlockLocation {
   kind: 'function' | 'file' | 'duplication';
   /** The most severe level among `exceeded`. */
   level: Level;
-  /** The function's name, for kind `function`. */
+  /** The function's name, qualified with the class it is a member of, for kind `function`. */
   name?: string;
   exceeded: ExceededLimit[];
-  /** The other copies of the block, for kind `duplication`. */
+  /**
+   * The parts adding the most to the cognitive complexity, largest first, for a function that
+   * exceeds a limit of it.
+   */
+  largestBlocks?: ViolationBlock[];
+  /** The other copies of the block, largest first, for kind `duplication`. */
   partners?: BlockLocation[];
 }
 
@@ -52,6 +63,8 @@ export interface CheckResult {
 }
 
 const violationKinds: readonly Violation['kind'][] = ['file', 'function', 'duplication'];
+
+const cognitiveComplexityMetric = 'functionCognitiveComplexity';
 
 const nestedInclusiveMetrics = new Set(
   functionThresholds
@@ -84,11 +97,7 @@ export function checkThresholds(
     for (const { fn, exceeded } of exceedingFunctions) {
       const ownExceeded = exceeded.filter((limit) => !isReportedByEnclosingFunction(limit, fn, exceedingFunctions));
       if (ownExceeded.length > 0) {
-        const { startLine, endLine } = fn;
-        violations.push({
-          ...toViolation({ file, startLine, endLine }, 'function', ownExceeded),
-          name: fn.name ?? '<anonymous>',
-        });
+        violations.push(toFunctionViolation(file, fn, ownExceeded, metrics.functions));
       }
     }
     violations.push(
@@ -145,6 +154,30 @@ function encloses(outer: FunctionMetrics, inner: FunctionMetrics): boolean {
   const endsAfter =
     outer.endLine > inner.endLine || (outer.endLine === inner.endLine && outer.endColumn >= inner.endColumn);
   return startsBefore && endsAfter;
+}
+
+function toFunctionViolation(
+  file: string,
+  fn: FunctionMetrics,
+  exceeded: ExceededLimit[],
+  fileFunctions: readonly FunctionMetrics[]
+): Violation {
+  const { startLine, endLine } = fn;
+  const name = fn.name ?? '<anonymous>';
+  const exceedsCognitiveComplexity = exceeded.some(({ metric }) => metric === cognitiveComplexityMetric);
+  return {
+    ...toViolation({ file, startLine, endLine }, 'function', exceeded),
+    name: fn.containerName ? `${fn.containerName}.${name}` : name,
+    ...(exceedsCognitiveComplexity &&
+      fn.cognitiveBlocks.length > 0 && {
+        largestBlocks: fn.cognitiveBlocks.map((block) => ({
+          ...block,
+          name: fileFunctions.find(
+            (nested) => nested !== fn && nested.startLine === block.startLine && nested.endLine === block.endLine
+          )?.name,
+        })),
+      }),
+  };
 }
 
 function toViolation(location: BlockLocation, kind: Violation['kind'], exceeded: ExceededLimit[]): Violation {
@@ -236,9 +269,12 @@ function collectDuplicationViolations(
   return mergeOverlapping([...copiesByBlock.keys()]).map(({ merged, sources }) => ({
     ...toViolation(merged, 'duplication', findExceededLines(merged)),
     // The region's own occurrences are among the copies of the groups it belongs to.
+    // The region merges every clone that overlaps it, so its copies range from whole copies of it
+    // to a few lines matching one fragment; the largest say the most about what to share.
     partners: mergeOverlapping(sources.flatMap((source) => copiesByBlock.get(source) ?? []))
       .map((partner) => partner.merged)
-      .filter((partner) => !overlaps(partner, merged)),
+      .filter((partner) => !overlaps(partner, merged))
+      .toSorted((left, right) => countLines(right) - countLines(left)),
   }));
 }
 
@@ -259,6 +295,10 @@ function mergeOverlapping(locations: readonly BlockLocation[]): { merged: BlockL
     }
   }
   return regions;
+}
+
+function countLines({ startLine, endLine }: BlockLocation): number {
+  return endLine - startLine + 1;
 }
 
 function overlaps(left: BlockLocation, right: BlockLocation): boolean {

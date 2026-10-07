@@ -260,6 +260,64 @@ fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     bound
 }
 
+const CONTAINER_NODE_TYPES: &[&str] = &[
+    "abstract_class_declaration",
+    "class",
+    "class_declaration",
+    "class_definition",
+    "class_specifier",
+    "enum_declaration",
+    "impl_item",
+    "interface_declaration",
+    "module",
+    "object_declaration",
+    "record_declaration",
+    "struct_declaration",
+    "struct_specifier",
+    "trait_item",
+];
+const CONTAINER_NAME_NODE_TYPES: &[&str] = &[
+    "constant",
+    "identifier",
+    "simple_identifier",
+    "type_identifier",
+];
+
+/// The name of the class-like declaration (class, struct, interface, trait, impl, module) whose
+/// member the function is: the nearest one enclosing it with no other function in between.
+pub fn find_container_name(
+    node: Node<'_>,
+    function_nodes: &FxHashSet<&'static str>,
+    code: &Source<'_>,
+) -> Option<String> {
+    let mut current = node.parent_node();
+    while let Some(ancestor) = current {
+        if crate::complexity::is_function_boundary(ancestor, function_nodes) {
+            return None;
+        }
+        if ancestor.is_named() && CONTAINER_NODE_TYPES.contains(&ancestor.kind_name()) {
+            // A Rust `impl` names its type in the `type` field, where `Pass<'a>` in turn wraps
+            // the name in a `generic_type`; Kotlin names a class in a child.
+            let name_node = ancestor
+                .child_by_field_name("name")
+                .or_else(|| {
+                    let implemented = ancestor.child_by_field_name("type")?;
+                    implemented
+                        .child_by_field_name("type")
+                        .or(Some(implemented))
+                })
+                .or_else(|| {
+                    crate::util::named_children(ancestor)
+                        .into_iter()
+                        .find(|child| CONTAINER_NAME_NODE_TYPES.contains(&child.kind_name()))
+                })?;
+            return Some(node_text(name_node, code).to_string()).filter(|name| !name.is_empty());
+        }
+        current = ancestor.parent_node();
+    }
+    None
+}
+
 pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
     if let Some(wrapped_name) =
@@ -977,10 +1035,7 @@ fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
             .child(index)
             .is_some_and(|child| child.id() == node.id())
         {
-            return matches!(
-                parent.field_name_for_child(index),
-                None | Some("value")
-            );
+            return matches!(parent.field_name_for_child(index), None | Some("value"));
         }
     }
     false
