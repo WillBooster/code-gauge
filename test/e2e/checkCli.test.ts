@@ -333,6 +333,19 @@ ep\`](value: number): number {
     expect(runCheck(['src2']).stdout).toContain('(1 files, 2 functions checked)');
   });
 
+  it('ranks a copy outside the target by its code lines like one inside', () => {
+    // A copy of the statements only, which comments stretch over more lines than a full copy.
+    const statements = reportFunction('partial').split('\n').slice(1, 10).join('\n  // A step.\n\n');
+    writeSource(
+      'src/padded.ts',
+      `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
+    );
+    writeSource('src/sub/full.ts', reportFunction('full'));
+    expect(runCheck(['src/sub', '--warning-min-duplicate-lines', '5']).stdout).toContain(
+      'src/sub/full.ts:1-12: duplicated lines 12 (max 4), also at src/report.ts:1-12, src/summary.ts:1-12, src/padded.ts:3-27\n'
+    );
+  });
+
   it('prints a JSON report with --json', () => {
     const result = runCheck(['--json']);
     expect(result.status).toBe(0);
