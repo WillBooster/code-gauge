@@ -203,18 +203,7 @@ pub fn find_inline_namespaces<'s>(root: Node<'_>, code: &Source<'s>) -> InlineNa
             if child.kind_name() != "namespace_definition" {
                 continue;
             }
-            let mut inner_path = path.clone();
-            if let Some(name) = child.child_by_field_name("name") {
-                for (part, is_inline) in
-                    namespace_parts(name, is_transparent_namespace(child), code)
-                {
-                    if is_inline {
-                        found.push((inner_path.clone(), part));
-                    } else {
-                        inner_path.push(part);
-                    }
-                }
-            }
+            let inner_path = enter_namespace(child, &path, &mut found, code);
             if let Some(body) = child.child_by_field_name("body") {
                 pending.push((body, inner_path));
             }
@@ -233,6 +222,27 @@ fn merge_cpp_scopes<'s>(mut enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> V
     enclosing.truncate(restart.unwrap_or(enclosing.len()));
     enclosing.extend(spelled);
     enclosing
+}
+
+/// Records the inline parts of the namespace's name and returns the path of its members.
+fn enter_namespace<'s>(
+    namespace: Node<'_>,
+    path: &[&'s str],
+    found: &mut InlineNamespaces<'s>,
+    code: &Source<'s>,
+) -> Vec<&'s str> {
+    let mut inner_path = path.to_vec();
+    let Some(name) = namespace.child_by_field_name("name") else {
+        return inner_path;
+    };
+    for (part, is_inline) in namespace_parts(name, is_transparent_namespace(namespace), code) {
+        if is_inline {
+            found.push((inner_path.clone(), part));
+        } else {
+            inner_path.push(part);
+        }
+    }
+    inner_path
 }
 
 /// The parts of a namespace's name, each with whether it is inline: the namespace itself when
