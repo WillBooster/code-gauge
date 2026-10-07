@@ -197,7 +197,15 @@ export interface DuplicationMetrics {
 
 export interface DuplicateBlockOccurrence {
   endLine: number;
+  /**
+   * Code lines carrying the occurrence's matched tokens: the lines from startLine to endLine
+   * without comment-only and blank lines, the unmatched gap of a merged clone, and what lies
+   * between the matched cores of a near-miss block.
+   */
+  lineCount: number;
   startLine: number;
+  /** Matched tokens, counted like the group's size (see DuplicationMetrics.maxDuplicateBlockSize). */
+  tokenCount: number;
 }
 
 export interface CodeMetrics {

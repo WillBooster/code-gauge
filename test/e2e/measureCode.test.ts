@@ -771,8 +771,8 @@ describe('measureCode: within-file duplication', () => {
     expect(metrics.duplication.duplicateBlockCount).toBe(1);
     expect(metrics.duplication.duplicateBlockGroups).toEqual([
       [
-        { startLine: 1, endLine: 12 },
-        { startLine: 14, endLine: 25 },
+        { startLine: 1, endLine: 12, lineCount: 12, tokenCount: 73 },
+        { startLine: 14, endLine: 25, lineCount: 12, tokenCount: 73 },
       ],
     ]);
     expect(metrics.duplication.duplicationRatio).toBe(1);

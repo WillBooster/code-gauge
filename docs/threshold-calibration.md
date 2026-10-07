@@ -301,8 +301,8 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   six of ten between 251 and 400, and six of the seven files above 1000 should be split, against
   seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
   percentiles are 377 and 1042.
-- **Duplicated lines, 15, no error.** In line span here; [in code lines](#duplicated-blocks-measured-in-code-lines) the limit is the same. Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
-  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,869 blocks from 10 code lines).
+- **Duplicated lines, 15, no error.** In line span here; [in matched lines](#duplicated-blocks-measured-in-matched-lines) the limit is the same. Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
+  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,859 blocks from 10 matched lines).
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
   more often than others of their cognitive complexity.
@@ -316,36 +316,39 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   which the metric names no change to make. Halstead effort is the product of volume and
   difficulty and was not rated on its own.
 
-With these limits, `check` reports 464 errors and 2,436 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
+With these limits, `check` reports 464 errors and 2,424 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
 
-## Duplicated blocks measured in code lines
+## Duplicated blocks measured in matched lines
 
 The tables of duplicated blocks above, and that of the [public part](#public-part-of-the-corpus)
-below, count a block by its line span, as `check` did when the limits were set. `check` now counts the lines of the span that are neither blank nor comment-only, so that a
-commented copy and its bare partner have the same length, and the limit was re-examined on the
-same corpus, exported again at its recorded commits (the same 45,123 functions and 6,603 files):
+below, count a block by its line span, as `check` did when the limits were set. `check` now counts
+the lines of the span matched in another copy. Lines that are blank or comment-only do not count,
+so that a commented copy and its bare partner have the same length, and neither do the lines
+between the matched parts of an edited copy, which the copies do not share. The limit was
+re-examined on the same corpus, exported again at its recorded commits (the same 45,123 functions
+and 6,603 files):
 
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| code lines           |   5,735 |    2,869 |    1,143 |      524 |      153 |       32 |
+| matched lines        |   5,735 |    2,859 |    1,131 |      513 |      147 |       30 |
 
-Regrouped by the code lines of their longest block, the 60 rated clone groups separate no better
-than by its span:
+Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
+groups separate no better than by its span:
 
-| Longest block, code lines | Rated |   A | A or B |
-| ------------------------- | ----: | --: | -----: |
-| up to 9                   |    15 | 20% |    53% |
-| 10–14                     |    13 | 15% |    62% |
-| 15–19                     |    10 | 20% |    60% |
-| 20–29                     |    14 | 29% |    79% |
-| 30 or more                |     8 | 25% |    62% |
+| Longest block, matched lines | Rated |   A | A or B |
+| ---------------------------- | ----: | --: | -----: |
+| up to 9                      |    12 | 17% |    50% |
+| 10–14                        |    15 | 20% |    60% |
+| 15–19                        |    11 | 18% |    55% |
+| 20–29                        |    15 | 27% |    80% |
+| 30 or more                   |     7 | 29% |    71% |
 
-The limit stays at 15: of the rated groups reaching it, 69% are A or B in code lines (22 of 32) as
-in line span (25 of 36), and no lower limit raises that share (66% from 13, 67% from 10) while
-a limit of 10 reports two and a half times the blocks. The same limit in code lines reports a
-quarter fewer blocks; those dropped are the ones that reached 15 lines only through their comments
-and blank lines.
+The limit stays at 15: of the rated groups reaching it, 70% are A or B in matched lines (23 of 33)
+as in line span (25 of 36), and no lower limit raises that share (65% from 13, 67% from 10) while
+a limit of 10 reports two and a half times the blocks. The same limit in matched lines reports a
+quarter fewer blocks; those dropped are the ones that reached 15 lines only through their
+comments, their blank lines, and the lines their copies do not share.
 
 ## Languages
 

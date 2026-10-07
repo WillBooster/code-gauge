@@ -110,15 +110,16 @@ export const fileThresholds: readonly Threshold<CodeMetrics>[] = [
 ];
 
 /**
- * A duplicated block violates when it holds at least this many code lines: comment-only and blank
- * lines do not count, so a copy reads the same length whether or not it is commented.
+ * A duplicated block violates when it holds at least this many duplicated lines, its code lines
+ * matched in another copy: comment-only and blank lines do not count, so a copy reads the same
+ * length whether or not it is commented, and neither do the lines its copies do not share.
  */
-export const duplicationThreshold: Threshold<{ codeLineCount: number }> = {
+export const duplicationThreshold: Threshold<{ duplicatedLineCount: number }> = {
   key: 'minDuplicateLines',
   label: 'duplicated lines',
   defaultLimits: { warning: 15, error: Infinity },
   hint: 'extract the repeated code into one shared function or module and call it from every location.',
-  measure: (block) => block.codeLineCount,
+  measure: (block) => block.duplicatedLineCount,
 };
 
 export const thresholds: readonly Threshold[] = [...functionThresholds, ...fileThresholds, duplicationThreshold];

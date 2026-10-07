@@ -96,7 +96,7 @@ export interface OssAggregateExpectation {
   duplication: {
     duplicateBlockCount: number;
     duplicateBlockGroupCount: number;
-    duplicateBlockGroups: { endLine: number; startLine: number }[][];
+    duplicateBlockGroups: { endLine: number; lineCount: number; startLine: number; tokenCount: number }[][];
     duplicateLineCount: number;
     duplicationRatio: number;
     maxDuplicateBlockSize: number;
@@ -135,15 +135,21 @@ export const ossExpectations: readonly OssFileExpectation[] = [
           [
             {
               endLine: 500,
+              lineCount: 3,
               startLine: 498,
+              tokenCount: 44,
             },
             {
               endLine: 506,
+              lineCount: 3,
               startLine: 504,
+              tokenCount: 44,
             },
             {
               endLine: 521,
+              lineCount: 3,
               startLine: 519,
+              tokenCount: 44,
             },
           ],
         ],
@@ -188,11 +194,15 @@ export const ossExpectations: readonly OssFileExpectation[] = [
           [
             {
               endLine: 41,
+              lineCount: 10,
               startLine: 31,
+              tokenCount: 46,
             },
             {
               endLine: 53,
+              lineCount: 9,
               startLine: 44,
+              tokenCount: 40,
             },
           ],
         ],
@@ -237,25 +247,35 @@ export const ossExpectations: readonly OssFileExpectation[] = [
           [
             {
               endLine: 131,
+              lineCount: 10,
               startLine: 121,
+              tokenCount: 68,
             },
             {
               endLine: 271,
+              lineCount: 16,
               startLine: 251,
+              tokenCount: 114,
             },
             {
               endLine: 314,
+              lineCount: 16,
               startLine: 294,
+              tokenCount: 114,
             },
           ],
           [
             {
               endLine: 457,
+              lineCount: 8,
               startLine: 446,
+              tokenCount: 76,
             },
             {
               endLine: 526,
+              lineCount: 8,
               startLine: 515,
+              tokenCount: 76,
             },
           ],
         ],
@@ -333,26 +353,36 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         duplicateBlockGroups: [
           [
             {
-              startLine: 252,
               endLine: 264,
+              lineCount: 11,
+              startLine: 252,
+              tokenCount: 89,
             },
             {
-              startLine: 268,
               endLine: 276,
+              lineCount: 8,
+              startLine: 268,
+              tokenCount: 80,
             },
           ],
           [
             {
-              startLine: 376,
               endLine: 388,
+              lineCount: 11,
+              startLine: 376,
+              tokenCount: 55,
             },
             {
-              startLine: 496,
               endLine: 507,
+              lineCount: 10,
+              startLine: 496,
+              tokenCount: 53,
             },
             {
-              startLine: 556,
               endLine: 567,
+              lineCount: 10,
+              startLine: 556,
+              tokenCount: 53,
             },
           ],
         ],
@@ -435,21 +465,29 @@ export const ossExpectations: readonly OssFileExpectation[] = [
           [
             {
               endLine: 282,
+              lineCount: 7,
               startLine: 276,
+              tokenCount: 43,
             },
             {
               endLine: 289,
+              lineCount: 7,
               startLine: 283,
+              tokenCount: 48,
             },
           ],
           [
             {
               endLine: 395,
+              lineCount: 4,
               startLine: 392,
+              tokenCount: 53,
             },
             {
               endLine: 401,
+              lineCount: 4,
               startLine: 398,
+              tokenCount: 53,
             },
           ],
         ],
@@ -578,35 +616,49 @@ export const ossExpectations: readonly OssFileExpectation[] = [
           [
             {
               endLine: 205,
+              lineCount: 6,
               startLine: 200,
+              tokenCount: 43,
             },
             {
               endLine: 213,
+              lineCount: 6,
               startLine: 208,
+              tokenCount: 43,
             },
           ],
           [
             {
               endLine: 578,
+              lineCount: 14,
               startLine: 565,
+              tokenCount: 68,
             },
             {
               endLine: 591,
+              lineCount: 13,
               startLine: 579,
+              tokenCount: 70,
             },
           ],
           [
             {
               endLine: 700,
+              lineCount: 20,
               startLine: 681,
+              tokenCount: 74,
             },
             {
               endLine: 721,
+              lineCount: 20,
               startLine: 702,
+              tokenCount: 74,
             },
             {
               endLine: 742,
+              lineCount: 20,
               startLine: 723,
+              tokenCount: 74,
             },
           ],
         ],
@@ -715,11 +767,15 @@ export const ossExpectations: readonly OssFileExpectation[] = [
           [
             {
               endLine: 165,
+              lineCount: 18,
               startLine: 146,
+              tokenCount: 105,
             },
             {
               endLine: 200,
+              lineCount: 18,
               startLine: 181,
+              tokenCount: 105,
             },
           ],
         ],
@@ -802,31 +858,43 @@ export const ossExpectations: readonly OssFileExpectation[] = [
           [
             {
               endLine: 221,
+              lineCount: 8,
               startLine: 206,
+              tokenCount: 57,
             },
             {
               endLine: 241,
+              lineCount: 5,
               startLine: 236,
+              tokenCount: 43,
             },
           ],
           [
             {
               endLine: 481,
+              lineCount: 22,
               startLine: 458,
+              tokenCount: 180,
             },
             {
               endLine: 527,
+              lineCount: 22,
               startLine: 504,
+              tokenCount: 180,
             },
           ],
           [
             {
               endLine: 489,
+              lineCount: 8,
               startLine: 482,
+              tokenCount: 77,
             },
             {
               endLine: 499,
+              lineCount: 8,
               startLine: 492,
+              tokenCount: 77,
             },
           ],
         ],
@@ -938,42 +1006,58 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         duplicateBlockGroups: [
           [
             {
-              startLine: 109,
               endLine: 118,
+              lineCount: 10,
+              startLine: 109,
+              tokenCount: 73,
             },
             {
-              startLine: 366,
               endLine: 375,
+              lineCount: 10,
+              startLine: 366,
+              tokenCount: 73,
             },
           ],
           [
             {
-              startLine: 562,
               endLine: 566,
+              lineCount: 5,
+              startLine: 562,
+              tokenCount: 43,
             },
             {
-              startLine: 577,
               endLine: 581,
+              lineCount: 5,
+              startLine: 577,
+              tokenCount: 43,
             },
           ],
           [
             {
-              startLine: 571,
               endLine: 574,
+              lineCount: 4,
+              startLine: 571,
+              tokenCount: 61,
             },
             {
-              startLine: 587,
               endLine: 590,
+              lineCount: 4,
+              startLine: 587,
+              tokenCount: 61,
             },
           ],
           [
             {
-              startLine: 763,
               endLine: 767,
+              lineCount: 5,
+              startLine: 763,
+              tokenCount: 41,
             },
             {
-              startLine: 776,
               endLine: 783,
+              lineCount: 8,
+              startLine: 776,
+              tokenCount: 41,
             },
           ],
         ],
@@ -1017,12 +1101,16 @@ export const ossExpectations: readonly OssFileExpectation[] = [
         duplicateBlockGroups: [
           [
             {
-              startLine: 692,
               endLine: 697,
+              lineCount: 6,
+              startLine: 692,
+              tokenCount: 53,
             },
             {
-              startLine: 697,
               endLine: 702,
+              lineCount: 6,
+              startLine: 697,
+              tokenCount: 71,
             },
           ],
         ],

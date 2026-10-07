@@ -7175,11 +7175,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 12,
+          "lineCount": 12,
           "startLine": 1,
+          "tokenCount": 73,
         },
         {
           "endLine": 25,
+          "lineCount": 12,
           "startLine": 14,
+          "tokenCount": 73,
         },
       ],
     ],
@@ -7363,11 +7367,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 15,
+          "lineCount": 12,
           "startLine": 4,
+          "tokenCount": 74,
         },
         {
           "endLine": 28,
+          "lineCount": 12,
           "startLine": 17,
+          "tokenCount": 74,
         },
       ],
     ],
@@ -7606,11 +7614,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 16,
+          "lineCount": 12,
           "startLine": 5,
+          "tokenCount": 78,
         },
         {
           "endLine": 29,
+          "lineCount": 12,
           "startLine": 18,
+          "tokenCount": 78,
         },
       ],
     ],
@@ -7858,11 +7870,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 18,
+          "lineCount": 14,
           "startLine": 5,
+          "tokenCount": 74,
         },
         {
           "endLine": 34,
+          "lineCount": 14,
           "startLine": 21,
+          "tokenCount": 74,
         },
       ],
     ],
@@ -8110,11 +8126,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 18,
+          "lineCount": 15,
           "startLine": 4,
+          "tokenCount": 54,
         },
         {
           "endLine": 34,
+          "lineCount": 15,
           "startLine": 20,
+          "tokenCount": 54,
         },
       ],
     ],
@@ -8359,11 +8379,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 14,
+          "lineCount": 12,
           "startLine": 3,
+          "tokenCount": 74,
         },
         {
           "endLine": 27,
+          "lineCount": 12,
           "startLine": 16,
+          "tokenCount": 74,
         },
       ],
     ],
@@ -8600,11 +8624,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 13,
+          "lineCount": 12,
           "startLine": 2,
+          "tokenCount": 65,
         },
         {
           "endLine": 26,
+          "lineCount": 12,
           "startLine": 15,
+          "tokenCount": 65,
         },
       ],
     ],
@@ -8855,21 +8883,29 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 12,
+          "lineCount": 11,
           "startLine": 2,
+          "tokenCount": 85,
         },
         {
           "endLine": 24,
+          "lineCount": 11,
           "startLine": 14,
+          "tokenCount": 85,
         },
       ],
       [
         {
           "endLine": 38,
+          "lineCount": 12,
           "startLine": 27,
+          "tokenCount": 65,
         },
         {
           "endLine": 51,
+          "lineCount": 12,
           "startLine": 40,
+          "tokenCount": 65,
         },
       ],
     ],
@@ -9130,11 +9166,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 14,
+          "lineCount": 12,
           "startLine": 3,
+          "tokenCount": 62,
         },
         {
           "endLine": 27,
+          "lineCount": 12,
           "startLine": 16,
+          "tokenCount": 62,
         },
       ],
     ],
@@ -9363,11 +9403,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 10,
+          "lineCount": 8,
           "startLine": 3,
+          "tokenCount": 47,
         },
         {
           "endLine": 21,
+          "lineCount": 8,
           "startLine": 14,
+          "tokenCount": 47,
         },
       ],
     ],
@@ -9596,11 +9640,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 12,
+          "lineCount": 10,
           "startLine": 3,
+          "tokenCount": 51,
         },
         {
           "endLine": 25,
+          "lineCount": 10,
           "startLine": 16,
+          "tokenCount": 51,
         },
       ],
     ],
@@ -9899,11 +9947,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 13,
+          "lineCount": 12,
           "startLine": 2,
+          "tokenCount": 73,
         },
         {
           "endLine": 26,
+          "lineCount": 12,
           "startLine": 15,
+          "tokenCount": 73,
         },
       ],
     ],
@@ -10140,11 +10192,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 13,
+          "lineCount": 12,
           "startLine": 2,
+          "tokenCount": 65,
         },
         {
           "endLine": 26,
+          "lineCount": 12,
           "startLine": 15,
+          "tokenCount": 65,
         },
       ],
     ],
@@ -10402,21 +10458,29 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 20,
+          "lineCount": 11,
           "startLine": 10,
+          "tokenCount": 85,
         },
         {
           "endLine": 32,
+          "lineCount": 11,
           "startLine": 22,
+          "tokenCount": 85,
         },
       ],
       [
         {
           "endLine": 46,
+          "lineCount": 12,
           "startLine": 35,
+          "tokenCount": 65,
         },
         {
           "endLine": 59,
+          "lineCount": 12,
           "startLine": 48,
+          "tokenCount": 65,
         },
       ],
     ],
@@ -19813,11 +19877,15 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
       [
         {
           "endLine": 87,
+          "lineCount": 11,
           "startLine": 77,
+          "tokenCount": 46,
         },
         {
           "endLine": 99,
+          "lineCount": 11,
           "startLine": 89,
+          "tokenCount": 46,
         },
       ],
     ],
