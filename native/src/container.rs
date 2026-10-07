@@ -203,12 +203,17 @@ pub fn find_inline_namespaces<'s>(root: Node<'_>, code: &Source<'s>) -> InlineNa
             if child.kind_name() != "namespace_definition" {
                 continue;
             }
-            let name = child.child_by_field_name("name");
             let mut inner_path = path.clone();
-            match (is_transparent_namespace(child), name) {
-                (true, Some(name)) => found.push((path.clone(), node_text(name, code))),
-                (false, Some(name)) => inner_path.extend(scope_names(name, code)),
-                _ => {}
+            if let Some(name) = child.child_by_field_name("name") {
+                for (part, is_inline) in
+                    namespace_parts(name, is_transparent_namespace(child), code)
+                {
+                    if is_inline {
+                        found.push((inner_path.clone(), part));
+                    } else {
+                        inner_path.push(part);
+                    }
+                }
             }
             if let Some(body) = child.child_by_field_name("body") {
                 pending.push((body, inner_path));
@@ -228,6 +233,23 @@ fn merge_cpp_scopes<'s>(mut enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> V
     enclosing.truncate(restart.unwrap_or(enclosing.len()));
     enclosing.extend(spelled);
     enclosing
+}
+
+/// The parts of a namespace's name, each with whether it is inline: the namespace itself when
+/// declared `inline namespace v2`, or a part of C++20's `namespace a::inline v2`.
+fn namespace_parts<'s>(name: Node<'_>, is_inline: bool, code: &Source<'s>) -> Vec<(&'s str, bool)> {
+    if name.kind_name() != "nested_namespace_specifier" {
+        return vec![(node_text(name, code), is_inline)];
+    }
+    let mut parts = Vec::new();
+    let mut follows_inline = false;
+    for child in crate::util::all_children(name) {
+        if child.is_named() && !child.is_extra() {
+            parts.extend(namespace_parts(child, follows_inline, code));
+        }
+        follows_inline = child.kind_name() == "inline";
+    }
+    parts
 }
 
 /// An include guard or `extern "C"` block holds namespaces without being a scope.
