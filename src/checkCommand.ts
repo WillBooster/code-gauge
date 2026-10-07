@@ -32,6 +32,7 @@ import {
   checkThresholds,
   type BlockLocation,
   type CheckedFile,
+  type CodeLineNumbersByFile,
   type CheckResult,
   type Violation,
 } from './thresholdCheck.js';
@@ -46,6 +47,8 @@ export interface CheckCliOptions extends CliOptions {
 export interface CheckScope {
   files: CheckedFile[];
   crossFileDuplication?: CrossFileDuplicationMetrics;
+  /** Of every measured file, so that a copy outside the files the check covers is sized like one inside. */
+  codeLineNumbersByFile: CodeLineNumbersByFile;
   /** Measurement failures of files the check covers. */
   errors: string[];
   warnings: string[];
@@ -75,7 +78,8 @@ export async function runCheckCommand(
     const result = checkThresholds(
       scope.files,
       scope.crossFileDuplication,
-      resolveLimits(cliLimits, config.config.thresholds)
+      resolveLimits(cliLimits, config.config.thresholds),
+      scope.codeLineNumbersByFile
     );
     await endFileViolationsAtLastLine(result.violations, scope.root);
 
@@ -148,11 +152,8 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
   });
   const crossFileDuplication = measureDuplication(scan, options);
   return {
-    files: scan.files.map(({ file, metrics, duplicationCandidates }) => ({
-      file: formatPath(file, scan.displayRoot),
-      metrics,
-      codeLineNumbers: duplicationCandidates?.codeLineNumbers,
-    })),
+    files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
+    codeLineNumbersByFile: indexCodeLineNumbers(scan, scan.displayRoot),
     crossFileDuplication,
     errors: scan.errors,
     warnings: scan.warnings,
@@ -207,11 +208,7 @@ async function scanRepository(
   const crossFileDuplication = measureDuplication(scan, options);
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
-  const measuredFiles: CheckedFile[] = scan.files.map(({ file, metrics, duplicationCandidates }) => ({
-    file: formatPath(file, repoRoot),
-    metrics,
-    codeLineNumbers: duplicationCandidates?.codeLineNumbers,
-  }));
+  const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
   let isCovered = (error: string): boolean =>
     canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
@@ -227,7 +224,24 @@ async function scanRepository(
     files = await attachHunks(measuredFiles, changesInTarget, repoRoot, mergeBase);
     isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
   }
-  return { files, crossFileDuplication, ...partitionErrors(scan, isCovered), root: repoRoot, mergeBase };
+  return {
+    files,
+    crossFileDuplication,
+    codeLineNumbersByFile: indexCodeLineNumbers(scan, repoRoot),
+    ...partitionErrors(scan, isCovered),
+    root: repoRoot,
+    mergeBase,
+  };
+}
+
+function indexCodeLineNumbers(scan: ScanResult, root: string): CodeLineNumbersByFile {
+  return new Map(
+    scan.files.flatMap(({ file, duplicationCandidates }) =>
+      duplicationCandidates?.codeLineNumbers
+        ? [[formatPath(file, root), duplicationCandidates.codeLineNumbers] as const]
+        : []
+    )
+  );
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */

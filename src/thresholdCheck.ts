@@ -16,16 +16,17 @@ import type { CodeMetrics, CognitiveBlock, FunctionMetrics } from './types.js';
 export interface CheckedFile {
   file: string;
   metrics: CodeMetrics;
-  /**
-   * The file's 1-based lines that are neither blank nor comment-only, by which its duplicated
-   * blocks are measured. Without it (the file's cross-file data could not be collected, which the
-   * scan reports as a warning), every line of a block counts, as for a copy in a file outside the
-   * check.
-   */
-  codeLineNumbers?: ReadonlySet<number>;
   /** The change to the file; when set, only what the change touches is checked. */
   hunks?: readonly LineHunk[];
 }
+
+/**
+ * By file path, the 1-based lines that are neither blank nor comment-only, by which duplicated
+ * blocks are measured and their copies ranked: of the checked files and of every other file a copy
+ * may lie in. A file is missing when its cross-file data could not be collected, which the scan
+ * reports as a warning.
+ */
+export type CodeLineNumbersByFile = ReadonlyMap<string, ReadonlySet<number>>;
 
 export interface ExceededLimit {
   metric: string;
@@ -77,12 +78,11 @@ const nestedInclusiveMetrics = new Set(
 export function checkThresholds(
   files: readonly CheckedFile[],
   crossFileDuplication: CrossFileDuplicationMetrics | undefined,
-  limitsOf: (language: string) => LimitsByLevel
+  limitsOf: (language: string) => LimitsByLevel,
+  codeLineNumbersByFile: CodeLineNumbersByFile
 ): CheckResult {
   const crossFileGroupsByFile = indexGroupsByFile(crossFileDuplication, new Set(files.map(({ file }) => file)));
-  const codeLineNumbersByFile = new Map(files.map(({ file, codeLineNumbers }) => [file, codeLineNumbers]));
-  // The length of a duplicated block. A file whose code lines are unknown (it is outside the check,
-  // or its cross-file data could not be collected) counts every line of the block.
+  // The length of a duplicated block. A file whose code lines are unknown counts every line of it.
   const countCodeLines = (block: BlockLocation): number => {
     const codeLineNumbers = codeLineNumbersByFile.get(block.file);
     if (!codeLineNumbers) return block.endLine - block.startLine + 1;
