@@ -159,6 +159,10 @@ fn cpp_spelled_owner(
         }
         current = current.child_by_field_name("name")?;
     }
+    // An inline namespace the file declares adds nothing when spelled either (`mylib::v2::Thing`
+    // is `mylib::Thing`), as it adds nothing around a definition.
+    let inline_namespaces = inline_namespace_names(node, code);
+    scopes.retain(|scope| !inline_namespaces.contains(scope));
     // A definition inside `namespace ns { ... }` belongs to that namespace too, which it may also
     // spell out (`ns::Rules::decide` inside `namespace ns`).
     let owner = if is_absolute {
@@ -167,6 +171,31 @@ fn cpp_spelled_owner(
         enclosing_cpp_scopes(node, function_nodes, code, false)
     };
     join_cpp_scopes(owner, scopes)
+}
+
+/// The names of the inline namespaces declared in the file of `node`. Namespaces nest only in one
+/// another, so the search descends through them alone.
+fn inline_namespace_names<'s>(node: Node<'_>, code: &Source<'s>) -> Vec<&'s str> {
+    let mut root = node;
+    while let Some(parent) = root.parent_node() {
+        root = parent;
+    }
+    let mut names = Vec::new();
+    let mut pending = vec![root];
+    while let Some(scope) = pending.pop() {
+        for child in named_children(scope) {
+            if child.kind_name() == "namespace_definition" {
+                if let (true, Some(name)) = (
+                    is_transparent_namespace(child),
+                    child.child_by_field_name("name"),
+                ) {
+                    names.push(node_text(name, code));
+                }
+                pending.extend(child.child_by_field_name("body"));
+            }
+        }
+    }
+    names
 }
 
 /// The enclosing scopes followed by the spelled ones, which take over from the innermost
