@@ -226,13 +226,24 @@ fn spell_owner(
     }
     // C++ spells an owner with the namespaces and classes around it (`ns::Rules`), as a definition
     // outside them has to.
-    let owner = if CPP_SCOPE_NODE_TYPES.contains(&container.kind_name()) {
+    let mut owner = if CPP_SCOPE_NODE_TYPES.contains(&container.kind_name()) {
         // A friend has namespace scope, whatever classes its declaring class is nested in.
         enclosing_cpp_scopes(container, function_nodes, code, is_friend)
     } else {
         Vec::new()
     };
-    join_cpp_scopes(owner, if is_friend { Vec::new() } else { name })
+    if is_friend {
+        return join_cpp_scopes(owner, Vec::new());
+    }
+    // Only a class spelled with a qualifier (`class ns::Box<int>`) refers to scopes that exist; a
+    // plain name, or the parts of `namespace a::b`, declare new ones even when they repeat an
+    // enclosing name.
+    let is_qualified_class = name.len() > 1 && container.kind_name() != "namespace_definition";
+    if is_qualified_class {
+        return join_cpp_scopes(owner, name);
+    }
+    owner.extend(name);
+    Some(owner.join("::"))
 }
 
 /// A function local to an initializer block, or a member of an object literal or of an anonymous

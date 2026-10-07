@@ -301,7 +301,7 @@ ep\`](value: number): number {
     // `namespace a::b` names two scopes, and template arguments add nothing.
     writeSource(
       'src/more.cpp',
-      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\nnamespace values { auto bound = [](int a, int b, int c, int d, int e, int f, int g) { return a; }; }\nstruct Holder { union Inner { void member(int a, int b, int c, int d, int e, int f, int g) {} }; };\nnamespace ns { template <> class ns::Box<int> { void put(int a, int b, int c, int d, int e, int f, int g) {} }; }\n'
+      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\nnamespace values { auto bound = [](int a, int b, int c, int d, int e, int f, int g) { return a; }; }\nstruct Holder { union Inner { void member(int a, int b, int c, int d, int e, int f, int g) {} }; };\nnamespace ns { template <> class ns::Box<int> { void put(int a, int b, int c, int d, int e, int f, int g) {} }; }\nnamespace gauge { struct gauge { void same(int a, int b, int c, int d, int e, int f, int g) {} }; }\n'
     );
     const more = runCheck(['src/more.cpp']).stdout;
     expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');
@@ -309,6 +309,8 @@ ep\`](value: number): number {
     // A lambda is a value: it keeps the name of what it is bound to and takes no owner.
     expect(more).toContain('src/more.cpp:3-3 bound: parameters 7 (max 6)\n');
     expect(more).toContain('src/more.cpp:5-5 ns::Box.put: parameters 7 (max 6)\n');
+    // A class named like its namespace keeps both names.
+    expect(more).toContain('src/more.cpp:6-6 gauge::gauge.same: parameters 7 (max 6)\n');
     // A union is a class like a struct.
     expect(more).toContain('src/more.cpp:4-4 Holder::Inner.member: parameters 7 (max 6)\n');
     // A namespace both enclosing and spelled out is counted once.
