@@ -134,8 +134,9 @@ A duplicated block is one occurrence of a within-file or cross-file clone, found
 [duplication detection settings](#duplication-detection-settings); its span runs from its first to
 its last line, and its length is the number of lines of that span matched in another copy. Lines
 that are blank or comment-only do not count, so that a copy has the same length whether or not it
-is commented, and neither do the lines the copies do not share: those between the matched parts of
-an edited copy. Occurrences of at least the warning or the error
+is commented, and neither do the lines between the matched parts of an edited copy, which the copies do not
+share. A block that resembles another as a whole (a near-miss clone, at least
+`minSimilarityPercent` similar) counts all its code lines, its edited ones included. Occurrences of at least the warning or the error
 `minDuplicateLines` that overlap in a file are reported as one block covering all of them, at the
 level its duplicated lines reach, each line counted once.
 

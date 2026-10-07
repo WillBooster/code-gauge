@@ -324,7 +324,8 @@ The tables of duplicated blocks above, and that of the [public part](#public-par
 below, count a block by its line span, as `check` did when the limits were set. `check` now counts
 the lines of the span matched in another copy. Lines that are blank or comment-only do not count,
 so that a commented copy and its bare partner have the same length, and neither do the lines
-between the matched parts of an edited copy, which the copies do not share. The limit was
+between the matched parts of an edited copy, which the copies do not share (a block resembling
+another as a whole still counts all its code lines). The limit was
 re-examined on the same corpus, exported again at its recorded commits (the same 45,123 functions
 and 6,603 files):
 
