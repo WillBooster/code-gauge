@@ -625,6 +625,26 @@ warning: b.ts:3-11: duplicated lines 9 (max 4), also at a.ts:2-10, a.ts:15-23
     expect(result.stdout).toBe('No threshold violations: 1 files, 2 functions checked.\n');
   });
 
+  it('lists the copies of a duplicated block with the most code lines first', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-copies-'));
+    try {
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
+      // A copy of the statements only, which comments stretch over more lines than a full copy.
+      const statements = reportFunction('partial').split('\n').slice(1, 10).join('\n  // A step.\n\n');
+      writeFileSync(
+        path.join(dir, 'a.ts'),
+        `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
+      );
+      writeFileSync(path.join(dir, 'm.ts'), reportFunction('middle'));
+      writeFileSync(path.join(dir, 'z.ts'), reportFunction('last'));
+      expect(runCheck(['--warning-min-duplicate-lines', '5', dir], dir).stdout).toContain(
+        'm.ts:1-12: duplicated lines 12 (max 4), also at z.ts:1-12, a.ts:3-27\n'
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('exits 2 with --base', () => {
     const result = runCheck(['--base', 'main', plainDir], plainDir);
     expect(result.status).toBe(2);

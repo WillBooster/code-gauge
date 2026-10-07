@@ -19,7 +19,8 @@ export interface CheckedFile {
   /**
    * The file's 1-based lines that are neither blank nor comment-only, by which its duplicated
    * blocks are measured. Without it (the file's cross-file data could not be collected, which the
-   * scan reports as a warning), every line of a block counts.
+   * scan reports as a warning), every line of a block counts, as for a copy in a file outside the
+   * check.
    */
   codeLineNumbers?: ReadonlySet<number>;
   /** The change to the file; when set, only what the change touches is checked. */
@@ -53,7 +54,7 @@ export interface Violation extends BlockLocation {
    * exceeds a limit of it.
    */
   largestBlocks?: CognitiveBlock[];
-  /** The other copies of the block, longest line span first, for kind `duplication`. */
+  /** The other copies of the block, most code lines first, for kind `duplication`. */
   partners?: BlockLocation[];
 }
 
@@ -79,6 +80,18 @@ export function checkThresholds(
   limitsOf: (language: string) => LimitsByLevel
 ): CheckResult {
   const crossFileGroupsByFile = indexGroupsByFile(crossFileDuplication, new Set(files.map(({ file }) => file)));
+  const codeLineNumbersByFile = new Map(files.map(({ file, codeLineNumbers }) => [file, codeLineNumbers]));
+  // The length of a duplicated block. A file whose code lines are unknown (it is outside the check,
+  // or its cross-file data could not be collected) counts every line of the block.
+  const countCodeLines = (block: BlockLocation): number => {
+    const codeLineNumbers = codeLineNumbersByFile.get(block.file);
+    if (!codeLineNumbers) return block.endLine - block.startLine + 1;
+    let count = 0;
+    for (let line = block.startLine; line <= block.endLine; line++) {
+      if (codeLineNumbers.has(line)) count += 1;
+    }
+    return count;
+  };
   const violations: Violation[] = [];
   let checkedFunctionCount = 0;
   for (const checkedFile of files) {
@@ -100,7 +113,9 @@ export function checkThresholds(
         violations.push(toFunctionViolation(file, fn, ownExceeded));
       }
     }
-    violations.push(...collectDuplicationViolations(checkedFile, crossFileGroupsByFile.get(file) ?? [], limits));
+    violations.push(
+      ...collectDuplicationViolations(checkedFile, crossFileGroupsByFile.get(file) ?? [], limits, countCodeLines)
+    );
   }
   return { violations: violations.toSorted(compareViolations), checkedFunctionCount };
 }
@@ -233,18 +248,11 @@ function indexGroupsByFile(
  * added lines), with overlapping occurrences merged into one region.
  */
 function collectDuplicationViolations(
-  { file, metrics, hunks, codeLineNumbers }: CheckedFile,
+  { file, metrics, hunks }: CheckedFile,
   crossFileGroups: readonly CrossFileDuplicateBlockGroup[],
-  limits: LimitsByLevel
+  limits: LimitsByLevel,
+  countCodeLines: (block: BlockLocation) => number
 ): Violation[] {
-  const countCodeLines = (block: BlockLocation): number => {
-    if (!codeLineNumbers) return countLines(block);
-    let count = 0;
-    for (let line = block.startLine; line <= block.endLine; line++) {
-      if (codeLineNumbers.has(line)) count += 1;
-    }
-    return count;
-  };
   const findExceededLines = (block: BlockLocation): ExceededLimit[] =>
     findExceeded(
       duplicationThreshold,
@@ -274,7 +282,7 @@ function collectDuplicationViolations(
     partners: mergeOverlapping(sources.flatMap((source) => copiesByBlock.get(source) ?? []))
       .map((partner) => partner.merged)
       .filter((partner) => !overlaps(partner, merged))
-      .toSorted((left, right) => countLines(right) - countLines(left)),
+      .toSorted((left, right) => countCodeLines(right) - countCodeLines(left)),
   }));
 }
 
@@ -295,10 +303,6 @@ function mergeOverlapping(locations: readonly BlockLocation[]): { merged: BlockL
     }
   }
   return regions;
-}
-
-function countLines({ startLine, endLine }: BlockLocation): number {
-  return endLine - startLine + 1;
 }
 
 function overlaps(left: BlockLocation, right: BlockLocation): boolean {

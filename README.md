@@ -181,7 +181,7 @@ adding the most to it, largest first, each with its lines, its name when it is a
 and what it adds: the outermost branching constructs and nested functions of the body or, where one
 of them merely wraps most of the function (a loop or an unnamed callback around the whole body),
 the ones inside it. A file-level violation prints the path without a line span, and a duplicated block lists
-up to three of its other copies, longest first.
+up to three of its other copies, those with the most code lines first.
 Paths are relative to the repository root, or to the target directory outside a git repository.
 
 | Exit code | Meaning                                                                                                                          |
@@ -268,7 +268,7 @@ ranking command.
   - `largestBlocks`: only for a function exceeding a cognitive-complexity limit; the parts the
     text report names, each with its line span, the `cognitiveComplexity` it adds to the function,
     and its `name` when it is a named nested function;
-  - `partners`: only for kind `duplication`; every other copy of the block, longest line span
+  - `partners`: only for kind `duplication`; every other copy of the block, most code lines
     first: the
     block merges every clone overlapping it, so its copies range from whole copies of it to a few
     lines matching one fragment.

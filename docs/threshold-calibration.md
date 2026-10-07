@@ -302,7 +302,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
   percentiles are 377 and 1042.
 - **Duplicated lines, 15, no error.** In line span here; [in code lines](#duplicated-blocks-measured-in-code-lines) the limit is the same. Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
-  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines on `check` reports 3,209 blocks in the corpus, nearly twice its 1,698 function violations.
+  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,869 blocks from 10 code lines).
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
   more often than others of their cognitive complexity.
@@ -316,12 +316,12 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   which the metric names no change to make. Halstead effort is the product of volume and
   difficulty and was not rated on its own.
 
-With these limits, `check` reports 464 errors and 2,799 warnings in the calibration corpus, and 45 of its 105 repositories have no error.
+With these limits, `check` reports 464 errors and 2,436 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
 
 ## Duplicated blocks measured in code lines
 
-The tables above count a duplicated block by its line span, as `check` did when the limits were
-set. `check` now counts the lines of the span that are neither blank nor comment-only, so that a
+The tables of duplicated blocks above, and that of the [public part](#public-part-of-the-corpus)
+below, count a block by its line span, as `check` did when the limits were set. `check` now counts the lines of the span that are neither blank nor comment-only, so that a
 commented copy and its bare partner have the same length, and the limit was re-examined on the
 same corpus, exported again at its recorded commits (the same 45,123 functions and 6,603 files):
 
