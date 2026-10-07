@@ -52,7 +52,8 @@ export interface Violation extends BlockLocation {
   exceeded: ExceededLimit[];
   /**
    * The parts adding the most to the cognitive complexity, largest first, for a function that
-   * exceeds a limit of it.
+   * exceeds a limit of it and has such parts: operator sequences outside any branching construct
+   * add to the complexity without being one.
    */
   largestBlocks?: CognitiveBlock[];
   /** The other copies of the block, most code lines first, for kind `duplication`. */

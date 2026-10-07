@@ -177,7 +177,8 @@ A violation's level is that of its most severe limit. A function gets one line l
 threshold it exceeds, each with the largest value its violated limit allows and, when that limit is
 milder than the line's level, the limit's own level; a method is named with the type or
 module it belongs to (`Rules.decide`). A cognitive-complexity violation also names up to three parts of the function
-adding the most to it, largest first, each with its lines, its name when it is a nested function,
+adding the most to it (none when the score comes from operator sequences alone, outside any
+branching construct), largest first, each with its lines, its name when it is a nested function,
 and what it adds: the outermost branching constructs and nested functions of the body or, where one
 of them merely wraps most of the function (a loop or an unnamed callback around the whole body),
 the ones inside it. A file-level violation prints the path without a line span, and a duplicated block lists
@@ -265,7 +266,8 @@ ranking command.
     `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe
     `level` whose limit the value violates, and that `limit`. A value violates when it is above the
     limit; `duplicateLines`, the code lines of the block, violates from the limit on;
-  - `largestBlocks`: only for a function exceeding a cognitive-complexity limit; the parts the
+  - `largestBlocks`: only for a function exceeding a cognitive-complexity limit that has a
+    branching construct or a nested function adding to it; the parts the
     text report names, each with its line span, the `cognitiveComplexity` it adds to the function,
     and its `name` when it is a named nested function;
   - `partners`: only for kind `duplication`; every other copy of the block, most code lines
