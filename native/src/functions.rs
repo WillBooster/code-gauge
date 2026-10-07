@@ -318,7 +318,7 @@ pub fn find_container_name(
             let (scope, _) = node_text(inner, code).rsplit_once("::")?;
             return Some(scope.trim().to_string()).filter(|scope| !scope.is_empty());
         }
-        declarator = inner.child_by_field_name("declarator");
+        declarator = next_declarator(inner);
     }
     // A Ruby `def Other.decide` belongs to the object it names rather than to the class around it.
     if let Some(owner) = explicit_ruby_owner(node.child_by_field_name("object"), code) {
