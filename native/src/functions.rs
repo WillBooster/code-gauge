@@ -271,6 +271,7 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "interface_declaration",
     "internal_module",
     "module",
+    "namespace_definition",
     "object_declaration",
     "record_declaration",
     "struct_declaration",
