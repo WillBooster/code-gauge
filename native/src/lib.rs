@@ -3,6 +3,7 @@
 use crate::duplication::DuplicationSettings;
 
 mod complexity;
+mod container;
 mod dep_degree;
 mod duplication;
 mod functions;

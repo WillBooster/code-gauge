@@ -82,16 +82,6 @@ export function checkThresholds(
   codeLineNumbersByFile: CodeLineNumbersByFile
 ): CheckResult {
   const crossFileGroupsByFile = indexGroupsByFile(crossFileDuplication, new Set(files.map(({ file }) => file)));
-  // The length of a duplicated block. A copy in a file that could not be measured counts every line.
-  const countCodeLines = (block: BlockLocation): number => {
-    const codeLineNumbers = codeLineNumbersByFile.get(block.file);
-    if (!codeLineNumbers) return block.endLine - block.startLine + 1;
-    let count = 0;
-    for (let line = block.startLine; line <= block.endLine; line++) {
-      if (codeLineNumbers.has(line)) count += 1;
-    }
-    return count;
-  };
   const violations: Violation[] = [];
   let checkedFunctionCount = 0;
   for (const checkedFile of files) {
@@ -114,7 +104,7 @@ export function checkThresholds(
       }
     }
     violations.push(
-      ...collectDuplicationViolations(checkedFile, crossFileGroupsByFile.get(file) ?? [], limits, countCodeLines)
+      ...collectDuplicationViolations(checkedFile, crossFileGroupsByFile.get(file) ?? [], limits, codeLineNumbersByFile)
     );
   }
   return { violations: violations.toSorted(compareViolations), checkedFunctionCount };
@@ -251,12 +241,12 @@ function collectDuplicationViolations(
   { file, metrics, hunks }: CheckedFile,
   crossFileGroups: readonly CrossFileDuplicateBlockGroup[],
   limits: LimitsByLevel,
-  countCodeLines: (block: BlockLocation) => number
+  codeLineNumbersByFile: CodeLineNumbersByFile
 ): Violation[] {
   const findExceededLines = (block: BlockLocation): ExceededLimit[] =>
     findExceeded(
       duplicationThreshold,
-      { codeLineCount: countCodeLines(block) },
+      { codeLineCount: countCodeLines(block, codeLineNumbersByFile) },
       limits,
       (value, limit) => value >= limit
     );
@@ -282,7 +272,9 @@ function collectDuplicationViolations(
     partners: mergeOverlapping(sources.flatMap((source) => copiesByBlock.get(source) ?? []))
       .map((partner) => partner.merged)
       .filter((partner) => !overlaps(partner, merged))
-      .toSorted((left, right) => countCodeLines(right) - countCodeLines(left)),
+      .toSorted(
+        (left, right) => countCodeLines(right, codeLineNumbersByFile) - countCodeLines(left, codeLineNumbersByFile)
+      ),
   }));
 }
 
@@ -303,6 +295,17 @@ function mergeOverlapping(locations: readonly BlockLocation[]): { merged: BlockL
     }
   }
   return regions;
+}
+
+/** The length of a duplicated block. A copy in a file that could not be measured counts every line. */
+function countCodeLines(block: BlockLocation, codeLineNumbersByFile: CodeLineNumbersByFile): number {
+  const codeLineNumbers = codeLineNumbersByFile.get(block.file);
+  if (!codeLineNumbers) return block.endLine - block.startLine + 1;
+  let count = 0;
+  for (let line = block.startLine; line <= block.endLine; line++) {
+    if (codeLineNumbers.has(line)) count += 1;
+  }
+  return count;
 }
 
 function overlaps(left: BlockLocation, right: BlockLocation): boolean {

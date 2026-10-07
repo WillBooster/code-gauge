@@ -58,7 +58,7 @@ pub fn measure(
                 .expect("every collected function node opens a frame in the body-metrics pass");
             FunctionMetrics {
                 name: find_function_name(*node, code),
-                container_name: crate::functions::find_container_name(
+                container_name: crate::container::find_container_name(
                     *node,
                     &sets.function_nodes,
                     code,
