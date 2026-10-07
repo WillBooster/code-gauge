@@ -159,10 +159,6 @@ fn cpp_spelled_owner(
         }
         current = current.child_by_field_name("name")?;
     }
-    // An inline namespace the file declares adds nothing when spelled either (`mylib::v2::Thing`
-    // is `mylib::Thing`), as it adds nothing around a definition.
-    let inline_namespaces = inline_namespace_names(node, code);
-    scopes.retain(|scope| !inline_namespaces.contains(scope));
     // A definition inside `namespace ns { ... }` belongs to that namespace too, which it may also
     // spell out (`ns::Rules::decide` inside `namespace ns`).
     let owner = if is_absolute {
@@ -170,44 +166,66 @@ fn cpp_spelled_owner(
     } else {
         enclosing_cpp_scopes(node, function_nodes, code, false)
     };
-    join_cpp_scopes(owner, scopes)
+    // An inline namespace the file declares adds nothing when spelled either (`mylib::v2::Thing`
+    // is `mylib::Thing`), as it adds nothing around a definition; a plain namespace of the same
+    // name elsewhere stays.
+    let inline = inline_namespaces(node, code);
+    let mut resolved: Vec<&str> = Vec::new();
+    for scope in merge_cpp_scopes(owner, scopes) {
+        let is_inline = inline
+            .iter()
+            .any(|(path, name)| *name == scope && *path == resolved);
+        if !is_inline {
+            resolved.push(scope);
+        }
+    }
+    (!resolved.is_empty()).then(|| resolved.join("::"))
 }
 
-/// The names of the inline namespaces declared in the file of `node`. Namespaces nest only in one
-/// another, so the search descends through them alone.
-fn inline_namespace_names<'s>(node: Node<'_>, code: &Source<'s>) -> Vec<&'s str> {
+/// The inline namespaces declared in the file of `node`, each as the scopes around it and its
+/// name. Namespaces nest only in one another, so the search descends through them alone.
+fn inline_namespaces<'s>(node: Node<'_>, code: &Source<'s>) -> Vec<(Vec<&'s str>, &'s str)> {
     let mut root = node;
     while let Some(parent) = root.parent_node() {
         root = parent;
     }
-    let mut names = Vec::new();
-    let mut pending = vec![root];
-    while let Some(scope) = pending.pop() {
+    let mut found = Vec::new();
+    let mut pending = vec![(root, Vec::new())];
+    while let Some((scope, path)) = pending.pop() {
         for child in named_children(scope) {
-            if child.kind_name() == "namespace_definition" {
-                if let (true, Some(name)) = (
-                    is_transparent_namespace(child),
-                    child.child_by_field_name("name"),
-                ) {
-                    names.push(node_text(name, code));
-                }
-                pending.extend(child.child_by_field_name("body"));
+            if child.kind_name() != "namespace_definition" {
+                continue;
+            }
+            let name = child.child_by_field_name("name");
+            let mut inner_path = path.clone();
+            match (is_transparent_namespace(child), name) {
+                (true, Some(name)) => found.push((path.clone(), node_text(name, code))),
+                (false, Some(name)) => inner_path.extend(scope_names(name, code)),
+                _ => {}
+            }
+            if let Some(body) = child.child_by_field_name("body") {
+                pending.push((body, inner_path));
             }
         }
     }
-    names
+    found
 }
 
 /// The enclosing scopes followed by the spelled ones, which take over from the innermost
 /// enclosing scope they start with, as name lookup finds that one first: `ns::Rules` spelled
 /// inside `namespace ns` is `ns::Rules`.
-fn join_cpp_scopes<'s>(mut enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> Option<String> {
+fn merge_cpp_scopes<'s>(mut enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> Vec<&'s str> {
     let restart = enclosing
         .iter()
         .rposition(|scope| Some(scope) == spelled.first());
     enclosing.truncate(restart.unwrap_or(enclosing.len()));
     enclosing.extend(spelled);
-    (!enclosing.is_empty()).then(|| enclosing.join("::"))
+    enclosing
+}
+
+fn join_cpp_scopes<'s>(enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> Option<String> {
+    let scopes = merge_cpp_scopes(enclosing, spelled);
+    (!scopes.is_empty()).then(|| scopes.join("::"))
 }
 
 /// The nearest class-like declaration around the function, unless something between them makes
