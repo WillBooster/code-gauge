@@ -314,9 +314,18 @@ pub fn find_container_name(
     let mut declarator = node.child_by_field_name("declarator");
     while let Some(inner) = declarator {
         if inner.kind_name() == "qualified_identifier" {
-            // The scope of a nested name (`ns::Rules::decide`) is everything before its last part.
-            let (scope, _) = node_text(inner, code).rsplit_once("::")?;
-            return Some(scope.trim().to_string()).filter(|scope| !scope.is_empty());
+            // A nested name (`ns::Rules::decide`) nests in its `name` field; the scopes on the way
+            // to the innermost name are the owner. The name itself may hold `::` too (`operator
+            // std::string`), so the text is not split.
+            let mut scopes = Vec::new();
+            let mut qualified = inner;
+            while qualified.kind_name() == "qualified_identifier" {
+                if let Some(scope) = qualified.child_by_field_name("scope") {
+                    scopes.push(node_text(scope, code));
+                }
+                qualified = qualified.child_by_field_name("name")?;
+            }
+            return (!scopes.is_empty()).then(|| scopes.join("::"));
         }
         declarator = next_declarator(inner);
     }

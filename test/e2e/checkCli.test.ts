@@ -281,11 +281,15 @@ ep\`](value: number): number {
   it('names a C++ method defined outside its class with the scope it names', () => {
     writeSource(
       'src/rules.cpp',
-      'class Rules { public: int decide(int a, int b, int c, int d, int e, int f, int g); };\nint ns::Rules::decide(int a, int b, int c, int d, int e, int f, int g) { return a; }\nint& Rules::ref(int& a, int b, int c, int d, int e, int f, int g) { return a; }\n'
+      'class Rules { public: int decide(int a, int b, int c, int d, int e, int f, int g); };\nint ns::Rules::decide(int a, int b, int c, int d, int e, int f, int g) { return a; }\nint& Rules::ref(int& a, int b, int c, int d, int e, int f, int g) { return a; }\nRules::operator std::string() { if (flag) return {}; return {}; }\n'
     );
     const { stdout } = runCheck(['src/rules.cpp']);
     expect(stdout).toContain('src/rules.cpp:2-2 ns::Rules.decide: parameters 7 (max 6)\n');
     expect(stdout).toContain('src/rules.cpp:3-3 Rules.ref: parameters 7 (max 6)\n');
+    // The `::` of the conversion type belongs to the name, not to the scope.
+    expect(runCheck(['src/rules.cpp', '--warning-max-function-cognitive-complexity', '0']).stdout).toContain(
+      'src/rules.cpp:4-4 Rules.operator std::string: cognitive complexity 1 (max 0; most from L4 1)\n'
+    );
   });
 
   it('leaves a method of an object literal in a class unqualified', () => {
