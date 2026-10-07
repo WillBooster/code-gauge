@@ -51,8 +51,8 @@ export interface BlockLocation {
 interface CloneOccurrence extends BlockLocation {
   /**
    * Its code lines matched in another copy, whose number is the length of a duplicated block. Its
-   * line span would also count what the copies do not share, the lines between the matched parts
-   * of one copy.
+   * line span would also count the lines between the matched parts of one copy, which the copies
+   * do not share; a block matched as a whole by a near-miss copy holds all its code lines.
    */
   lineNumbers: readonly number[];
   tokenCount: number;

@@ -112,7 +112,9 @@ export const fileThresholds: readonly Threshold<CodeMetrics>[] = [
 /**
  * A duplicated block violates when it holds at least this many duplicated lines, its code lines
  * matched in another copy: comment-only and blank lines do not count, so a copy reads the same
- * length whether or not it is commented, and neither do the lines its copies do not share.
+ * length whether or not it is commented, and neither do the lines between the matched parts of an
+ * edited copy. A block matched as a whole by a near-miss copy counts all its code lines, its
+ * edited ones included.
  */
 export const duplicationThreshold: Threshold<{ duplicatedLineCount: number }> = {
   key: 'minDuplicateLines',
