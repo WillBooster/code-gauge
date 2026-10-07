@@ -94,7 +94,10 @@ export interface FunctionMetrics {
    * singleton class names. A C++ owner is spelled with the namespaces and classes around it
    * (`ns::Rules`), whether the function is defined inside them or outside as `ns::Rules::decide`;
    * an unnamed or inline namespace and template arguments add nothing, and a friend defined in a class
-   * belongs to the namespace around that class.
+   * belongs to the namespace around that class. Names are not looked up: a scope a definition
+   * spells is taken as the enclosing scope of that name when there is one, also where C++ would
+   * find a like-named member of it (`void gauge::f()` inside `namespace gauge` holding a
+   * `struct gauge`).
    *
    * Absent for a function written as a value (a lambda, a closure, a function expression), which
    * keeps the name of what it is bound to, for a function nested in another function, for a
