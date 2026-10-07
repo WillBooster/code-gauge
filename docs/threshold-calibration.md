@@ -301,7 +301,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   six of ten between 251 and 400, and six of the seven files above 1000 should be split, against
   seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
   percentiles are 377 and 1042.
-- **Duplicated lines, 15, no error.** Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
+- **Duplicated lines, 15, no error.** In line span here; [in code lines](#duplicated-blocks-measured-in-code-lines) the limit is the same. Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
   of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines on `check` reports 3,209 blocks in the corpus, nearly twice its 1,698 function violations.
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
@@ -317,6 +317,36 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   difficulty and was not rated on its own.
 
 With these limits, `check` reports 464 errors and 2,799 warnings in the calibration corpus, and 45 of its 105 repositories have no error.
+
+## Duplicated blocks measured in code lines
+
+The tables above count a duplicated block by its line span, as `check` did when the limits were
+set. `check` now counts the lines of the span that are neither blank nor comment-only, so that a
+commented copy and its bare partner have the same length, and the limit was re-examined on the 117
+corpus repositories that could be exported again at their recorded commits (44,088 of the 45,123
+functions; the two repositories of data files are missing):
+
+| Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
+| -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
+| line span            |   5,600 |    3,083 |    1,439 |      659 |      212 |       50 |
+| code lines           |   5,510 |    2,760 |    1,088 |      501 |      147 |       32 |
+
+Regrouped by the code lines of their longest block, the 60 rated clone groups separate no better
+than by its span:
+
+| Longest block, code lines | Rated |   A | A or B |
+| ------------------------- | ----: | --: | -----: |
+| up to 9                   |    15 | 20% |    53% |
+| 10–14                     |    13 | 15% |    62% |
+| 15–19                     |    10 | 20% |    60% |
+| 20–29                     |    14 | 29% |    79% |
+| 30 or more                |     8 | 25% |    62% |
+
+The limit stays at 15: of the rated groups reaching it, 69% are A or B in code lines (22 of 32) as
+in line span (25 of 36), and no lower limit raises that share (66% from 13, 67% from 10) while
+a limit of 10 reports two and a half times the blocks. The same limit in code lines reports a
+quarter fewer blocks; those dropped are the ones that reached 15 lines only through their comments
+and blank lines.
 
 ## Languages
 

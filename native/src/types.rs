@@ -64,6 +64,9 @@ pub struct FunctionMetrics {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CognitiveBlock {
+    /// The name of the nested function the block is.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
     pub start_line: usize,
     pub end_line: usize,
     pub cognitive_complexity: u64,

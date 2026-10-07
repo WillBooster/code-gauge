@@ -142,7 +142,7 @@ function addSharedOptions(command: Command): Command {
 
 function describeLimit(key: string, level: Level): string {
   if (key === duplicationThreshold.key) {
-    return `line count from which a duplicated block is ${level === 'error' ? 'an error' : 'a warning'}`;
+    return `code-line count from which a duplicated block is ${level === 'error' ? 'an error' : 'a warning'}`;
   }
   const fileThreshold = fileThresholds.find((threshold) => threshold.key === key);
   const subject = fileThreshold

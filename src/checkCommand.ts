@@ -148,7 +148,11 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
   });
   const crossFileDuplication = measureDuplication(scan, options);
   return {
-    files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
+    files: scan.files.map(({ file, metrics, duplicationCandidates }) => ({
+      file: formatPath(file, scan.displayRoot),
+      metrics,
+      codeLineNumbers: duplicationCandidates?.codeLineNumbers,
+    })),
     crossFileDuplication,
     errors: scan.errors,
     warnings: scan.warnings,
@@ -203,7 +207,11 @@ async function scanRepository(
   const crossFileDuplication = measureDuplication(scan, options);
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
-  const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
+  const measuredFiles: CheckedFile[] = scan.files.map(({ file, metrics, duplicationCandidates }) => ({
+    file: formatPath(file, repoRoot),
+    metrics,
+    codeLineNumbers: duplicationCandidates?.codeLineNumbers,
+  }));
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
   let isCovered = (error: string): boolean =>
     canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
@@ -240,13 +248,14 @@ async function attachHunks(
   repoRoot: string,
   mergeBase: string
 ): Promise<CheckedFile[]> {
-  const metricsByPath = new Map(measuredFiles.map(({ file, metrics }) => [file, metrics]));
+  const measuredByPath = new Map(measuredFiles.map((measured) => [measured.file, measured]));
   const files = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
-    const metrics = metricsByPath.get(changed.headPath);
+    const measured = measuredByPath.get(changed.headPath);
     // A changed file the scan left out (unsupported, excluded, or failed) has nothing to check.
-    if (metrics === undefined) {
+    if (measured === undefined) {
       return [];
     }
+    const { metrics } = measured;
     const wholeFile: LineHunk = { headStart: 1, headCount: metrics.lines.total };
     const hunks =
       changed.basePath === undefined
@@ -255,7 +264,7 @@ async function attachHunks(
     if (metrics.language === 'python' && hunks.some(({ headCount }) => headCount === 0)) {
       anchorDeletionsToCode(hunks, await readFile(path.join(repoRoot, changed.headPath), 'utf8'));
     }
-    return [{ file: changed.headPath, metrics, hunks }];
+    return [{ ...measured, hunks }];
   });
   return files.flat();
 }

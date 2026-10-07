@@ -77,6 +77,8 @@ export interface HalsteadMetrics {
 }
 
 export interface CognitiveBlock {
+  /** The name of the nested function the block is, when it is one with a name. */
+  name?: string;
   startLine: number;
   endLine: number;
   cognitiveComplexity: number;

@@ -79,6 +79,7 @@ pub fn measure(
                     .cognitive_blocks
                     .iter()
                     .map(|block| crate::types::CognitiveBlock {
+                        name: block.name.clone(),
                         start_line: block.start_line,
                         end_line: block.end_line,
                         cognitive_complexity: block.cognitive_complexity,

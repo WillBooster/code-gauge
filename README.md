@@ -105,7 +105,7 @@ like the ranking command. The thresholds:
 | `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it          | off     | off   |
 | `maxFunctionDepDegree`            | a function's DepDegree is above it                | off     | off   |
 | `maxFileNcss`                     | a file's NCSS is above it                         | 400     | 1000  |
-| `minDuplicateLines`               | a duplicated block spans at least this many lines | 15      | off   |
+| `minDuplicateLines`               | a duplicated block holds at least this many lines | 15      | off   |
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
@@ -131,7 +131,8 @@ for each function.
 
 A duplicated block is one occurrence of a within-file or cross-file clone, found with the
 [duplication detection settings](#duplication-detection-settings); its span runs from its first to
-its last line. Occurrences of at least the warning or the error `minDuplicateLines` that overlap in a
+its last line, and its length is the number of lines of that span that are neither blank nor
+comment-only, so that a copy has the same length whether or not it is commented. Occurrences of at least the warning or the error `minDuplicateLines` that overlap in a
 file are reported as one block covering all of them, at the level its whole span reaches.
 
 Each limit is set in the `warning` or `error` part of the
@@ -262,7 +263,7 @@ ranking command.
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
     `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe
     `level` whose limit the value violates, and that `limit`. A value violates when it is above the
-    limit; `duplicateLines` violates from the limit on;
+    limit; `duplicateLines`, the code lines of the block, violates from the limit on;
   - `largestBlocks`: only for a function exceeding a cognitive-complexity limit; the parts the
     text report names, each with its line span, the `cognitiveComplexity` it adds to the function,
     and its `name` when it is a named nested function;

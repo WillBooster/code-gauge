@@ -206,7 +206,7 @@ warning: src/legacy.ts:1-21 decide:`);
       )
     );
     const { stdout } = runCheck(['src/wrapped.ts']);
-    // The callback holds all of the complexity, so the blocks named are those inside it.
+    // The callback holds all of the complexity, so the parts named are those inside it.
     expect(stdout).toContain(' wrapped: cognitive complexity 35 (max 30; most from L5-11 15, L17 3, L18 3)\n');
     // Nesting depth covers a function's own body only, so the nested function alone exceeds its limit.
     expect(stdout).toMatch(/ <anonymous>: nesting depth 5 \(max 4\)\n/u);
@@ -236,6 +236,14 @@ warning: src/legacy.ts:1-21 decide:`);
     expect(runCheck(['src/factory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
       ' createCounter: cognitive complexity 11 (max 5; most from L3-8 step 5, L9-13 reset 5, L14 1)\n'
     );
+    // Two functions on one line are told apart.
+    writeSource(
+      'src/oneLine.ts',
+      'export function pair(a: boolean, b: boolean): void { const first = () => { if (a) pair(b, a); }; const second = () => { if (b) pair(a, b); }; first(); second(); }\n'
+    );
+    expect(runCheck(['src/oneLine.ts', '--warning-max-function-cognitive-complexity', '3']).stdout).toContain(
+      'most from L1 first 2, L1 second 2)'
+    );
   });
 
   it('prints a single line and exits 0 when nothing exceeds a threshold', () => {
@@ -258,6 +266,15 @@ warning: src/legacy.ts:1-21 decide:`);
     expect(runCheck(['src/copies']).stdout).toContain(
       'src/copies/a.ts:1-12: duplicated lines 12 (max 9), also at src/copies/b.ts:1-12, src/copies/c.ts:1-12, src/report.ts:1-12, ...\n'
     );
+  });
+
+  it('measures a duplicated block by its code lines, whatever comments and blank lines it holds', () => {
+    const commented = reportFunction('commented').replaceAll(/^ {2}const /gmu, '\n  // A step.\n  const ');
+    writeSource('src/commented.ts', commented);
+    expect(runCheck(['src/commented.ts']).stdout).toContain(
+      'src/commented.ts:1-22: duplicated lines 12 (max 9), also at src/report.ts:1-12'
+    );
+    expect(runCheck(['src/commented.ts', '--warning-min-duplicate-lines', '13']).stdout).not.toContain('duplicated');
   });
 
   it('detects duplication against the git-visible files of the whole repository, with or without --base', () => {

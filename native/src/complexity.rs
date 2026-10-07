@@ -97,6 +97,7 @@ const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "un
 /// A branching construct or nested function inside a function body, with the cognitive complexity
 /// its whole subtree adds to that function.
 pub struct CognitiveBlock {
+    pub name: Option<String>,
     pub start_line: usize,
     pub end_line: usize,
     pub cognitive_complexity: u64,
@@ -104,6 +105,8 @@ pub struct CognitiveBlock {
 
 /// A block with the blocks directly inside it, as recorded while its function's frame is open.
 struct CognitiveBlockNode {
+    /// The name of the nested function the block is.
+    name: Option<String>,
     start_line: usize,
     end_line: usize,
     cognitive_complexity: u64,
@@ -158,6 +161,7 @@ fn select_reported_blocks(blocks: &[CognitiveBlockNode], total: u64) -> Vec<Cogn
         .into_iter()
         .take(MAX_REPORTED_COGNITIVE_BLOCKS)
         .map(|block| CognitiveBlock {
+            name: block.name.clone(),
             start_line: block.start_line,
             end_line: block.end_line,
             cognitive_complexity: block.cognitive_complexity,
@@ -501,7 +505,12 @@ impl FunctionBodyPass<'_, '_, '_> {
         if cognitive_complexity == 0 {
             return;
         }
+        let name = is_function_boundary(node, &self.sets.function_nodes)
+            .then(|| crate::functions::find_function_name(node, self.code))
+            .flatten();
+        let frame = self.top_frame();
         let block = CognitiveBlockNode {
+            name,
             start_line: node.start_position().row + 1,
             end_line: node.end_position().row + 1,
             cognitive_complexity,

@@ -1463,6 +1463,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
         {
           "cognitiveComplexity": 1,
           "endLine": 87,
+          "name": "guard",
           "startLine": 87,
         },
         {
@@ -2768,11 +2769,13 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
         {
           "cognitiveComplexity": 2,
           "endLine": 113,
+          "name": "run",
           "startLine": 110,
         },
         {
           "cognitiveComplexity": 2,
           "endLine": 116,
+          "name": "doubler",
           "startLine": 116,
         },
       ],
@@ -3880,11 +3883,13 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
         {
           "cognitiveComplexity": 3,
           "endLine": 123,
+          "name": "doubler",
           "startLine": 123,
         },
         {
           "cognitiveComplexity": 2,
           "endLine": 120,
+          "name": "run",
           "startLine": 117,
         },
         {
@@ -4388,11 +4393,13 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
         {
           "cognitiveComplexity": 2,
           "endLine": 74,
+          "name": "inner",
           "startLine": 72,
         },
         {
           "cognitiveComplexity": 2,
           "endLine": 77,
+          "name": "scale",
           "startLine": 77,
         },
       ],
@@ -15444,6 +15451,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
         {
           "cognitiveComplexity": 2,
           "endLine": 56,
+          "name": "lam",
           "startLine": 56,
         },
         {
