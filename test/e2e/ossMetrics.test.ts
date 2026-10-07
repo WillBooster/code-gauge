@@ -32,8 +32,9 @@ const round = (value: number): number => Math.round(value * 10_000) / 10_000;
  * including fields added to the hand-enumerated duplication/halstead groups.
  */
 // duplicateLineNumbers is asserted structurally (its length is the pinned duplicateLineCount), and
-// codeLineNumbers is no aggregate: the golden snapshots of the fixture corpus pin its contents. So
-// the aggregate expectations stay hand-readable.
+// codeLineNumbers is no aggregate: these files pin its length through `lines.code`, and the golden
+// snapshots pin its contents for the other fixtures. So the aggregate expectations stay
+// hand-readable.
 type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree' | 'codeLineNumbers'>;
 type RoundedAggregates = Omit<Record<AggregateKey, unknown>, 'duplication' | 'halstead'> & {
   duplication: Record<Exclude<keyof DuplicationMetrics, 'duplicateLineNumbers'>, unknown>;
