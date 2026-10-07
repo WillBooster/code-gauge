@@ -144,17 +144,20 @@ const INITIALIZER_NODE_TYPES: &[&str] = &[
     "block",
 ];
 
+/// A block of a class that runs when the class or an instance is initialized.
+pub fn is_initializer_block(node: Node<'_>) -> bool {
+    INITIALIZER_NODE_TYPES.contains(&node.kind_name())
+        // A bare block is an initializer only as a direct member of a Java class or enum body.
+        && (node.kind_name() != "block"
+            || node.parent_node().is_some_and(|parent| {
+                matches!(parent.kind_name(), "class_body" | "enum_body_declarations")
+            }))
+}
+
 fn count_initializer_blocks(candidates: &[Node<'_>]) -> u64 {
     candidates
         .iter()
-        .filter(|node| INITIALIZER_NODE_TYPES.contains(&node.kind_name()))
-        .filter(|node| {
-            // A bare block is an initializer only as a direct member of a Java class or enum body.
-            node.kind_name() != "block"
-                || node.parent_node().is_some_and(|parent| {
-                    matches!(parent.kind_name(), "class_body" | "enum_body_declarations")
-                })
-        })
+        .filter(|node| is_initializer_block(**node))
         .count() as u64
 }
 

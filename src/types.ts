@@ -87,15 +87,19 @@ export interface CognitiveBlock {
 export interface FunctionMetrics {
   name?: string;
   /**
-   * The name of the declaration whose member the function is: a class, struct, interface, enum,
-   * record, object, trait, namespace, Rust `impl`, or Ruby module enclosing it, the receiver type
-   * of a Go method, or the object a Ruby singleton method or singleton class names. A C++ owner is
-   * spelled with the namespaces and classes around it (`ns::Rules`), whether the function is
-   * defined inside them or outside as `ns::Rules::decide`; an unnamed namespace adds nothing. Absent when another function lies
-   * between the two, so a member of a class declared inside a function has it and a closure inside
-   * a method does not, and absent for a member of an anonymous class or of an object literal, a
-   * function passed to a call or held in a collection in a member's initializer, and a function local to a static block,
-   * which are no members of the named type around them.
+   * The name of the declaration whose member the function is, read from the syntax alone: a
+   * class, struct, interface, enum, record, object, trait, namespace or module, or Rust `impl`
+   * enclosing it, the receiver type of a Go method, or the object a Ruby singleton method or
+   * singleton class names. A C++ owner is spelled with the namespaces and classes around it
+   * (`ns::Rules`), whether the function is defined inside them or outside as `ns::Rules::decide`;
+   * an unnamed namespace and template arguments add nothing, and a friend defined in a class
+   * belongs to the scopes around that class.
+   *
+   * Absent unless the function is the member itself or the value its member is bound to: a
+   * function nested in another function, a value inside an expression of a member's initializer
+   * (an argument of a call, an element of a collection), a member of an anonymous class or of an
+   * object literal, and a function local to an initializer block have none. So a member of a
+   * class declared inside a function has it, and a closure inside a method does not.
    */
   containerName?: string;
   /**

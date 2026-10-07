@@ -21995,7 +21995,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     {
       "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
-      "containerName": undefined,
+      "containerName": "hidden",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -22022,7 +22022,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     {
       "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
-      "containerName": undefined,
+      "containerName": "surface",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,
@@ -22049,7 +22049,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     {
       "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
-      "containerName": undefined,
+      "containerName": "surface",
       "cyclomaticComplexity": 1,
       "depDegree": 0,
       "endColumn": 5,

@@ -289,6 +289,15 @@ ep\`](value: number): number {
     expect(stdout).toContain('src/rules.cpp:5-5 ns.inside: parameters 7 (max 6)\n');
     // An unnamed namespace adds nothing to the name.
     expect(stdout).toContain('src/rules.cpp:7-7 ns.local: parameters 7 (max 6)\n');
+    // A friend belongs to the scopes around the class, `namespace a::b` names two scopes, and
+    // template arguments add nothing.
+    writeSource(
+      'src/more.cpp',
+      'namespace a::b { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\n'
+    );
+    const more = runCheck(['src/more.cpp']).stdout;
+    expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');
+    expect(more).toContain('src/more.cpp:2-2 a::b::Plain.spelled: parameters 7 (max 6)\n');
     // A namespace both enclosing and spelled out is counted once.
     expect(stdout).toContain('src/rules.cpp:6-6 ns::Rules.spelled: parameters 7 (max 6)\n');
     // The same method is named alike whether it is defined inside its namespace or outside.
@@ -307,6 +316,16 @@ ep\`](value: number): number {
     const { stdout } = runCheck(['src/registered.ts']);
     expect(stdout).toContain('src/registered.ts:2-4 callback: parameters 7 (max 6)\n');
     expect(stdout).toContain('src/registered.ts:5-5 element: parameters 7 (max 6)\n');
+  });
+
+  it('leaves a function local to an instance initializer unqualified', () => {
+    writeSource(
+      'src/Init.java',
+      'class Init {\n  {\n    Seven local = (a, b, c, d, e, f, g) -> a;\n  }\n  Seven member = (a, b, c, d, e, f, g) -> a;\n}\ninterface Seven { int apply(int a, int b, int c, int d, int e, int f, int g); }\n'
+    );
+    const { stdout } = runCheck(['src/Init.java']);
+    expect(stdout).toContain('src/Init.java:3-3 local: parameters 7 (max 6)\n');
+    expect(stdout).toContain('src/Init.java:5-5 Init.member: parameters 7 (max 6)\n');
   });
 
   it('leaves a callback passed to an enum constant unqualified', () => {

@@ -270,6 +270,7 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "impl_item",
     "interface_declaration",
     "internal_module",
+    "mod_item",
     "module",
     "namespace_definition",
     "object_declaration",
@@ -278,33 +279,31 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "struct_specifier",
     "trait_item",
 ];
-/// A function passed to a call or held in a collection, as in a member's initializer
-/// `field = register(() => { ... })` or `field = [() => { ... }]`, is the call's argument or the
-/// collection's element rather than a member.
-const CALL_NODE_TYPES: &[&str] = &[
-    "annotated_lambda",
-    "array",
-    "array_creation_expression",
-    "array_expression",
-    "collection_literal",
-    "dictionary",
-    "hash",
-    "initializer_list",
-    "list",
-    "set",
-    "tuple",
-    // Argument lists too: an enum constant's constructor arguments hang off no call node.
-    "argument_list",
-    "arguments",
-    "call",
-    "call_expression",
-    "invocation_expression",
-    "macro_invocation",
-    "method_invocation",
-    "new_expression",
-    "object_creation_expression",
-    "value_arguments",
-];
+/// Whether a function below `ancestor` is a value inside an expression rather than what a member
+/// is bound to: passed to a call (`field = register(() => { ... })`), held in a collection
+/// (`field = [() => { ... }]`), or chosen by an operator. Grammars name such nodes
+/// `..._expression`; the listed kinds are those named otherwise.
+fn is_enclosing_expression(ancestor: Node<'_>) -> bool {
+    const OTHER_EXPRESSION_NODE_TYPES: &[&str] = &[
+        "annotated_lambda",
+        "argument_list",
+        "arguments",
+        "array",
+        "call",
+        "collection_literal",
+        "dictionary",
+        "hash",
+        "initializer_list",
+        "list",
+        "macro_invocation",
+        "method_invocation",
+        "set",
+        "tuple",
+        "value_arguments",
+    ];
+    let kind = ancestor.kind_name();
+    kind.ends_with("_expression") || OTHER_EXPRESSION_NODE_TYPES.contains(&kind)
+}
 
 const CPP_SCOPE_NODE_TYPES: &[&str] = &[
     "class_specifier",
@@ -327,7 +326,8 @@ fn enclosing_cpp_scopes<'s>(
         }
         if CPP_SCOPE_NODE_TYPES.contains(&ancestor.kind_name()) {
             match ancestor.child_by_field_name("name") {
-                Some(name) => scopes.push(node_text(name, code)),
+                // `namespace a::b` names two scopes at once.
+                Some(name) => scopes.extend(node_text(name, code).rsplit("::")),
                 // An unnamed namespace adds nothing; an unnamed class ends the owner, as its
                 // members are reached through no name.
                 None if ancestor.kind_name() == "namespace_definition" => {}
@@ -386,7 +386,9 @@ pub fn find_container_name(
             let mut qualified = inner;
             while qualified.kind_name() == "qualified_identifier" {
                 if let Some(scope) = qualified.child_by_field_name("scope") {
-                    scopes.push(node_text(scope, code));
+                    // `Rules<T>::decide` belongs to the class its definition names `Rules`.
+                    let named = scope.child_by_field_name("name").unwrap_or(scope);
+                    scopes.push(node_text(named, code));
                 }
                 qualified = qualified.child_by_field_name("name")?;
             }
@@ -414,8 +416,12 @@ pub fn find_container_name(
     }
     // A Ruby `private def decide` passes the definition to a call and still defines a member.
     let is_ruby_definition = matches!(node.kind_name(), "method" | "singleton_method");
-    let mut current = node.parent_node();
+    // Wrappers such as parentheses and casts leave the function what the member is bound to.
+    let mut current = unwrap_transparent_value_wrappers(node).parent_node();
+    // A C++ friend defined in a class belongs to the scopes around that class.
+    let mut is_friend = false;
     while let Some(ancestor) = current {
+        is_friend |= ancestor.kind_name() == "friend_declaration";
         // So does a method inside `class << Other`; `class << self` leaves the class around it.
         if ancestor.kind_name() == "singleton_class" {
             if let Some(owner) = explicit_ruby_owner(ancestor.child_by_field_name("value"), code) {
@@ -428,11 +434,9 @@ pub fn find_container_name(
         // A function local to a static block, or a member of an object literal or of an anonymous
         // class (a class body whose parent declares no type), is no member of the named type
         // around it.
-        let is_unnamed_scope = matches!(
-            ancestor.kind_name(),
-            "class_static_block" | "static_initializer" | "object"
-        ) || (!is_ruby_definition
-            && CALL_NODE_TYPES.contains(&ancestor.kind_name()))
+        let is_unnamed_scope = ancestor.kind_name() == "object"
+            || crate::measure::is_initializer_block(ancestor)
+            || (!is_ruby_definition && is_enclosing_expression(ancestor))
             || (ancestor.kind_name() == "class_body"
                 && ancestor
                     .parent_node()
@@ -477,8 +481,10 @@ pub fn find_container_name(
             } else {
                 Vec::new()
             };
-            owner.push(name);
-            return Some(owner.join("::"));
+            if !is_friend {
+                owner.extend(name.split("::"));
+            }
+            return (!owner.is_empty()).then(|| owner.join("::"));
         }
         current = ancestor.parent_node();
     }
