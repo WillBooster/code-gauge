@@ -230,8 +230,8 @@ Kotlin, and Rust code:
 
 - 225 functions from 15 strata of metric values, 15 each;
 - 47 files from five strata of file NCSS, 10 each and all 7 above 1000;
-- 60 clone groups from five strata of the length of their longest block, 12 each; the block `check`
-  reports for a group is at least that long.
+- 60 clone groups from five strata of the length of their longest block in line span, 12 each;
+  the block `check` reported for a group was at least that long in line span.
 
 The draw preceded the fetch of one of the two data repositories, so its 675 Python functions could
 not be drawn. LLM reviewers that saw the code but neither the metric values nor the strata rated
