@@ -244,6 +244,14 @@ warning: src/legacy.ts:1-21 decide:`);
     expect(runCheck(['src/oneLine.ts', '--warning-max-function-cognitive-complexity', '3']).stdout).toContain(
       'largest parts L1 first 2, L1 second 2)'
     );
+    // Also when a wrapper around one of them is replaced by what it holds.
+    writeSource(
+      'src/oneLineWrapped.ts',
+      'export function wrappedPair(xs: number[], a: boolean, b: boolean): number { for (const it of xs) { const first = () => { if (a) { wrappedPair([it], b, a); } }; } const second = () => { const both = a && b; if (both) { wrappedPair(xs, b, a); } }; return 0; }\n'
+    );
+    expect(runCheck(['src/oneLineWrapped.ts', '--warning-max-function-cognitive-complexity', '2']).stdout).toContain(
+      'largest parts L1 first 3, L1 second 3)'
+    );
   });
 
   it('keeps a named nested function holding most of the complexity as the part to act on', () => {

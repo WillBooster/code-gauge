@@ -142,16 +142,10 @@ fn select_reported_blocks(blocks: &[CognitiveBlockNode], total: u64) -> Vec<Cogn
         {
             break;
         }
-        selected.swap_remove(index);
-        selected.extend(largest.children.iter());
+        // In place, so that `selected` stays in source order for the stable sort below.
+        selected.splice(index..=index, largest.children.iter());
     }
-    // Source order among equals keeps the report independent of the selection's bookkeeping.
-    selected.sort_by_key(|block| {
-        (
-            std::cmp::Reverse(block.cognitive_complexity),
-            block.start_line,
-        )
-    });
+    selected.sort_by_key(|block| std::cmp::Reverse(block.cognitive_complexity));
     selected
         .into_iter()
         .take(MAX_REPORTED_COGNITIVE_BLOCKS)
