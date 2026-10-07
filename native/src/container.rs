@@ -254,7 +254,11 @@ fn namespace_parts<'s>(name: Node<'_>, is_inline: bool, code: &Source<'s>) -> Ve
     let mut parts = Vec::new();
     let mut follows_inline = false;
     for child in crate::util::all_children(name) {
-        if child.is_named() && !child.is_extra() {
+        // A comment between `inline` and the name is no part and does not end the marking.
+        if child.is_extra() {
+            continue;
+        }
+        if child.is_named() {
             parts.extend(namespace_parts(child, follows_inline, code));
         }
         follows_inline = child.kind_name() == "inline";
