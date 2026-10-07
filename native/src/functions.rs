@@ -278,6 +278,36 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "struct_specifier",
     "trait_item",
 ];
+const CPP_SCOPE_NODE_TYPES: &[&str] = &[
+    "class_specifier",
+    "namespace_definition",
+    "struct_specifier",
+];
+
+/// The names of the C++ namespaces and classes around `node`, outermost first, up to the function
+/// enclosing it.
+fn enclosing_cpp_scopes<'s>(
+    node: Node<'_>,
+    function_nodes: &FxHashSet<&'static str>,
+    code: &Source<'s>,
+) -> Vec<&'s str> {
+    let mut scopes = Vec::new();
+    let mut current = node.parent_node();
+    while let Some(ancestor) = current {
+        if crate::complexity::is_function_boundary(ancestor, function_nodes) {
+            break;
+        }
+        if CPP_SCOPE_NODE_TYPES.contains(&ancestor.kind_name()) {
+            if let Some(name) = ancestor.child_by_field_name("name") {
+                scopes.push(node_text(name, code));
+            }
+        }
+        current = ancestor.parent_node();
+    }
+    scopes.reverse();
+    scopes
+}
+
 /// The object a Ruby singleton method or singleton class names, unless it is `self`.
 fn explicit_ruby_owner(object: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
     let text = node_text(object?, code);
@@ -326,7 +356,10 @@ pub fn find_container_name(
                 }
                 qualified = qualified.child_by_field_name("name")?;
             }
-            return (!scopes.is_empty()).then(|| scopes.join("::"));
+            // A definition inside `namespace ns { ... }` belongs to that namespace too.
+            let mut owner = enclosing_cpp_scopes(node, function_nodes, code);
+            owner.extend(scopes);
+            return (!owner.is_empty()).then(|| owner.join("::"));
         }
         declarator = next_declarator(inner);
     }
@@ -350,7 +383,15 @@ pub fn find_container_name(
         // around it.
         let is_unnamed_scope = matches!(
             ancestor.kind_name(),
-            "class_static_block" | "static_initializer" | "object"
+            "class_static_block"
+                | "static_initializer"
+                | "object"
+                // A callback passed to a call in a member's initializer is no member either.
+                | "arguments"
+                | "argument_list"
+                | "value_arguments"
+                | "call_suffix"
+                | "annotated_lambda"
         ) || (ancestor.kind_name() == "class_body"
             && ancestor
                 .parent_node()
@@ -378,7 +419,19 @@ pub fn find_container_name(
                         .into_iter()
                         .find(|child| CONTAINER_NAME_NODE_TYPES.contains(&child.kind_name()))
                 })?;
-            return Some(node_text(name_node, code).to_string()).filter(|name| !name.is_empty());
+            let name = node_text(name_node, code);
+            if name.is_empty() {
+                return None;
+            }
+            // C++ spells an owner with the namespaces and classes around it (`ns::Rules`), as a
+            // definition outside them has to.
+            let mut owner = if CPP_SCOPE_NODE_TYPES.contains(&ancestor.kind_name()) {
+                enclosing_cpp_scopes(ancestor, function_nodes, code)
+            } else {
+                Vec::new()
+            };
+            owner.push(name);
+            return Some(owner.join("::"));
         }
         current = ancestor.parent_node();
     }

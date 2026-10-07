@@ -497,7 +497,7 @@ describe('cli: ranking details', () => {
 describe('cli: file discovery', () => {
   it('maps every supported extension, including alternate and uppercase spellings, and skips generated names', () => {
     // Content only the C++ grammar accepts: parsed as C it yields two functions (`n`, `A`), as
-    // C++ the single method `A.f`, so the reported worst function reveals which grammar ran.
+    // C++ the single method `n::A.f`, so the reported worst function reveals which grammar ran.
     const cppOnly = 'namespace n { class A { public: int f() { return 1; } }; }\n';
     const cppSpellings = [
       'impl.cc',
@@ -544,7 +544,7 @@ describe('cli: file discovery', () => {
           .toSorted()
       );
       for (const file of cppSpellings) {
-        expect(report.files.find((entry) => entry.file === file)?.worstFunction?.name, file).toBe('A.f');
+        expect(report.files.find((entry) => entry.file === file)?.worstFunction?.name, file).toBe('n::A.f');
       }
       expect(report.files.find((entry) => entry.file === 'base.c')?.worstFunction?.name).toBe('f');
     } finally {
