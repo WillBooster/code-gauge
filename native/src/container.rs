@@ -95,6 +95,7 @@ pub fn find_container_name(
     node: Node<'_>,
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
+    inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
     // A function written as a value belongs to whatever it is passed or assigned to, which the
     // syntax cannot follow reliably; it keeps the name of what it is bound to and has no owner.
@@ -105,11 +106,11 @@ pub fn find_container_name(
         return go_receiver_type(receiver, code);
     }
     if let Some(qualified) = find_qualified_declarator(node) {
-        return cpp_spelled_owner(node, qualified, function_nodes, code);
+        return cpp_spelled_owner(node, qualified, function_nodes, code, inline_namespaces);
     }
     // A Ruby `def Other.decide` belongs to the object it names rather than to the class around it.
     explicit_ruby_owner(node.child_by_field_name("object"), code)
-        .or_else(|| enclosing_owner(node, function_nodes, code))
+        .or_else(|| enclosing_owner(node, function_nodes, code, inline_namespaces))
 }
 
 /// A Go method is declared outside its type and names it as its receiver, `(r *Rules)` or
@@ -143,6 +144,7 @@ fn cpp_spelled_owner(
     qualified: Node<'_>,
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
+    inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
     // A nested name (`ns::Rules::decide`) nests in its `name` field; the scopes on the way to the
     // innermost name are the owner. The name itself may hold `::` too (`operator std::string`), so
@@ -166,17 +168,16 @@ fn cpp_spelled_owner(
     } else {
         enclosing_cpp_scopes(node, function_nodes, code, false)
     };
-    spell_cpp_scopes(merge_cpp_scopes(owner, scopes), node, code)
+    spell_cpp_scopes(merge_cpp_scopes(owner, scopes), inline_namespaces)
 }
 
-/// The scopes as an owner, without the inline namespaces the file of `node` declares: one adds
-/// nothing when spelled (`mylib::v2::Thing` is `mylib::Thing`), as it adds nothing around a
-/// definition, while a plain namespace of the same name elsewhere stays.
-fn spell_cpp_scopes(scopes: Vec<&str>, node: Node<'_>, code: &Source<'_>) -> Option<String> {
-    let inline = inline_namespaces(node, code);
+/// The scopes as an owner, without the inline namespaces the file declares: one adds nothing when
+/// spelled (`mylib::v2::Thing` is `mylib::Thing`), as it adds nothing around a definition, while a
+/// plain namespace of the same name elsewhere stays.
+fn spell_cpp_scopes(scopes: Vec<&str>, inline_namespaces: &InlineNamespaces<'_>) -> Option<String> {
     let mut resolved: Vec<&str> = Vec::new();
     for scope in scopes {
-        let is_inline = inline
+        let is_inline = inline_namespaces
             .iter()
             .any(|(path, name)| *name == scope && *path == resolved);
         if !is_inline {
@@ -186,17 +187,25 @@ fn spell_cpp_scopes(scopes: Vec<&str>, node: Node<'_>, code: &Source<'_>) -> Opt
     (!resolved.is_empty()).then(|| resolved.join("::"))
 }
 
-/// The inline namespaces declared in the file of `node`, each as the scopes around it and its
-/// name. Namespaces nest only in one another, so the search descends through them alone.
-fn inline_namespaces<'s>(node: Node<'_>, code: &Source<'s>) -> Vec<(Vec<&'s str>, &'s str)> {
-    let mut root = node;
-    while let Some(parent) = root.parent_node() {
-        root = parent;
-    }
+/// The inline C++ namespaces a file declares, each as the scopes around it and its name.
+pub type InlineNamespaces<'s> = Vec<(Vec<&'s str>, &'s str)>;
+
+/// Collected once per file, as every owner in it is checked against them. Namespaces nest only in
+/// one another and in the wrappers below, so the search descends through those alone.
+pub fn find_inline_namespaces<'s>(root: Node<'_>, code: &Source<'s>) -> InlineNamespaces<'s> {
     let mut found = Vec::new();
     let mut pending = vec![(root, Vec::new())];
     while let Some((scope, path)) = pending.pop() {
         for child in named_children(scope) {
+            // An include guard or `extern "C"` holds namespaces without being a scope.
+            if child.kind_name().starts_with("preproc_")
+                || matches!(
+                    child.kind_name(),
+                    "linkage_specification" | "declaration_list"
+                )
+            {
+                pending.push((child, path.clone()));
+            }
             if child.kind_name() != "namespace_definition" {
                 continue;
             }
@@ -233,6 +242,7 @@ fn enclosing_owner(
     node: Node<'_>,
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
+    inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
     let mut current = node.parent_node();
     // A C++ friend defined in a class belongs to the scopes around that class.
@@ -252,7 +262,7 @@ fn enclosing_owner(
             return None;
         }
         if is_named_container(ancestor) {
-            return spell_owner(ancestor, is_friend, function_nodes, code);
+            return spell_owner(ancestor, is_friend, function_nodes, code, inline_namespaces);
         }
         current = ancestor.parent_node();
     }
@@ -264,6 +274,7 @@ fn spell_owner(
     is_friend: bool,
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
+    inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
     let name = scope_names(container_name_node(container)?, code);
     if name.iter().any(|part| part.is_empty()) {
@@ -285,7 +296,7 @@ fn spell_owner(
     } else if !is_friend {
         owner.extend(name);
     }
-    spell_cpp_scopes(owner, container, code)
+    spell_cpp_scopes(owner, inline_namespaces)
 }
 
 /// A function local to an initializer block, or a member of an object literal or of an anonymous

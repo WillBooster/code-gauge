@@ -49,6 +49,7 @@ pub fn measure(
         .collect();
 
     let body_metrics = measure_function_body_metrics(root, &sets, code);
+    let inline_namespaces = crate::container::find_inline_namespaces(root, code);
     let function_metrics: Vec<FunctionMetrics> = functions
         .iter()
         .map(|node| {
@@ -62,6 +63,7 @@ pub fn measure(
                     *node,
                     &sets.function_nodes,
                     code,
+                    &inline_namespaces,
                 ),
                 node_type: node.kind_name().to_string(),
                 start_line: node.start_position().row + 1,
