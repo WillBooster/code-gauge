@@ -250,7 +250,7 @@ fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
 /// Climbs from a value through the transparent wrappers around it (`(() => 1)`, `(() => 2) as Fn`,
 /// `<Fn>(() => 3)`, Rust `(|x| x) as fn(i32) -> i32`) to the outermost one, whose binding site
 /// names the value.
-pub(crate) fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
+fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     let mut bound = node;
     while let Some(wrapper) = bound.parent_node().filter(|wrapper| {
         wrapped_transparent_value(*wrapper).is_some_and(|value| value.id() == bound.id())

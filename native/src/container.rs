@@ -1,7 +1,7 @@
 use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
-use crate::functions::{next_declarator, unwrap_transparent_value_wrappers};
+use crate::functions::next_declarator;
 use crate::tree_index::NodeExt;
 use crate::util::{named_children, node_text, Source};
 
@@ -41,71 +41,6 @@ fn is_function_declaration(node: Node<'_>) -> bool {
                 | "setter"
                 | "singleton_method"
         )
-}
-
-/// What may lie between a function value bound to a member and the class: the member's
-/// declaration, which grammars name `..._declaration`, `..._definition`, `..._declarator`, or
-/// `..._item`, and the body or scope holding it.
-fn is_member_binding(ancestor: Node<'_>) -> bool {
-    const MEMBER_SCOPE_NODE_TYPES: &[&str] = &[
-        "assignment",
-        "block",
-        "body_statement",
-        "class_body",
-        "companion_object",
-        "declaration",
-        "declaration_list",
-        "enum_body",
-        "enum_body_declarations",
-        "enum_class_body",
-        "equals_value_clause",
-        "export_statement",
-        "expression_statement",
-        "interface_body",
-        "linkage_specification",
-        "statement_block",
-    ];
-    let kind = ancestor.kind_name();
-    [
-        "_declaration",
-        "_definition",
-        "_declarator",
-        "_item",
-        "_declaration_list",
-    ]
-    .iter()
-    .any(|suffix| kind.ends_with(suffix))
-        || MEMBER_SCOPE_NODE_TYPES.contains(&kind)
-}
-
-/// Whether a function below `ancestor` is a value inside an expression rather than what a member
-/// is bound to: passed to a call (`field = register(() => { ... })`), held in a collection
-/// (`field = [() => { ... }]`), or an operand of an operator. Grammars name such nodes
-/// `..._expression` or `..._operator`; the listed kinds are those named otherwise.
-fn is_enclosing_expression(ancestor: Node<'_>) -> bool {
-    const OTHER_EXPRESSION_NODE_TYPES: &[&str] = &[
-        "annotated_lambda",
-        "argument_list",
-        "arguments",
-        "array",
-        "binary",
-        "call",
-        "collection_literal",
-        "dictionary",
-        "hash",
-        "initializer_list",
-        "list",
-        "macro_invocation",
-        "method_invocation",
-        "set",
-        "tuple",
-        "unary",
-        "value_arguments",
-    ];
-    let kind = ancestor.kind_name();
-    kind.ends_with("_expression")
-        || kind.ends_with("_operator")
-        || OTHER_EXPRESSION_NODE_TYPES.contains(&kind)
 }
 
 const CPP_SCOPE_NODE_TYPES: &[&str] = &[
@@ -161,14 +96,19 @@ const CONTAINER_NAME_NODE_TYPES: &[&str] = &[
     "type_identifier",
 ];
 
-/// The name of the declaration whose member the function is: the nearest class-like declaration
-/// enclosing it, or the owner the function names itself (a Go receiver, a C++ qualified
+/// The name of the declaration whose member a declared function is: the nearest class-like
+/// declaration enclosing it, or the owner the function names itself (a Go receiver, a C++ qualified
 /// declarator, the object of a Ruby singleton method).
 pub fn find_container_name(
     node: Node<'_>,
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
 ) -> Option<String> {
+    // A function written as a value belongs to whatever it is passed or assigned to, which the
+    // syntax cannot follow reliably; it keeps the name of what it is bound to and has no owner.
+    if !is_function_declaration(node) {
+        return None;
+    }
     if let Some(receiver) = node.child_by_field_name("receiver") {
         return go_receiver_type(receiver, code);
     }
@@ -251,11 +191,7 @@ fn enclosing_owner(
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
 ) -> Option<String> {
-    // A Ruby `private def decide` passes the definition to a call and still defines a member.
-    let is_ruby_definition = matches!(node.kind_name(), "method" | "singleton_method");
-    let is_declaration = is_function_declaration(node);
-    // Wrappers such as parentheses and casts leave the function what the member is bound to.
-    let mut current = unwrap_transparent_value_wrappers(node).parent_node();
+    let mut current = node.parent_node();
     // A C++ friend defined in a class belongs to the scopes around that class.
     let mut is_friend = false;
     while let Some(ancestor) = current {
@@ -268,18 +204,12 @@ fn enclosing_owner(
             }
         }
         if crate::complexity::is_function_boundary(ancestor, function_nodes)
-            || ends_membership(ancestor, is_ruby_definition)
+            || ends_membership(ancestor)
         {
             return None;
         }
         if is_named_container(ancestor) {
             return spell_owner(ancestor, is_friend, function_nodes, code);
-        }
-        // A function value is a member only as what a member is bound to: anything but a binding
-        // between it and the class (a call, a collection, an operator, whatever the grammar calls
-        // it) makes it a value of that construct instead.
-        if !is_declaration && !is_member_binding(ancestor) {
-            return None;
         }
         current = ancestor.parent_node();
     }
@@ -310,13 +240,12 @@ fn spell_owner(
     (!owner.is_empty()).then(|| owner.join("::"))
 }
 
-/// A function local to an initializer block, a value inside an expression, or a member of an
-/// object literal or of an anonymous class (a class body whose parent declares no type) is no
+/// A function local to an initializer block, or a member of an object literal or of an anonymous
+/// class (a class body whose parent declares no type) is no
 /// member of the named type around it.
-fn ends_membership(ancestor: Node<'_>, is_ruby_definition: bool) -> bool {
+fn ends_membership(ancestor: Node<'_>) -> bool {
     ancestor.kind_name() == "object"
         || crate::measure::is_initializer_block(ancestor)
-        || (!is_ruby_definition && is_enclosing_expression(ancestor))
         || (ancestor.kind_name() == "class_body"
             && ancestor
                 .parent_node()

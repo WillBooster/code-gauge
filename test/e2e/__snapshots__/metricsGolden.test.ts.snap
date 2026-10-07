@@ -4031,7 +4031,7 @@ exports[`measureCode: golden metrics for the fixture corpus > matches the golden
     {
       "cognitiveBlocks": [],
       "cognitiveComplexity": 0,
-      "containerName": "Panel",
+      "containerName": undefined,
       "cyclomaticComplexity": 1,
       "depDegree": 1,
       "endColumn": 3,

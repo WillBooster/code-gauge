@@ -177,7 +177,8 @@ How to fix:
 A violation's level is that of its most severe limit. A function gets one line listing every
 threshold it exceeds, each with the largest value its violated limit allows and, when that limit is
 milder than the line's level, the limit's own level; a method is named with the type or
-module it belongs to (`Rules.decide`). A cognitive-complexity violation also names up to three parts of the function
+module it belongs to (`Rules.decide`), while a function written as a value, such as a lambda
+assigned to a field, keeps the bare name of what it is bound to. A cognitive-complexity violation also names up to three parts of the function
 adding the most to it (none when the score comes from operator sequences alone, outside any
 branching construct), largest first, each with its lines, its name when it is a nested function,
 and what it adds: the outermost branching constructs and nested functions of the body or, where one

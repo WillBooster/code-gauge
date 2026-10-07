@@ -306,8 +306,8 @@ ep\`](value: number): number {
     const more = runCheck(['src/more.cpp']).stdout;
     expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');
     expect(more).toContain('src/more.cpp:2-2 a::b::Plain.spelled: parameters 7 (max 6)\n');
-    // A lambda bound to a namespace member is that member.
-    expect(more).toContain('src/more.cpp:3-3 values.bound: parameters 7 (max 6)\n');
+    // A lambda is a value: it keeps the name of what it is bound to and takes no owner.
+    expect(more).toContain('src/more.cpp:3-3 bound: parameters 7 (max 6)\n');
     // A union is a class like a struct.
     expect(more).toContain('src/more.cpp:4-4 Holder::Inner.member: parameters 7 (max 6)\n');
     // A namespace both enclosing and spelled out is counted once.
@@ -320,32 +320,14 @@ ep\`](value: number): number {
     );
   });
 
-  it('leaves a callback in the initializer of a class field unqualified', () => {
+  it('names a function written as a value by what it is bound to, without an owner', () => {
     writeSource(
-      'src/registered.ts',
-      'export class Registered {\n  field = register(function callback(a: number, b: number, c: number, d: number, e: number, f: number, g: number) {\n    return a;\n  });\n  list = [function element(a: number, b: number, c: number, d: number, e: number, f: number, g: number) {}];\n}\n'
+      'src/Values.java',
+      'class Values {\n  Seven member = (a, b, c, d, e, f, g) -> a;\n  int method(int a, int b, int c, int d, int e, int f, int g) { return a; }\n}\ninterface Seven { int apply(int a, int b, int c, int d, int e, int f, int g); }\n'
     );
-    const { stdout } = runCheck(['src/registered.ts']);
-    expect(stdout).toContain('src/registered.ts:2-4 callback: parameters 7 (max 6)\n');
-    expect(stdout).toContain('src/registered.ts:5-5 element: parameters 7 (max 6)\n');
-  });
-
-  it('leaves a function local to an instance initializer unqualified', () => {
-    writeSource(
-      'src/Init.java',
-      'class Init {\n  {\n    Seven local = (a, b, c, d, e, f, g) -> a;\n  }\n  Seven member = (a, b, c, d, e, f, g) -> a;\n}\ninterface Seven { int apply(int a, int b, int c, int d, int e, int f, int g); }\n'
-    );
-    const { stdout } = runCheck(['src/Init.java']);
-    expect(stdout).toContain('src/Init.java:3-3 local: parameters 7 (max 6)\n');
-    expect(stdout).toContain('src/Init.java:5-5 Init.member: parameters 7 (max 6)\n');
-  });
-
-  it('leaves a callback passed to an enum constant unqualified', () => {
-    writeSource(
-      'src/Kind.java',
-      'enum Kind {\n  ONE((a, b, c, d, e, f, g) -> a);\n  Kind(Seven seven) {}\n}\ninterface Seven { int apply(int a, int b, int c, int d, int e, int f, int g); }\n'
-    );
-    expect(runCheck(['src/Kind.java']).stdout).toContain('src/Kind.java:2-2 <anonymous>: parameters 7 (max 6)\n');
+    const { stdout } = runCheck(['src/Values.java']);
+    expect(stdout).toContain('src/Values.java:2-2 member: parameters 7 (max 6)\n');
+    expect(stdout).toContain('src/Values.java:3-3 Values.method: parameters 7 (max 6)\n');
   });
 
   it('leaves a method of an object literal in a class unqualified', () => {
@@ -368,13 +350,13 @@ ep\`](value: number): number {
     expect(stdout).toContain(' Rules.hidden: parameters 7 (max 6)\n');
   });
 
-  it('keeps the class of a function value bound to a Kotlin companion property', () => {
+  it('names a member of a Kotlin companion with the class it accompanies', () => {
     writeSource(
       'src/Companion.kt',
-      'class Companion {\n  companion object {\n    val bound = { a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int -> a }\n  }\n}\n'
+      'class Companion {\n  companion object {\n    fun build(a: Int, b: Int, c: Int, d: Int, e: Int, f: Int, g: Int): Int { return a }\n  }\n}\n'
     );
     expect(runCheck(['src/Companion.kt']).stdout).toContain(
-      'src/Companion.kt:3-3 Companion.bound: parameters 7 (max 6)\n'
+      'src/Companion.kt:3-3 Companion.build: parameters 7 (max 6)\n'
     );
   });
 
