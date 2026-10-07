@@ -197,13 +197,7 @@ pub fn find_inline_namespaces<'s>(root: Node<'_>, code: &Source<'s>) -> InlineNa
     let mut pending = vec![(root, Vec::new())];
     while let Some((scope, path)) = pending.pop() {
         for child in named_children(scope) {
-            // An include guard or `extern "C"` holds namespaces without being a scope.
-            if child.kind_name().starts_with("preproc_")
-                || matches!(
-                    child.kind_name(),
-                    "linkage_specification" | "declaration_list"
-                )
-            {
+            if holds_namespaces_without_scope(child) {
                 pending.push((child, path.clone()));
             }
             if child.kind_name() != "namespace_definition" {
@@ -234,6 +228,15 @@ fn merge_cpp_scopes<'s>(mut enclosing: Vec<&'s str>, spelled: Vec<&'s str>) -> V
     enclosing.truncate(restart.unwrap_or(enclosing.len()));
     enclosing.extend(spelled);
     enclosing
+}
+
+/// An include guard or `extern "C"` block holds namespaces without being a scope.
+fn holds_namespaces_without_scope(node: Node<'_>) -> bool {
+    node.kind_name().starts_with("preproc_")
+        || matches!(
+            node.kind_name(),
+            "linkage_specification" | "declaration_list"
+        )
 }
 
 /// The nearest class-like declaration around the function, unless something between them makes
