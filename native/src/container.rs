@@ -266,12 +266,13 @@ fn namespace_parts<'s>(name: Node<'_>, is_inline: bool, code: &Source<'s>) -> Ve
     parts
 }
 
-/// An include guard or `extern "C"` block holds namespaces without being a scope.
+/// An include guard, an `extern "C"` block, or a module's `export` holds namespaces without being
+/// a scope.
 fn holds_namespaces_without_scope(node: Node<'_>) -> bool {
     node.kind_name().starts_with("preproc_")
         || matches!(
             node.kind_name(),
-            "linkage_specification" | "declaration_list"
+            "declaration_list" | "export_declaration" | "linkage_specification"
         )
 }
 
