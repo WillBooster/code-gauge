@@ -22,9 +22,8 @@ export interface CheckedFile {
 
 /**
  * By file path, the 1-based lines that are neither blank nor comment-only, by which duplicated
- * blocks are measured and their copies ranked: of the checked files and of every other file a copy
- * may lie in. A file is missing when its cross-file data could not be collected, which the scan
- * reports as a warning.
+ * blocks are measured and their copies ranked: of the checked files and of every other measured
+ * file a copy may lie in.
  */
 export type CodeLineNumbersByFile = ReadonlyMap<string, ReadonlySet<number>>;
 
@@ -83,7 +82,7 @@ export function checkThresholds(
   codeLineNumbersByFile: CodeLineNumbersByFile
 ): CheckResult {
   const crossFileGroupsByFile = indexGroupsByFile(crossFileDuplication, new Set(files.map(({ file }) => file)));
-  // The length of a duplicated block. A file whose code lines are unknown counts every line of it.
+  // The length of a duplicated block. A copy in a file that could not be measured counts every line.
   const countCodeLines = (block: BlockLocation): number => {
     const codeLineNumbers = codeLineNumbersByFile.get(block.file);
     if (!codeLineNumbers) return block.endLine - block.startLine + 1;

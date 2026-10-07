@@ -88,11 +88,13 @@ export interface FunctionMetrics {
   name?: string;
   /**
    * The name of the declaration whose member the function is: a class, struct, interface, enum,
-   * record, object, trait, Rust `impl`, or Ruby module enclosing it, the receiver type of a Go
-   * method, or the scope of a C++ method defined outside its class (`Rules` in `Rules::decide`); absent when another function lies between the two, so a member of a class declared
-   * inside a function has it and a closure inside a method does not, and absent for a member of
-   * an anonymous class or of an object literal and for a function local to a static block, which
-   * are no members of the named type around them.
+   * record, object, trait, namespace, Rust `impl`, or Ruby module enclosing it, the receiver type
+   * of a Go method, the scope of a C++ method defined outside its class (`Rules` in
+   * `Rules::decide`), or the object a Ruby singleton method or singleton class names. Absent when
+   * another function lies between the two, so a member of a class declared inside a function has
+   * it and a closure inside a method does not, and absent for a member of an anonymous class or
+   * of an object literal and for a function local to a static block, which are no members of the
+   * named type around them.
    */
   containerName?: string;
   /**
@@ -193,6 +195,8 @@ export interface CodeMetrics {
   language: LanguageName;
   bytes: number;
   lines: LineMetrics;
+  /** The 1-based lines counted in `lines.code` (neither blank nor comment-only), sorted ascending. */
+  codeLineNumbers: number[];
   functions: FunctionMetrics[];
   /**
    * The file's cyclomatic complexity as McCabe's v = e - n + 2p over its components: the sum of

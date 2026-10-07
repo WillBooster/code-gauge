@@ -93,6 +93,11 @@ pub fn measure(
         language: language.name.to_string(),
         bytes: code.code.len(),
         lines,
+        code_line_numbers: {
+            let mut sorted: Vec<usize> = code_line_numbers.iter().copied().collect();
+            sorted.sort_unstable();
+            sorted
+        },
         // McCabe's v = e - n + 2p over the file's components: every function, every initializer
         // block, and the module body when the file runs top-level code; decisions outside functions
         // belong to the file.

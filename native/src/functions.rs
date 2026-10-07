@@ -269,6 +269,7 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "enum_declaration",
     "impl_item",
     "interface_declaration",
+    "internal_module",
     "module",
     "object_declaration",
     "record_declaration",
@@ -276,6 +277,12 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "struct_specifier",
     "trait_item",
 ];
+/// The object a Ruby singleton method or singleton class names, unless it is `self`.
+fn explicit_ruby_owner(object: Option<Node<'_>>, code: &Source<'_>) -> Option<String> {
+    let text = node_text(object?, code);
+    (text != "self").then(|| text.to_string())
+}
+
 const CONTAINER_NAME_NODE_TYPES: &[&str] = &[
     "constant",
     "identifier",
@@ -313,8 +320,18 @@ pub fn find_container_name(
         }
         declarator = inner.child_by_field_name("declarator");
     }
+    // A Ruby `def Other.decide` belongs to the object it names rather than to the class around it.
+    if let Some(owner) = explicit_ruby_owner(node.child_by_field_name("object"), code) {
+        return Some(owner);
+    }
     let mut current = node.parent_node();
     while let Some(ancestor) = current {
+        // So does a method inside `class << Other`; `class << self` leaves the class around it.
+        if ancestor.kind_name() == "singleton_class" {
+            if let Some(owner) = explicit_ruby_owner(ancestor.child_by_field_name("value"), code) {
+                return Some(owner);
+            }
+        }
         if crate::complexity::is_function_boundary(ancestor, function_nodes) {
             return None;
         }

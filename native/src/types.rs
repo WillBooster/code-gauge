@@ -10,6 +10,8 @@ pub struct NativeMetrics {
     pub language: String,
     pub bytes: usize,
     pub lines: LineMetrics,
+    /// The 1-based lines counted in `lines.code`, sorted ascending.
+    pub code_line_numbers: Vec<usize>,
     pub functions: Vec<FunctionMetrics>,
     pub cyclomatic_complexity: u64,
     pub cognitive_complexity: u64,

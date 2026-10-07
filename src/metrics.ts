@@ -121,6 +121,7 @@ function assembleNativeMetrics(payload: NativeMetricsPayload, includeSyntaxTree:
     language: payload.language,
     bytes: payload.bytes,
     lines: payload.lines,
+    codeLineNumbers: payload.codeLineNumbers,
     functions: payload.functions.map((fn) => ({
       name: fn.name,
       containerName: fn.containerName,

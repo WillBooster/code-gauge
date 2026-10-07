@@ -31,9 +31,10 @@ const round = (value: number): number => Math.round(value * 10_000) / 10_000;
  * roundFloats' result — the return type makes forgetting a newly added metric a compile error,
  * including fields added to the hand-enumerated duplication/halstead groups.
  */
-type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree'>;
-// duplicateLineNumbers is asserted structurally (its length is the pinned duplicateLineCount and
-// the golden snapshots pin the exact arrays), so the aggregate expectations stay hand-readable.
+// codeLineNumbers and duplicateLineNumbers are asserted structurally (their lengths are the pinned
+// lines.code and duplicateLineCount, and the golden snapshots pin the exact arrays), so the
+// aggregate expectations stay hand-readable.
+type AggregateKey = Exclude<keyof CodeMetrics, 'language' | 'bytes' | 'functions' | 'syntaxTree' | 'codeLineNumbers'>;
 type RoundedAggregates = Omit<Record<AggregateKey, unknown>, 'duplication' | 'halstead'> & {
   duplication: Record<Exclude<keyof DuplicationMetrics, 'duplicateLineNumbers'>, unknown>;
   halstead: Record<keyof HalsteadMetrics, number>;
@@ -119,6 +120,7 @@ describe('real-world OSS corpus: all supported metrics for all supported languag
         expect(metrics.language).toBe(expectation.language);
         expect(metrics.bytes).toBe(Buffer.byteLength(code));
         expect(metrics.duplication.duplicateLineNumbers).toHaveLength(metrics.duplication.duplicateLineCount);
+        expect(metrics.codeLineNumbers).toHaveLength(metrics.lines.code);
         expect(roundFloats(metrics)).toEqual(expectation.aggregates);
       });
 

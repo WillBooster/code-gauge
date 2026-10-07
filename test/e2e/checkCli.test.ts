@@ -294,6 +294,16 @@ ep\`](value: number): number {
     expect(runCheck(['src/outer.ts']).stdout).toContain('src/outer.ts:3-5 run: parameters 7 (max 6)\n');
   });
 
+  it('names a Ruby singleton method with the object it is defined on', () => {
+    writeSource(
+      'src/rules.rb',
+      'class Rules\n  class << Other\n    def decide(a, b, c, d, e, f, g)\n    end\n  end\n\n  def self.build(a, b, c, d, e, f, g)\n  end\nend\n'
+    );
+    const { stdout } = runCheck(['src/rules.rb']);
+    expect(stdout).toContain(' Other.decide: parameters 7 (max 6)\n');
+    expect(stdout).toContain(' Rules.build: parameters 7 (max 6)\n');
+  });
+
   it('names a Go method with its receiver type', () => {
     writeSource(
       'src/rules.go',

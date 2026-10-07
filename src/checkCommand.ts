@@ -235,13 +235,7 @@ async function scanRepository(
 }
 
 function indexCodeLineNumbers(scan: ScanResult, root: string): CodeLineNumbersByFile {
-  return new Map(
-    scan.files.flatMap(({ file, duplicationCandidates }) =>
-      duplicationCandidates?.codeLineNumbers
-        ? [[formatPath(file, root), duplicationCandidates.codeLineNumbers] as const]
-        : []
-    )
-  );
+  return new Map(scan.files.map(({ file, metrics }) => [formatPath(file, root), new Set(metrics.codeLineNumbers)]));
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
