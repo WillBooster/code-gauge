@@ -67,13 +67,12 @@ fn enclosing_cpp_scopes<'s>(
         let is_namespace = ancestor.kind_name() == "namespace_definition";
         if CPP_SCOPE_NODE_TYPES.contains(&ancestor.kind_name())
             && (is_namespace || !namespaces_only)
+            && !is_transparent_namespace(ancestor)
         {
             match ancestor.child_by_field_name("name") {
                 // `namespace a::b` names two scopes at once.
                 Some(name) => scopes.extend(scope_names(name, code).into_iter().rev()),
-                // An unnamed namespace adds nothing; an unnamed class ends the owner, as its
-                // members are reached through no name.
-                None if is_namespace => {}
+                // An unnamed class ends the owner, as its members are reached through no name.
                 None => break,
             }
         }
@@ -263,12 +262,19 @@ fn ends_membership(ancestor: Node<'_>) -> bool {
 }
 
 fn is_named_container(ancestor: Node<'_>) -> bool {
-    // The members of an unnamed C++ namespace belong to the namespace around it.
-    let is_unnamed_namespace = ancestor.kind_name() == "namespace_definition"
-        && ancestor.child_by_field_name("name").is_none();
     ancestor.is_named()
-        && !is_unnamed_namespace
+        && !is_transparent_namespace(ancestor)
         && CONTAINER_NODE_TYPES.contains(&ancestor.kind_name())
+}
+
+/// The members of an unnamed or inline C++ namespace are reached through the namespace around it,
+/// which is how a definition outside it spells them.
+fn is_transparent_namespace(node: Node<'_>) -> bool {
+    node.kind_name() == "namespace_definition"
+        && (node.child_by_field_name("name").is_none()
+            || node
+                .child(0)
+                .is_some_and(|first| first.kind_name() == "inline"))
 }
 
 /// The identifiers a name consists of: one, or those of a C++ `a::b`, whose separators, spacing,

@@ -93,7 +93,7 @@ export interface FunctionMetrics {
    * enclosing it, the receiver type of a Go method, or the object a Ruby singleton method or
    * singleton class names. A C++ owner is spelled with the namespaces and classes around it
    * (`ns::Rules`), whether the function is defined inside them or outside as `ns::Rules::decide`;
-   * an unnamed namespace and template arguments add nothing, and a friend defined in a class
+   * an unnamed or inline namespace and template arguments add nothing, and a friend defined in a class
    * belongs to the namespace around that class.
    *
    * Absent for a function written as a value (a lambda, a closure, a function expression), which
