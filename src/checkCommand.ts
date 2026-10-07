@@ -387,7 +387,7 @@ function describeLargestBlocks({ largestBlocks = [] }: Violation): string {
     ({ startLine, endLine, name, cognitiveComplexity }) =>
       `L${startLine}${endLine === startLine ? '' : `-${endLine}`}${name ? ` ${toOneLine(name)}` : ''} ${cognitiveComplexity}`
   );
-  return blocks.length > 0 ? `; most from ${blocks.join(', ')}` : '';
+  return blocks.length > 0 ? `; largest parts ${blocks.join(', ')}` : '';
 }
 
 function describeViolation(violation: Violation, exceeded: string): string {

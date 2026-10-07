@@ -170,7 +170,7 @@ describe('code-gauge check', () => {
     expect(result.status).toBe(0);
     expect(result.stdout)
       .toBe(`Threshold violations: 0 errors, 3 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-warning: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; most from L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)
+warning: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; largest parts L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)
 warning: src/report.ts:1-12: duplicated lines 12 (max 9), also at src/summary.ts:1-12
 warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12
 
@@ -186,7 +186,7 @@ How to fix:
     expect(result.status).toBe(1);
     expect(result.stdout)
       .toContain(`Threshold violations: 3 errors, 0 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-21 decide: cognitive complexity 24 (warning max 15; most from L4-10 12, L16 2, L17 2), nesting depth 5 (max 3)
+error: src/legacy.ts:1-21 decide: cognitive complexity 24 (warning max 15; largest parts L4-10 12, L16 2, L17 2), nesting depth 5 (max 3)
 error: src/report.ts:1-12: duplicated lines 12 (max 11), also at src/summary.ts:1-12
 error: src/summary.ts:1-12: duplicated lines 12 (max 11), also at src/report.ts:1-12
 `);
@@ -207,7 +207,7 @@ warning: src/legacy.ts:1-21 decide:`);
     );
     const { stdout } = runCheck(['src/wrapped.ts']);
     // The callback holds all of the complexity, so the parts named are those inside it.
-    expect(stdout).toContain(' wrapped: cognitive complexity 35 (max 30; most from L5-11 15, L17 3, L18 3)\n');
+    expect(stdout).toContain(' wrapped: cognitive complexity 35 (max 30; largest parts L5-11 15, L17 3, L18 3)\n');
     // Nesting depth covers a function's own body only, so the nested function alone exceeds its limit.
     expect(stdout).toMatch(/ <anonymous>: nesting depth 5 \(max 4\)\n/u);
   });
@@ -234,7 +234,7 @@ warning: src/legacy.ts:1-21 decide:`);
 `
     );
     expect(runCheck(['src/factory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
-      ' createCounter: cognitive complexity 11 (max 5; most from L3-8 step 5, L9-13 reset 5, L14 1)\n'
+      ' createCounter: cognitive complexity 11 (max 5; largest parts L3-8 step 5, L9-13 reset 5, L14 1)\n'
     );
     // Two functions on one line are told apart.
     writeSource(
@@ -242,7 +242,7 @@ warning: src/legacy.ts:1-21 decide:`);
       'export function pair(a: boolean, b: boolean): void { const first = () => { if (a) pair(b, a); }; const second = () => { if (b) pair(a, b); }; first(); second(); }\n'
     );
     expect(runCheck(['src/oneLine.ts', '--warning-max-function-cognitive-complexity', '3']).stdout).toContain(
-      'most from L1 first 2, L1 second 2)'
+      'largest parts L1 first 2, L1 second 2)'
     );
   });
 
@@ -266,7 +266,7 @@ ep\`](value: number): number {
 `
     );
     expect(runCheck(['src/holderFactory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
-      ' createHolder: cognitive complexity 9 (max 5; most from L3-11 [`st ep`] 9)\n'
+      ' createHolder: cognitive complexity 9 (max 5; largest parts L3-11 [`st ep`] 9)\n'
     );
   });
 
@@ -288,7 +288,7 @@ ep\`](value: number): number {
     expect(stdout).toContain('src/rules.cpp:3-3 Rules.ref: parameters 7 (max 6)\n');
     // The `::` of the conversion type belongs to the name, not to the scope.
     expect(runCheck(['src/rules.cpp', '--warning-max-function-cognitive-complexity', '0']).stdout).toContain(
-      'src/rules.cpp:4-4 Rules.operator std::string: cognitive complexity 1 (max 0; most from L4 1)\n'
+      'src/rules.cpp:4-4 Rules.operator std::string: cognitive complexity 1 (max 0; largest parts L4 1)\n'
     );
   });
 
@@ -555,7 +555,7 @@ describe('code-gauge check --base', () => {
 
     writeSource('src/legacy.ts', legacy.replace('return fallback;', 'return fallback + 0;'));
     expect(runCheck(['--base', 'main']).stdout).toContain(
-      'src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; most from L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)\n'
+      'src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; largest parts L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)\n'
     );
   });
 

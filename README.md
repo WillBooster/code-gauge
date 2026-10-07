@@ -163,7 +163,7 @@ one remediation hint per violated metric:
 
 ```
 Threshold violations: 1 errors, 2 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
-error: src/legacy.ts:1-48 Rules.decide: cognitive complexity 34 (max 30; most from L12-31 19, L33-40 isLegacy 8, L44 2), NCSS 36 (warning max 30)
+error: src/legacy.ts:1-48 Rules.decide: cognitive complexity 34 (max 30; largest parts L12-31 19, L33-40 isLegacy 8, L44 2), NCSS 36 (warning max 30)
 warning: src/report.ts:1-18: duplicated lines 18 (max 14), also at src/summary.ts:1-18
 warning: src/summary.ts:1-18: duplicated lines 18 (max 14), also at src/report.ts:1-18
 
