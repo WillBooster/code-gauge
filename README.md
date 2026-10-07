@@ -179,8 +179,8 @@ threshold it exceeds, each with the largest value its violated limit allows and,
 milder than the line's level, the limit's own level; a method is named with the type or
 module it belongs to (`Rules.decide`), while a function written as a value, such as a lambda
 assigned to a field, keeps the bare name of what it is bound to. A cognitive-complexity violation also names up to three parts of the function
-adding the most to it (none when the score comes only from what is no such part: operator
-sequences and jumps outside any branching construct), largest first, each with its lines, its name when it is a nested function,
+adding the most to it (none when all of it comes from operator sequences and jumps outside any
+branching construct, which add to the score without being such a part), largest first, each with its lines, its name when it is a nested function,
 and what it adds: the outermost branching constructs and nested functions of the body or, where one
 of them merely wraps most of the function (a loop or an unnamed callback around the whole body),
 the ones inside it. A file-level violation prints the path without a line span, and a duplicated block lists
