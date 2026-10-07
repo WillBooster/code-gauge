@@ -293,11 +293,13 @@ ep\`](value: number): number {
     // `namespace a::b` names two scopes, and template arguments add nothing.
     writeSource(
       'src/more.cpp',
-      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\n'
+      'namespace a :: b { struct Outer { class Rules { friend int near(int a, int b, int c, int d, int e, int f, int g) { return a; } }; }; }\ntemplate <typename T> int a::b::Plain<T>::spelled(int a, int b, int c, int d, int e, int f, int g) { return a; }\nnamespace values { auto bound = [](int a, int b, int c, int d, int e, int f, int g) { return a; }; }\n'
     );
     const more = runCheck(['src/more.cpp']).stdout;
     expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');
     expect(more).toContain('src/more.cpp:2-2 a::b::Plain.spelled: parameters 7 (max 6)\n');
+    // A lambda bound to a namespace member is that member.
+    expect(more).toContain('src/more.cpp:3-3 values.bound: parameters 7 (max 6)\n');
     // A namespace both enclosing and spelled out is counted once.
     expect(stdout).toContain('src/rules.cpp:6-6 ns::Rules.spelled: parameters 7 (max 6)\n');
     // The same method is named alike whether it is defined inside its namespace or outside.
