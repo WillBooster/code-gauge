@@ -72,7 +72,7 @@ export interface Violation extends BlockLocation {
    * construct add to the complexity without being one.
    */
   largestBlocks?: CognitiveBlock[];
-  /** The other copies of the block, most code lines first, for kind `duplication`. */
+  /** The other copies of the block, most matched tokens first, for kind `duplication`. */
   partners?: BlockLocation[];
 }
 
