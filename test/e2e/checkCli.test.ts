@@ -281,12 +281,14 @@ ep\`](value: number): number {
   it('names a C++ method defined outside its class with the scope it names', () => {
     writeSource(
       'src/rules.cpp',
-      'class Rules { public: int decide(int a, int b, int c, int d, int e, int f, int g); };\nint ns::Rules::decide(int a, int b, int c, int d, int e, int f, int g) { return a; }\nint& Rules::ref(int& a, int b, int c, int d, int e, int f, int g) { return a; }\nRules::operator std::string() { if (flag) return {}; return {}; }\nnamespace ns { int inside(int a, int b, int c, int d, int e, int f, int g) { return a; } int Rules::other(int a, int b, int c, int d, int e, int f, int g) { return a; } }\n'
+      'class Rules { public: int decide(int a, int b, int c, int d, int e, int f, int g); };\nint ns::Rules::decide(int a, int b, int c, int d, int e, int f, int g) { return a; }\nint& Rules::ref(int& a, int b, int c, int d, int e, int f, int g) { return a; }\nRules::operator std::string() { if (flag) return {}; return {}; }\nnamespace ns { int inside(int a, int b, int c, int d, int e, int f, int g) { return a; } int Rules::other(int a, int b, int c, int d, int e, int f, int g) { return a; } }\nnamespace ns { namespace { int local(int a, int b, int c, int d, int e, int f, int g) { return a; } } }\n'
     );
     const { stdout } = runCheck(['src/rules.cpp']);
     expect(stdout).toContain('src/rules.cpp:2-2 ns::Rules.decide: parameters 7 (max 6)\n');
     expect(stdout).toContain('src/rules.cpp:3-3 Rules.ref: parameters 7 (max 6)\n');
     expect(stdout).toContain('src/rules.cpp:5-5 ns.inside: parameters 7 (max 6)\n');
+    // An unnamed namespace adds nothing to the name.
+    expect(stdout).toContain('src/rules.cpp:6-6 ns.local: parameters 7 (max 6)\n');
     // The same method is named alike whether it is defined inside its namespace or outside.
     expect(stdout).toContain('src/rules.cpp:5-5 ns::Rules.other: parameters 7 (max 6)\n');
     // The `::` of the conversion type belongs to the name, not to the scope.
@@ -314,11 +316,13 @@ ep\`](value: number): number {
   it('names a Ruby singleton method with the object it is defined on', () => {
     writeSource(
       'src/rules.rb',
-      'class Rules\n  class << Other\n    def decide(a, b, c, d, e, f, g)\n    end\n  end\n\n  def self.build(a, b, c, d, e, f, g)\n  end\nend\n'
+      'class Rules\n  class << Other\n    def decide(a, b, c, d, e, f, g)\n    end\n  end\n\n  def self.build(a, b, c, d, e, f, g)\n  end\n\n  private def hidden(a, b, c, d, e, f, g)\n  end\nend\n'
     );
     const { stdout } = runCheck(['src/rules.rb']);
     expect(stdout).toContain(' Other.decide: parameters 7 (max 6)\n');
     expect(stdout).toContain(' Rules.build: parameters 7 (max 6)\n');
+    // A definition passed to `private` is still a member.
+    expect(stdout).toContain(' Rules.hidden: parameters 7 (max 6)\n');
   });
 
   it('names a Go method with its receiver type', () => {

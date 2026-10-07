@@ -278,6 +278,19 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "struct_specifier",
     "trait_item",
 ];
+/// A function passed to a call, as in a member's initializer `field = register(() => { ... })`, is
+/// the call's argument rather than a member.
+const CALL_NODE_TYPES: &[&str] = &[
+    "annotated_lambda",
+    "call",
+    "call_expression",
+    "invocation_expression",
+    "macro_invocation",
+    "method_invocation",
+    "new_expression",
+    "object_creation_expression",
+];
+
 const CPP_SCOPE_NODE_TYPES: &[&str] = &[
     "class_specifier",
     "namespace_definition",
@@ -367,6 +380,8 @@ pub fn find_container_name(
     if let Some(owner) = explicit_ruby_owner(node.child_by_field_name("object"), code) {
         return Some(owner);
     }
+    // A Ruby `private def decide` passes the definition to a call and still defines a member.
+    let is_ruby_definition = matches!(node.kind_name(), "method" | "singleton_method");
     let mut current = node.parent_node();
     while let Some(ancestor) = current {
         // So does a method inside `class << Other`; `class << self` leaves the class around it.
@@ -383,27 +398,27 @@ pub fn find_container_name(
         // around it.
         let is_unnamed_scope = matches!(
             ancestor.kind_name(),
-            "class_static_block"
-                | "static_initializer"
-                | "object"
-                // A callback passed to a call in a member's initializer is no member either.
-                | "arguments"
-                | "argument_list"
-                | "value_arguments"
-                | "call_suffix"
-                | "annotated_lambda"
-        ) || (ancestor.kind_name() == "class_body"
-            && ancestor
-                .parent_node()
-                // A Kotlin companion's members are reached through the class it accompanies.
-                .is_none_or(|owner| {
-                    owner.kind_name() != "companion_object"
-                        && !CONTAINER_NODE_TYPES.contains(&owner.kind_name())
-                }));
+            "class_static_block" | "static_initializer" | "object"
+        ) || (!is_ruby_definition
+            && CALL_NODE_TYPES.contains(&ancestor.kind_name()))
+            || (ancestor.kind_name() == "class_body"
+                && ancestor
+                    .parent_node()
+                    // A Kotlin companion's members are reached through the class it accompanies.
+                    .is_none_or(|owner| {
+                        owner.kind_name() != "companion_object"
+                            && !CONTAINER_NODE_TYPES.contains(&owner.kind_name())
+                    }));
         if is_unnamed_scope {
             return None;
         }
-        if ancestor.is_named() && CONTAINER_NODE_TYPES.contains(&ancestor.kind_name()) {
+        // The members of an unnamed C++ namespace belong to the namespace around it.
+        let is_unnamed_namespace = ancestor.kind_name() == "namespace_definition"
+            && ancestor.child_by_field_name("name").is_none();
+        if ancestor.is_named()
+            && !is_unnamed_namespace
+            && CONTAINER_NODE_TYPES.contains(&ancestor.kind_name())
+        {
             // A Rust `impl` names its type in the `type` field, where `Pass<'a>` in turn wraps
             // the name in a `generic_type`; Kotlin names a class in a child.
             let name_node = ancestor
