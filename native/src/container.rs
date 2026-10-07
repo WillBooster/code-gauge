@@ -24,6 +24,50 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "struct_specifier",
     "trait_item",
 ];
+/// Whether the function is declared, as a method or a named function is, rather than written as a
+/// value (a lambda, a closure, a function expression).
+fn is_function_declaration(node: Node<'_>) -> bool {
+    let kind = node.kind_name();
+    kind.ends_with("_declaration")
+        || kind.ends_with("_definition")
+        || matches!(
+            kind,
+            "function_item"
+                | "getter"
+                | "local_function_statement"
+                | "method"
+                | "secondary_constructor"
+                | "setter"
+                | "singleton_method"
+        )
+}
+
+/// What lies between a function value bound to a member and the class: the member's declaration
+/// and the body holding it.
+const BINDING_NODE_TYPES: &[&str] = &[
+    "assignment",
+    "block",
+    "body_statement",
+    "class_body",
+    "const_item",
+    "declaration_list",
+    "enum_body",
+    "enum_body_declarations",
+    "equals_value_clause",
+    "export_statement",
+    "expression_statement",
+    "field_declaration",
+    "field_declaration_list",
+    "field_definition",
+    "lexical_declaration",
+    "property_declaration",
+    "public_field_definition",
+    "statement_block",
+    "static_item",
+    "variable_declaration",
+    "variable_declarator",
+];
+
 /// Whether a function below `ancestor` is a value inside an expression rather than what a member
 /// is bound to: passed to a call (`field = register(() => { ... })`), held in a collection
 /// (`field = [() => { ... }]`), or an operand of an operator. Grammars name such nodes
@@ -194,6 +238,7 @@ fn enclosing_owner(
 ) -> Option<String> {
     // A Ruby `private def decide` passes the definition to a call and still defines a member.
     let is_ruby_definition = matches!(node.kind_name(), "method" | "singleton_method");
+    let is_declaration = is_function_declaration(node);
     // Wrappers such as parentheses and casts leave the function what the member is bound to.
     let mut current = unwrap_transparent_value_wrappers(node).parent_node();
     // A C++ friend defined in a class belongs to the scopes around that class.
@@ -214,6 +259,12 @@ fn enclosing_owner(
         }
         if is_named_container(ancestor) {
             return spell_owner(ancestor, is_friend, function_nodes, code);
+        }
+        // A function value is a member only as what a member is bound to: anything but a binding
+        // between it and the class (a call, a collection, an operator, whatever the grammar calls
+        // it) makes it a value of that construct instead.
+        if !is_declaration && !BINDING_NODE_TYPES.contains(&ancestor.kind_name()) {
+            return None;
         }
         current = ancestor.parent_node();
     }
