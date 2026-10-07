@@ -61,7 +61,9 @@ pub struct FunctionMetrics {
     pub dep_degree: u64,
 }
 
-#[derive(Serialize)]
+/// A branching construct or nested function inside a function body, with the cognitive complexity
+/// its whole subtree adds to that function.
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CognitiveBlock {
     /// The name of the nested function the block is.

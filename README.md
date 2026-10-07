@@ -168,18 +168,18 @@ warning: src/summary.ts:1-18: duplicated lines 18 (max 14), also at src/report.t
 
 How to fix:
 - cognitive complexity: flatten nested branching with early returns and extract nested blocks into named functions.
-- NCSS: move the statements that form one step into a named function; leave a flat list of independent one-line steps as it is.
+- NCSS: move each group of statements that forms one step into a named function.
 - duplicated lines: extract the repeated code into one shared function or module and call it from every location.
 ```
 
 A violation's level is that of its most severe limit. A function gets one line listing every
 threshold it exceeds, each with the largest value its violated limit allows and, when that limit is
-milder than the line's level, the limit's own level; a method is named with its class
-(`Rules.decide`). A cognitive-complexity violation also names up to three parts of the function
+milder than the line's level, the limit's own level; a method is named with the class, struct,
+interface, trait, or module it belongs to (`Rules.decide`). A cognitive-complexity violation also names up to three parts of the function
 adding the most to it, largest first, each with its lines, its name when it is a nested function,
 and what it adds: the outermost branching constructs and nested functions of the body or, where one
-of them merely wraps most of the function (a loop or a callback around the whole body), the ones
-inside it. A file-level violation prints the path without a line span, and a duplicated block lists
+of them merely wraps most of the function (a loop or an unnamed callback around the whole body),
+the ones inside it. A file-level violation prints the path without a line span, and a duplicated block lists
 up to three of its other copies, largest first.
 Paths are relative to the repository root, or to the target directory outside a git repository.
 
@@ -258,7 +258,8 @@ ranking command.
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
     kind `file`, the first and last line of the file;
-  - `name`: only for kind `function`; a method's name follows its class (`Rules.decide`), and a
+  - `name`: only for kind `function`; a method's name follows the class, struct, interface, trait, or module it belongs to
+    (`Rules.decide`), and a
     function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
     `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe

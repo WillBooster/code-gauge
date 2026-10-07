@@ -246,6 +246,38 @@ warning: src/legacy.ts:1-21 decide:`);
     );
   });
 
+  it('keeps a named nested function holding most of the complexity as the part to act on', () => {
+    writeSource(
+      'src/holderFactory.ts',
+      `export function createHolder(limit: number): unknown {
+  const holder = {
+    [\`st
+ep\`](value: number): number {
+      for (let index = 0; index < limit; index++) {
+        if (index % 2 === 0) {
+          if (value > index) return index;
+        }
+      }
+      return value;
+    },
+  };
+  return holder;
+}
+`
+    );
+    expect(runCheck(['src/holderFactory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
+      ' createHolder: cognitive complexity 9 (max 5; most from L3-11 [`st ep`] 9)\n'
+    );
+  });
+
+  it('names a Go method with its receiver type', () => {
+    writeSource(
+      'src/rules.go',
+      'package rules\n\nfunc (r *Rules) Decide(a, b, c, d, e, f, g int) int {\n\treturn a\n}\n'
+    );
+    expect(runCheck(['src/rules.go']).stdout).toContain('src/rules.go:3-5 Rules.Decide: parameters 7 (max 6)\n');
+  });
+
   it('prints a single line and exits 0 when nothing exceeds a threshold', () => {
     const result = runCheck(['src/calc.ts']);
     expect(result.status).toBe(0);

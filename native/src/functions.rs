@@ -290,6 +290,19 @@ pub fn find_container_name(
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
 ) -> Option<String> {
+    // A Go method is declared outside its type and names it as its receiver, `(r *Rules)` or
+    // `(r Rules[T])`.
+    if let Some(receiver) = node.child_by_field_name("receiver") {
+        let mut receiver_type = named_children(receiver)
+            .into_iter()
+            .find_map(|parameter| parameter.child_by_field_name("type"))?;
+        while receiver_type.kind_name() != "type_identifier" {
+            receiver_type = receiver_type
+                .child_by_field_name("type")
+                .or_else(|| named_children(receiver_type).into_iter().next())?;
+        }
+        return Some(node_text(receiver_type, code).to_string());
+    }
     let mut current = node.parent_node();
     while let Some(ancestor) = current {
         if crate::complexity::is_function_boundary(ancestor, function_nodes) {

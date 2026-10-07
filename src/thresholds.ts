@@ -49,7 +49,7 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     key: 'maxFunctionNcss',
     label: 'NCSS',
     defaultLimits: { warning: 30, error: 60 },
-    hint: 'move the statements that form one step into a named function; leave a flat list of independent one-line steps as it is.',
+    hint: 'move each group of statements that forms one step into a named function.',
     measure: (fn) => fn.ncss,
     includesNestedFunctions: true,
   },

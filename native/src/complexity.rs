@@ -2,6 +2,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tree_sitter::Node;
 
 use crate::tree_index::NodeExt;
+use crate::types::CognitiveBlock;
 use crate::util::{all_children, node_text, Source};
 
 /// Node-type lookup sets built once per measurement from the language definition.
@@ -94,15 +95,6 @@ const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
 
 const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "unless"];
 
-/// A branching construct or nested function inside a function body, with the cognitive complexity
-/// its whole subtree adds to that function.
-pub struct CognitiveBlock {
-    pub name: Option<String>,
-    pub start_line: usize,
-    pub end_line: usize,
-    pub cognitive_complexity: u64,
-}
-
 /// A block with the blocks directly inside it, as recorded while its function's frame is open.
 struct CognitiveBlockNode {
     /// The name of the nested function the block is.
@@ -131,7 +123,8 @@ const MAX_REPORTED_COGNITIVE_BLOCKS: usize = 3;
 /// that merely wraps most of the function replaced by the blocks inside it, since a loop or
 /// callback around the whole body says nothing about what to extract. A block is such a wrapper
 /// when it holds more than half of the function's complexity and the blocks inside it hold at
-/// least three quarters of its own.
+/// least three quarters of its own. A named nested function is never replaced: its name is what
+/// the reader acts on, and the enclosing function's violation is the only one reporting it.
 fn select_reported_blocks(blocks: &[CognitiveBlockNode], total: u64) -> Vec<CognitiveBlock> {
     let mut selected: Vec<&CognitiveBlockNode> = blocks.iter().collect();
     while let Some(index) =
@@ -143,7 +136,9 @@ fn select_reported_blocks(blocks: &[CognitiveBlockNode], total: u64) -> Vec<Cogn
             .iter()
             .map(|child| child.cognitive_complexity)
             .sum();
-        if largest.cognitive_complexity * 2 <= total || inner * 4 < largest.cognitive_complexity * 3
+        if largest.name.is_some()
+            || largest.cognitive_complexity * 2 <= total
+            || inner * 4 < largest.cognitive_complexity * 3
         {
             break;
         }

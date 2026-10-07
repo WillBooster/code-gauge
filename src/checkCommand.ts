@@ -377,7 +377,7 @@ function formatViolation(violation: Violation): string {
 function describeLargestBlocks({ largestBlocks = [] }: Violation): string {
   const blocks = largestBlocks.map(
     ({ startLine, endLine, name, cognitiveComplexity }) =>
-      `L${startLine}${endLine === startLine ? '' : `-${endLine}`}${name ? ` ${name}` : ''} ${cognitiveComplexity}`
+      `L${startLine}${endLine === startLine ? '' : `-${endLine}`}${name ? ` ${toOneLine(name)}` : ''} ${cognitiveComplexity}`
   );
   return blocks.length > 0 ? `; most from ${blocks.join(', ')}` : '';
 }
@@ -388,8 +388,7 @@ function describeViolation(violation: Violation, exceeded: string): string {
       return `${violation.file}: ${exceeded}`;
     }
     case 'function': {
-      // A computed name can span lines in the source; the report keeps one line per function.
-      return `${formatLocation(violation)} ${violation.name?.replaceAll(/\s*[\n\r]\s*/gu, ' ')}: ${exceeded}`;
+      return `${formatLocation(violation)} ${toOneLine(violation.name ?? '')}: ${exceeded}`;
     }
     case 'duplication': {
       const partners = (violation.partners ?? []).map((partner) => formatLocation(partner));
@@ -397,6 +396,11 @@ function describeViolation(violation: Violation, exceeded: string): string {
       return `${formatLocation(violation)}: ${exceeded}${listed.length > 0 ? `, also at ${listed.join(', ')}` : ''}`;
     }
   }
+}
+
+/** A computed name can span lines in the source; the report keeps one line per function. */
+function toOneLine(name: string): string {
+  return name.replaceAll(/\s*[\n\r]\s*/gu, ' ');
 }
 
 function formatLocation({ file, startLine, endLine }: BlockLocation): string {

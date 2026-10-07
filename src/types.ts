@@ -87,8 +87,9 @@ export interface CognitiveBlock {
 export interface FunctionMetrics {
   name?: string;
   /**
-   * The name of the class-like declaration (class, struct, interface, trait, Rust `impl`, Ruby
-   * module) whose member the function is; absent for a function nested in another function.
+   * The name of the declaration whose member the function is: a class, struct, interface, enum,
+   * record, object, trait, Rust `impl`, or Ruby module enclosing it, or the receiver type of a Go
+   * method; absent for a function nested in another function.
    */
   containerName?: string;
   /**
@@ -115,9 +116,11 @@ export interface FunctionMetrics {
   cyclomaticComplexity: number;
   cognitiveComplexity: number;
   /**
-   * The parts of the function adding the most cognitive complexity, largest first (at most 3): its
-   * outermost branching constructs and the functions nested directly in its body, each with the
-   * complexity its whole span adds to this function.
+   * The parts of the function adding the most cognitive complexity, largest first (at most 3),
+   * each with the complexity its span adds to this function: the outermost branching constructs
+   * and nested functions of its body, where one that merely wraps most of the function (it holds
+   * more than half of the function's complexity, three quarters of which lie in the blocks inside
+   * it) is replaced by the blocks inside it, unless it is a named function.
    */
   cognitiveBlocks: CognitiveBlock[];
   nestingDepth: number;

@@ -75,16 +75,7 @@ pub fn measure(
                 // cycle, but this is intentionally not implemented (issue #22): mainstream
                 // implementations (PMD, SonarQube analyzers) omit it.
                 cognitive_complexity: body_metrics.cognitive_complexity,
-                cognitive_blocks: body_metrics
-                    .cognitive_blocks
-                    .iter()
-                    .map(|block| crate::types::CognitiveBlock {
-                        name: block.name.clone(),
-                        start_line: block.start_line,
-                        end_line: block.end_line,
-                        cognitive_complexity: block.cognitive_complexity,
-                    })
-                    .collect(),
+                cognitive_blocks: body_metrics.cognitive_blocks.clone(),
                 nesting_depth: body_metrics.nesting_depth,
                 ncss: body_metrics.ncss,
                 parameter_count: count_parameters(*node, code),
