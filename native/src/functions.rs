@@ -303,16 +303,27 @@ pub fn find_container_name(
         }
         return Some(node_text(receiver_type, code).to_string());
     }
+    // A C++ method defined outside its class names it in its declarator, `int Rules::decide()`.
+    let mut declarator = node.child_by_field_name("declarator");
+    while let Some(inner) = declarator {
+        if inner.kind_name() == "qualified_identifier" {
+            // The scope of a nested name (`ns::Rules::decide`) is everything before its last part.
+            let (scope, _) = node_text(inner, code).rsplit_once("::")?;
+            return Some(scope.trim().to_string()).filter(|scope| !scope.is_empty());
+        }
+        declarator = inner.child_by_field_name("declarator");
+    }
     let mut current = node.parent_node();
     while let Some(ancestor) = current {
         if crate::complexity::is_function_boundary(ancestor, function_nodes) {
             return None;
         }
-        // A function local to a static block, or a member of an anonymous class (a class body
-        // whose parent declares no type), is no member of the named type around it.
+        // A function local to a static block, or a member of an object literal or of an anonymous
+        // class (a class body whose parent declares no type), is no member of the named type
+        // around it.
         let is_unnamed_scope = matches!(
             ancestor.kind_name(),
-            "class_static_block" | "static_initializer"
+            "class_static_block" | "static_initializer" | "object"
         ) || (ancestor.kind_name() == "class_body"
             && ancestor
                 .parent_node()

@@ -278,6 +278,22 @@ ep\`](value: number): number {
     expect(runCheck(['src/Outer.java']).stdout).toContain('src/Outer.java:3-3 run: parameters 7 (max 6)\n');
   });
 
+  it('names a C++ method defined outside its class with the scope it names', () => {
+    writeSource(
+      'src/rules.cpp',
+      'class Rules { public: int decide(int a, int b, int c, int d, int e, int f, int g); };\nint ns::Rules::decide(int a, int b, int c, int d, int e, int f, int g) { return a; }\n'
+    );
+    expect(runCheck(['src/rules.cpp']).stdout).toContain('src/rules.cpp:2-2 ns::Rules.decide: parameters 7 (max 6)\n');
+  });
+
+  it('leaves a method of an object literal in a class unqualified', () => {
+    writeSource(
+      'src/outer.ts',
+      'export class Outer {\n  value = {\n    run(a: number, b: number, c: number, d: number, e: number, f: number, g: number) {\n      return a;\n    },\n  };\n}\n'
+    );
+    expect(runCheck(['src/outer.ts']).stdout).toContain('src/outer.ts:3-5 run: parameters 7 (max 6)\n');
+  });
+
   it('names a Go method with its receiver type', () => {
     writeSource(
       'src/rules.go',
