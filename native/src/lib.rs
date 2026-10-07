@@ -28,7 +28,7 @@ mod worker_pool;
 /// src/nativeMetrics.ts.
 /// scripts/installNative.mjs parses the literal from this function's source.
 pub fn payload_version() -> u32 {
-    9
+    10
 }
 
 /// Measures code metrics for the given source, returning the NativeMetrics payload as JSON; with
