@@ -267,6 +267,14 @@ fn scope_names<'s>(name: Node<'_>, code: &Source<'s>) -> Vec<&'s str> {
             return scope_names(template, code);
         }
     }
+    // `class ns::Box<int>` spells its namespace in front of the name.
+    if name.kind_name() == "qualified_identifier" {
+        return ["scope", "name"]
+            .into_iter()
+            .filter_map(|field| name.child_by_field_name(field))
+            .flat_map(|part| scope_names(part, code))
+            .collect();
+    }
     let parts: Vec<Node<'_>> = named_children(name)
         .into_iter()
         .filter(|part| !part.is_extra())
