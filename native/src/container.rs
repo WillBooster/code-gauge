@@ -7,6 +7,7 @@ use crate::util::{named_children, node_text, Source};
 
 const CONTAINER_NODE_TYPES: &[&str] = &[
     "abstract_class_declaration",
+    "annotation_type_declaration",
     "class",
     "class_declaration",
     "class_definition",
@@ -20,9 +21,11 @@ const CONTAINER_NODE_TYPES: &[&str] = &[
     "namespace_definition",
     "object_declaration",
     "record_declaration",
+    "record_struct_declaration",
     "struct_declaration",
     "struct_specifier",
     "trait_item",
+    "union_specifier",
 ];
 /// Whether the function is declared, as a method or a named function is, rather than written as a
 /// value (a lambda, a closure, a function expression).
@@ -111,6 +114,7 @@ const CPP_SCOPE_NODE_TYPES: &[&str] = &[
     "class_specifier",
     "namespace_definition",
     "struct_specifier",
+    "union_specifier",
 ];
 
 /// The names of the C++ namespaces and classes around `node`, outermost first, up to the function
