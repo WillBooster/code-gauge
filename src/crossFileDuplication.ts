@@ -29,7 +29,10 @@ export interface CrossFileDuplicateOccurrence {
    */
   lineNumbers?: number[];
   startLine: number;
-  /** Matched tokens; the group's `tokenCount` is the smallest of its occurrences'. */
+  /**
+   * The tokens of its matched runs, or of a near-miss block or its matched cores with the edited
+   * tokens among them; the group's `tokenCount` is the smallest of its occurrences'.
+   */
   tokenCount: number;
 }
 

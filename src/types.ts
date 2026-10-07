@@ -204,7 +204,10 @@ export interface DuplicateBlockOccurrence {
    */
   lineNumbers: number[];
   startLine: number;
-  /** Matched tokens, counted like the group's size (see DuplicationMetrics.maxDuplicateBlockSize). */
+  /**
+   * The tokens of its matched runs (the gap of a merged clone is not counted), or of a near-miss
+   * block or its matched cores with the edited tokens among them.
+   */
   tokenCount: number;
 }
 
