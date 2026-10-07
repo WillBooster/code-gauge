@@ -42,40 +42,40 @@ fn is_function_declaration(node: Node<'_>) -> bool {
         )
 }
 
-/// What lies between a function value bound to a member and the class: the member's declaration
-/// and the body holding it.
-const BINDING_NODE_TYPES: &[&str] = &[
-    "assignment",
-    "block",
-    "body_statement",
-    "class_body",
-    "companion_object",
-    "const_item",
-    "constant_declaration",
-    "declaration",
-    "declaration_list",
-    "enum_body",
-    "enum_body_declarations",
-    "enum_class_body",
-    "equals_value_clause",
-    "export_statement",
-    "expression_statement",
-    "field_declaration",
-    "field_declaration_list",
-    "field_definition",
-    "init_declarator",
-    "interface_body",
-    "lexical_declaration",
-    "linkage_specification",
-    "object_declaration",
-    "property_declaration",
-    "public_field_definition",
-    "statement_block",
-    "static_item",
-    "template_declaration",
-    "variable_declaration",
-    "variable_declarator",
-];
+/// What may lie between a function value bound to a member and the class: the member's
+/// declaration, which grammars name `..._declaration`, `..._definition`, `..._declarator`, or
+/// `..._item`, and the body or scope holding it.
+fn is_member_binding(ancestor: Node<'_>) -> bool {
+    const MEMBER_SCOPE_NODE_TYPES: &[&str] = &[
+        "assignment",
+        "block",
+        "body_statement",
+        "class_body",
+        "companion_object",
+        "declaration",
+        "declaration_list",
+        "enum_body",
+        "enum_body_declarations",
+        "enum_class_body",
+        "equals_value_clause",
+        "export_statement",
+        "expression_statement",
+        "interface_body",
+        "linkage_specification",
+        "statement_block",
+    ];
+    let kind = ancestor.kind_name();
+    [
+        "_declaration",
+        "_definition",
+        "_declarator",
+        "_item",
+        "_declaration_list",
+    ]
+    .iter()
+    .any(|suffix| kind.ends_with(suffix))
+        || MEMBER_SCOPE_NODE_TYPES.contains(&kind)
+}
 
 /// Whether a function below `ancestor` is a value inside an expression rather than what a member
 /// is bound to: passed to a call (`field = register(() => { ... })`), held in a collection
@@ -276,7 +276,7 @@ fn enclosing_owner(
         // A function value is a member only as what a member is bound to: anything but a binding
         // between it and the class (a call, a collection, an operator, whatever the grammar calls
         // it) makes it a value of that construct instead.
-        if !is_declaration && !BINDING_NODE_TYPES.contains(&ancestor.kind_name()) {
+        if !is_declaration && !is_member_binding(ancestor) {
             return None;
         }
         current = ancestor.parent_node();
