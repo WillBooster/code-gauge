@@ -165,13 +165,16 @@ fn is_variable_leaf(leaf: &DepDegreeLeaf<'_>) -> bool {
 fn is_member_pointer_name(node: Node<'_>) -> bool {
     let mut current = node;
     while let Some(parent) = current.parent_node() {
-        let field = field_name_in_parent(current, parent);
+        // The kind is tested before the field is looked up: this runs for every variable read,
+        // and scanning the children of a high-arity parent (a list of arguments) each time would
+        // cost the square of its length.
         if parent.kind_name() == "qualified_identifier" {
-            return current.kind_name() == "pointer_declarator" && field == Some("name");
+            return current.kind_name() == "pointer_declarator"
+                && field_name_in_parent(current, parent) == Some("name");
         }
         // The climb follows the declared-name position only, exactly like unwrap_declarator_wrappers.
         if !DECLARATOR_WRAPPER_TYPES.contains(&parent.kind_name())
-            || field.is_some_and(|field| field != "declarator")
+            || field_name_in_parent(current, parent).is_some_and(|field| field != "declarator")
         {
             return false;
         }
