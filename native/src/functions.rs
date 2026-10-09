@@ -140,6 +140,7 @@ fn is_void_parameter(node: Node<'_>, code: &Source<'_>) -> bool {
 }
 
 fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
+    let node = find_conditional_signature(node).unwrap_or(node);
     if let Some(direct) = node.child_by_field_name("parameters") {
         return Some(direct);
     }
@@ -260,7 +261,27 @@ fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     bound
 }
 
+/// A C# method whose header is chosen by `#if` keeps its body outside the directive and its
+/// alternative headers inside; the first one names the method and declares its parameters.
+fn find_conditional_signature(node: Node<'_>) -> Option<Node<'_>> {
+    if node.kind_name() != "conditional_method_declaration" {
+        return None;
+    }
+    let mut pending = named_children(node);
+    pending.reverse();
+    while let Some(current) = pending.pop() {
+        if current.kind_name() == "method_signature" {
+            return Some(current);
+        }
+        if current.kind_name().starts_with("preproc_") {
+            pending.extend(named_children(current).into_iter().rev());
+        }
+    }
+    None
+}
+
 pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let node = find_conditional_signature(node).unwrap_or(node);
     // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
     if let Some(wrapped_name) =
         find_wrapped_component_name(node, code).filter(|name| !name.is_empty())

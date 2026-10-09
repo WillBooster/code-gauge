@@ -305,6 +305,7 @@ const JS_NCSS_NODES: &[&str] = &[
     "export_statement",
     "lexical_declaration",
     "variable_declaration",
+    "using_declaration",
     "function_declaration",
     "function_signature",
     "generator_function_declaration",
@@ -425,6 +426,8 @@ const RUST_NCSS_NODES: &[&str] = &[
     "type_item",
     "associated_type",
     "macro_definition",
+    "decl_macro",
+    "trait_alias",
     "field_declaration",
     "let_declaration",
     "expression_statement",
@@ -563,6 +566,7 @@ const CPP_NCSS_NODES: &[&str] = &[
 // expression-bodied property or indexer (`int X => ...`) is its own getter (see functions.rs).
 const CSHARP_FUNCTION_NODES: &[&str] = &[
     "method_declaration",
+    "conditional_method_declaration",
     "constructor_declaration",
     "destructor_declaration",
     "operator_declaration",
@@ -603,6 +607,7 @@ const CSHARP_NCSS_NODES: &[&str] = &[
     "property_declaration",
     "indexer_declaration",
     "method_declaration",
+    "conditional_method_declaration",
     "constructor_declaration",
     "destructor_declaration",
     "operator_declaration",

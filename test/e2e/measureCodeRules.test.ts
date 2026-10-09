@@ -357,6 +357,12 @@ describe('cyclomatic complexity: catch-all switch arms', () => {
     ['csharp', 'class P { int F(int x) => x switch { _ when x > 0 => 1, _ => 0 }; }', 2],
     ['csharp', 'class P { int F(object x) => x switch { var (a, b) => 1, _ => 0 }; }', 2],
     ['kotlin', 'fun f(x: Int) { when (x) { 1 -> println(1); else -> println(0) } }', 2],
+    ['kotlin', 'fun f(x: Any) { when (x) { is Int if x > 0 -> println(1); else -> println(0) } }', 3],
+    [
+      'kotlin',
+      'fun f(x: Any) { when (x) { is Int -> println(1); else if x == 0 -> println(2); else -> println(0) } }',
+      3,
+    ],
     [
       'python',
       'def f(x):\n    match x:\n        case 1:\n            return 1\n        case _ if x:\n            return 2\n',
@@ -1164,6 +1170,28 @@ describe('line classification', () => {
   it('treats Python docstrings as code and shebang lines as comments', () => {
     expect(linesOf('def f():\n    """doc\n    string"""\n    return 1\n#!x\n', 'python')).toEqual([6, 4, 1, 1]);
     expect(linesOf('#!/usr/bin/env ruby\n# c\nx = 1\n', 'ruby')).toEqual([4, 1, 2, 1]);
+  });
+});
+
+describe('NCSS: declarations of recent language versions', () => {
+  it.each([
+    // function, two resource declarations, return.
+    ['typescript', 'async function f() { using x = g(); await using y = h(); return x; }', 4],
+    ['rust', 'pub macro m($x:expr) { $x + 1 }\ntrait A = B + C;', 2],
+    // class, method, if, return: the alternative headers are one declaration.
+    ['csharp', 'class A {\n#if X\n void M(int a)\n#else\n void N(int a, int b)\n#endif\n { if (a > 0) return; }\n}', 4],
+  ])('%s: %s', (language, code, expected) => {
+    expect(measureCode(code, { language }).ncssCount).toBe(expected);
+  });
+
+  it('measures a C# method whose header is chosen by #if under its first header', () => {
+    const functions = functionsOf(
+      'csharp',
+      'class A {\n#if X\n void M(int a)\n#else\n void N(int a, int b)\n#endif\n { if (a > 0) return; }\n}'
+    );
+    expect(functions.map((fn) => [fn.name, fn.containerName, fn.parameterCount, fn.cyclomaticComplexity])).toEqual([
+      ['M', 'A', 1, 2],
+    ]);
   });
 });
 

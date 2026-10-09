@@ -639,7 +639,8 @@ fn find_boolean_operator_text<'a>(binary_node: Node<'_>, code: &Source<'a>) -> O
 }
 
 /// Java `guard`, C# `when_clause`, Ruby `if_guard`, a Python `case` guard (an `if_clause` under a
-/// `case_clause`), and Rust guards inside `match_pattern`. A Python comprehension filter shares
+/// `case_clause`), a Kotlin guard (the `guard` field of a `when_entry`), and Rust guards inside
+/// `match_pattern`. A Python comprehension filter shares
 /// the `if_clause` type but is a per-element predicate of one expression, not an extra execution
 /// path: Sonar ports differ on it (complexipy charges it), and code-gauge does not, unlike
 /// ternaries and conditions, which are charged. A C# exception filter (`catch (E e) when (...)`, a `catch_filter_clause`) is
@@ -655,6 +656,14 @@ fn is_pattern_guard(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     }
     if kind == "if_clause" {
         return parent.is_some_and(|parent| parent.kind_name() == "case_clause");
+    }
+    if parent.is_some_and(|parent| {
+        parent.kind_name() == "when_entry"
+            && parent
+                .child_by_field_name("guard")
+                .is_some_and(|guard| guard.id() == node.id())
+    }) {
+        return true;
     }
     kind == "match_pattern"
         && all_children(node)
