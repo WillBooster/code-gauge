@@ -1584,7 +1584,7 @@ struct CountedOccurrence {
     /// again: a retained group's occurrence that a partial gapped merge also paired into a merged
     /// group, and a near-miss anchor, which overlaps the reported occurrence it was matched through.
     shared_with_merged_group: bool,
-    /// The token runs of a near-miss copy that its closest partners match, within its segments;
+    /// The token runs of a near-miss copy that its partners match, within its segments;
     /// `None` for an exact or gapped copy, whose segments are matched throughout.
     matched_runs: Option<Vec<(usize, usize)>>,
     /// Sum of segment token counts (the gap tokens are not matched content).
@@ -2007,71 +2007,21 @@ fn collect_near_miss_groups(
         parent[left_root.max(right_root)] = left_root.min(right_root);
     }
 
-    // The lines of a near-miss copy that are duplicated are those its partners match, which takes
-    // the pairing itself. Aligning every pair would cost the square of a clone family's size, so
-    // each node is aligned with its closest partners only.
-    let mut edges_by_node: Vec<Vec<usize>> = vec![Vec::new(); node_blocks.len()];
-    for (edge_index, nodes) in edge_nodes.iter().enumerate() {
-        for &node in nodes {
-            edges_by_node[node].push(edge_index);
-        }
-    }
-    // A node takes its partners by closeness alone, whichever of them other nodes took, until
-    // their spans cover it and the tokens they matched number its own: one partner for an
-    // identical copy, the next closest too for an edited one, since a copy shares with a farther
-    // partner what it does not share with its closest. The pairs taken by either of their nodes
-    // are aligned, and what a pair matches counts for both.
-    let mut aligned = vec![false; edges.len()];
-    for (node, node_edges) in edges_by_node.iter_mut().enumerate() {
-        // Equally close partners are ordered by their content, so that neither the order of the
-        // copies nor that of their verification decides which of them the node counts against.
-        node_edges.sort_by_cached_key(|&edge_index| {
-            let edge = &edges[edge_index];
-            let partner_side = usize::from(edge_nodes[edge_index][0] == node);
-            let keys = matcher.compared_keys(
-                &blocks[edge.left],
-                &blocks[edge.right],
-                edge.cores,
-                &token_keys,
-            );
-            (
-                std::cmp::Reverse(edge.alignment.lcs_length),
-                keys[partner_side],
-            )
-        });
-        let (node_start, node_end) = node_range(node);
-        let mut covered: Vec<(usize, usize)> = Vec::new();
-        let mut matched_token_count = 0;
-        for &edge_index in node_edges.iter() {
-            let side = usize::from(edge_nodes[edge_index][0] != node);
-            let (block, core) = edges[edge_index].sides()[side];
-            let span = core.unwrap_or((
-                comparable[block].start_token_index,
-                comparable[block].end_token_index,
-            ));
-            let is_covered = merge_overlapping_cores(&covered)
-                .iter()
-                .any(|merged| merged.0 <= span.0 && span.1 <= merged.1);
-            if !is_covered || matched_token_count < node_end - node_start {
-                aligned[edge_index] = true;
-                covered.push(span);
-                matched_token_count += edges[edge_index].alignment.lcs_length;
-            }
-        }
-    }
+    // The lines of a near-miss copy that are duplicated are those a verified partner matches,
+    // which takes the pairing itself. Every pair is aligned: verifying it already cost a longest
+    // common subsequence of the same sequences, and any choice among a copy's partners would let
+    // their number or their order decide what the copy counts.
     let mut matched_runs_by_node: Vec<Vec<(usize, usize)>> = vec![Vec::new(); node_blocks.len()];
-    for (edge_index, edge) in edges.iter().enumerate() {
-        if aligned[edge_index] {
-            let (left_runs, right_runs) = matcher.align(
-                &blocks[edge.left],
-                &blocks[edge.right],
-                edge.cores,
-                edge.alignment,
-                &token_keys,
-            );
-            matched_runs_by_node[edge_nodes[edge_index][0]].extend(left_runs);
-            matched_runs_by_node[edge_nodes[edge_index][1]].extend(right_runs);
-        }
+    for (edge, nodes) in edges.iter().zip(&edge_nodes) {
+        let (left_runs, right_runs) = matcher.align(
+            &blocks[edge.left],
+            &blocks[edge.right],
+            edge.cores,
+            edge.alignment,
+            &token_keys,
+        );
+        matched_runs_by_node[nodes[0]].extend(left_runs);
+        matched_runs_by_node[nodes[1]].extend(right_runs);
     }
 
     let mut members_by_root: IndexMap<usize, Vec<usize>> = IndexMap::new();

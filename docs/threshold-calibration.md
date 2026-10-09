@@ -302,7 +302,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
   percentiles are 377 and 1042.
 - **Duplicated lines, 15, no error.** In line span here; [in matched lines](#duplicated-blocks-measured-in-matched-lines) the limit is the same. Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
-  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,601 blocks from 10 matched lines).
+  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,604 blocks from 10 matched lines).
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
   more often than others of their cognitive complexity.
@@ -316,7 +316,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   which the metric names no change to make. Halstead effort is the product of volume and
   difficulty and was not rated on its own.
 
-With these limits, `check` reports 464 errors and 2,270 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
+With these limits, `check` reports 464 errors and 2,272 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
 
 ## Duplicated blocks measured in matched lines
 
@@ -325,15 +325,15 @@ below, count a block by its line span, as `check` did when the limits were set. 
 the lines of the span matched in another copy. Lines that are blank or comment-only do not count,
 so that a commented copy and its bare partner have the same length, and neither do the lines the
 copies do not share: those between the matched parts of an edited copy, and those a block
-resembling another as a whole adds or rewrites (a line of it counts when the copies it is aligned
-with match more than half of its tokens between them). Copies of each other that share a line are blocks of their own. The limit was
+resembling another as a whole adds or rewrites (a line of it counts when its copies match more than
+half of its tokens between them). Copies of each other that share a line are blocks of their own. The limit was
 re-examined on the same corpus, exported again at its recorded commits (the same 45,123 functions
 and 6,603 files):
 
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| matched lines        |   5,658 |    2,601 |      977 |      418 |      111 |       24 |
+| matched lines        |   5,659 |    2,604 |      979 |      419 |      111 |       24 |
 
 Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
 groups separate no better than by its span:

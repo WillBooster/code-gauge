@@ -170,8 +170,6 @@ pub(crate) enum PairMatch {
 /// What Matcher::align needs to recover the tokens a verified match pairs.
 #[derive(Clone, Copy)]
 pub(crate) struct Alignment {
-    /// The length of the longest common subsequence the match was verified by.
-    pub lcs_length: usize,
     /// Whether the blocks matched only with their statements in canonical order.
     reordered: bool,
 }
@@ -237,10 +235,7 @@ impl Matcher {
         {
             let in_order = lcs_length(&left.sequence, &right.sequence);
             if in_order * 100 >= required {
-                return Some(PairMatch::Whole(Alignment {
-                    lcs_length: in_order,
-                    reordered: false,
-                }));
+                return Some(PairMatch::Whole(Alignment { reordered: false }));
             }
             // With their top-level statements (each anonymized on its own) in a canonical order,
             // a copy whose independent statements were swapped still matches.
@@ -249,10 +244,7 @@ impl Matcher {
             {
                 let reordered = lcs_length(left, right);
                 if reordered * 100 >= required {
-                    return Some(PairMatch::Whole(Alignment {
-                        lcs_length: reordered,
-                        reordered: true,
-                    }));
+                    return Some(PairMatch::Whole(Alignment { reordered: true }));
                 }
             }
         }
@@ -384,10 +376,7 @@ impl Matcher {
                         (left.start + left_start, left.start + left_end),
                         (right.start + right_start, right.start + right_end),
                     ),
-                    Alignment {
-                        lcs_length,
-                        reordered: false,
-                    },
+                    Alignment { reordered: false },
                 ))
             })
             .collect();

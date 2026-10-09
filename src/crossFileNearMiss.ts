@@ -108,8 +108,6 @@ type CorePair = [[number, number], [number, number]];
 
 /** What alignPair needs to recover the tokens a verified match pairs. */
 interface Alignment {
-  /** The length of the longest common subsequence the match was verified by. */
-  lcsLength: number;
   /** Whether the blocks matched only with their statements in canonical order. */
   reordered: boolean;
 }
@@ -163,13 +161,13 @@ export function collectCrossFileNearMissGroups(
     }
     if (!match.cores) {
       if (!(touchesReported[left] && touchesReported[right])) {
-        edges.push({ left, right, lcsLength: match.lcsLength, reordered: match.reordered });
+        edges.push({ left, right, reordered: match.reordered });
       }
       return;
     }
-    for (const { pair, lcsLength, reordered } of match.cores) {
+    for (const { pair, reordered } of match.cores) {
       if (!(touchesCore(leftBlock, pair[0]) && touchesCore(rightBlock, pair[1]))) {
-        edges.push({ left, right, cores: pair, lcsLength, reordered });
+        edges.push({ left, right, cores: pair, reordered });
       }
     }
   });
@@ -243,11 +241,7 @@ export function collectCrossFileNearMissGroups(
     const rightRoot = find(rightNode);
     parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
   }
-  const nodeLengths = nodes.map(({ blockIndex, core }) => {
-    const range = blocks[blockIndex]?.range;
-    return core ? core[1] - core[0] : (range?.endTokenIndex ?? 0) - (range?.startTokenIndex ?? 0);
-  });
-  const matchedRunsByNode = alignClosestPartners(blocks, edges, edgeNodes, nodeLengths);
+  const matchedRunsByNode = alignPairs(blocks, edges, edgeNodes, nodes.length);
 
   const membersByRoot = new Map<number, number[]>();
   for (const node of nodes.keys()) {
@@ -300,70 +294,21 @@ function sidesOf({ left, right, cores }: MatchEdge): [number, [number, number] |
 
 /**
  * Per node, the token runs its partners match. The lines of a near-miss copy that are duplicated
- * are those its partners match, which takes the pairing itself. Aligning every pair would cost the
- * square of a clone family's size, so each node, of the given length in tokens, is aligned with
- * its closest partners only.
+ * are those a verified partner matches, which takes the pairing itself. Every pair is aligned:
+ * verifying it already cost a longest common subsequence of the same sequences, and any choice
+ * among a copy's partners would let their number or their order decide what the copy counts.
  */
-function alignClosestPartners(
+function alignPairs(
   blocks: NormalizedBlock[],
   edges: MatchEdge[],
   edgeNodes: number[][],
-  nodeLengths: number[]
+  nodeCount: number
 ): [number, number][][] {
-  const nodeCount = nodeLengths.length;
-  const edgesByNode = Array.from({ length: nodeCount }, (): number[] => []);
-  for (const [edgeIndex, edgeNodePair] of edgeNodes.entries()) {
-    for (const node of edgeNodePair) {
-      edgesByNode[node]?.push(edgeIndex);
-    }
-  }
-  /** The content key of what the pair matched on the side opposite `node`. */
-  const partnerKey = (edgeIndex: number, node: number): number => {
-    const edge = edges[edgeIndex];
-    const partnerSide = edgeNodes[edgeIndex]?.[0] === node ? 1 : 0;
-    const partner = blocks[(partnerSide === 0 ? edge?.left : edge?.right) ?? 0];
-    return edge && partner ? contentKey(partner, edge.cores?.[partnerSide]) : 0;
-  };
-  // A node takes its partners by closeness alone, whichever of them other nodes took, until their
-  // spans cover it and the tokens they matched number its own: one partner for an identical copy,
-  // the next closest too for an edited one, since a copy shares with a farther partner what it does
-  // not share with its closest. The pairs taken by either of their nodes are aligned, and what a
-  // pair matches counts for both.
-  const aligned = new Uint8Array(edges.length);
-  for (const [node, nodeEdges] of edgesByNode.entries()) {
-    // Equally close partners are ordered by their content, so that neither the order of the files
-    // nor that of their verification decides which of them the node counts against.
-    const partnerKeys = new Map(nodeEdges.map((edgeIndex) => [edgeIndex, partnerKey(edgeIndex, node)]));
-    const closestFirst = nodeEdges.toSorted(
-      (first, second) =>
-        (edges[second]?.lcsLength ?? 0) - (edges[first]?.lcsLength ?? 0) ||
-        (partnerKeys.get(first) ?? 0) - (partnerKeys.get(second) ?? 0) ||
-        first - second
-    );
-    const covered: [number, number][] = [];
-    let matchedTokenCount = 0;
-    for (const edgeIndex of closestFirst) {
-      const edge = edges[edgeIndex];
-      if (!edge) {
-        continue;
-      }
-      const side = edgeNodes[edgeIndex]?.[0] === node ? 0 : 1;
-      const [blockIndex, core] = sidesOf(edge)[side] ?? [0, undefined];
-      const range = blocks[blockIndex]?.range;
-      const [start, end] = core ?? [range?.startTokenIndex ?? 0, range?.endTokenIndex ?? 0];
-      const isCovered = mergeOverlappingCores(covered).some((merged) => merged[0] <= start && end <= merged[1]);
-      if (!isCovered || matchedTokenCount < (nodeLengths[node] ?? 0)) {
-        aligned[edgeIndex] = 1;
-        covered.push([start, end]);
-        matchedTokenCount += edge.lcsLength;
-      }
-    }
-  }
   const matchedRunsByNode = Array.from({ length: nodeCount }, (): [number, number][] => []);
   for (const [edgeIndex, edge] of edges.entries()) {
     const left = blocks[edge.left];
     const right = blocks[edge.right];
-    if (aligned[edgeIndex] === 1 && left && right) {
+    if (left && right) {
       const [leftRuns, rightRuns] = alignPair(left, right, edge);
       matchedRunsByNode[edgeNodes[edgeIndex]?.[0] ?? 0]?.push(...leftRuns);
       matchedRunsByNode[edgeNodes[edgeIndex]?.[1] ?? 0]?.push(...rightRuns);
@@ -750,7 +695,6 @@ function createMatcher(
             [leftOffset + leftStart, leftOffset + leftEnd],
             [rightOffset + rightStart, rightOffset + rightEnd],
           ],
-          lcsLength: coreLcsLength,
           reordered: false,
         });
       }
@@ -768,7 +712,7 @@ function createMatcher(
       if (sortedOverlap(left.sortedSequence, right.sortedSequence) * 100 >= required) {
         const inOrder = lcsLengthWithRight(right, rightIndex, left.sequence);
         if (inOrder * 100 >= required) {
-          return { lcsLength: inOrder, reordered: false };
+          return { reordered: false };
         }
       }
       // With their top-level statements (each anonymized on its own) in a canonical order, a copy
@@ -776,7 +720,7 @@ function createMatcher(
       if (left.canonical && right.canonical) {
         const reordered = lcsLength(left.canonical.sequence, right.canonical.sequence);
         if (reordered * 100 >= required) {
-          return { lcsLength: reordered, reordered: true };
+          return { reordered: true };
         }
       }
     }

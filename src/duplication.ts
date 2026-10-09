@@ -108,7 +108,7 @@ export interface CountedOccurrence {
   /** Matched token runs; more than one once gapped groups are merged. */
   segments: TokenSegment[];
   /**
-   * The token runs of a near-miss copy that its closest partners match, within its segments;
+   * The token runs of a near-miss copy that its partners match, within its segments;
    * absent for an exact or gapped copy, whose segments are matched throughout.
    */
   matchedRuns?: TokenSegment[];
