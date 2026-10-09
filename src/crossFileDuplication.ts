@@ -56,7 +56,7 @@ export interface CrossFileDuplicationMetrics {
   /**
    * Per file, the 1-based code lines covered by the tokens of its cross-file occurrences, sorted
    * ascending: the matched tokens of exact and gapped occurrences, and the lines of a near-miss
-   * block or its matched cores at least half of whose tokens its partners match (like within-file
+   * block or its matched cores more than half of whose tokens its partners match (like within-file
    * near-miss coverage). The unmatched gap of a merged
    * clone and comment/blank lines inside an occurrence's bounding range are excluded (blank rows
    * inside multi-row tokens only when the file supplied codeLineNumbers). A file that supplied

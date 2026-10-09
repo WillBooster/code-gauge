@@ -947,9 +947,16 @@ warning: wrappers.tsx:50-72: duplicated lines 20 (max 14), also at wrappers.tsx:
     // Without gapped merging and with a minimum above the runs between the added lines, only the
     // resemblance of the functions as wholes matches them.
     const args = ['--duplication-max-gap-tokens', '0', '--duplication-min-tokens', '100'];
+    // Of a two-token line, the separator alone pairs with one of the other copy.
+    const stopped = reportFunction('edited').replaceAll(
+      /^ {2}const (?:scaled|shifted|rounded) =/gmu,
+      '  debugger;\n$&'
+    );
     const layouts: Record<string, string>[] = [
       { 'edited.ts': edited, 'original.ts': original },
       { 'both.ts': `${edited}\n${original}` },
+      { 'edited.ts': stopped, 'original.ts': original },
+      { 'both.ts': `${stopped}\n${original}` },
     ];
     for (const files of layouts) {
       const report = (limit: number): string =>

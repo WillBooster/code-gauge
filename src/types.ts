@@ -207,7 +207,7 @@ export interface DuplicateBlockOccurrence {
    * The 1-based code lines carrying the occurrence's matched tokens, sorted ascending: the lines
    * from startLine to endLine without comment-only and blank lines, the unmatched gap of a merged
    * clone, what lies between the matched cores of a near-miss block, and the lines of a near-miss
-   * block or core less than half of whose tokens the copies it is aligned with match.
+   * block or core no more than half of whose tokens the copies it is aligned with match.
    */
   lineNumbers: number[];
   startLine: number;

@@ -2571,7 +2571,7 @@ fn count_redundant_fragments(group: &[CountedOccurrence]) -> usize {
 }
 
 /// Only CODE lines carrying matched tokens count; the unmatched gap of a merged clone stays out
-/// of line coverage. A line of a near-miss copy counts when its partners match at least half of
+/// of line coverage. A line of a near-miss copy counts when its partners match more than half of
 /// its tokens: a line the copy adds or rewrites is not duplicated, while a longest common
 /// subsequence still pairs a stray token of it (a bracket, a separator) with one of the partner.
 fn collect_matched_lines(
@@ -2597,7 +2597,7 @@ fn collect_matched_lines(
     token_counts_by_row
         .into_iter()
         .filter(|(line, (matched_count, token_count))| {
-            code_line_numbers.contains(line) && matched_count * 2 >= *token_count
+            code_line_numbers.contains(line) && matched_count * 2 > *token_count
         })
         .map(|(line, _)| line)
         .collect()

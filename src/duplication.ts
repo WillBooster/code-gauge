@@ -970,7 +970,7 @@ export function countRedundantFragments(group: CountedOccurrence[]): number {
 
 /**
  * The 1-based code lines the occurrence's matched tokens cover, given its segments and matched runs
- * as indexes into `tokens`. A line of a near-miss copy counts when its partners match at least half
+ * as indexes into `tokens`. A line of a near-miss copy counts when its partners match more than half
  * of its tokens: a line the copy adds or rewrites is not duplicated, while a longest common
  * subsequence still pairs a stray token of it (a bracket, a separator) with one of the partner.
  */
@@ -998,7 +998,7 @@ export function collectMatchedLines(
   }
   const lines = new Set<number>();
   for (const [line, tokenCount] of tokenCountByLine) {
-    if ((!codeLineNumbers || codeLineNumbers.has(line)) && (matchedCountByLine.get(line) ?? 0) * 2 >= tokenCount) {
+    if ((!codeLineNumbers || codeLineNumbers.has(line)) && (matchedCountByLine.get(line) ?? 0) * 2 > tokenCount) {
       lines.add(line);
     }
   }
