@@ -347,7 +347,13 @@ function mergeOverlapping(
   );
   for (const location of ordered) {
     const last = regions.at(-1);
-    if (last && overlaps(last.merged, location) && !last.sources.some((source) => areCopies(source, location))) {
+    // A block containing the location holds it whatever it is a copy of.
+    const joins =
+      last &&
+      overlaps(last.merged, location) &&
+      (last.sources.some((source) => contains(source, location)) ||
+        !last.sources.some((source) => areCopies(source, location)));
+    if (joins) {
       last.merged.endLine = Math.max(last.merged.endLine, location.endLine);
       last.sources.push(location);
     } else {

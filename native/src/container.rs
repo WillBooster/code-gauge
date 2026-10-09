@@ -1,7 +1,9 @@
 use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
-use crate::functions::{find_pair_key_name, next_declarator, unwrap_transparent_value_wrappers};
+use crate::functions::{
+    find_pair_key_name, find_value_binding, next_declarator, unwrap_transparent_value_wrappers,
+};
 use crate::tree_index::NodeExt;
 use crate::util::{named_children, node_text, Source};
 
@@ -98,11 +100,18 @@ pub fn find_container_name(
     code: &Source<'_>,
     inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
-    let bound = unwrap_transparent_value_wrappers(node);
-    let holder = bound.parent_node();
-    let member = holder
-        .filter(|holder| holder.kind_name() == "pair")
-        .unwrap_or(bound);
+    let is_declared = is_function_declaration(node);
+    // A function expression with a name of its own (`pick = function impl() {}`) is reported
+    // under that name, which is no member of what binds the expression.
+    if !is_declared && node.child_by_field_name("name").is_some() {
+        return None;
+    }
+    let (holder, bound) = find_value_binding(node, code)?;
+    let member = if holder.kind_name() == "pair" {
+        holder
+    } else {
+        bound
+    };
     if let Some(object) = member
         .parent_node()
         .filter(|parent| parent.kind_name() == "object")
@@ -112,10 +121,10 @@ pub fn find_container_name(
     // A function written as a value belongs to whatever it is passed or assigned to, which the
     // syntax can follow only where a declaration binds it (a class field, a constant of a
     // namespace); elsewhere it keeps the name of what it is bound to and has no owner.
-    if !is_function_declaration(node) {
-        return holder
-            .filter(|holder| declares_binding(*holder, bound))
-            .and_then(|_| enclosing_owner(bound, function_nodes, code, inline_namespaces));
+    if !is_declared {
+        return declares_binding(holder, bound)
+            .then(|| enclosing_owner(holder, function_nodes, code, inline_namespaces))
+            .flatten();
     }
     if let Some(receiver) = node.child_by_field_name("receiver") {
         return go_receiver_type(receiver, code);
@@ -129,13 +138,22 @@ pub fn find_container_name(
 }
 
 /// Whether `holder` declares the name its value `bound` is bound to, as a field, a property, or a
-/// variable does; Python and Ruby declare an attribute by assigning to a plain name.
+/// variable does. A Python class declares an attribute by assigning to a plain name and a Ruby
+/// one a constant; a plain name assigned in a Ruby class body is a local variable of that body.
 fn declares_binding(holder: Node<'_>, bound: Node<'_>) -> bool {
     let kind = holder.kind_name();
     if kind == "assignment" {
+        // Only Python wraps an assignment in an `expression_statement`.
+        let is_python = holder
+            .parent_node()
+            .is_some_and(|statement| statement.kind_name() == "expression_statement");
         return holder
             .child_by_field_name("left")
-            .is_some_and(|target| matches!(target.kind_name(), "identifier" | "constant"))
+            .is_some_and(|target| match target.kind_name() {
+                "identifier" => is_python,
+                "constant" => true,
+                _ => false,
+            })
             && holder
                 .child_by_field_name("right")
                 .is_some_and(|value| value.id() == bound.id());

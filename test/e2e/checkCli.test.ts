@@ -959,6 +959,13 @@ warning: wrappers.tsx:50-72: duplicated lines 20 (max 14), also at wrappers.tsx:
     }
   });
 
+  it('reports a block another file copies as one block, whatever copies of each other it holds', () => {
+    const report = checkProject(['--warning-min-duplicate-lines', '8'], { 'a.ts': branchChain, 'b.ts': branchChain });
+    expect(report).toContain('warning: a.ts:1-31: duplicated lines 31 (max 7), also at b.ts:1-31\n');
+    expect(report).toContain('warning: b.ts:1-31: duplicated lines 31 (max 7), also at a.ts:1-31\n');
+    expect(report).toContain('2 duplicated blocks');
+  });
+
   it('reports copies of each other that share a line as blocks of their own', () => {
     expect(checkProject(['--warning-min-duplicate-lines', '8'], { 'chain.ts': branchChain })).toContain(`
 warning: chain.ts:2-11: duplicated lines 10 (max 7), also at chain.ts:11-20, chain.ts:20-29

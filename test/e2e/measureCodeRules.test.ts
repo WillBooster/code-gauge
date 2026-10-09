@@ -1200,6 +1200,25 @@ describe('owners of functions written as values', () => {
     expect(ownersOf('ruby', 'class A\n  PICK = ->(x) { x }\nend\n')).toEqual(['A|PICK']);
   });
 
+  it('follows the binding forms that name the value', () => {
+    expect(ownersOf('cpp', 'namespace n { auto pick{[](int x) { return x; }}; }')).toEqual(['n|pick']);
+    expect(ownersOf('kotlin', 'class A { val pick = label@ { x: Int -> x } }')).toEqual(['A|pick']);
+    // A plain name assigned in a Ruby class body is a local variable of that body.
+    expect(ownersOf('ruby', 'class A\n  PICK = lambda { |x| x }\n  handler = ->(x) { x }\nend\n')).toEqual([
+      'A|PICK',
+      '-|handler',
+    ]);
+  });
+
+  it('names no owner for a function expression reported under a name of its own', () => {
+    expect(
+      ownersOf(
+        'typescript',
+        'class A { pick = function impl(x: number) { return x; }; }\nconst api = { run: function inner() {}, go: function () {} };'
+      )
+    ).toEqual(['-|impl', '-|inner', 'api|go']);
+  });
+
   it('reaches the members of an object literal through the path the object is bound to', () => {
     expect(
       ownersOf(

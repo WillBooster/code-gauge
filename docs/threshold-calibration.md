@@ -325,15 +325,15 @@ below, count a block by its line span, as `check` did when the limits were set. 
 the lines of the span matched in another copy. Lines that are blank or comment-only do not count,
 so that a commented copy and its bare partner have the same length, and neither do the lines the
 copies do not share: those between the matched parts of an edited copy, and those a block
-resembling another as a whole adds or rewrites (a line of it counts when the copy matches at least
-half of its tokens). Copies of each other that share a line are blocks of their own. The limit was
+resembling another as a whole adds or rewrites (a line of it counts when the copies closest to it
+match at least half of its tokens between them). Copies of each other that share a line are blocks of their own. The limit was
 re-examined on the same corpus, exported again at its recorded commits (the same 45,123 functions
 and 6,603 files):
 
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| matched lines        |   5,670 |    2,655 |      996 |      431 |      115 |       25 |
+| matched lines        |   5,662 |    2,651 |      996 |      431 |      115 |       25 |
 
 Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
 groups separate no better than by its span:

@@ -105,7 +105,8 @@ export interface FunctionMetrics {
    * the object is bound to: `api` for `const api = { load() {} }`, `Rules.handlers` for the field
    * of a class, `api.admin` for the value of a property, `module.exports` for an assignment.
    *
-   * Absent for a function without a name, for one passed as an argument or assigned to a member,
+   * Absent for a function without a name, for a function expression with a name of its own (which
+   * is no member of what binds the expression), for one passed as an argument or assigned to a member,
    * for a function nested in another function, for a member of an anonymous class or of an object
    * literal bound to no name, and for a function local to an initializer block. So a method of a
    * class declared inside a function has it, and a closure inside a method does not.

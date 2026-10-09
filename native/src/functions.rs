@@ -261,6 +261,52 @@ pub fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     bound
 }
 
+/// The `init_declarator` whose variable is the C++ lambda held by `parent`.
+fn find_cpp_lambda_declaration<'t>(parent: Node<'t>, code: &Source<'_>) -> Option<Node<'t>> {
+    match parent.kind_name() {
+        "init_declarator" => Some(parent),
+        "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
+            .parent_node()
+            .filter(|holder| holder.kind_name() == "init_declarator")
+            .filter(|holder| declares_deduced_type(*holder))
+            // `auto f = {[] {}}` deduces a list holding the closure, not the closure itself;
+            // only the direct form `auto f{[] {}}` makes the variable the closure.
+            .filter(|holder| {
+                parent.kind_name() == "argument_list"
+                    || !all_children(*holder)
+                        .iter()
+                        .any(|child| !child.is_named() && node_text(*child, code) == "=")
+            }),
+        _ => None,
+    }
+}
+
+/// The node binding a function written as a value and the value it holds, through the forms
+/// find_function_name names the function by: transparent wrappers, the label or annotation of a
+/// Kotlin lambda, the `lambda`/`proc` call around a Ruby block, and the direct initializer of a
+/// deduced C++ variable.
+pub fn find_value_binding<'t>(node: Node<'t>, code: &Source<'_>) -> Option<(Node<'t>, Node<'t>)> {
+    let mut value = unwrap_transparent_value_wrappers(node);
+    let mut holder = value.parent_node()?;
+    if node.kind_name() == "lambda_expression" {
+        if let Some(declaration) = find_cpp_lambda_declaration(holder, code) {
+            return Some((declaration, value));
+        }
+    }
+    if matches!(node.kind_name(), "block" | "do_block") && is_ruby_lambda_call(holder, code) {
+        value = unwrap_transparent_value_wrappers(holder);
+        holder = value.parent_node()?;
+    }
+    while matches!(
+        holder.kind_name(),
+        "labeled_expression" | "annotated_expression"
+    ) {
+        value = holder;
+        holder = value.parent_node()?;
+    }
+    Some((holder, value))
+}
+
 /// A C# method whose header is chosen by `#if` keeps its body outside the directive and its
 /// alternative headers inside; the first one names the method and declares its parameters.
 fn find_conditional_signature(node: Node<'_>) -> Option<Node<'_>> {
@@ -324,23 +370,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // closure itself. With a written type (`std::thread worker([] {})`) the lambda is a constructor
     // argument, and the constructor stores whatever it likes, so it names nothing.
     if node.kind_name() == "lambda_expression" {
-        let declaration = match parent.kind_name() {
-            "init_declarator" => Some(parent),
-            "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
-                .parent_node()
-                .filter(|holder| holder.kind_name() == "init_declarator")
-                .filter(|holder| declares_deduced_type(*holder))
-                // `auto f = {[] {}}` deduces a list holding the closure, not the closure itself;
-                // only the direct form `auto f{[] {}}` makes the variable the closure.
-                .filter(|holder| {
-                    parent.kind_name() == "argument_list"
-                        || !all_children(*holder)
-                            .iter()
-                            .any(|child| !child.is_named() && node_text(*child, code) == "=")
-                }),
-            _ => None,
-        };
-        if let Some(declaration) = declaration {
+        if let Some(declaration) = find_cpp_lambda_declaration(parent, code) {
             return unwrap_declarator_name(declaration.child_by_field_name("declarator"), code);
         }
     }
