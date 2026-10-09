@@ -1250,6 +1250,12 @@ describe('owners of functions written as values', () => {
     ]);
   });
 
+  it('spells the target of an assignment without the comments in it', () => {
+    expect(ownersOf('javascript', 'module /* why */ .exports // here\n  .api = { load() {} };')).toEqual([
+      'module.exports.api|load',
+    ]);
+  });
+
   it('reads a field named by a literal like one named by an identifier', () => {
     expect(
       ownersOf('typescript', 'class A { "handlers" = { run() {} }; 1 = { go() {} }; [computed] = { no() {} }; }')

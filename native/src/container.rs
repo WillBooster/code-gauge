@@ -243,24 +243,24 @@ fn object_owner(
         }
         "assignment_expression" if is_value("right") => holder
             .child_by_field_name("left")
-            .filter(|target| is_member_path(*target))
-            .map(|target| node_text(target, code).to_string()),
+            .and_then(|target| member_path(target, code)),
         _ => None,
     }
 }
 
-/// A name or a chain of property accesses on one (`exports`, `Rules.prototype`, `this.handlers`).
-fn is_member_path(node: Node<'_>) -> bool {
+/// A name or a chain of property accesses on one (`exports`, `Rules.prototype`, `this.handlers`),
+/// spelled without the comments and line breaks its source may hold.
+fn member_path(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     match node.kind_name() {
-        "identifier" | "this" => true,
+        "identifier" | "this" => Some(node_text(node, code).to_string()),
         "member_expression" => {
-            node.child_by_field_name("object")
-                .is_some_and(is_member_path)
-                && node
-                    .child_by_field_name("property")
-                    .is_some_and(|property| property.kind_name() == "property_identifier")
+            let object = member_path(node.child_by_field_name("object")?, code)?;
+            let property = node
+                .child_by_field_name("property")
+                .filter(|property| property.kind_name() == "property_identifier")?;
+            Some(format!("{object}.{}", node_text(property, code)))
         }
-        _ => false,
+        _ => None,
     }
 }
 
