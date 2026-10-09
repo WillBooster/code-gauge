@@ -1,6 +1,7 @@
 use indexmap::IndexMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use std::hash::BuildHasher;
 use std::sync::OnceLock;
 use tree_sitter::Node;
 
@@ -1863,7 +1864,7 @@ fn collect_near_miss_groups(
             .collect()
     };
 
-    let (symbols, is_content) = to_symbol_stream(tokens);
+    let (symbols, is_content, token_keys) = to_symbol_stream(tokens);
     let statements = top_level_statement_finder(&source.container_statement_ranges);
     let mut blocks: Vec<Block> = comparable
         .iter()
@@ -2030,7 +2031,7 @@ fn collect_near_miss_groups(
                 &blocks[edge.left],
                 &blocks[edge.right],
                 edge.cores,
-                edge.alignment,
+                &token_keys,
             );
             (
                 std::cmp::Reverse(edge.alignment.lcs_length),
@@ -2435,32 +2436,37 @@ fn merge_overlapping_cores(cores: &[(usize, usize)]) -> Vec<(usize, usize)> {
 /// other token interned from its hash pairs (literal VALUES folded in, unlike the exact
 /// fingerprint's kind tags), plus which tokens are content-bearing (names and literal values).
 /// Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
-/// other files the process measured before it.
-fn to_symbol_stream(tokens: &[Token<'_>]) -> (Vec<i32>, Vec<bool>) {
+/// other files the process measured before it. A symbol id still depends on where in the file its
+/// token first occurs, so each non-identifier token also gets a key of its content alone.
+fn to_symbol_stream(tokens: &[Token<'_>]) -> (Vec<i32>, Vec<bool>, Vec<u64>) {
     let mut symbol_by_token_hashes: FxHashMap<(i32, i32, i32, i32), i32> = FxHashMap::default();
     let mut id_by_identifier: FxHashMap<&str, i32> = FxHashMap::default();
-    tokens
-        .iter()
-        .map(|token| {
-            if token.is_id {
-                let next_id = id_by_identifier.len() as i32;
-                let id = *id_by_identifier
-                    .entry(token.text.as_ref())
-                    .or_insert(next_id);
-                return (-(id + 1), false);
-            }
-            let next_symbol = symbol_by_token_hashes.len() as i32;
-            let symbol = *symbol_by_token_hashes
-                .entry((
-                    token.text_hash,
-                    token.text_hash2,
-                    token.literal_hash.unwrap_or(0),
-                    token.literal_hash2.unwrap_or(0),
-                ))
-                .or_insert(next_symbol);
-            (symbol, token.is_name || token.literal_hash.is_some())
-        })
-        .unzip()
+    let mut symbols = Vec::with_capacity(tokens.len());
+    let mut is_content = Vec::with_capacity(tokens.len());
+    let mut token_keys = Vec::with_capacity(tokens.len());
+    for token in tokens {
+        if token.is_id {
+            let next_id = id_by_identifier.len() as i32;
+            let id = *id_by_identifier
+                .entry(token.text.as_ref())
+                .or_insert(next_id);
+            symbols.push(-(id + 1));
+            is_content.push(false);
+            token_keys.push(0);
+            continue;
+        }
+        let hashes = (
+            token.text_hash,
+            token.text_hash2,
+            token.literal_hash.unwrap_or(0),
+            token.literal_hash2.unwrap_or(0),
+        );
+        let next_symbol = symbol_by_token_hashes.len() as i32;
+        symbols.push(*symbol_by_token_hashes.entry(hashes).or_insert(next_symbol));
+        is_content.push(token.is_name || token.literal_hash.is_some());
+        token_keys.push(rustc_hash::FxBuildHasher.hash_one(hashes));
+    }
+    (symbols, is_content, token_keys)
 }
 
 /// Returns a lookup of the outermost container statements inside a token range, excluding a

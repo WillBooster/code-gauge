@@ -77,6 +77,11 @@ interface NormalizedBlock {
   /** Interned non-identifier symbols (>= 0) and identifiers as -(file-level id + 1). */
   symbols: Int32Array;
   isContent: Uint8Array;
+  /**
+   * Per token of the block's file, a key of its content for a non-identifier: unlike a symbol,
+   * numbered by first occurrence, it does not depend on the order of the files.
+   */
+  fileTokenKeys: Float64Array;
   /** Identifiers anonymized by first occurrence within the block. */
   sequence: Int32Array;
   /** The sequence sorted, for the token-bag upper bound on the LCS. */
@@ -312,7 +317,10 @@ function alignClosestPartners(
       edgesByNode[node]?.push(edgeIndex);
     }
   }
-  /** A key of what the pair compared on the side opposite `node`, equal for equal content wherever it lies. */
+  /**
+   * A key of the content the pair matched on the side opposite `node`, as written: equal for equal
+   * content wherever it lies.
+   */
   const partnerKey = (edgeIndex: number, node: number): number => {
     const edge = edges[edgeIndex];
     const partnerSide = edgeNodes[edgeIndex]?.[0] === node ? 1 : 0;
@@ -320,10 +328,14 @@ function alignClosestPartners(
     if (!edge || !partner) {
       return 0;
     }
+    const { sequence, positions } = comparedSequence(partner, edge.cores?.[partnerSide], false);
     let key = 0;
-    for (const symbol of comparedSequence(partner, edge.cores?.[partnerSide], edge.reordered).sequence) {
+    for (const [index, symbol] of sequence.entries()) {
+      const tokenKey = partner.fileTokenKeys[positions[index] ?? 0] ?? 0;
+      // A token key holds 53 bits; both halves enter the hash.
+      const content = symbol < 0 ? symbol : tokenKey ^ Math.floor(tokenKey / 0x1_00_00_00_00);
       // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32.
-      key = (Math.imul(key, 31) + symbol) | 0;
+      key = (Math.imul(key, 31) + content) | 0;
     }
     return key;
   };
@@ -944,6 +956,7 @@ function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
     }
     const symbols = new Int32Array(tokens.length);
     const isContent = new Uint8Array(tokens.length);
+    const fileTokenKeys = new Float64Array(tokens.length);
     const idByIdentifier = new Map<string, number>();
     for (const [index, token] of tokens.entries()) {
       if (token.kind === 'id') {
@@ -956,6 +969,7 @@ function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
         continue;
       }
       const key = tokenKey(token);
+      fileTokenKeys[index] = key;
       let symbol = symbolByTokenKey.get(key);
       if (symbol === undefined) {
         symbol = symbolByTokenKey.size;
@@ -985,6 +999,7 @@ function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
         range,
         symbols: blockSymbols,
         isContent: blockIsContent,
+        fileTokenKeys,
         sequence,
         sortedSequence: sequence.toSorted(),
         ngrams: Int32Array.from(occurrenceCounts.keys()),

@@ -247,21 +247,27 @@ impl Matcher {
         self.match_locally(left, right)
     }
 
-    /// A key of what a match compared on each side, equal for equal content wherever it lies.
+    /// A key of the content a pair matched on each side, as written: equal for equal content
+    /// wherever it lies, which symbol ids, numbered by first occurrence in the file, are not.
+    /// `token_keys` holds the content key of each non-identifier token of the file.
     pub fn compared_keys(
         &self,
         left: &Block,
         right: &Block,
         cores: Option<CorePair>,
-        alignment: Alignment,
+        token_keys: &[u64],
     ) -> [u64; 2] {
         let (left_core, right_core) = cores.unzip();
         [(left, left_core), (right, right_core)].map(|(block, core)| {
+            let (sequence, positions) = block.compared(core, false);
             let mut hasher = rustc_hash::FxHasher::default();
-            block
-                .compared(core, alignment.reordered)
-                .0
-                .hash(&mut hasher);
+            for (&symbol, &position) in sequence.iter().zip(&positions) {
+                if symbol < 0 {
+                    symbol.hash(&mut hasher);
+                } else {
+                    token_keys[position].hash(&mut hasher);
+                }
+            }
             hasher.finish()
         })
     }
