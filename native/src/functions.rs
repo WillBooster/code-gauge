@@ -14,6 +14,7 @@ const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
     "function_definition",
     "function_declaration",
     "method_declaration",
+    "conditional_method_declaration",
     "constructor_declaration",
     "compact_constructor_declaration",
     "function_signature_item",
