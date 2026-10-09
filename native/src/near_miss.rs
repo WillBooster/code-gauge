@@ -41,6 +41,11 @@ pub(crate) struct Block {
     is_content: Vec<bool>,
     /// Identifiers anonymized by first occurrence within the block.
     sequence: Vec<i32>,
+    /// The content of the block as written: per token its content key, or the number of its
+    /// identifier. Equal for equal content wherever it lies, which symbols, numbered by first
+    /// occurrence in the file, are not; ordered like `writtenContent` in crossFileNearMiss.ts, so
+    /// that both detectors take the sides of a pair in the same order.
+    written_content: Vec<i64>,
     pub ngrams: FxHashSet<i32>,
     /// The n-grams occurring exactly once in the block with their offsets, sorted by hash so two
     /// blocks' local-match anchors intersect by merging.
@@ -110,9 +115,15 @@ impl Block {
                 }),
             )
         });
+        let sequence = anonymize(&symbols);
         Block {
             start,
-            sequence: anonymize(&symbols),
+            written_content: sequence
+                .iter()
+                .zip(&token_keys[start..end])
+                .map(|(&symbol, &token_key)| content_value(symbol, token_key))
+                .collect(),
+            sequence,
             ngrams: occurrence_counts.into_keys().collect(),
             unique_ngrams,
             content: count_content(&symbols, &is_content),
@@ -127,11 +138,12 @@ impl Block {
         self.symbols.len()
     }
 
-    /// The content of the block or of a core of it, as written: per token its content key, or the
-    /// number of its identifier by first occurrence in the range. Equal for equal content wherever
-    /// it lies, which symbols, numbered by first occurrence in the file, are not; ordered like
-    /// `contentOf` in crossFileNearMiss.ts, so that both detectors align a pair from the same side.
-    fn content(&self, core: Option<(usize, usize)>, token_keys: &[i64]) -> Vec<i64> {
+    /// The content of the block or of a core of it, as written (see `written_content`), with the
+    /// identifiers of a core numbered within it.
+    fn content(&self, core: Option<(usize, usize)>, token_keys: &[i64]) -> Cow<'_, [i64]> {
+        if core.is_none() {
+            return Cow::Borrowed(&self.written_content);
+        }
         let (sequence, positions) = self.compared(core, false);
         sequence
             .iter()
@@ -259,6 +271,23 @@ impl Matcher {
                     return Some(PairMatch::Whole(Alignment { reordered: true }));
                 }
             }
+        }
+        // Of the equally long chains of anchors, the one kept depends on which block comes first,
+        // so the blocks are taken in the order of their content rather than of their positions.
+        if right.written_content < left.written_content {
+            return self
+                .match_locally(right, left)
+                .map(|matched| match matched {
+                    PairMatch::Local(cores) => PairMatch::Local(
+                        cores
+                            .into_iter()
+                            .map(|((right_core, left_core), alignment)| {
+                                ((left_core, right_core), alignment)
+                            })
+                            .collect(),
+                    ),
+                    whole => whole,
+                });
         }
         self.match_locally(left, right)
     }

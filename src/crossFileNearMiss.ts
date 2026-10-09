@@ -84,6 +84,13 @@ interface NormalizedBlock {
   fileTokenKeys: Float64Array;
   /** Identifiers anonymized by first occurrence within the block. */
   sequence: Int32Array;
+  /**
+   * The content of the block as written: per token its content key, or the number of its
+   * identifier. Equal for equal content wherever it lies, which symbols, numbered by first
+   * occurrence, are not; ordered like `written_content` in native/src/near_miss.rs, so that both
+   * detectors take the sides of a pair in the same order.
+   */
+  writtenContent: Float64Array;
   /** The sequence sorted, for the token-bag upper bound on the LCS. */
   sortedSequence: Int32Array;
   /** Distinct non-stop n-gram hashes. */
@@ -339,12 +346,13 @@ function alignPair(
 }
 
 /**
- * The content of a block or of a core of it, as written: per token its content key, or the number
- * of its identifier by first occurrence in the range. Equal for equal content wherever it lies,
- * which symbols, numbered by first occurrence, are not; ordered like `Block::content` in
- * native/src/near_miss.rs, so that both detectors align a pair from the same side.
+ * The content of a block or of a core of it, as written (see `writtenContent`), with the
+ * identifiers of a core numbered within it.
  */
 function contentOf(block: NormalizedBlock, core: [number, number] | undefined): Float64Array {
+  if (!core) {
+    return block.writtenContent;
+  }
   const { sequence, positions } = comparedSequence(block, core, false);
   return Float64Array.from(sequence, (symbol, index) =>
     symbol < 0 ? symbol : (block.fileTokenKeys[positions[index] ?? 0] ?? 0)
@@ -720,6 +728,19 @@ function createMatcher(
         }
       }
     }
+    // Of the equally long chains of anchors, the one kept depends on which block comes first, so
+    // the blocks are taken in the order of their content rather than of their files.
+    if (compareSequences(right.writtenContent, left.writtenContent) < 0) {
+      const swapped = matchLocally(right, left);
+      return (
+        swapped?.cores && {
+          cores: swapped.cores.map(({ pair: [rightCore, leftCore], ...alignment }) => ({
+            ...alignment,
+            pair: [leftCore, rightCore],
+          })),
+        }
+      );
+    }
     return matchLocally(left, right);
   };
 }
@@ -955,6 +976,9 @@ function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
         isContent: blockIsContent,
         fileTokenKeys,
         sequence,
+        writtenContent: Float64Array.from(sequence, (symbol, index) =>
+          symbol < 0 ? symbol : (fileTokenKeys[start + index] ?? 0)
+        ),
         sortedSequence: sequence.toSorted(),
         ngrams: Int32Array.from(occurrenceCounts.keys()),
         uniqueNgrams: Int32Array.from(uniqueOffsets, (offset) => ngramHashes[offset] ?? 0),
