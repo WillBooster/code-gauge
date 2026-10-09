@@ -2014,14 +2014,12 @@ fn collect_near_miss_groups(
             edges_by_node[node].push(edge_index);
         }
     }
-    let mut aligned = vec![false; edges.len()];
+    // Per pair, the sides that count what the pair matches: a node takes its partners by
+    // closeness alone, whichever of them other nodes took.
+    let mut selecting_sides = vec![[false; 2]; edges.len()];
     for (node, node_edges) in edges_by_node.iter_mut().enumerate() {
-        node_edges.sort_by_key(|&edge_index| {
-            (
-                !aligned[edge_index],
-                std::cmp::Reverse(edges[edge_index].alignment.lcs_length),
-            )
-        });
+        node_edges
+            .sort_by_key(|&edge_index| std::cmp::Reverse(edges[edge_index].alignment.lcs_length));
         let mut covered: Vec<(usize, usize)> = Vec::new();
         for &edge_index in node_edges.iter() {
             let side = usize::from(edge_nodes[edge_index][0] != node);
@@ -2033,23 +2031,28 @@ fn collect_near_miss_groups(
             let is_covered = merge_overlapping_cores(&covered)
                 .iter()
                 .any(|merged| merged.0 <= span.0 && span.1 <= merged.1);
-            if aligned[edge_index] || !is_covered {
-                aligned[edge_index] = true;
+            if !is_covered {
+                selecting_sides[edge_index][side] = true;
                 covered.push(span);
             }
         }
     }
     let mut matched_runs_by_node: Vec<Vec<(usize, usize)>> = vec![Vec::new(); node_blocks.len()];
     for (edge_index, edge) in edges.iter().enumerate() {
-        if aligned[edge_index] {
+        let [left_selects, right_selects] = selecting_sides[edge_index];
+        if left_selects || right_selects {
             let (left_runs, right_runs) = matcher.align(
                 &blocks[edge.left],
                 &blocks[edge.right],
                 edge.cores,
                 edge.alignment,
             );
-            matched_runs_by_node[edge_nodes[edge_index][0]].extend(left_runs);
-            matched_runs_by_node[edge_nodes[edge_index][1]].extend(right_runs);
+            if left_selects {
+                matched_runs_by_node[edge_nodes[edge_index][0]].extend(left_runs);
+            }
+            if right_selects {
+                matched_runs_by_node[edge_nodes[edge_index][1]].extend(right_runs);
+            }
         }
     }
 

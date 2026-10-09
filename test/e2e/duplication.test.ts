@@ -538,6 +538,36 @@ function secondShape(limit, step) {
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
   });
 
+  it('counts the lines the closest copy matches, in whatever order the copies appear', () => {
+    // Each function rewrites the statements at the given positions; the fewer positions two of
+    // them differ in, the closer they are.
+    const rewritten = [[2, 6, 10, 14, 18, 22], [10, 14, 18, 22], [18, 22], [22]];
+    const copies = rewritten.map(
+      (positions, index) =>
+        `function f${index}(input) {\nconst state = input; const audit = input; const logger = input;\n${Array.from(
+          { length: 25 },
+          (_, position) =>
+            positions.includes(position)
+              ? '  throw new Error("bad");'
+              : `  state.value = Math.min(state.value * ${position + 1}, state.limit) + Math.abs(state.offset);`
+        ).join('\n')}\nreturn input;\n}\n`
+    );
+    const duplication = { minTokens: 590, maxGapTokens: 0 };
+    const matchedLineCounts = (order: number[]): (number | undefined)[] => {
+      const { duplicateBlockGroups } = measureCode(order.map((index) => copies[index]).join(''), {
+        language: 'javascript',
+        duplication,
+      }).duplication;
+      expect(duplicateBlockGroups).toHaveLength(1);
+      const counts = duplicateBlockGroups[0]?.map((occurrence) => occurrence.lineNumbers.length) ?? [];
+      return order.map((_, index) => counts[order.indexOf(index)]);
+    };
+    // f1 is closest to f2, which shares all but two of its statements; counted against f0, which
+    // an earlier position in the file once made its partner, it would hold two lines more.
+    expect(matchedLineCounts([0, 1, 2, 3])).toEqual([27, 27, 28, 28]);
+    expect(matchedLineCounts([3, 2, 1, 0])).toEqual([27, 27, 28, 28]);
+  });
+
   it('appends an edited third copy to the exact group of its two identical siblings', () => {
     // Copy-paste-then-edit: two identical copies form an exact group; the edited copy must still
     // be found by anchoring on a reported block instead of being suppressed by it.

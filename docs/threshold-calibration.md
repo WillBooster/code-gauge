@@ -333,7 +333,7 @@ and 6,603 files):
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| matched lines        |   5,674 |    2,668 |    1,006 |      435 |      115 |       25 |
+| matched lines        |   5,670 |    2,655 |      996 |      431 |      115 |       25 |
 
 Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
 groups separate no better than by its span:
@@ -342,12 +342,12 @@ groups separate no better than by its span:
 | ---------------------------- | ----: | --: | -----: |
 | up to 9                      |    14 | 14% |    50% |
 | 10–14                        |    18 | 22% |    61% |
-| 15–19                        |     8 | 25% |    62% |
-| 20–29                        |    17 | 18% |    76% |
+| 15–19                        |     9 | 22% |    67% |
+| 20–29                        |    16 | 19% |    75% |
 | 30 or more                   |     3 | 67% |    67% |
 
 The limit stays at 15: of the rated groups reaching it, 71% are A or B in matched lines (20 of 28),
-69% in line span (25 of 36), and no lower limit raises that share (70% from 13, 67% from 10) while
+69% in line span (25 of 36), and no lower limit raises that share (69% from 13, 67% from 10) while
 a limit of 10 reports more than two and a half times the blocks. The same limit in matched lines
 reports a third fewer blocks; those dropped are the ones that reached 15 lines only through their
 comments, their blank lines, and the lines their copies do not share.

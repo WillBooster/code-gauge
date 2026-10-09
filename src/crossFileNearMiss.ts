@@ -307,26 +307,26 @@ function alignClosestPartners(
       edgesByNode[node]?.push(edgeIndex);
     }
   }
-  const aligned = new Uint8Array(edges.length);
+  // Per pair, the sides that count what the pair matches: a node takes its partners by closeness
+  // alone, whichever of them other nodes took.
+  const selectingSides = edges.map((): [boolean, boolean] => [false, false]);
   for (const [node, nodeEdges] of edgesByNode.entries()) {
     const closestFirst = nodeEdges.toSorted(
-      (first, second) =>
-        (aligned[second] ?? 0) - (aligned[first] ?? 0) ||
-        (edges[second]?.lcsLength ?? 0) - (edges[first]?.lcsLength ?? 0) ||
-        first - second
+      (first, second) => (edges[second]?.lcsLength ?? 0) - (edges[first]?.lcsLength ?? 0) || first - second
     );
     const covered: [number, number][] = [];
     for (const edgeIndex of closestFirst) {
       const edge = edges[edgeIndex];
-      if (!edge) {
+      const selecting = selectingSides[edgeIndex];
+      if (!edge || !selecting) {
         continue;
       }
-      const [blockIndex, core] = sidesOf(edge)[edgeNodes[edgeIndex]?.[0] === node ? 0 : 1] ?? [0, undefined];
+      const side = edgeNodes[edgeIndex]?.[0] === node ? 0 : 1;
+      const [blockIndex, core] = sidesOf(edge)[side] ?? [0, undefined];
       const range = blocks[blockIndex]?.range;
       const [start, end] = core ?? [range?.startTokenIndex ?? 0, range?.endTokenIndex ?? 0];
-      const isCovered = mergeOverlappingCores(covered).some((merged) => merged[0] <= start && end <= merged[1]);
-      if (aligned[edgeIndex] === 1 || !isCovered) {
-        aligned[edgeIndex] = 1;
+      if (!mergeOverlappingCores(covered).some((merged) => merged[0] <= start && end <= merged[1])) {
+        selecting[side] = true;
         covered.push([start, end]);
       }
     }
@@ -335,10 +335,15 @@ function alignClosestPartners(
   for (const [edgeIndex, edge] of edges.entries()) {
     const left = blocks[edge.left];
     const right = blocks[edge.right];
-    if (aligned[edgeIndex] === 1 && left && right) {
+    const [leftSelects, rightSelects] = selectingSides[edgeIndex] ?? [false, false];
+    if ((leftSelects || rightSelects) && left && right) {
       const [leftRuns, rightRuns] = alignPair(left, right, edge);
-      matchedRunsByNode[edgeNodes[edgeIndex]?.[0] ?? 0]?.push(...leftRuns);
-      matchedRunsByNode[edgeNodes[edgeIndex]?.[1] ?? 0]?.push(...rightRuns);
+      if (leftSelects) {
+        matchedRunsByNode[edgeNodes[edgeIndex]?.[0] ?? 0]?.push(...leftRuns);
+      }
+      if (rightSelects) {
+        matchedRunsByNode[edgeNodes[edgeIndex]?.[1] ?? 0]?.push(...rightRuns);
+      }
     }
   }
   return matchedRunsByNode;

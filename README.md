@@ -434,7 +434,7 @@ The `duplication` section tunes how clones are detected:
   every decision and short-circuit operator adds one, one per case-labelled statement, plus the
   file total over McCabe's components (every function, every initializer block, decisions outside
   functions, and the module body of a file that runs top-level code)
-- Per-function parameter counts and locations (name, the type or module a declared function is a
+- Per-function parameter counts and locations (name, the type, module, or object a function is a
   member of, node type, line span)
 - Within-file duplication: copy-pasted blocks matched on normalized tokens (identifiers anonymized
   consistently, literals by kind, and literal-dense data tables excluded unless their values also
