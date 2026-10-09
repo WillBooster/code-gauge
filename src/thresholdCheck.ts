@@ -294,12 +294,17 @@ function collectDuplicationViolations(
           const tokenCount = Math.max(
             ...sources.filter((outer) => contains(outer, source)).map((outer) => outer.tokenCount)
           );
-          return (groupOf.get(source) ?? []).filter((copy) => copy.tokenCount * 100 >= tokenCount * minTokenPercent);
+          return (groupOf.get(source) ?? []).filter(
+            (copy) =>
+              copy.tokenCount * 100 >= tokenCount * minTokenPercent &&
+              // The region's own occurrences are among the copies of the groups it belongs to, and
+              // so may be an occurrence within one of them that is not reported itself: a
+              // repetition inside the block, not another place.
+              !sources.some((outer) => contains(outer, copy))
+          );
         }),
         areCopies
       )
-        // The region's own occurrences are among the copies of the groups it belongs to.
-        .filter((partner) => !partner.sources.every((copy) => sources.includes(copy)))
         // The largest say the most about what to share.
         .toSorted((left, right) => sumTokens(right.sources) - sumTokens(left.sources))
         .map((partner) => partner.merged);
