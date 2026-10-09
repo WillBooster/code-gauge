@@ -1,5 +1,6 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
+use std::hash::{Hash, Hasher};
 
 /// N-gram size for the candidate index and local-match anchors (NIL's default); shared with
 /// crossFileNearMiss.ts.
@@ -244,6 +245,25 @@ impl Matcher {
             }
         }
         self.match_locally(left, right)
+    }
+
+    /// A key of what a match compared on each side, equal for equal content wherever it lies.
+    pub fn compared_keys(
+        &self,
+        left: &Block,
+        right: &Block,
+        cores: Option<CorePair>,
+        alignment: Alignment,
+    ) -> [u64; 2] {
+        let (left_core, right_core) = cores.unzip();
+        [(left, left_core), (right, right_core)].map(|(block, core)| {
+            let mut hasher = rustc_hash::FxHasher::default();
+            block
+                .compared(core, alignment.reordered)
+                .0
+                .hash(&mut hasher);
+            hasher.finish()
+        })
     }
 
     /// The token runs a verified match pairs, per side as absolute token ranges: those of a longest

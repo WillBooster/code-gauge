@@ -538,34 +538,29 @@ function secondShape(limit, step) {
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
   });
 
-  it('counts the lines the closest copy matches, in whatever order the copies appear', () => {
-    // Each function rewrites the statements at the given positions; the fewer positions two of
-    // them differ in, the closer they are.
-    const rewritten = [[2, 6, 10, 14, 18, 22], [10, 14, 18, 22], [18, 22], [22]];
-    const copies = rewritten.map(
-      (positions, index) =>
-        `function f${index}(input) {\nconst state = input; const audit = input; const logger = input;\n${Array.from(
-          { length: 25 },
-          (_, position) =>
-            positions.includes(position)
-              ? '  throw new Error("bad");'
-              : `  state.value = Math.min(state.value * ${position + 1}, state.limit) + Math.abs(state.offset);`
-        ).join('\n')}\nreturn input;\n}\n`
-    );
-    const duplication = { minTokens: 590, maxGapTokens: 0 };
-    const matchedLineCounts = (order: number[]): (number | undefined)[] => {
-      const { duplicateBlockGroups } = measureCode(order.map((index) => copies[index]).join(''), {
-        language: 'javascript',
-        duplication,
-      }).duplication;
-      expect(duplicateBlockGroups).toHaveLength(1);
-      const counts = duplicateBlockGroups[0]?.map((occurrence) => occurrence.lineNumbers.length) ?? [];
-      return order.map((_, index) => counts[order.indexOf(index)]);
-    };
-    // f1 is closest to f2, which shares all but two of its statements; counted against f0, which
-    // an earlier position in the file once made its partner, it would hold two lines more.
-    expect(matchedLineCounts([0, 1, 2, 3])).toEqual([27, 27, 28, 28]);
-    expect(matchedLineCounts([3, 2, 1, 0])).toEqual([27, 27, 28, 28]);
+  describe('the lines a copy counts do not depend on the order of the copies', () => {
+    it('counts against the closest copy, wherever it stands', () => {
+      // f1 is closest to f2, which shares all but two of its statements; counted against f0 it
+      // would hold two lines more.
+      const copies = rewrittenCopies([[2, 6, 10, 14, 18, 22], [10, 14, 18, 22], [18, 22], [22]]);
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 590, [0, 1, 2, 3])).toEqual([27, 27, 28, 28]);
+        expect(count(copies, 590, [3, 2, 1, 0])).toEqual([27, 27, 28, 28]);
+      }
+    });
+
+    it('counts against the same one of two equally close copies', () => {
+      // f1 is as close to f0 as to f2, and lays out a statement f0 rewrites over three lines, so
+      // the lines it counts differ by two with the copy it is counted against.
+      const copies = rewrittenCopies([[2, 6], [6], [6, 10]]);
+      copies[1] = (copies[1] ?? '').replace(
+        'state.value = Math.min(state.value * 3, state.limit) + Math.abs(state.offset);',
+        'state.value =\n    Math.min(state.value * 3, state.limit) +\n    Math.abs(state.offset);'
+      );
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 650, [2, 1, 0])).toEqual(count(copies, 650, [0, 1, 2]));
+      }
+    });
   });
 
   it('appends an edited third copy to the exact group of its two identical siblings', () => {
@@ -1350,3 +1345,44 @@ describe('duplication: dependency declarations', () => {
     expect(measureCrossFileDuplication(files, options.duplication).groups).toStrictEqual([]);
   });
 });
+
+/** One function per entry, rewriting the statements at the given positions: the fewer positions two differ in, the closer they are. */
+function rewrittenCopies(rewritten: number[][]): string[] {
+  return rewritten.map(
+    (positions, index) =>
+      `function f${index}(input) {\nconst state = input; const audit = input; const logger = input;\n${Array.from(
+        { length: 25 },
+        (_, position) =>
+          positions.includes(position)
+            ? '  throw new Error("bad");'
+            : `  state.value = Math.min(state.value * ${position + 1}, state.limit) + Math.abs(state.offset);`
+      ).join('\n')}\nreturn input;\n}\n`
+  );
+}
+
+/** Per copy, the lines it counts when the copies stand in one file in the given order. */
+function countWithinFile(copies: string[], minTokens: number, order: number[]): (number | undefined)[] {
+  const { duplicateBlockGroups } = measureCode(order.map((index) => copies[index]).join(''), {
+    language: 'javascript',
+    duplication: { minTokens, maxGapTokens: 0 },
+  }).duplication;
+  expect(duplicateBlockGroups).toHaveLength(1);
+  const counts = duplicateBlockGroups[0]?.map((occurrence) => occurrence.lineNumbers.length) ?? [];
+  return order.map((_, index) => counts[order.indexOf(index)]);
+}
+
+/** Per copy, the lines it counts when the copies are files passed in the given order. */
+function countAcrossFiles(copies: string[], minTokens: number, order: number[]): (number | undefined)[] {
+  const duplication = { minTokens, maxGapTokens: 0 };
+  const { groups } = measureCrossFileDuplication(
+    order.map((index) => ({
+      file: `${index}.js`,
+      ...collectCrossFileDuplicationFileData(copies[index] ?? '', { language: 'javascript', duplication }),
+    })),
+    duplication
+  );
+  expect(groups).toHaveLength(1);
+  return order.map(
+    (_, index) => groups[0]?.occurrences.find((occurrence) => occurrence.file === `${index}.js`)?.lineNumbers?.length
+  );
+}

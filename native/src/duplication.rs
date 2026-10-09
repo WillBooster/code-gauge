@@ -2018,8 +2018,22 @@ fn collect_near_miss_groups(
     // closeness alone, whichever of them other nodes took.
     let mut selecting_sides = vec![[false; 2]; edges.len()];
     for (node, node_edges) in edges_by_node.iter_mut().enumerate() {
-        node_edges
-            .sort_by_key(|&edge_index| std::cmp::Reverse(edges[edge_index].alignment.lcs_length));
+        // Equally close partners are ordered by their content, so that neither the order of the
+        // copies nor that of their verification decides which of them the node counts against.
+        node_edges.sort_by_cached_key(|&edge_index| {
+            let edge = &edges[edge_index];
+            let partner_side = usize::from(edge_nodes[edge_index][0] == node);
+            let keys = matcher.compared_keys(
+                &blocks[edge.left],
+                &blocks[edge.right],
+                edge.cores,
+                edge.alignment,
+            );
+            (
+                std::cmp::Reverse(edge.alignment.lcs_length),
+                keys[partner_side],
+            )
+        });
         let mut covered: Vec<(usize, usize)> = Vec::new();
         for &edge_index in node_edges.iter() {
             let side = usize::from(edge_nodes[edge_index][0] != node);

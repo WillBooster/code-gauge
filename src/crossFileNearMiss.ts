@@ -307,12 +307,33 @@ function alignClosestPartners(
       edgesByNode[node]?.push(edgeIndex);
     }
   }
+  /** A key of what the pair compared on the side opposite `node`, equal for equal content wherever it lies. */
+  const partnerKey = (edgeIndex: number, node: number): number => {
+    const edge = edges[edgeIndex];
+    const partnerSide = edgeNodes[edgeIndex]?.[0] === node ? 1 : 0;
+    const partner = blocks[(partnerSide === 0 ? edge?.left : edge?.right) ?? 0];
+    if (!edge || !partner) {
+      return 0;
+    }
+    let key = 0;
+    for (const symbol of comparedSequence(partner, edge.cores?.[partnerSide], edge.reordered).sequence) {
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32.
+      key = (Math.imul(key, 31) + symbol) | 0;
+    }
+    return key;
+  };
   // Per pair, the sides that count what the pair matches: a node takes its partners by closeness
   // alone, whichever of them other nodes took.
   const selectingSides = edges.map((): [boolean, boolean] => [false, false]);
   for (const [node, nodeEdges] of edgesByNode.entries()) {
+    // Equally close partners are ordered by their content, so that neither the order of the files
+    // nor that of their verification decides which of them the node counts against.
+    const partnerKeys = new Map(nodeEdges.map((edgeIndex) => [edgeIndex, partnerKey(edgeIndex, node)]));
     const closestFirst = nodeEdges.toSorted(
-      (first, second) => (edges[second]?.lcsLength ?? 0) - (edges[first]?.lcsLength ?? 0) || first - second
+      (first, second) =>
+        (edges[second]?.lcsLength ?? 0) - (edges[first]?.lcsLength ?? 0) ||
+        (partnerKeys.get(first) ?? 0) - (partnerKeys.get(second) ?? 0) ||
+        first - second
     );
     const covered: [number, number][] = [];
     for (const edgeIndex of closestFirst) {
