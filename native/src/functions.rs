@@ -865,7 +865,7 @@ fn find_declared_type_spec<'t>(from: Node<'t>, name: &str, code: &Source<'t>) ->
 /// delimiters and prefixes (`"""k"""`, `r"k"`, `%q(k)`, `:"k"`) never leak into it. JavaScript
 /// splits the content into `string_fragment` and `escape_sequence` siblings; Ruby and Python emit
 /// `string_content` (Python nests escapes inside it). Interpolation makes the key unstable.
-fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<String> {
+pub fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<String> {
     let children = named_children(literal);
     if children
         .iter()

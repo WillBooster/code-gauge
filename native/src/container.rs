@@ -2,7 +2,8 @@ use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
 use crate::functions::{
-    find_pair_key_name, find_value_binding, next_declarator, unwrap_transparent_value_wrappers,
+    find_pair_key_name, find_string_literal_content, find_value_binding, next_declarator,
+    unwrap_transparent_value_wrappers,
 };
 use crate::tree_index::NodeExt;
 use crate::util::{named_children, node_text, Source};
@@ -187,13 +188,19 @@ fn object_owner(
         {
             let name = holder
                 .child_by_field_name("name")
-                .or_else(|| holder.child_by_field_name("property"))
-                .filter(|name| name.kind_name().ends_with("identifier"))?;
-            let name = node_text(name, code);
+                .or_else(|| holder.child_by_field_name("property"))?;
+            // A field may be named by a literal (`"handlers" = {}`); a computed name or a
+            // destructuring pattern names nothing.
+            let name = match name.kind_name() {
+                "string" => find_string_literal_content(name, code)?,
+                "number" => node_text(name, code).to_string(),
+                kind if kind.ends_with("identifier") => node_text(name, code).to_string(),
+                _ => return None,
+            };
             Some(
                 match enclosing_owner(holder, function_nodes, code, inline_namespaces) {
                     Some(owner) => format!("{owner}.{name}"),
-                    None => name.to_string(),
+                    None => name,
                 },
             )
         }

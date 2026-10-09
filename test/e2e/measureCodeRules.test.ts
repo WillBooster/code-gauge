@@ -1238,6 +1238,12 @@ describe('owners of functions written as values', () => {
     ]);
   });
 
+  it('reads a field named by a literal like one named by an identifier', () => {
+    expect(
+      ownersOf('typescript', 'class A { "handlers" = { run() {} }; 1 = { go() {} }; [computed] = { no() {} }; }')
+    ).toEqual(['A.handlers|run', 'A.1|go', '-|no']);
+  });
+
   it('names no owner for an object that is passed, returned, or exported without a name', () => {
     expect(
       ownersOf(
