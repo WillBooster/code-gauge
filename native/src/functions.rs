@@ -1038,7 +1038,7 @@ fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
 /// A value group of a Python or Ruby parallel assignment: the value list itself, or a tuple, list,
 /// or array literal that destructuring takes apart (`a, (b, c) = x, (f, y)`, `a, b = [f, g]`). A set
 /// or a mapping is unordered, so it groups nothing positionally.
-fn is_value_group(node: Node<'_>) -> bool {
+pub fn is_value_group(node: Node<'_>) -> bool {
     matches!(
         node.kind_name(),
         "expression_list" | "right_assignment_list" | "tuple" | "list" | "array"
@@ -1061,6 +1061,12 @@ fn is_target_group(node: Node<'_>) -> bool {
 /// destructuring. The position this value takes in each group it sits in is collected on the way up
 /// to the assignment, then replayed on the target side.
 fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let (_, target) = find_parallel_assignment_target(value)?;
+    find_assignment_target_text(target, code)
+}
+
+/// The assignment a value of a parallel assignment sits in and the target it is bound to.
+pub fn find_parallel_assignment_target<'t>(value: Node<'t>) -> Option<(Node<'t>, Node<'t>)> {
     let mut positions = Vec::new();
     let mut current = value;
     let assignment = loop {
@@ -1093,7 +1099,7 @@ fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<S
         }
         target = aligned_target(*values, *child, target)?;
     }
-    find_assignment_target_text(target, code)
+    Some((assignment, target))
 }
 
 /// The target a value takes within one group. Comments are named children of both sides but bind

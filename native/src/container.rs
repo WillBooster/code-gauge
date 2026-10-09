@@ -2,8 +2,8 @@ use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
 use crate::functions::{
-    find_pair_key_name, find_string_literal_content, find_value_binding, next_declarator,
-    unwrap_transparent_value_wrappers,
+    find_pair_key_name, find_parallel_assignment_target, find_string_literal_content,
+    find_value_binding, is_value_group, next_declarator, unwrap_transparent_value_wrappers,
 };
 use crate::tree_index::NodeExt;
 use crate::util::{named_children, node_text, Source};
@@ -123,6 +123,13 @@ pub fn find_container_name(
     // syntax can follow only where a declaration binds it (a class field, a constant of a
     // namespace); elsewhere it keeps the name of what it is bound to and has no owner.
     if !is_declared {
+        // A parallel assignment binds the value to the target at its position.
+        if is_value_group(holder) {
+            let (assignment, target) = find_parallel_assignment_target(bound)?;
+            return assigns_attribute(assignment, target)
+                .then(|| enclosing_owner(assignment, function_nodes, code, inline_namespaces))
+                .flatten();
+        }
         if !declares_binding(holder, bound) {
             return None;
         }
@@ -147,22 +154,13 @@ pub fn find_container_name(
 }
 
 /// Whether `holder` declares the name its value `bound` is bound to, as a field, a property, or a
-/// variable does. A Python class declares an attribute by assigning to a plain name and a Ruby
-/// one a constant; a plain name assigned in a Ruby class body is a local variable of that body.
+/// variable does.
 fn declares_binding(holder: Node<'_>, bound: Node<'_>) -> bool {
     let kind = holder.kind_name();
     if kind == "assignment" {
-        // Only Python wraps an assignment in an `expression_statement`.
-        let is_python = holder
-            .parent_node()
-            .is_some_and(|statement| statement.kind_name() == "expression_statement");
         return holder
             .child_by_field_name("left")
-            .is_some_and(|target| match target.kind_name() {
-                "identifier" => is_python,
-                "constant" => true,
-                _ => false,
-            })
+            .is_some_and(|target| assigns_attribute(holder, target))
             && holder
                 .child_by_field_name("right")
                 .is_some_and(|value| value.id() == bound.id());
@@ -171,6 +169,20 @@ fn declares_binding(holder: Node<'_>, bound: Node<'_>) -> bool {
         || kind.ends_with("_declaration")
         || kind.ends_with("_definition")
         || matches!(kind, "const_item" | "static_item")
+}
+
+/// Whether an assignment declares `target` as an attribute of the class around it: a Python class
+/// does by assigning to a plain name and a Ruby one a constant, while a plain name assigned in a
+/// Ruby class body is a local variable of that body.
+fn assigns_attribute(assignment: Node<'_>, target: Node<'_>) -> bool {
+    match target.kind_name() {
+        // Only Python wraps an assignment in an `expression_statement`.
+        "identifier" => assignment
+            .parent_node()
+            .is_some_and(|statement| statement.kind_name() == "expression_statement"),
+        "constant" => true,
+        _ => false,
+    }
 }
 
 /// The path a JavaScript object literal is bound to, which its members are reached through:
