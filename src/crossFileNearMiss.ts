@@ -238,7 +238,11 @@ export function collectCrossFileNearMissGroups(
     const rightRoot = find(rightNode);
     parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
   }
-  const matchedRunsByNode = alignClosestPartners(blocks, edges, edgeNodes, nodes.length);
+  const nodeLengths = nodes.map(({ blockIndex, core }) => {
+    const range = blocks[blockIndex]?.range;
+    return core ? core[1] - core[0] : (range?.endTokenIndex ?? 0) - (range?.startTokenIndex ?? 0);
+  });
+  const matchedRunsByNode = alignClosestPartners(blocks, edges, edgeNodes, nodeLengths);
 
   const membersByRoot = new Map<number, number[]>();
   for (const node of nodes.keys()) {
@@ -292,15 +296,16 @@ function sidesOf({ left, right, cores }: MatchEdge): [number, [number, number] |
 /**
  * Per node, the token runs its partners match. The lines of a near-miss copy that are duplicated
  * are those its partners match, which takes the pairing itself. Aligning every pair would cost the
- * square of a clone family's size, so each node is aligned with its closest partners only, until
- * what they matched covers it.
+ * square of a clone family's size, so each node, of the given length in tokens, is aligned with
+ * its closest partners only.
  */
 function alignClosestPartners(
   blocks: NormalizedBlock[],
   edges: MatchEdge[],
   edgeNodes: number[][],
-  nodeCount: number
+  nodeLengths: number[]
 ): [number, number][][] {
+  const nodeCount = nodeLengths.length;
   const edgesByNode = Array.from({ length: nodeCount }, (): number[] => []);
   for (const [edgeIndex, edgeNodePair] of edgeNodes.entries()) {
     for (const node of edgeNodePair) {
@@ -322,9 +327,12 @@ function alignClosestPartners(
     }
     return key;
   };
-  // Per pair, the sides that count what the pair matches: a node takes its partners by closeness
-  // alone, whichever of them other nodes took.
-  const selectingSides = edges.map((): [boolean, boolean] => [false, false]);
+  // A node takes its partners by closeness alone, whichever of them other nodes took, until their
+  // spans cover it and the tokens they matched number its own: one partner for an identical copy,
+  // the next closest too for an edited one, since a copy shares with a farther partner what it does
+  // not share with its closest. The pairs taken by either of their nodes are aligned, and what a
+  // pair matches counts for both.
+  const aligned = new Uint8Array(edges.length);
   for (const [node, nodeEdges] of edgesByNode.entries()) {
     // Equally close partners are ordered by their content, so that neither the order of the files
     // nor that of their verification decides which of them the node counts against.
@@ -336,19 +344,21 @@ function alignClosestPartners(
         first - second
     );
     const covered: [number, number][] = [];
+    let matchedTokenCount = 0;
     for (const edgeIndex of closestFirst) {
       const edge = edges[edgeIndex];
-      const selecting = selectingSides[edgeIndex];
-      if (!edge || !selecting) {
+      if (!edge) {
         continue;
       }
       const side = edgeNodes[edgeIndex]?.[0] === node ? 0 : 1;
       const [blockIndex, core] = sidesOf(edge)[side] ?? [0, undefined];
       const range = blocks[blockIndex]?.range;
       const [start, end] = core ?? [range?.startTokenIndex ?? 0, range?.endTokenIndex ?? 0];
-      if (!mergeOverlappingCores(covered).some((merged) => merged[0] <= start && end <= merged[1])) {
-        selecting[side] = true;
+      const isCovered = mergeOverlappingCores(covered).some((merged) => merged[0] <= start && end <= merged[1]);
+      if (!isCovered || matchedTokenCount < (nodeLengths[node] ?? 0)) {
+        aligned[edgeIndex] = 1;
         covered.push([start, end]);
+        matchedTokenCount += edge.lcsLength;
       }
     }
   }
@@ -356,15 +366,10 @@ function alignClosestPartners(
   for (const [edgeIndex, edge] of edges.entries()) {
     const left = blocks[edge.left];
     const right = blocks[edge.right];
-    const [leftSelects, rightSelects] = selectingSides[edgeIndex] ?? [false, false];
-    if ((leftSelects || rightSelects) && left && right) {
+    if (aligned[edgeIndex] === 1 && left && right) {
       const [leftRuns, rightRuns] = alignPair(left, right, edge);
-      if (leftSelects) {
-        matchedRunsByNode[edgeNodes[edgeIndex]?.[0] ?? 0]?.push(...leftRuns);
-      }
-      if (rightSelects) {
-        matchedRunsByNode[edgeNodes[edgeIndex]?.[1] ?? 0]?.push(...rightRuns);
-      }
+      matchedRunsByNode[edgeNodes[edgeIndex]?.[0] ?? 0]?.push(...leftRuns);
+      matchedRunsByNode[edgeNodes[edgeIndex]?.[1] ?? 0]?.push(...rightRuns);
     }
   }
   return matchedRunsByNode;

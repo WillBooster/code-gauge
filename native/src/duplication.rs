@@ -2007,16 +2007,19 @@ fn collect_near_miss_groups(
 
     // The lines of a near-miss copy that are duplicated are those its partners match, which takes
     // the pairing itself. Aligning every pair would cost the square of a clone family's size, so
-    // each node is aligned with its closest partners only, until what they matched covers it.
+    // each node is aligned with its closest partners only.
     let mut edges_by_node: Vec<Vec<usize>> = vec![Vec::new(); node_blocks.len()];
     for (edge_index, nodes) in edge_nodes.iter().enumerate() {
         for &node in nodes {
             edges_by_node[node].push(edge_index);
         }
     }
-    // Per pair, the sides that count what the pair matches: a node takes its partners by
-    // closeness alone, whichever of them other nodes took.
-    let mut selecting_sides = vec![[false; 2]; edges.len()];
+    // A node takes its partners by closeness alone, whichever of them other nodes took, until
+    // their spans cover it and the tokens they matched number its own: one partner for an
+    // identical copy, the next closest too for an edited one, since a copy shares with a farther
+    // partner what it does not share with its closest. The pairs taken by either of their nodes
+    // are aligned, and what a pair matches counts for both.
+    let mut aligned = vec![false; edges.len()];
     for (node, node_edges) in edges_by_node.iter_mut().enumerate() {
         // Equally close partners are ordered by their content, so that neither the order of the
         // copies nor that of their verification decides which of them the node counts against.
@@ -2034,7 +2037,9 @@ fn collect_near_miss_groups(
                 keys[partner_side],
             )
         });
+        let (node_start, node_end) = node_range(node);
         let mut covered: Vec<(usize, usize)> = Vec::new();
+        let mut matched_token_count = 0;
         for &edge_index in node_edges.iter() {
             let side = usize::from(edge_nodes[edge_index][0] != node);
             let (block, core) = edges[edge_index].sides()[side];
@@ -2045,28 +2050,24 @@ fn collect_near_miss_groups(
             let is_covered = merge_overlapping_cores(&covered)
                 .iter()
                 .any(|merged| merged.0 <= span.0 && span.1 <= merged.1);
-            if !is_covered {
-                selecting_sides[edge_index][side] = true;
+            if !is_covered || matched_token_count < node_end - node_start {
+                aligned[edge_index] = true;
                 covered.push(span);
+                matched_token_count += edges[edge_index].alignment.lcs_length;
             }
         }
     }
     let mut matched_runs_by_node: Vec<Vec<(usize, usize)>> = vec![Vec::new(); node_blocks.len()];
     for (edge_index, edge) in edges.iter().enumerate() {
-        let [left_selects, right_selects] = selecting_sides[edge_index];
-        if left_selects || right_selects {
+        if aligned[edge_index] {
             let (left_runs, right_runs) = matcher.align(
                 &blocks[edge.left],
                 &blocks[edge.right],
                 edge.cores,
                 edge.alignment,
             );
-            if left_selects {
-                matched_runs_by_node[edge_nodes[edge_index][0]].extend(left_runs);
-            }
-            if right_selects {
-                matched_runs_by_node[edge_nodes[edge_index][1]].extend(right_runs);
-            }
+            matched_runs_by_node[edge_nodes[edge_index][0]].extend(left_runs);
+            matched_runs_by_node[edge_nodes[edge_index][1]].extend(right_runs);
         }
     }
 

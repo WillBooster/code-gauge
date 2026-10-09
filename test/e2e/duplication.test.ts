@@ -539,13 +539,13 @@ function secondShape(limit, step) {
   });
 
   describe('the lines a copy counts do not depend on the order of the copies', () => {
-    it('counts against the closest copy, wherever it stands', () => {
-      // f1 is closest to f2, which shares all but two of its statements; counted against f0 it
-      // would hold two lines more.
+    it('counts what the closest copies share, wherever they stand', () => {
+      // f1 shares all but two of its statements with f2 and those two with f0, so every line of it
+      // is duplicated; counted against the first copy in the file alone, it once lost two lines.
       const copies = rewrittenCopies([[2, 6, 10, 14, 18, 22], [10, 14, 18, 22], [18, 22], [22]]);
       for (const count of [countWithinFile, countAcrossFiles]) {
-        expect(count(copies, 590, [0, 1, 2, 3])).toEqual([27, 27, 28, 28]);
-        expect(count(copies, 590, [3, 2, 1, 0])).toEqual([27, 27, 28, 28]);
+        expect(count(copies, 590, [0, 1, 2, 3])).toEqual([27, 29, 29, 28]);
+        expect(count(copies, 590, [3, 2, 1, 0])).toEqual([27, 29, 29, 28]);
       }
     });
 
