@@ -69,16 +69,25 @@ impl Block {
         let symbols = symbols[start..end].to_vec();
         let is_content = is_content[start..end].to_vec();
         // Identifier-blind, so a block copied into different surroundings (renumbering its
-        // identifiers) or with reordered statements still shares its n-grams.
-        let ngram_hashes: Vec<i32> = symbols
+        // identifiers) or with reordered statements still shares its n-grams. Hashed from the
+        // content of the tokens: with symbols, numbered by first occurrence in the file, which
+        // n-grams collide, and so which anchor a match, would depend on where other code stands.
+        let hashed: Vec<i32> = symbols
+            .iter()
+            .zip(&token_keys[start..end])
+            .map(|(&symbol, &token_key)| {
+                if symbol < 0 {
+                    BLIND_IDENTIFIER
+                } else {
+                    (token_key ^ (token_key >> 32)) as i32
+                }
+            })
+            .collect();
+        let ngram_hashes: Vec<i32> = hashed
             .windows(NGRAM_SIZE)
             .map(|window| {
-                window.iter().fold(5381i32, |hash, &symbol| {
-                    hash.wrapping_mul(31).wrapping_add(if symbol < 0 {
-                        BLIND_IDENTIFIER
-                    } else {
-                        symbol
-                    })
+                window.iter().fold(5381i32, |hash, &value| {
+                    hash.wrapping_mul(31).wrapping_add(value)
                 })
             })
             .collect();

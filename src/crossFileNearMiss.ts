@@ -990,7 +990,7 @@ function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
       const blockSymbols = symbols.subarray(start, end);
       const blockIsContent = isContent.subarray(start, end);
       const sequence = anonymize(blockSymbols);
-      const ngramHashes = collectNgramHashes(blockSymbols);
+      const ngramHashes = collectNgramHashes(blockSymbols, fileTokenKeys.subarray(start, end));
       const occurrenceCounts = new Map<number, number>();
       for (const hash of ngramHashes) {
         occurrenceCounts.set(hash, (occurrenceCounts.get(hash) ?? 0) + 1);
@@ -1104,16 +1104,19 @@ function tokenKey(token: Token): number {
 /**
  * N-gram hash per start offset, identifier-blind (every identifier hashes as -1) so a block copied
  * into different surroundings (renumbering its identifiers) or with reordered statements still
- * shares its n-grams.
+ * shares its n-grams. Hashed from the content keys of the tokens: with symbols, numbered by first
+ * occurrence, which n-grams collide would depend on the order of the files.
  */
-function collectNgramHashes(symbols: Int32Array): Int32Array {
+function collectNgramHashes(symbols: Int32Array, tokenKeys: Float64Array): Int32Array {
   const hashes = new Int32Array(Math.max(symbols.length - ngramSize + 1, 0));
   for (let start = 0; start < hashes.length; start += 1) {
     let hash = 5381;
     for (let offset = 0; offset < ngramSize; offset += 1) {
-      const symbol = symbols[start + offset] ?? 0;
-      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32 like the native n-gram hash.
-      hash = (Math.imul(hash, 31) + (symbol < 0 ? -1 : symbol)) | 0;
+      const tokenKey = tokenKeys[start + offset] ?? 0;
+      // A token key holds 53 bits; both halves enter the hash.
+      const value = (symbols[start + offset] ?? 0) < 0 ? -1 : tokenKey ^ Math.floor(tokenKey / 0x1_00_00_00_00);
+      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32.
+      hash = (Math.imul(hash, 31) + value) | 0;
     }
     hashes[start] = hash;
   }
