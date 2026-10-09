@@ -57,14 +57,19 @@ pub fn measure(
                 .by_function
                 .get(&node.id())
                 .expect("every collected function node opens a frame in the body-metrics pass");
-            FunctionMetrics {
-                name: find_function_name(*node, code),
-                container_name: crate::container::find_container_name(
+            let name = find_function_name(*node, code);
+            // Without a name of its own, a function has nothing an owner would qualify.
+            let container_name = name.as_ref().and_then(|_| {
+                crate::container::find_container_name(
                     *node,
                     &sets.function_nodes,
                     code,
                     &inline_namespaces,
-                ),
+                )
+            });
+            FunctionMetrics {
+                name,
+                container_name,
                 node_type: node.kind_name().to_string(),
                 start_line: node.start_position().row + 1,
                 // The tree is parsed from UTF-16, so columns are UTF-16 code units x 2 — halving

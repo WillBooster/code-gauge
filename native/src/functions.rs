@@ -251,7 +251,7 @@ fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
 /// Climbs from a value through the transparent wrappers around it (`(() => 1)`, `(() => 2) as Fn`,
 /// `<Fn>(() => 3)`, Rust `(|x| x) as fn(i32) -> i32`) to the outermost one, whose binding site
 /// names the value.
-fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
+pub fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     let mut bound = node;
     while let Some(wrapper) = bound.parent_node().filter(|wrapper| {
         wrapped_transparent_value(*wrapper).is_some_and(|value| value.id() == bound.id())
@@ -446,7 +446,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
 
 /// The key of a `pair` when it is a plain, Ruby symbol, or string-literal property name; a
 /// computed key (`[k]: ...`), an interpolated string or symbol, or an empty string names nothing.
-fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
+pub fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     let key = pair.child_by_field_name("key")?;
     match key.kind_name() {
         // A numeric key (`{ 1: () => {} }`) is as stable a property name as an identifier, signed

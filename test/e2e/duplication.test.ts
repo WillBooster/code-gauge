@@ -214,10 +214,9 @@ describe('duplication: partial gapped-clone merging', () => {
   it('does not double-count spans where a retained group overlaps the merged group', () => {
     // alpha repeats the prefix run AFTER its suffix, so the prefix group (x3: alpha start, beta,
     // alpha tail) survives a partial merge alongside the merged gapped group (alpha, beta), and
-    // the two OVERLAP. delta is a near-miss copy of beta, so the anchored rebuild coalesces both
-    // groups' fragments per copy: overlapping fragments must union, not concatenate — naive
-    // summing reported a duplicated segment with tokenCount 171 (union: 128), inflating
-    // maxDuplicateBlockSize (171 vs 139) and duplicateBlockCount (5 vs 4).
+    // the two OVERLAP. delta is a near-miss copy of alpha and beta as wholes, so the anchored
+    // rebuild coalesces each function with both groups' fragments in it: overlapping parts must
+    // union, not concatenate, into ONE fragment per copy.
     const longSuffix = `${suffixHalf.replace('  return total + count + big - small;\n', '')}  let more = 0;
   for (const item of items) {
     if (item.flagged) {
@@ -236,10 +235,10 @@ describe('duplication: partial gapped-clone merging', () => {
 
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
     expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(4);
-    // Segment counts per occurrence are [2, 1, 2, 1]: sum minus the largest.
-    expect(metrics.duplication.duplicateBlockCount).toBe(4);
-    // The largest occurrence is delta's whole near-miss block, not a double-counted alpha span.
-    expect(metrics.duplication.maxDuplicateBlockSize).toBe(139);
+    // The three functions and alpha's second copy of the prefix, one fragment each: all but one.
+    expect(metrics.duplication.duplicateBlockCount).toBe(3);
+    // The largest occurrence is alpha's whole block, each of its tokens counted once.
+    expect(metrics.duplication.maxDuplicateBlockSize).toBe(182);
   });
 
   // Cross-file nested copies (inside a larger group's region) are not copies of a merged span: they
@@ -573,9 +572,10 @@ function secondShape(limit, step) {
     // A and B share an exact prefix AND an exact suffix, split by over-large differing middles
     // (two exact groups, multi-fragment copies); C carries scattered operator edits so only the
     // near-miss phase finds it. The component must become ONE group with ONE occurrence per copy
-    // (A's and B's prefix+suffix fragments coalesce), and the fragment-weighted count must be 3
-    // in every source order: without the coalescing and sum-minus-max counting, the same family
-    // reported five occurrences and a source-order-dependent count.
+    // (A and B as the whole functions C resembles, their prefix and suffix fragments coalesced
+    // into them), and the count must be 2 in every source order: without the coalescing and
+    // sum-minus-max counting, the same family reported five occurrences and a
+    // source-order-dependent count.
     const exactA = fragmentedCopy('alpha', fragmentedMiddle('bonusA', 'level', 'bonus'), '+', '+');
     const exactB = fragmentedCopy('beta', fragmentedMiddle('bonusB', 'rank', 'extra'), '+', '+');
     const edited = fragmentedCopy('gamma', fragmentedMiddle('bonusC', 'depth', 'weight'), '-', '-');
@@ -584,7 +584,7 @@ function secondShape(limit, step) {
       const metrics = measureCode(code, { language: 'javascript' });
       expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
       expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
-      expect(metrics.duplication.duplicateBlockCount).toBe(3);
+      expect(metrics.duplication.duplicateBlockCount).toBe(2);
     }
   });
 

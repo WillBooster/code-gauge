@@ -99,11 +99,16 @@ export interface FunctionMetrics {
    * find a like-named member of it (`void gauge::f()` inside `namespace gauge` holding a
    * `struct gauge`).
    *
-   * Absent for a function written as a value (a lambda, a closure, a function expression), which
-   * keeps the name of what it is bound to, for a function nested in another function, for a
-   * member of an anonymous class or of an object literal, and for a function local to an
-   * initializer block. So a method of a class declared inside a function has it, and a closure
-   * inside a method does not.
+   * A function written as a value (a lambda, a closure, a function expression) is a member of
+   * the declaration binding it: the class of a field it initializes, the namespace or module of a
+   * constant. A member of a JavaScript or TypeScript object literal is reached through the path
+   * the object is bound to: `api` for `const api = { load() {} }`, `Rules.handlers` for the field
+   * of a class, `api.admin` for the value of a property, `module.exports` for an assignment.
+   *
+   * Absent for a function without a name, for one passed as an argument or assigned to a member,
+   * for a function nested in another function, for a member of an anonymous class or of an object
+   * literal bound to no name, and for a function local to an initializer block. So a method of a
+   * class declared inside a function has it, and a closure inside a method does not.
    */
   containerName?: string;
   /**
@@ -200,7 +205,8 @@ export interface DuplicateBlockOccurrence {
   /**
    * The 1-based code lines carrying the occurrence's matched tokens, sorted ascending: the lines
    * from startLine to endLine without comment-only and blank lines, the unmatched gap of a merged
-   * clone, and what lies between the matched cores of a near-miss block.
+   * clone, what lies between the matched cores of a near-miss block, and the lines of a near-miss
+   * block or core less than half of whose tokens the copies closest to it match.
    */
   lineNumbers: number[];
   startLine: number;

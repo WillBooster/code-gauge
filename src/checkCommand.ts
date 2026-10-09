@@ -354,9 +354,8 @@ function countViolations(violations: readonly Violation[]): {
 
 /** One violation as a single line: its level, the location, then every limit it exceeds. */
 function formatViolation(violation: Violation): string {
-  const labelByMetric = new Map(thresholds.map((threshold) => [metricNameOf(threshold), threshold.label]));
   const exceeded = violation.exceeded
-    .map(({ metric, value, level, limit }) => {
+    .map(({ metric, label, value, level, limit }) => {
       // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
       const roundedValue = Math.ceil(value * 10) / 10;
       const levelPrefix = level === violation.level ? '' : `${level} `;
@@ -364,7 +363,7 @@ function formatViolation(violation: Violation): string {
       // the last whole number below it; a limit of 0 allows none.
       const maxAllowed = violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit;
       const blocks = metric === 'functionCognitiveComplexity' ? describeLargestBlocks(violation) : '';
-      return `${labelByMetric.get(metric)} ${roundedValue} (${levelPrefix}max ${maxAllowed}${blocks})`;
+      return `${label} ${roundedValue} (${levelPrefix}max ${maxAllowed}${blocks})`;
     })
     .join(', ');
   return `${violation.level}: ${describeViolation(violation, exceeded)}`;

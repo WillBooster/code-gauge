@@ -2,7 +2,7 @@ import { collectCrossFileNearMissGroups } from './crossFileNearMiss.js';
 import { selectMaximalGroups, type SelectableRegion } from './duplicateSelection.js';
 import {
   buildLiteralCountPrefix,
-  collectSegmentLines,
+  collectMatchedLines,
   collectSequenceWindowCandidates,
   countRedundantFragments,
   mergeAdjacentGroups,
@@ -11,6 +11,7 @@ import {
   type CrossFileDuplicateCandidate,
   type CrossFileDuplicationFileData,
   type SequenceWindowContext,
+  type TokenSegment,
 } from './duplication.js';
 import type { DuplicationOptions } from './types.js';
 
@@ -54,8 +55,9 @@ export interface CrossFileDuplicationMetrics {
   duplicateBlockGroupCountByFile: Record<string, number>;
   /**
    * Per file, the 1-based code lines covered by the tokens of its cross-file occurrences, sorted
-   * ascending: the matched tokens of exact and gapped occurrences, and every token of a near-miss
-   * block or its matched cores, edited ones included (like within-file near-miss coverage). The unmatched gap of a merged
+   * ascending: the matched tokens of exact and gapped occurrences, and the lines of a near-miss
+   * block or its matched cores at least half of whose tokens its partners match (like within-file
+   * near-miss coverage). The unmatched gap of a merged
    * clone and comment/blank lines inside an occurrence's bounding range are excluded (blank rows
    * inside multi-row tokens only when the file supplied codeLineNumbers). A file that supplied
    * only candidates (no `tokens`) has no entry — without its token stream the covered lines are
@@ -140,15 +142,17 @@ function collectNearMissGroups(
       return {
         ...occurrence,
         file: files[occurrence.fileIndex]?.file ?? '',
-        segments: occurrence.segments.map((segment) => ({
-          startTokenIndex: segment.startTokenIndex + offset,
-          endTokenIndex: segment.endTokenIndex + offset,
-        })),
+        segments: occurrence.segments.map((segment) => shift(segment, offset)),
+        matchedRuns: occurrence.matchedRuns?.map((run) => shift(run, offset)),
         startTokenIndex: occurrence.startTokenIndex + offset,
         endTokenIndex: occurrence.endTokenIndex + offset,
       };
     })
   );
+}
+
+function shift({ startTokenIndex, endTokenIndex }: TokenSegment, offset: number): TokenSegment {
+  return { startTokenIndex: startTokenIndex + offset, endTokenIndex: endTokenIndex + offset };
 }
 
 /** Repeated sub-windows of sibling statements matched across the whole project's files. */
@@ -288,9 +292,9 @@ function summarize(
 }
 
 /**
- * Adds the code lines an occurrence's segment tokens cover (matched tokens of an exact or gapped
- * occurrence, the whole block or matched cores of a near-miss one) to its file's line set, mapping the
- * project-wide token segments back into the file's own token stream, and returns them in order.
+ * Adds the code lines an occurrence's matched tokens cover (see collectMatchedLines) to its file's
+ * line set, mapping the project-wide token segments back into the file's own token stream, and
+ * returns them in order.
  * A file that supplied only candidates (no token stream) is skipped rather than approximated from
  * the bounding line range, which would include gap and comment/blank lines and break the field's
  * exactness contract.
@@ -312,18 +316,12 @@ function collectOccurrenceLines(
     fileLines = new Set();
     lineNumbersByFile.set(occurrence.file, fileLines);
   }
-  const lines = new Set<number>();
-  for (const segment of occurrence.segments) {
-    collectSegmentLines(
-      {
-        startTokenIndex: segment.startTokenIndex - fileData.offset,
-        endTokenIndex: segment.endTokenIndex - fileData.offset,
-      },
-      fileData.tokens,
-      fileData.codeLineNumbers,
-      lines
-    );
-  }
+  const lines = collectMatchedLines(
+    occurrence.segments.map((segment) => shift(segment, -fileData.offset)),
+    occurrence.matchedRuns?.map((run) => shift(run, -fileData.offset)),
+    fileData.tokens,
+    fileData.codeLineNumbers
+  );
   for (const line of lines) {
     fileLines.add(line);
   }

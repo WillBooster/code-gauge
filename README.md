@@ -134,11 +134,13 @@ A duplicated block is one occurrence of a within-file or cross-file clone, found
 [duplication detection settings](#duplication-detection-settings); its span runs from its first to
 its last line, and its length is the number of lines of that span matched in another copy. Lines
 that are blank or comment-only do not count, so that a copy has the same length whether or not it
-is commented, and neither do the lines between the matched parts of an edited copy, which the copies do not
-share. A block that resembles another as a whole (a near-miss clone, at least
-`minSimilarityPercent` similar) counts all its code lines, its edited ones included. Occurrences of at least the warning or the error
+is commented, and neither do the lines the copies do not share: those between the matched parts of
+an edited copy, and those a block that resembles another as a whole (a near-miss clone, at least
+`minSimilarityPercent` similar) adds or rewrites. A line of such a block counts when the copy
+closest to the block matches at least half of the line's tokens. Occurrences of at least the warning or the error
 `minDuplicateLines` that overlap in a file are reported as one block covering all of them, at the
-level its duplicated lines reach, each line counted once.
+level its duplicated lines reach, each line counted once; copies of each other that merely share a
+line (the branches of an `else if` chain) are reported as blocks of their own.
 
 Each limit is set in the `warning` or `error` part of the
 [`thresholds` config section](#configuration), where `null` disables it and `languages` overrides
@@ -180,8 +182,9 @@ How to fix:
 A violation's level is that of its most severe limit. A function gets one line listing every
 threshold it exceeds, each with the largest value its violated limit allows and, when that limit is
 milder than the line's level, the limit's own level; a method is named with the type or
-module it belongs to (`Rules.decide`), while a function written as a value, such as a lambda
-assigned to a field, keeps the bare name of what it is bound to. A cognitive-complexity violation also names up to three parts of the function
+module it belongs to (`Rules.decide`), as is a function written as the value of a field or of a
+constant of a namespace, and a member of a JavaScript or TypeScript object literal with the path
+the object is bound to (`api.load` for `const api = { load() {} }`). A cognitive-complexity violation also names up to three parts of the function
 adding the most to it (none when all of it comes from operator sequences and jumps outside any
 branching construct, which add to the score without being such a part), largest first, each with its lines, its name when it is a nested function,
 and what it adds: the outermost branching constructs and nested functions of the body or, where one
@@ -230,8 +233,14 @@ ranking command.
       "startLine": 1,
       "endLine": 48,
       "exceeded": [
-        { "metric": "functionCognitiveComplexity", "value": 34, "level": "error", "limit": 30 },
-        { "metric": "functionNcss", "value": 36, "level": "warning", "limit": 30 }
+        {
+          "metric": "functionCognitiveComplexity",
+          "label": "cognitive complexity",
+          "value": 34,
+          "level": "error",
+          "limit": 30
+        },
+        { "metric": "functionNcss", "label": "NCSS", "value": 36, "level": "warning", "limit": 30 }
       ],
       "name": "Rules.decide",
       "largestBlocks": [
@@ -246,7 +255,15 @@ ranking command.
       "file": "src/pasted.ts",
       "startLine": 1,
       "endLine": 18,
-      "exceeded": [{ "metric": "duplicateLines", "value": 18, "level": "warning", "limit": 15 }],
+      "exceeded": [
+        {
+          "metric": "duplicateLines",
+          "label": "duplicated lines",
+          "value": 18,
+          "level": "warning",
+          "limit": 15
+        }
+      ],
       "partners": [{ "file": "src/report.ts", "startLine": 1, "endLine": 18 }]
     }
   ],
@@ -265,10 +282,11 @@ ranking command.
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
     kind `file`, the first and last line of the file;
-  - `name`: only for kind `function`; a method's name follows the type or module it belongs to (`Rules.decide`), and a
-    function without a name is `<anonymous>`;
+  - `name`: only for kind `function`; a member's name follows the type, module, or object it
+    belongs to (`Rules.decide`), and a function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
-    `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the measured `value`, the most severe
+    `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the `label` the text report prints
+    for it, the measured `value`, the most severe
     `level` whose limit the value violates, and that `limit`. A value violates when it is above the
     limit; `duplicateLines`, the lines of the block matched in another copy, violates from the limit on;
   - `largestBlocks`: only for a function exceeding a cognitive-complexity limit that has a
@@ -277,7 +295,8 @@ ranking command.
     and its `name` when it is a named nested function;
   - `partners`: only for kind `duplication`; every other copy of the block, largest first. A
     place repeating only a part of the block (less than `minSimilarityPercent` of its tokens) is
-    not a copy of it, and is listed only when no copy is known.
+    not a copy of it, and is listed only for a block that no place copies as a whole, its parts
+    being repeated in different places.
 - `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
   `error` level of a violation.
 - `warnings`: files measured without cross-file duplication data, and unmeasured files of the

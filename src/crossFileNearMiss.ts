@@ -1,9 +1,11 @@
 import {
   createLcsLengthCounter,
   lcsLength,
+  markLcs,
   type CountedOccurrence,
   type Token,
   type TokenRange,
+  type TokenSegment,
 } from './duplication.js';
 
 /**
@@ -89,27 +91,45 @@ interface NormalizedBlock {
   uniqueNgramOffsets: Int32Array;
   contentCounts: Map<number, number>;
   /**
-   * The sequence with its top-level statements in canonical order, when it has enough of them for
-   * statement-order-insensitive comparison.
+   * The sequence with its top-level statements in canonical order and the block offset each of its
+   * tokens comes from, when the block has enough statements for statement-order-insensitive
+   * comparison.
    */
-  canonicalSequence: Int32Array | undefined;
+  canonical: { sequence: Int32Array; offsets: Int32Array } | undefined;
 }
 
 /** A verified core in each block of a pair, as file token ranges. */
 type CorePair = [[number, number], [number, number]];
 
+/** What alignPair needs to recover the tokens a verified match pairs. */
+interface Alignment {
+  /** The length of the longest common subsequence the match was verified by. */
+  lcsLength: number;
+  /** Whether the blocks matched only with their statements in canonical order. */
+  reordered: boolean;
+}
+
 /** How a verified pair matched: whole blocks, or every anchored core pair (one per gap-split chain segment). */
-type PairMatch = { kind: 'whole' } | { kind: 'local'; cores: CorePair[] };
+type PairMatch = (Alignment & { cores?: undefined }) | { cores: (Alignment & { pair: CorePair })[] };
+
+/** A verified near-miss pair of blocks; without `cores`, the blocks match as wholes. */
+interface MatchEdge extends Alignment {
+  left: number;
+  right: number;
+  cores?: CorePair;
+}
 
 /**
  * Clusters verified cross-file near-miss pairs into groups. A node (a whole block or a matched
  * core) overlapping an occurrence of `reportedSpansByFile` (the exact cross-file groups) is an
  * anchor: it links near-miss copies to the content an exact group already reports, and appears in
  * the near-miss group marked `spanCountedElsewhere` so block counting does not count its span
- * twice. Pairs of two anchors are skipped (blocks wholly covered by reported spans are not even
- * compared), and a group needs at least one non-anchor node. A block that matched only locally is
- * reported as its matched cores (overlapping cores merged), each clustered with its own partners,
- * so code no verified pair matched never counts as duplicated.
+ * twice. A pair of two spans that both overlap reported spans is dropped before clustering (blocks
+ * wholly covered by reported spans are not even compared), so it neither collapses the blocks' core
+ * nodes nor widens a node beyond what the pairs clustering it matched, and a group needs at least
+ * one non-anchor node. A block that matched only locally is reported as its matched cores
+ * (overlapping cores merged), each clustered with its own partners, so code no verified pair
+ * matched never counts as duplicated.
  */
 export function collectCrossFileNearMissGroups(
   files: NearMissSourceFile[],
@@ -126,22 +146,25 @@ export function collectCrossFileNearMissGroups(
   const coveredByReportedSpans = reportedSpansByFile.map(createCoverageTest);
   const fullyReported = blocks.map(({ fileIndex, range }) => coveredByReportedSpans[fileIndex]?.(range) ?? false);
   const touchesReported = blocks.map(({ fileIndex, range }) => overlapsReportedSpan[fileIndex]?.(range) ?? false);
-  const edges: [number, [number, number] | undefined, number, [number, number] | undefined][] = [];
+  const touchesCore = ({ fileIndex }: NormalizedBlock, [startTokenIndex, endTokenIndex]: [number, number]): boolean =>
+    overlapsReportedSpan[fileIndex]?.({ startTokenIndex, endTokenIndex }) ?? false;
+  const edges: MatchEdge[] = [];
   forEachCandidatePair(blocks, fullyReported, minSimilarityPercent, (left, right) => {
     const leftBlock = blocks[left];
     const rightBlock = blocks[right];
     const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
-    if (match) {
-      if (match.kind === 'whole') {
-        // A whole match between two blocks that both overlap reported spans could never join a
-        // group, and recording it would collapse the blocks' core nodes.
-        if (!(touchesReported[left] && touchesReported[right])) {
-          edges.push([left, undefined, right, undefined]);
-        }
-      } else {
-        for (const [leftCore, rightCore] of match.cores) {
-          edges.push([left, leftCore, right, rightCore]);
-        }
+    if (!match) {
+      return;
+    }
+    if (!match.cores) {
+      if (!(touchesReported[left] && touchesReported[right])) {
+        edges.push({ left, right, lcsLength: match.lcsLength, reordered: match.reordered });
+      }
+      return;
+    }
+    for (const { pair, lcsLength, reordered } of match.cores) {
+      if (!(touchesCore(leftBlock, pair[0]) && touchesCore(rightBlock, pair[1]))) {
+        edges.push({ left, right, cores: pair, lcsLength, reordered });
       }
     }
   });
@@ -151,11 +174,8 @@ export function collectCrossFileNearMissGroups(
   // matched with different partners fall into separate groups.
   const matchedWhole = blocks.map(() => false);
   const localCores = blocks.map((): [number, number][] => []);
-  for (const [left, leftCore, right, rightCore] of edges) {
-    for (const [index, core] of [
-      [left, leftCore],
-      [right, rightCore],
-    ] as const) {
+  for (const edge of edges) {
+    for (const [index, core] of sidesOf(edge)) {
       if (core) {
         localCores[index]?.push(core);
       } else {
@@ -212,16 +232,13 @@ export function collectCrossFileNearMissGroups(
     ];
     return overlapsReportedSpan[block?.fileIndex ?? 0]?.({ startTokenIndex, endTokenIndex }) ?? false;
   });
-  for (const [left, leftCore, right, rightCore] of edges) {
-    const leftNode = nodeOf(left, leftCore);
-    const rightNode = nodeOf(right, rightCore);
-    if (anchored[leftNode] && anchored[rightNode]) {
-      continue;
-    }
+  const edgeNodes = edges.map((edge) => sidesOf(edge).map(([index, core]) => nodeOf(index, core)));
+  for (const [leftNode = 0, rightNode = 0] of edgeNodes) {
     const leftRoot = find(leftNode);
     const rightRoot = find(rightNode);
     parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
   }
+  const matchedRunsByNode = alignClosestPartners(blocks, edges, edgeNodes, nodes.length);
 
   const membersByRoot = new Map<number, number[]>();
   for (const node of nodes.keys()) {
@@ -238,22 +255,147 @@ export function collectCrossFileNearMissGroups(
     }
     // A group's nodes from one block become ONE occurrence whose segments are its cores, so the
     // fragment-weighted count charges the block as one copy (as for gapped clones), not once per core.
-    const coresByBlock = new Map<number, { cores: ([number, number] | undefined)[]; anchor: boolean }>();
+    const coresByBlock = new Map<number, BlockCopy>();
     for (const node of members) {
       const { blockIndex = 0, core } = nodes[node] ?? {};
-      const entry = coresByBlock.get(blockIndex) ?? { cores: [], anchor: false };
+      const entry = coresByBlock.get(blockIndex) ?? { cores: [], anchor: false, matchedRuns: [] };
       entry.cores.push(core);
       entry.anchor ||= anchored[node] ?? false;
+      entry.matchedRuns.push(...(matchedRunsByNode[node] ?? []));
       coresByBlock.set(blockIndex, entry);
     }
     groups.push(
-      [...coresByBlock].flatMap(([blockIndex, { cores, anchor }]) => {
+      [...coresByBlock].flatMap(([blockIndex, copy]) => {
         const block = blocks[blockIndex];
-        return block ? [toOccurrence(block, files, cores, anchor)] : [];
+        return block ? [toOccurrence(block, files, copy)] : [];
       })
     );
   }
   return groups;
+}
+
+/** The nodes of one block in a group: its cores (`undefined` for the whole block) and what its partners match of them. */
+interface BlockCopy {
+  cores: ([number, number] | undefined)[];
+  anchor: boolean;
+  matchedRuns: [number, number][];
+}
+
+/** The (block, core) on each side of a pair. */
+function sidesOf({ left, right, cores }: MatchEdge): [number, [number, number] | undefined][] {
+  return [
+    [left, cores?.[0]],
+    [right, cores?.[1]],
+  ];
+}
+
+/**
+ * Per node, the token runs its partners match. The lines of a near-miss copy that are duplicated
+ * are those its partners match, which takes the pairing itself. Aligning every pair would cost the
+ * square of a clone family's size, so each node is aligned with its closest partners only, until
+ * what they matched covers it.
+ */
+function alignClosestPartners(
+  blocks: NormalizedBlock[],
+  edges: MatchEdge[],
+  edgeNodes: number[][],
+  nodeCount: number
+): [number, number][][] {
+  const edgesByNode = Array.from({ length: nodeCount }, (): number[] => []);
+  for (const [edgeIndex, edgeNodePair] of edgeNodes.entries()) {
+    for (const node of edgeNodePair) {
+      edgesByNode[node]?.push(edgeIndex);
+    }
+  }
+  const aligned = new Uint8Array(edges.length);
+  for (const [node, nodeEdges] of edgesByNode.entries()) {
+    const closestFirst = nodeEdges.toSorted(
+      (first, second) =>
+        (aligned[second] ?? 0) - (aligned[first] ?? 0) ||
+        (edges[second]?.lcsLength ?? 0) - (edges[first]?.lcsLength ?? 0) ||
+        first - second
+    );
+    const covered: [number, number][] = [];
+    for (const edgeIndex of closestFirst) {
+      const edge = edges[edgeIndex];
+      if (!edge) {
+        continue;
+      }
+      const [blockIndex, core] = sidesOf(edge)[edgeNodes[edgeIndex]?.[0] === node ? 0 : 1] ?? [0, undefined];
+      const range = blocks[blockIndex]?.range;
+      const [start, end] = core ?? [range?.startTokenIndex ?? 0, range?.endTokenIndex ?? 0];
+      const isCovered = mergeOverlappingCores(covered).some((merged) => merged[0] <= start && end <= merged[1]);
+      if (aligned[edgeIndex] === 1 || !isCovered) {
+        aligned[edgeIndex] = 1;
+        covered.push([start, end]);
+      }
+    }
+  }
+  const matchedRunsByNode = Array.from({ length: nodeCount }, (): [number, number][] => []);
+  for (const [edgeIndex, edge] of edges.entries()) {
+    const left = blocks[edge.left];
+    const right = blocks[edge.right];
+    if (aligned[edgeIndex] === 1 && left && right) {
+      const [leftRuns, rightRuns] = alignPair(left, right, edge);
+      matchedRunsByNode[edgeNodes[edgeIndex]?.[0] ?? 0]?.push(...leftRuns);
+      matchedRunsByNode[edgeNodes[edgeIndex]?.[1] ?? 0]?.push(...rightRuns);
+    }
+  }
+  return matchedRunsByNode;
+}
+
+/**
+ * The token runs a verified match pairs, per side as file token ranges: those of a longest common
+ * subsequence of what the match compared, its cores or else the whole blocks.
+ */
+function alignPair(
+  left: NormalizedBlock,
+  right: NormalizedBlock,
+  { cores, reordered }: MatchEdge
+): [[number, number][], [number, number][]] {
+  const leftCompared = comparedSequence(left, cores?.[0], reordered);
+  const rightCompared = comparedSequence(right, cores?.[1], reordered);
+  const [leftMatched, rightMatched] = markLcs(leftCompared.sequence, rightCompared.sequence);
+  return [toRuns(leftCompared.positions, leftMatched), toRuns(rightCompared.positions, rightMatched)];
+}
+
+/** The maximal runs of the matched positions, as half-open ranges. */
+function toRuns(positions: Int32Array, matched: Uint8Array): [number, number][] {
+  const runs: [number, number][] = [];
+  for (const position of positions.filter((_, index) => matched[index] === 1).toSorted()) {
+    const last = runs.at(-1);
+    if (last?.[1] === position) {
+      last[1] = position + 1;
+    } else {
+      runs.push([position, position + 1]);
+    }
+  }
+  return runs;
+}
+
+/**
+ * The sequence a match compared, with the file token index of each of its symbols: a core, the
+ * block with its statements in canonical order, or the block as written.
+ */
+function comparedSequence(
+  block: NormalizedBlock,
+  core: [number, number] | undefined,
+  reordered: boolean
+): { sequence: Int32Array; positions: Int32Array } {
+  const blockStart = block.range.startTokenIndex;
+  if (core) {
+    return {
+      sequence: anonymize(block.symbols.subarray(core[0] - blockStart, core[1] - blockStart)),
+      positions: Int32Array.from({ length: core[1] - core[0] }, (_, index) => core[0] + index),
+    };
+  }
+  if (reordered && block.canonical) {
+    return {
+      sequence: block.canonical.sequence,
+      positions: block.canonical.offsets.map((offset) => blockStart + offset),
+    };
+  }
+  return { sequence: block.sequence, positions: block.sequence.map((_, index) => blockStart + index) };
 }
 
 /** The unions of overlapping cores, in position order. */
@@ -338,8 +480,7 @@ function createOverlapTest(
 function toOccurrence(
   { fileIndex, range }: NormalizedBlock,
   files: NearMissSourceFile[],
-  cores: ([number, number] | undefined)[],
-  anchor: boolean
+  { cores, anchor, matchedRuns }: BlockCopy
 ): NearMissOccurrence {
   const whole = cores.includes(undefined);
   const segments = cores
@@ -353,6 +494,10 @@ function toOccurrence(
     fileIndex,
     spanCountedElsewhere: anchor || undefined,
     segments,
+    matchedRuns: mergeOverlappingCores(matchedRuns).map(([startTokenIndex, endTokenIndex]): TokenSegment => ({
+      startTokenIndex,
+      endTokenIndex,
+    })),
     tokenCount: segments.reduce((sum, segment) => sum + segment.endTokenIndex - segment.startTokenIndex, 0),
     startTokenIndex: start,
     endTokenIndex: end,
@@ -523,7 +668,7 @@ function createMatcher(
     });
     const leftOffset = left.range.startTokenIndex;
     const rightOffset = right.range.startTokenIndex;
-    const cores: CorePair[] = [];
+    const cores: (Alignment & { pair: CorePair })[] = [];
     for (const segment of chainSegments(longestIncreasingChain(runAnchors))) {
       const [leftStart, rightStart] = segment[0] ?? [0, 0];
       const [leftLast, rightLast] = segment.at(-1) ?? [0, 0];
@@ -534,27 +679,32 @@ function createMatcher(
       const shorter = Math.min(leftLength, rightLength);
       const required = minSimilarityPercent * Math.max(leftLength, rightLength);
       if (
-        shorter >= minTokens &&
-        shorter * 100 >= required &&
-        anchoredTokenCount(segment) * 100 >= minAnchorCoveragePercent * shorter &&
-        sharesContent(
+        shorter < minTokens ||
+        shorter * 100 < required ||
+        anchoredTokenCount(segment) * 100 < minAnchorCoveragePercent * shorter ||
+        !sharesContent(
           weigh(countContent(left.symbols, left.isContent, leftStart, leftEnd)),
           weigh(countContent(right.symbols, right.isContent, rightStart, rightEnd))
-        ) &&
-        lcsLength(
-          anonymize(left.symbols.subarray(leftStart, leftEnd)),
-          anonymize(right.symbols.subarray(rightStart, rightEnd))
-        ) *
-          100 >=
-          required
+        )
       ) {
-        cores.push([
-          [leftOffset + leftStart, leftOffset + leftEnd],
-          [rightOffset + rightStart, rightOffset + rightEnd],
-        ]);
+        continue;
+      }
+      const coreLcsLength = lcsLength(
+        anonymize(left.symbols.subarray(leftStart, leftEnd)),
+        anonymize(right.symbols.subarray(rightStart, rightEnd))
+      );
+      if (coreLcsLength * 100 >= required) {
+        cores.push({
+          pair: [
+            [leftOffset + leftStart, leftOffset + leftEnd],
+            [rightOffset + rightStart, rightOffset + rightEnd],
+          ],
+          lcsLength: coreLcsLength,
+          reordered: false,
+        });
       }
     }
-    return cores.length > 0 ? { kind: 'local', cores } : undefined;
+    return cores.length > 0 ? { cores } : undefined;
   };
 
   /** Cheapest bounds first: the LCS cannot exceed the shorter block's length nor the bag overlap. */
@@ -562,12 +712,22 @@ function createMatcher(
     const required = minSimilarityPercent * Math.max(left.sequence.length, right.sequence.length);
     if (
       Math.min(left.sequence.length, right.sequence.length) * 100 >= required &&
-      sharesContent(blockContents.get(left), blockContents.get(right)) &&
-      ((sortedOverlap(left.sortedSequence, right.sortedSequence) * 100 >= required &&
-        lcsLengthWithRight(right, rightIndex, left.sequence) * 100 >= required) ||
-        matchesReordered(left, right, required))
+      sharesContent(blockContents.get(left), blockContents.get(right))
     ) {
-      return { kind: 'whole' };
+      if (sortedOverlap(left.sortedSequence, right.sortedSequence) * 100 >= required) {
+        const inOrder = lcsLengthWithRight(right, rightIndex, left.sequence);
+        if (inOrder * 100 >= required) {
+          return { lcsLength: inOrder, reordered: false };
+        }
+      }
+      // With their top-level statements (each anonymized on its own) in a canonical order, a copy
+      // whose independent statements were swapped still matches.
+      if (left.canonical && right.canonical) {
+        const reordered = lcsLength(left.canonical.sequence, right.canonical.sequence);
+        if (reordered * 100 >= required) {
+          return { lcsLength: reordered, reordered: true };
+        }
+      }
     }
     return matchLocally(left, right);
   };
@@ -607,51 +767,46 @@ function sharesContent(left: WeightedContent | undefined, right: WeightedContent
 }
 
 /**
- * Compares the blocks with their top-level statements (each anonymized on its own) in a canonical
- * order, so a copy whose independent statements were swapped still matches.
- */
-function matchesReordered(left: NormalizedBlock, right: NormalizedBlock, required: number): boolean {
-  return (
-    left.canonicalSequence !== undefined &&
-    right.canonicalSequence !== undefined &&
-    lcsLength(left.canonicalSequence, right.canonicalSequence) * 100 >= required
-  );
-}
-
-/**
  * The block's units (its top-level statements, given in file token indexes, and the token runs
- * between them), each anonymized on its own and sorted, concatenated; undefined with too few
- * statements.
+ * between them), each anonymized on its own and sorted, concatenated, with the block offset of
+ * every token; undefined with too few statements.
  */
 function canonicalSequenceOf(
   symbols: Int32Array,
   statements: [number, number][],
   blockStart: number
-): Int32Array | undefined {
+): NormalizedBlock['canonical'] {
   if (statements.length < minReorderStatementCount) {
     return undefined;
   }
-  const units: Int32Array[] = [];
+  const units: { unit: Int32Array; start: number }[] = [];
+  const pushUnit = (start: number, end: number): void => {
+    units.push({ unit: anonymize(symbols.subarray(start, end)), start });
+  };
   let cursor = 0;
   for (const [statementStart, statementEnd] of statements) {
     const start = statementStart - blockStart;
     if (cursor < start) {
-      units.push(anonymize(symbols.subarray(cursor, start)));
+      pushUnit(cursor, start);
     }
-    units.push(anonymize(symbols.subarray(start, statementEnd - blockStart)));
+    pushUnit(start, statementEnd - blockStart);
     cursor = statementEnd - blockStart;
   }
   if (cursor < symbols.length) {
-    units.push(anonymize(symbols.subarray(cursor)));
+    pushUnit(cursor, symbols.length);
   }
-  units.sort(compareSequences);
-  const canonical = new Int32Array(symbols.length);
-  let offset = 0;
-  for (const unit of units) {
-    canonical.set(unit, offset);
-    offset += unit.length;
+  units.sort((left, right) => compareSequences(left.unit, right.unit) || left.start - right.start);
+  const sequence = new Int32Array(symbols.length);
+  const offsets = new Int32Array(symbols.length);
+  let position = 0;
+  for (const { unit, start } of units) {
+    sequence.set(unit, position);
+    for (let index = 0; index < unit.length; index += 1) {
+      offsets[position + index] = start + index;
+    }
+    position += unit.length;
   }
-  return canonical;
+  return { sequence, offsets };
 }
 
 /** Lexicographic order, matching Rust's Vec<i32> ordering. */
@@ -805,7 +960,7 @@ function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
         uniqueNgrams: Int32Array.from(uniqueOffsets, (offset) => ngramHashes[offset] ?? 0),
         uniqueNgramOffsets: Int32Array.from(uniqueOffsets),
         contentCounts: countContent(blockSymbols, blockIsContent, 0, blockSymbols.length),
-        canonicalSequence: canonicalSequenceOf(blockSymbols, findStatements(start, end), start),
+        canonical: canonicalSequenceOf(blockSymbols, findStatements(start, end), start),
       });
     }
   }

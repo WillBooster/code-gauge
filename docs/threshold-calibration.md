@@ -323,33 +323,42 @@ With these limits, `check` reports 464 errors and 2,424 warnings in the calibrat
 The tables of duplicated blocks above, and that of the [public part](#public-part-of-the-corpus)
 below, count a block by its line span, as `check` did when the limits were set. `check` now counts
 the lines of the span matched in another copy. Lines that are blank or comment-only do not count,
-so that a commented copy and its bare partner have the same length, and neither do the lines
-between the matched parts of an edited copy, which the copies do not share (a block resembling
-another as a whole still counts all its code lines). The limit was
+so that a commented copy and its bare partner have the same length, and neither do the lines the
+copies do not share: those between the matched parts of an edited copy, and those a block
+resembling another as a whole adds or rewrites (a line of it counts when the copy matches at least
+half of its tokens). Copies of each other that share a line are blocks of their own. The limit was
 re-examined on the same corpus, exported again at its recorded commits (the same 45,123 functions
 and 6,603 files):
 
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| matched lines        |   5,735 |    2,859 |    1,131 |      513 |      147 |       30 |
+| matched lines        |   5,674 |    2,668 |    1,006 |      435 |      115 |       25 |
 
 Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
 groups separate no better than by its span:
 
 | Longest block, matched lines | Rated |   A | A or B |
 | ---------------------------- | ----: | --: | -----: |
-| up to 9                      |    12 | 17% |    50% |
-| 10–14                        |    15 | 20% |    60% |
-| 15–19                        |    11 | 18% |    55% |
-| 20–29                        |    15 | 27% |    80% |
-| 30 or more                   |     7 | 29% |    71% |
+| up to 9                      |    14 | 14% |    50% |
+| 10–14                        |    18 | 22% |    61% |
+| 15–19                        |     8 | 25% |    62% |
+| 20–29                        |    17 | 18% |    76% |
+| 30 or more                   |     3 | 67% |    67% |
 
-The limit stays at 15: of the rated groups reaching it, 70% are A or B in matched lines (23 of 33)
-as in line span (25 of 36), and no lower limit raises that share (65% from 13, 67% from 10) while
-a limit of 10 reports two and a half times the blocks. The same limit in matched lines reports a
-quarter fewer blocks; those dropped are the ones that reached 15 lines only through their
+The limit stays at 15: of the rated groups reaching it, 71% are A or B in matched lines (20 of 28),
+69% in line span (25 of 36), and no lower limit raises that share (70% from 13, 67% from 10) while
+a limit of 10 reports more than two and a half times the blocks. The same limit in matched lines
+reports a third fewer blocks; those dropped are the ones that reached 15 lines only through their
 comments, their blank lines, and the lines their copies do not share.
+
+## Later grammar versions
+
+The tables above are those of the tree-sitter grammars in use when the limits were set. Measured
+again with the grammars updated since, the corpus holds the same 45,123 functions and 6,603 files,
+as many of them above every limit, and four quantiles differ: the 75th percentile of Halstead effort
+in TSX (1583.3) and of Halstead volume in Kotlin (141.8), the 99.9th percentile and maximum of
+Halstead volume in JavaScript (16396.8), and the 98th percentile of file NCSS in Kotlin (413).
 
 ## Languages
 

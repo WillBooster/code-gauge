@@ -1173,6 +1173,61 @@ describe('line classification', () => {
   });
 });
 
+describe('owners of functions written as values', () => {
+  const ownersOf = (language: string, code: string): string[] =>
+    functionsOf(language, code).map((fn) => `${fn.containerName ?? '-'}|${fn.name ?? '-'}`);
+
+  it('names the declaration binding the value, and nothing for a local or an assigned one', () => {
+    expect(
+      ownersOf(
+        'typescript',
+        'class Rules { decide = async (x: number) => x; static pick = function (y: number) { return y; }; run() { const local = () => 1; return local; } }\nnamespace Shop { export const total = (a: number) => a; }\nconst top = () => 1;'
+      )
+    ).toEqual(['Rules|decide', 'Rules|pick', 'Rules|run', '-|local', 'Shop|total', '-|top']);
+    expect(
+      ownersOf('python', 'class A:\n    pick = lambda self, x: x\n    registry.run = lambda: 1\ntop = lambda: 3\n')
+    ).toEqual(['A|pick', '-|run', '-|top']);
+    expect(ownersOf('kotlin', 'class A { val pick = { x: Int -> x }\n fun m() { val local = { 1 } } }')).toEqual([
+      'A|pick',
+      'A|m',
+      '-|local',
+    ]);
+    expect(ownersOf('java', 'class A { Runnable r = () -> { run(); }; }')).toEqual(['A|r']);
+    expect(ownersOf('csharp', 'class A { Func<int, int> pick = x => x; }')).toEqual(['A|pick']);
+    expect(ownersOf('cpp', 'namespace n { auto pick = [](int x) { return x; }; }')).toEqual(['n|pick']);
+    expect(ownersOf('rust', 'mod m { static PICK: fn(i32) -> i32 = |x| x; }')).toEqual(['m|PICK']);
+    expect(ownersOf('ruby', 'class A\n  PICK = ->(x) { x }\nend\n')).toEqual(['A|PICK']);
+  });
+
+  it('reaches the members of an object literal through the path the object is bound to', () => {
+    expect(
+      ownersOf(
+        'typescript',
+        "export const service = { load() { return 1; }, save: async () => 2, 'quoted-key': () => 3, [computed]: () => 4 } satisfies Service;\nclass Rules { handlers = { click: () => 1, nested: { deep() { return 2; } } }; }\nnamespace Shop { export const api = { get: () => 1 } as const; }\nmodule.exports = { start() {} };\nRules.prototype.extra = { more: () => 1 };"
+      )
+    ).toEqual([
+      'service|load',
+      'service|save',
+      'service|quoted-key',
+      '-|-',
+      'Rules.handlers|click',
+      'Rules.handlers.nested|deep',
+      'Shop.api|get',
+      'module.exports|start',
+      'Rules.prototype.extra|more',
+    ]);
+  });
+
+  it('names no owner for an object that is passed, returned, or exported without a name', () => {
+    expect(
+      ownersOf(
+        'javascript',
+        'register({ onEvent() {} });\nexport default { anonymous() {} };\nfunction make() { return { made() {} }; }\nconst list = [{ item() {} }];'
+      )
+    ).toEqual(['-|onEvent', '-|anonymous', '-|make', '-|made', '-|item']);
+  });
+});
+
 describe('NCSS: declarations of recent language versions', () => {
   it.each([
     // function, two resource declarations, return.
