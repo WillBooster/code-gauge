@@ -1216,6 +1216,8 @@ describe('owners of functions written as values', () => {
   it('follows a parallel assignment to the target at the position of the value', () => {
     expect(ownersOf('python', 'class A:\n    pick, other = lambda x: x, 0\n')).toEqual(['A|pick']);
     expect(ownersOf('ruby', 'class A\n  PICK, local = ->(x) { x }, ->(y) { y }\nend\n')).toEqual(['A|PICK', '-|local']);
+    // A lone value goes to the first target.
+    expect(ownersOf('ruby', 'class A\n  PICK, OTHER = ->(x) { x }\nend\n')).toEqual(['A|PICK']);
   });
 
   it('names no owner for a function expression reported under a name of its own', () => {
