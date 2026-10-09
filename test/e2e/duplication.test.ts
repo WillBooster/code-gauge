@@ -561,6 +561,18 @@ function secondShape(limit, step) {
       }
     });
 
+    it('counts the same lines of two copies of equal length, whichever comes first', () => {
+      // Each rewrites six statements, so their longest common subsequence is not unique and the
+      // one marked depends on the side the alignment starts from.
+      const copies = rewrittenCopies([
+        [3, 4, 8, 13, 14, 19],
+        [5, 8, 11, 12, 17, 23],
+      ]);
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 590, [1, 0])).toEqual(count(copies, 590, [0, 1]));
+      }
+    });
+
     it('counts against the same one of two equally close copies', () => {
       // f1 is as close to f0 as to f2, and lays out a statement f0 rewrites over three lines, so
       // the lines it counts differ by two with the copy it is counted against.
