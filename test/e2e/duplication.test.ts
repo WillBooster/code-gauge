@@ -571,6 +571,8 @@ function secondShape(limit, step) {
       for (const count of [countWithinFile, countAcrossFiles]) {
         expect(count(copies, 590, [1, 0])).toEqual(count(copies, 590, [0, 1]));
       }
+      // Both detectors start the alignment from the same side.
+      expect(countAcrossFiles(copies, 590, [0, 1])).toEqual(countWithinFile(copies, 590, [0, 1]));
     });
 
     it('counts the same lines with two equally similar copies in either order', () => {

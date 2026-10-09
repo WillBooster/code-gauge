@@ -1,6 +1,5 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
-use std::hash::{Hash, Hasher};
 
 /// N-gram size for the candidate index and local-match anchors (NIL's default); shared with
 /// crossFileNearMiss.ts.
@@ -61,7 +60,7 @@ impl Block {
     pub fn new(
         symbols: &[i32],
         is_content: &[bool],
-        token_keys: &[u64],
+        token_keys: &[i64],
         start: usize,
         end: usize,
         statements: Vec<(usize, usize)>,
@@ -126,6 +125,19 @@ impl Block {
 
     pub fn len(&self) -> usize {
         self.symbols.len()
+    }
+
+    /// The content of the block or of a core of it, as written: per token its content key, or the
+    /// number of its identifier by first occurrence in the range. Equal for equal content wherever
+    /// it lies, which symbols, numbered by first occurrence in the file, are not; ordered like
+    /// `contentOf` in crossFileNearMiss.ts, so that both detectors align a pair from the same side.
+    fn content(&self, core: Option<(usize, usize)>, token_keys: &[i64]) -> Vec<i64> {
+        let (sequence, positions) = self.compared(core, false);
+        sequence
+            .iter()
+            .zip(&positions)
+            .map(|(&symbol, &position)| content_value(symbol, token_keys[position]))
+            .collect()
     }
 
     /// The sequence a match compared, with the absolute token index of each of its symbols: a core,
@@ -251,53 +263,29 @@ impl Matcher {
         self.match_locally(left, right)
     }
 
-    /// A key of the content a pair matched on each side, as written: equal for equal content
-    /// wherever it lies, which symbol ids, numbered by first occurrence in the file, are not.
-    /// `token_keys` holds the content key of each non-identifier token of the file.
-    pub fn compared_keys(
-        &self,
-        left: &Block,
-        right: &Block,
-        cores: Option<CorePair>,
-        token_keys: &[u64],
-    ) -> [u64; 2] {
-        let (left_core, right_core) = cores.unzip();
-        [(left, left_core), (right, right_core)].map(|(block, core)| {
-            let (sequence, positions) = block.compared(core, false);
-            let mut hasher = rustc_hash::FxHasher::default();
-            for (&symbol, &position) in sequence.iter().zip(&positions) {
-                if symbol < 0 {
-                    symbol.hash(&mut hasher);
-                } else {
-                    token_keys[position].hash(&mut hasher);
-                }
-            }
-            hasher.finish()
-        })
-    }
-
     /// The token runs a verified match pairs, per side as absolute token ranges: those of a longest
     /// common subsequence of what the match compared, `cores` or else the whole blocks. Of the
     /// equally long subsequences, which one is marked depends on which sequence comes first, so
-    /// the sides are taken in the order of their content keys rather than of their positions.
+    /// the sides are taken in the order of their content rather than of their positions.
+    /// `token_keys` holds the content key of each non-identifier token of the file.
     pub fn align(
         &self,
         left: &Block,
         right: &Block,
         cores: Option<CorePair>,
         alignment: Alignment,
-        token_keys: &[u64],
+        token_keys: &[i64],
     ) -> (TokenRuns, TokenRuns) {
         let (left_core, right_core) = cores.unzip();
         let (left_sequence, left_positions) = left.compared(left_core, alignment.reordered);
         let (right_sequence, right_positions) = right.compared(right_core, alignment.reordered);
-        let [left_key, right_key] = self.compared_keys(left, right, cores, token_keys);
-        let (left_matched, right_matched) = if left_key <= right_key {
-            mark_lcs(&left_sequence, &right_sequence)
-        } else {
-            let (right_matched, left_matched) = mark_lcs(&right_sequence, &left_sequence);
-            (left_matched, right_matched)
-        };
+        let (left_matched, right_matched) =
+            if left.content(left_core, token_keys) <= right.content(right_core, token_keys) {
+                mark_lcs(&left_sequence, &right_sequence)
+            } else {
+                let (right_matched, left_matched) = mark_lcs(&right_sequence, &left_sequence);
+                (left_matched, right_matched)
+            };
         (
             to_runs(left_positions, left_matched),
             to_runs(right_positions, right_matched),
@@ -477,16 +465,16 @@ fn anonymize(symbols: &[i32]) -> Vec<i32> {
 /// other code stands.
 fn canonical_sequence(
     symbols: &[i32],
-    token_keys: &[u64],
+    token_keys: &[i64],
     statements: impl Iterator<Item = (usize, usize)>,
 ) -> (Vec<i32>, Vec<usize>) {
-    let mut units: Vec<(Vec<u64>, usize, Vec<i32>)> = Vec::new();
+    let mut units: Vec<(Vec<i64>, usize, Vec<i32>)> = Vec::new();
     let mut push_unit = |start: usize, end: usize| {
         let unit = anonymize(&symbols[start..end]);
         let content = unit
             .iter()
             .zip(&token_keys[start..end])
-            .map(|(&symbol, &token_key)| if symbol < 0 { symbol as u64 } else { token_key })
+            .map(|(&symbol, &token_key)| content_value(symbol, token_key))
             .collect();
         units.push((content, start, unit));
     };
@@ -676,4 +664,14 @@ fn to_runs(positions: Vec<usize>, matched: Vec<bool>) -> TokenRuns {
         }
     }
     runs
+}
+
+/// What a token contributes to the content of a range: its content key, or the range-local number
+/// of its identifier.
+fn content_value(symbol: i32, token_key: i64) -> i64 {
+    if symbol < 0 {
+        i64::from(symbol)
+    } else {
+        token_key
+    }
 }

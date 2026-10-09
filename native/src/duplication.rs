@@ -1,7 +1,6 @@
 use indexmap::IndexMap;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
-use std::hash::BuildHasher;
 use std::sync::OnceLock;
 use tree_sitter::Node;
 
@@ -2390,7 +2389,7 @@ fn merge_overlapping_cores(cores: &[(usize, usize)]) -> Vec<(usize, usize)> {
 /// Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
 /// other files the process measured before it. A symbol id still depends on where in the file its
 /// token first occurs, so each non-identifier token also gets a key of its content alone.
-fn to_symbol_stream(tokens: &[Token<'_>]) -> (Vec<i32>, Vec<bool>, Vec<u64>) {
+fn to_symbol_stream(tokens: &[Token<'_>]) -> (Vec<i32>, Vec<bool>, Vec<i64>) {
     let mut symbol_by_token_hashes: FxHashMap<(i32, i32, i32, i32), i32> = FxHashMap::default();
     let mut id_by_identifier: FxHashMap<&str, i32> = FxHashMap::default();
     let mut symbols = Vec::with_capacity(tokens.len());
@@ -2416,9 +2415,17 @@ fn to_symbol_stream(tokens: &[Token<'_>]) -> (Vec<i32>, Vec<bool>, Vec<u64>) {
         let next_symbol = symbol_by_token_hashes.len() as i32;
         symbols.push(*symbol_by_token_hashes.entry(hashes).or_insert(next_symbol));
         is_content.push(token.is_name || token.literal_hash.is_some());
-        token_keys.push(rustc_hash::FxBuildHasher.hash_one(hashes));
+        token_keys.push(token_content_key(hashes));
     }
     (symbols, is_content, token_keys)
+}
+
+/// A 53-bit key of a token's two text hashes, each mixed with the matching literal value hash; the
+/// same key as `tokenKey` in crossFileNearMiss.ts, so that both detectors order content alike.
+fn token_content_key((text, text2, literal, literal2): (i32, i32, i32, i32)) -> i64 {
+    let primary = (text ^ literal.wrapping_mul(0x9E37_79B1_u32 as i32)) as u32;
+    let secondary = (text2 ^ literal2.wrapping_mul(0x85EB_CA6B_u32 as i32)) as u32;
+    i64::from(primary) * 0x20_0000 + i64::from(secondary >> 11)
 }
 
 /// Returns a lookup of the outermost container statements inside a token range, excluding a

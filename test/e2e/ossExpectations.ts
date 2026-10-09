@@ -354,7 +354,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
           [
             {
               endLine: 264,
-              lineCount: 8,
+              lineCount: 9,
               startLine: 252,
               tokenCount: 89,
             },
@@ -386,8 +386,8 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             },
           ],
         ],
-        duplicateLineCount: 44,
-        duplicationRatio: 0.0903,
+        duplicateLineCount: 45,
+        duplicationRatio: 0.0924,
         maxDuplicateBlockSize: 89,
       },
       halstead: {
@@ -1108,15 +1108,15 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             },
             {
               endLine: 702,
-              lineCount: 6,
+              lineCount: 5,
               startLine: 697,
-              tokenCount: 52,
+              tokenCount: 71,
             },
           ],
         ],
         duplicateLineCount: 11,
         duplicationRatio: 0.0235,
-        maxDuplicateBlockSize: 53,
+        maxDuplicateBlockSize: 71,
       },
       halstead: {
         distinctOperators: 30,

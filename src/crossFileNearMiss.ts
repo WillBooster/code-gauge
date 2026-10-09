@@ -329,8 +329,8 @@ function alignPair(
   const leftCompared = comparedSequence(left, cores?.[0], reordered);
   const rightCompared = comparedSequence(right, cores?.[1], reordered);
   // Of the equally long subsequences, which one is marked depends on which sequence comes first,
-  // so the sides are taken in the order of their content keys rather than of their files.
-  if (contentKey(left, cores?.[0]) <= contentKey(right, cores?.[1])) {
+  // so the sides are taken in the order of their content rather than of their files.
+  if (compareSequences(contentOf(left, cores?.[0]), contentOf(right, cores?.[1])) <= 0) {
     const [leftMatched, rightMatched] = markLcs(leftCompared.sequence, rightCompared.sequence);
     return [toRuns(leftCompared.positions, leftMatched), toRuns(rightCompared.positions, rightMatched)];
   }
@@ -339,20 +339,16 @@ function alignPair(
 }
 
 /**
- * A key of the content of a block, or of a core of it, as written: equal for equal content wherever
- * it lies, which symbols, numbered by first occurrence, are not.
+ * The content of a block or of a core of it, as written: per token its content key, or the number
+ * of its identifier by first occurrence in the range. Equal for equal content wherever it lies,
+ * which symbols, numbered by first occurrence, are not; ordered like `Block::content` in
+ * native/src/near_miss.rs, so that both detectors align a pair from the same side.
  */
-function contentKey(block: NormalizedBlock, core: [number, number] | undefined): number {
+function contentOf(block: NormalizedBlock, core: [number, number] | undefined): Float64Array {
   const { sequence, positions } = comparedSequence(block, core, false);
-  let key = 0;
-  for (const [index, symbol] of sequence.entries()) {
-    const tokenKey = block.fileTokenKeys[positions[index] ?? 0] ?? 0;
-    // A token key holds 53 bits; both halves enter the hash.
-    const content = symbol < 0 ? symbol : tokenKey ^ Math.floor(tokenKey / 0x1_00_00_00_00);
-    // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32.
-    key = (Math.imul(key, 31) + content) | 0;
-  }
-  return key;
+  return Float64Array.from(sequence, (symbol, index) =>
+    symbol < 0 ? symbol : (block.fileTokenKeys[positions[index] ?? 0] ?? 0)
+  );
 }
 
 /** The maximal runs of the matched positions, as half-open ranges. */
