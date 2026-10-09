@@ -57,9 +57,11 @@ pub(crate) struct Block {
 }
 
 impl Block {
+    /// `token_keys` holds the content key of each non-identifier token of the file.
     pub fn new(
         symbols: &[i32],
         is_content: &[bool],
+        token_keys: &[u64],
         start: usize,
         end: usize,
         statements: Vec<(usize, usize)>,
@@ -94,6 +96,7 @@ impl Block {
         let canonical_sequence = (statements.len() >= MIN_REORDER_STATEMENT_COUNT).then(|| {
             canonical_sequence(
                 &symbols,
+                &token_keys[start..end],
                 statements.iter().map(|&(statement_start, statement_end)| {
                     (statement_start - start, statement_end - start)
                 }),
@@ -462,29 +465,41 @@ fn anonymize(symbols: &[i32]) -> Vec<i32> {
 
 /// The block's units (its top-level statements, as block-relative offsets, and the token runs
 /// between them), each anonymized on its own and sorted, concatenated, with the block offset of
-/// every token.
+/// every token. The units are ordered by the content of their tokens (`token_keys`, per token of
+/// the block): symbols, numbered by first occurrence in the file, would order them by where
+/// other code stands.
 fn canonical_sequence(
     symbols: &[i32],
+    token_keys: &[u64],
     statements: impl Iterator<Item = (usize, usize)>,
 ) -> (Vec<i32>, Vec<usize>) {
-    let mut units: Vec<(Vec<i32>, usize)> = Vec::new();
+    let mut units: Vec<(Vec<u64>, usize, Vec<i32>)> = Vec::new();
+    let mut push_unit = |start: usize, end: usize| {
+        let unit = anonymize(&symbols[start..end]);
+        let content = unit
+            .iter()
+            .zip(&token_keys[start..end])
+            .map(|(&symbol, &token_key)| if symbol < 0 { symbol as u64 } else { token_key })
+            .collect();
+        units.push((content, start, unit));
+    };
     let mut cursor = 0;
     for (start, end) in statements {
         if cursor < start {
-            units.push((anonymize(&symbols[cursor..start]), cursor));
+            push_unit(cursor, start);
         }
-        units.push((anonymize(&symbols[start..end]), start));
+        push_unit(start, end);
         cursor = end;
     }
     if cursor < symbols.len() {
-        units.push((anonymize(&symbols[cursor..]), cursor));
+        push_unit(cursor, symbols.len());
     }
     units.sort_unstable();
     let offsets = units
         .iter()
-        .flat_map(|(unit, start)| *start..*start + unit.len())
+        .flat_map(|(_, start, unit)| *start..*start + unit.len())
         .collect();
-    let sequence = units.into_iter().flat_map(|(unit, _)| unit).collect();
+    let sequence = units.into_iter().flat_map(|(_, _, unit)| unit).collect();
     (sequence, offsets)
 }
 

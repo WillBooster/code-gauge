@@ -1872,6 +1872,7 @@ fn collect_near_miss_groups(
             Block::new(
                 &symbols,
                 &is_content,
+                &token_keys,
                 range.start_token_index,
                 range.end_token_index,
                 statements(range.start_token_index, range.end_token_index),

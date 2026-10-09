@@ -812,19 +812,25 @@ function sharesContent(left: WeightedContent | undefined, right: WeightedContent
 /**
  * The block's units (its top-level statements, given in file token indexes, and the token runs
  * between them), each anonymized on its own and sorted, concatenated, with the block offset of
- * every token; undefined with too few statements.
+ * every token; undefined with too few statements. `tokenKeys` holds the content key of each
+ * non-identifier token of the block.
  */
 function canonicalSequenceOf(
   symbols: Int32Array,
+  tokenKeys: Float64Array,
   statements: [number, number][],
   blockStart: number
 ): NormalizedBlock['canonical'] {
   if (statements.length < minReorderStatementCount) {
     return undefined;
   }
-  const units: { unit: Int32Array; start: number }[] = [];
+  const units: { unit: Int32Array; content: Float64Array; start: number }[] = [];
   const pushUnit = (start: number, end: number): void => {
-    units.push({ unit: anonymize(symbols.subarray(start, end)), start });
+    const unit = anonymize(symbols.subarray(start, end));
+    // Ordered by the content of their tokens: symbols, numbered by first occurrence, would order
+    // the units by where other code stands.
+    const content = Float64Array.from(unit, (symbol, index) => (symbol < 0 ? symbol : (tokenKeys[start + index] ?? 0)));
+    units.push({ unit, content, start });
   };
   let cursor = 0;
   for (const [statementStart, statementEnd] of statements) {
@@ -838,7 +844,7 @@ function canonicalSequenceOf(
   if (cursor < symbols.length) {
     pushUnit(cursor, symbols.length);
   }
-  units.sort((left, right) => compareSequences(left.unit, right.unit) || left.start - right.start);
+  units.sort((left, right) => compareSequences(left.content, right.content) || left.start - right.start);
   const sequence = new Int32Array(symbols.length);
   const offsets = new Int32Array(symbols.length);
   let position = 0;
@@ -852,8 +858,8 @@ function canonicalSequenceOf(
   return { sequence, offsets };
 }
 
-/** Lexicographic order, matching Rust's Vec<i32> ordering. */
-function compareSequences(left: Int32Array, right: Int32Array): number {
+/** Lexicographic order. */
+function compareSequences(left: Float64Array, right: Float64Array): number {
   for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
     const difference = (left[index] ?? 0) - (right[index] ?? 0);
     if (difference !== 0) {
@@ -1006,7 +1012,12 @@ function normalizeBlocks(files: NearMissSourceFile[]): NormalizedBlock[] {
         uniqueNgrams: Int32Array.from(uniqueOffsets, (offset) => ngramHashes[offset] ?? 0),
         uniqueNgramOffsets: Int32Array.from(uniqueOffsets),
         contentCounts: countContent(blockSymbols, blockIsContent, 0, blockSymbols.length),
-        canonical: canonicalSequenceOf(blockSymbols, findStatements(start, end), start),
+        canonical: canonicalSequenceOf(
+          blockSymbols,
+          fileTokenKeys.subarray(start, end),
+          findStatements(start, end),
+          start
+        ),
       });
     }
   }

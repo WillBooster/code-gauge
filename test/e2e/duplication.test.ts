@@ -549,6 +549,18 @@ function secondShape(limit, step) {
       }
     });
 
+    it('counts the same lines of copies matched with their statements in a canonical order', () => {
+      const copies = [[], [0, 6, 12]].map(
+        (rewritten: number[], index) =>
+          `export function copy${index}(items) {\n  let sum = 0;\n${Array.from({ length: 14 }, (_, position) =>
+            rewritten.includes(position) ? `  alt${position} = ${position};\n` : wideStatement(position)
+          ).join('')}  return sum;\n}\n`
+      );
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 700, [1, 0])).toEqual(count(copies, 700, [0, 1]));
+      }
+    });
+
     it('counts against the same one of two equally close copies', () => {
       // f1 is as close to f0 as to f2, and lays out a statement f0 rewrites over three lines, so
       // the lines it counts differ by two with the copy it is counted against.
@@ -1385,4 +1397,12 @@ function countAcrossFiles(copies: string[], minTokens: number, order: number[]):
   return order.map(
     (_, index) => groups[0]?.occurrences.find((occurrence) => occurrence.file === `${index}.js`)?.lineNumbers?.length
   );
+}
+
+/** A long declaration whose sixteen terms differ from those of every other position. */
+function wideStatement(position: number): string {
+  return `  const value${position} = ${Array.from(
+    { length: 16 },
+    (_, term) => `${term === 0 ? '' : `${['+', '-', '*'][term % 3]} `}fn${term}(items, ${(position * 17 + term) % 97})`
+  ).join(' ')};\n`;
 }

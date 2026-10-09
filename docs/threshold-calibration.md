@@ -316,7 +316,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   which the metric names no change to make. Halstead effort is the product of volume and
   difficulty and was not rated on its own.
 
-With these limits, `check` reports 464 errors and 2,307 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
+With these limits, `check` reports 464 errors and 2,306 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
 
 ## Duplicated blocks measured in matched lines
 
@@ -333,7 +333,7 @@ and 6,603 files):
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| matched lines        |   5,667 |    2,675 |    1,014 |      442 |      116 |       25 |
+| matched lines        |   5,681 |    2,675 |    1,013 |      442 |      116 |       25 |
 
 Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
 groups separate no better than by its span:
