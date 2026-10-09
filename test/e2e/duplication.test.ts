@@ -575,6 +575,25 @@ function secondShape(limit, step) {
       expect(countAcrossFiles(copies, 590, [0, 1])).toEqual(countWithinFile(copies, 590, [0, 1]));
     });
 
+    it('counts the same lines of two copies matched on a core, whichever comes first', () => {
+      // One statement of two halves, exchanged in the second copy, between statements the copies
+      // do not share: only a half matches, and which one follows the side the match starts from.
+      const copies = [0, 1].map((index) => {
+        const halves = ['alpha', 'beta'].map((name) =>
+          Array.from(
+            { length: 10 },
+            (_, term) =>
+              `${name}${term}(incoming) * ${name}${term}Two(incoming)${term % 4 === 3 ? ` + ${term + index * 100}` : ''}`
+          )
+        );
+        const [first = [], second = []] = index === 0 ? halves : halves.toReversed();
+        return `function f${index}(incoming) {\n${unsharedStatements(`pre${index}`, index)}  const mix = ${first.join(' + ')} +\n    ${second.join(' +\n    ')};\n${unsharedStatements(`post${index}`, index + 1)}  return mix;\n}\n`;
+      });
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 50, [1, 0])).toEqual(count(copies, 50, [0, 1]));
+      }
+    });
+
     it('counts the same lines with two equally similar copies in either order', () => {
       // f1 is as similar to f0 as to f2, and lays out a statement f0 rewrites over three lines, so
       // the lines either of them matches alone differ by two.
@@ -1419,4 +1438,17 @@ function wideStatement(position: number): string {
     { length: 16 },
     (_, term) => `${term === 0 ? '' : `${['+', '-', '*'][term % 3]} `}fn${term}(items, ${(position * 17 + term) % 97})`
   ).join(' ')};\n`;
+}
+
+/** Six declarations no other variant or tag shares the shape of. */
+function unsharedStatements(tag: string, variant: number): string {
+  return Array.from(
+    { length: 6 },
+    (_, index) =>
+      `  const ${tag}${index} = ${Array.from(
+        { length: 1 + ((index + variant * 2) % 4) },
+        (__, term) =>
+          `${term === 0 ? '' : ` ${['+', '*', '-'][(term + variant) % 3]} `}${tag}${index}x${term}(incoming${term})`
+      ).join('')};\n`
+  ).join('');
 }
