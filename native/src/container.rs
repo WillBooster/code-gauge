@@ -123,9 +123,17 @@ pub fn find_container_name(
     // syntax can follow only where a declaration binds it (a class field, a constant of a
     // namespace); elsewhere it keeps the name of what it is bound to and has no owner.
     if !is_declared {
-        return declares_binding(holder, bound)
-            .then(|| enclosing_owner(holder, function_nodes, code, inline_namespaces))
-            .flatten();
+        if !declares_binding(holder, bound) {
+            return None;
+        }
+        // A C++ variable defined outside its class (`int (*Rules::pick)(int) = [] {}`) spells
+        // its owner, as a function defined there does.
+        return match find_qualified_declarator(holder) {
+            Some(qualified) => {
+                cpp_spelled_owner(holder, qualified, function_nodes, code, inline_namespaces)
+            }
+            None => enclosing_owner(holder, function_nodes, code, inline_namespaces),
+        };
     }
     if let Some(receiver) = node.child_by_field_name("receiver") {
         return go_receiver_type(receiver, code);
