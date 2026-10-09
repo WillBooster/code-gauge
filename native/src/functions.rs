@@ -1207,6 +1207,11 @@ fn find_assignment_target_text(target: Node<'_>, code: &Source<'_>) -> Option<St
 /// value: a value that is not an array goes to the first target that is not the star, descending
 /// into a nested group (`a, b = -> { 1 }` and `*a, b = -> { 1 }` both bind the lambda to a name).
 fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    find_assignment_target_text(find_single_assignment_target(assignment)?, code)
+}
+
+/// The target a Ruby or Python assignment of one value binds it to.
+pub fn find_single_assignment_target(assignment: Node<'_>) -> Option<Node<'_>> {
     let left = assignment.child_by_field_name("left")?;
     let mut target = left;
     if matches!(
@@ -1219,7 +1224,7 @@ fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<
                 .find(|child| !is_splat(child))?;
         }
     }
-    find_assignment_target_text(target, code)
+    Some(target)
 }
 
 fn is_ruby_lambda_call(node: Node<'_>, code: &Source<'_>) -> bool {

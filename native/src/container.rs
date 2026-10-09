@@ -2,8 +2,9 @@ use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
 use crate::functions::{
-    find_pair_key_name, find_parallel_assignment_target, find_string_literal_content,
-    find_value_binding, is_value_group, next_declarator, unwrap_transparent_value_wrappers,
+    find_pair_key_name, find_parallel_assignment_target, find_single_assignment_target,
+    find_string_literal_content, find_value_binding, is_value_group, next_declarator,
+    unwrap_transparent_value_wrappers,
 };
 use crate::tree_index::NodeExt;
 use crate::util::{named_children, node_text, Source};
@@ -158,8 +159,7 @@ pub fn find_container_name(
 fn declares_binding(holder: Node<'_>, bound: Node<'_>) -> bool {
     let kind = holder.kind_name();
     if kind == "assignment" {
-        return holder
-            .child_by_field_name("left")
+        return find_single_assignment_target(holder)
             .is_some_and(|target| assigns_attribute(holder, target))
             && holder
                 .child_by_field_name("right")
