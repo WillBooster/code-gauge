@@ -285,18 +285,27 @@ impl Matcher {
     }
 
     /// The token runs a verified match pairs, per side as absolute token ranges: those of a longest
-    /// common subsequence of what the match compared, `cores` or else the whole blocks.
+    /// common subsequence of what the match compared, `cores` or else the whole blocks. Of the
+    /// equally long subsequences, which one is marked depends on which sequence comes first, so
+    /// the sides are taken in the order of their content keys rather than of their positions.
     pub fn align(
         &self,
         left: &Block,
         right: &Block,
         cores: Option<CorePair>,
         alignment: Alignment,
+        token_keys: &[u64],
     ) -> (TokenRuns, TokenRuns) {
         let (left_core, right_core) = cores.unzip();
         let (left_sequence, left_positions) = left.compared(left_core, alignment.reordered);
         let (right_sequence, right_positions) = right.compared(right_core, alignment.reordered);
-        let (left_matched, right_matched) = mark_lcs(&left_sequence, &right_sequence);
+        let [left_key, right_key] = self.compared_keys(left, right, cores, token_keys);
+        let (left_matched, right_matched) = if left_key <= right_key {
+            mark_lcs(&left_sequence, &right_sequence)
+        } else {
+            let (right_matched, left_matched) = mark_lcs(&right_sequence, &left_sequence);
+            (left_matched, right_matched)
+        };
         (
             to_runs(left_positions, left_matched),
             to_runs(right_positions, right_matched),

@@ -2067,6 +2067,7 @@ fn collect_near_miss_groups(
                 &blocks[edge.right],
                 edge.cores,
                 edge.alignment,
+                &token_keys,
             );
             matched_runs_by_node[edge_nodes[edge_index][0]].extend(left_runs);
             matched_runs_by_node[edge_nodes[edge_index][1]].extend(right_runs);

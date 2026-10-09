@@ -317,27 +317,12 @@ function alignClosestPartners(
       edgesByNode[node]?.push(edgeIndex);
     }
   }
-  /**
-   * A key of the content the pair matched on the side opposite `node`, as written: equal for equal
-   * content wherever it lies.
-   */
+  /** The content key of what the pair matched on the side opposite `node`. */
   const partnerKey = (edgeIndex: number, node: number): number => {
     const edge = edges[edgeIndex];
     const partnerSide = edgeNodes[edgeIndex]?.[0] === node ? 1 : 0;
     const partner = blocks[(partnerSide === 0 ? edge?.left : edge?.right) ?? 0];
-    if (!edge || !partner) {
-      return 0;
-    }
-    const { sequence, positions } = comparedSequence(partner, edge.cores?.[partnerSide], false);
-    let key = 0;
-    for (const [index, symbol] of sequence.entries()) {
-      const tokenKey = partner.fileTokenKeys[positions[index] ?? 0] ?? 0;
-      // A token key holds 53 bits; both halves enter the hash.
-      const content = symbol < 0 ? symbol : tokenKey ^ Math.floor(tokenKey / 0x1_00_00_00_00);
-      // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32.
-      key = (Math.imul(key, 31) + content) | 0;
-    }
-    return key;
+    return edge && partner ? contentKey(partner, edge.cores?.[partnerSide]) : 0;
   };
   // A node takes its partners by closeness alone, whichever of them other nodes took, until their
   // spans cover it and the tokens they matched number its own: one partner for an identical copy,
@@ -398,8 +383,31 @@ function alignPair(
 ): [[number, number][], [number, number][]] {
   const leftCompared = comparedSequence(left, cores?.[0], reordered);
   const rightCompared = comparedSequence(right, cores?.[1], reordered);
-  const [leftMatched, rightMatched] = markLcs(leftCompared.sequence, rightCompared.sequence);
+  // Of the equally long subsequences, which one is marked depends on which sequence comes first,
+  // so the sides are taken in the order of their content keys rather than of their files.
+  if (contentKey(left, cores?.[0]) <= contentKey(right, cores?.[1])) {
+    const [leftMatched, rightMatched] = markLcs(leftCompared.sequence, rightCompared.sequence);
+    return [toRuns(leftCompared.positions, leftMatched), toRuns(rightCompared.positions, rightMatched)];
+  }
+  const [rightMatched, leftMatched] = markLcs(rightCompared.sequence, leftCompared.sequence);
   return [toRuns(leftCompared.positions, leftMatched), toRuns(rightCompared.positions, rightMatched)];
+}
+
+/**
+ * A key of the content of a block, or of a core of it, as written: equal for equal content wherever
+ * it lies, which symbols, numbered by first occurrence, are not.
+ */
+function contentKey(block: NormalizedBlock, core: [number, number] | undefined): number {
+  const { sequence, positions } = comparedSequence(block, core, false);
+  let key = 0;
+  for (const [index, symbol] of sequence.entries()) {
+    const tokenKey = block.fileTokenKeys[positions[index] ?? 0] ?? 0;
+    // A token key holds 53 bits; both halves enter the hash.
+    const content = symbol < 0 ? symbol : tokenKey ^ Math.floor(tokenKey / 0x1_00_00_00_00);
+    // oxlint-disable-next-line unicorn/prefer-math-trunc -- `| 0` wraps the sum to int32.
+    key = (Math.imul(key, 31) + content) | 0;
+  }
+  return key;
 }
 
 /** The maximal runs of the matched positions, as half-open ranges. */
