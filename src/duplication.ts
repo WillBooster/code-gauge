@@ -105,7 +105,10 @@ interface DuplicateCandidate {
 }
 
 export interface CountedOccurrence {
-  /** Matched token runs; more than one once gapped groups are merged. */
+  /**
+   * The token runs the occurrence covers, matched throughout except in a near-miss copy (see
+   * `matchedRuns`); more than one once gapped groups are merged.
+   */
   segments: TokenSegment[];
   /**
    * The token runs of a near-miss copy that its partners match, within its segments;

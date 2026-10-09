@@ -187,8 +187,8 @@ export interface DuplicationMetrics {
   /** Number of distinct lines covered by any counted duplicate occurrence (originals included). */
   duplicateLineCount: number;
   /**
-   * The 1-based lines behind duplicateLineCount, sorted ascending: code lines carrying matched
-   * tokens. Exposed so consumers combining within-file and cross-file coverage can union exact
+   * The 1-based lines behind duplicateLineCount, sorted ascending: the union of the occurrences'
+   * `lineNumbers`. Exposed so consumers combining within-file and cross-file coverage can union exact
    * line sets instead of over-counting from block bounding ranges (which include the unmatched gap
    * of a merged clone and comment/blank lines).
    */
