@@ -356,7 +356,7 @@ comments, their blank lines, and the lines their copies do not share.
 
 The tables above are those of the tree-sitter grammars in use when the limits were set. Measured
 again with the grammars updated since, the corpus holds the same 45,123 functions and 6,603 files,
-as many of them above every limit, and four quantiles differ: the 75th percentile of Halstead effort
+as many of them above every limit, and five cells of the tables differ: the 75th percentile of Halstead effort
 in TSX (1583.3) and of Halstead volume in Kotlin (141.8), the 99.9th percentile and maximum of
 Halstead volume in JavaScript (16396.8), and the 98th percentile of file NCSS in Kotlin (413).
 
