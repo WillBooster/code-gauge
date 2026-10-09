@@ -902,9 +902,11 @@ function mergeGroups<T extends CountedOccurrence>(
   const secondReplaced = secondFullyPaired && !second.some((occurrence) => occurrence.nestedInLargerGroup);
   const merged = pairs.map(([leading, trailing]) => ({
     ...leading,
-    // A merged occurrence is a fresh span combination; it never inherits shared-span marks.
+    // A merged occurrence is a fresh span combination; it never inherits shared-span marks, and
+    // its segments are matched throughout.
     spanCountedElsewhere: undefined,
     nestedInLargerGroup: undefined,
+    matchedRuns: undefined,
     segments: [...leading.segments, ...trailing.segments],
     tokenCount: leading.tokenCount + trailing.tokenCount,
     endTokenIndex: trailing.endTokenIndex,

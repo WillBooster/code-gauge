@@ -107,9 +107,11 @@ export interface FunctionMetrics {
    *
    * Absent for a function without a name, for a function expression with a name of its own (which
    * is no member of what binds the expression), for one passed as an argument or assigned to a member,
-   * for a function nested in another function, for a member of an anonymous class or of an object
-   * literal bound to no name, and for a function local to an initializer block. So a method of a
-   * class declared inside a function has it, and a closure inside a method does not.
+   * for a function written as a value inside another function, for a member of an anonymous class
+   * or of an object literal bound to no name, and for a function local to an initializer block. So
+   * a method of a class declared inside a function has it, as has a member of an object literal a
+   * function binds to a local name (`api` for `const api = { run() {} }`), and a closure inside a
+   * method does not.
    */
   containerName?: string;
   /**
