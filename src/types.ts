@@ -100,14 +100,16 @@ export interface FunctionMetrics {
    * `struct gauge`).
    *
    * A function written as a value (a lambda, a closure, a function expression) is a member of
-   * the declaration binding it: the class of a field it initializes, the namespace or module of a
-   * constant. A member of a JavaScript or TypeScript object literal is reached through the path
+   * what the declaration binding it is declared in, as a declared function would be: the class of
+   * a field it initializes, the declared namespace or module of a constant (a file is neither, so
+   * a constant at its top level has no owner). A member of a JavaScript or TypeScript object literal is reached through the path
    * the object is bound to: `api` for `const api = { load() {} }`, `Rules.handlers` for the field
    * of a class, `api.admin` for the value of a property, `module.exports` for an assignment.
    *
    * Absent for a function without a name, for a function expression with a name of its own (which
    * is no member of what binds the expression), for one passed as an argument or assigned to a member,
-   * for a function written as a value inside another function, for a member of an anonymous class
+   * for a function written as a value inside another function or bound to a plain name in a Ruby
+   * class body (a local variable of that body), for a member of an anonymous class
    * or of an object literal bound to no name, and for a function local to an initializer block. So
    * a method of a class declared inside a function has it, as has a member of an object literal a
    * function binds to a local name (`api` for `const api = { run() {} }`), and a closure inside a
