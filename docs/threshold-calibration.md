@@ -284,7 +284,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
 | `maxFunctionNcss`                |      30 |    60 | 2.62% and 0.59% of functions         |
 | `maxFunctionParameterCount`      |       6 |   off | 0.48% of functions                   |
 | `maxFileNcss`                    |     400 |  1000 | 0.89% and 0.11% of files             |
-| `minDuplicateLines`              |      15 |   off | 1,143 duplicated blocks              |
+| `minDuplicateLines`              |      15 |   off | 976 duplicated blocks                |
 
 - **Cognitive complexity, 15 and 30.** The share of A rises steadily with the value and the
   conventional limit of 15 is where B takes over from C. Above 30, 27 of 30 functions were A;
