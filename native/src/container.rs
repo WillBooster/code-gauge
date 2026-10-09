@@ -176,10 +176,20 @@ fn declares_binding(holder: Node<'_>, bound: Node<'_>) -> bool {
 /// Ruby class body is a local variable of that body.
 fn assigns_attribute(assignment: Node<'_>, target: Node<'_>) -> bool {
     match target.kind_name() {
-        // Only Python wraps an assignment in an `expression_statement`.
-        "identifier" => assignment
-            .parent_node()
-            .is_some_and(|statement| statement.kind_name() == "expression_statement"),
+        // Only Python wraps an assignment in an `expression_statement`, a chain (`e = f = ...`)
+        // in that of its outermost assignment.
+        "identifier" => {
+            let mut outermost = assignment;
+            while let Some(outer) = outermost
+                .parent_node()
+                .filter(|outer| outer.kind_name() == "assignment")
+            {
+                outermost = outer;
+            }
+            outermost
+                .parent_node()
+                .is_some_and(|statement| statement.kind_name() == "expression_statement")
+        }
         "constant" => true,
         _ => false,
     }
