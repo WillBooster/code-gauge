@@ -1404,6 +1404,14 @@ describe('duplication: cross-file grouping and reporting', () => {
   });
 });
 
+const loopStatement = (n: number): string => `  while (v.next(${n})) {\n    total += weigh(v.current, ${n});\n  }\n`;
+const branchStatement = (n: number): string =>
+  `  if (v.count > ${n}) {\n    report(v.count - v.length, "${n}");\n  } else {\n    report(v.size + ${n});\n  }\n`;
+const keysStatement = (n: number): string =>
+  `  for (const key of Object.keys(v.map${n})) {\n    logger.debug(key, ${n});\n  }\n`;
+const pushStatement = (n: number): string => `  v.list${n}.push({ id: ${n}, name: "n${n}", value: v.value * ${n} });\n`;
+const mapStatement = (n: number): string => `  const m${n} = new Map(v.items${n}.map((item) => [item.id, item]));\n`;
+
 const javaMethod = (name: string): string =>
   `  int ${name}(int[] xs) {\n    int total = 0;\n    int count = 0;\n    for (int x : xs) {\n      if (x > 0) {\n        total += x;\n        count += 1;\n      }\n    }\n    return count == 0 ? 0 : total / count;\n  }\n`;
 
@@ -1629,6 +1637,41 @@ describe('duplication: within-file statement runs and containers', () => {
     ]);
     expect(within.duplicateLineNumbers.filter((line) => line <= 22)).toHaveLength(8);
     expect(across.duplicateLineNumbersByFile['0.js']).toHaveLength(8);
+  });
+
+  it('keeps a clone enclosing kept copies when a group that fails anyway overlaps it', () => {
+    // f1 and f3 are identical; f0 and f2 share a run with them and, between themselves, also the
+    // `while` statement before it (lines 8-24 and 60-76). A two-statement candidate ending inside
+    // that clone in f2 is kept first although its group has no other copy left; it must not cost
+    // the clone of f0 and f2, which is shed before it otherwise.
+    const run = `${keysStatement(0)}  switch (v.kind1) {\n    case 1:\n      return v.a;\n    default:\n      break;\n  }\n${branchStatement(2)}`;
+    const identical = `${branchStatement(3)}${mapStatement(4)}${mapStatement(5)}${run}${pushStatement(6)}${pushStatement(7)}`;
+    const functions = [
+      `function f0(v) {\n${loopStatement(13)}${keysStatement(14)}${loopStatement(15)}${run}  const a16 = compute(v, seed16);\n  notify(v.length, ratio * 17, Math.max(big, small17));\n}\n`,
+      `function f1(v) {\n${identical}}\n`,
+      `function f2(v) {\n${pushStatement(8)}${branchStatement(9)}${loopStatement(10)}${run}${loopStatement(11)}  audit.record(v.size, Date.now(), "12");\n}\n`,
+      `function f3(v) {\n${identical}}\n`,
+    ];
+
+    const within = measureCode(functions.join(''), { language: 'javascript' }).duplication;
+    const across = measureJavaScriptFiles(
+      Object.fromEntries(functions.map((source, index) => [`${index}.js`, source]))
+    );
+
+    expect(
+      within.duplicateBlockGroups.map((group) => group.map(({ startLine, endLine }) => [startLine, endLine]))
+    ).toEqual([
+      [
+        [8, 24],
+        [60, 76],
+      ],
+      [
+        [28, 52],
+        [82, 106],
+      ],
+    ]);
+    expect(within.duplicateLineNumbers.filter((line) => line <= 27)).toHaveLength(17);
+    expect(across.duplicateLineNumbersByFile['0.js']).toHaveLength(17);
   });
 
   it('does not report a homogeneous run of identically shaped statements as a clone', () => {

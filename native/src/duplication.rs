@@ -1523,14 +1523,29 @@ fn select_maximal_duplicates(
     // groups are removed and the selection reruns: the largest one at a time, then all at once.
     let mut rerun = 0;
     loop {
-        let mut counted = select_greedily(&duplicates);
+        let (mut counted, blockers) = select_greedily(&duplicates);
         let failed = |group: &[DuplicateCandidate]| group.len() < 2;
+        // A failed group that another failed group kept a copy from is not shed before it:
+        // shedding the blocking group can rescue it, while shedding it frees nothing the other
+        // waits for.
+        let blocked_by_failed = |fingerprint: &std::rc::Rc<str>| {
+            blockers.get(fingerprint).is_some_and(|blocking| {
+                blocking.iter().any(|other| {
+                    other != fingerprint && counted.get(other).is_some_and(|group| failed(group))
+                })
+            })
+        };
         let largest_failed = counted
             .iter()
             .filter(|(_, group)| failed(group))
             // The first of the largest, as in selectMaximalGroups.
             .rev()
-            .max_by_key(|(_, group)| group.first().map_or(0, |first| first.token_count))
+            .max_by_key(|(fingerprint, group)| {
+                (
+                    !blocked_by_failed(fingerprint),
+                    group.first().map_or(0, |first| first.token_count),
+                )
+            })
             .map(|(fingerprint, _)| fingerprint.clone());
         // No failed fingerprint means every counted group kept at least two survivors.
         let Some(largest_failed) = largest_failed else {
@@ -1553,6 +1568,10 @@ fn select_maximal_duplicates(
     }
 }
 
+/// Per fingerprint, the fingerprints of the kept regions that kept a candidate of it from being
+/// selected.
+type BlockersByFingerprint = FxHashMap<std::rc::Rc<str>, Vec<std::rc::Rc<str>>>;
+
 /// One greedy selection in ranking order, in two passes. The first keeps each candidate that
 /// overlaps no kept region and lets a candidate a kept region contains join its group as a nested
 /// copy. The second lets a candidate left over take the place of the kept copies it encloses,
@@ -1562,7 +1581,10 @@ fn select_maximal_duplicates(
 /// without a standalone copy are dropped.
 fn select_greedily(
     duplicates: &[DuplicateCandidate],
-) -> IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> {
+) -> (
+    IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
+    BlockersByFingerprint,
+) {
     let is_region = |candidate: &DuplicateCandidate, region: (usize, usize)| {
         (candidate.start_index, candidate.end_index) == region
     };
@@ -1571,6 +1593,7 @@ fn select_greedily(
     let mut counted: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> = IndexMap::new();
     let mut nested: Vec<DuplicateCandidate> = Vec::new();
     let mut left_over: Vec<&DuplicateCandidate> = Vec::new();
+    let mut blockers = BlockersByFingerprint::default();
     for encloses in [false, true] {
         let candidates: Vec<&DuplicateCandidate> = if encloses {
             std::mem::take(&mut left_over)
@@ -1580,7 +1603,8 @@ fn select_greedily(
         'candidates: for candidate in candidates {
             let (start, end) = (candidate.start_index, candidate.end_index);
             let mut enclosed: Vec<usize> = Vec::new();
-            for (index, &((region_start, region_end), _)) in kept_regions.iter().enumerate() {
+            for (index, ((region_start, region_end), blocker)) in kept_regions.iter().enumerate() {
+                let (region_start, region_end) = (*region_start, *region_end);
                 if region_start >= end || start >= region_end {
                     continue;
                 }
@@ -1595,6 +1619,12 @@ fn select_greedily(
                     enclosed.push(index);
                 } else {
                     left_over.push(candidate);
+                    if encloses {
+                        blockers
+                            .entry(candidate.fingerprint.clone())
+                            .or_default()
+                            .push(blocker.clone());
+                    }
                     continue 'candidates;
                 }
             }
@@ -1639,7 +1669,7 @@ fn select_greedily(
             .iter()
             .any(|candidate| !candidate.nested_in_larger_group)
     });
-    counted
+    (counted, blockers)
 }
 
 /// Past the rerun caps: drops the groups below two copies without another selection pass, and

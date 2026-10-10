@@ -302,7 +302,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
   percentiles are 377 and 1042.
 - **Duplicated lines, 15, no error.** In line span here; [in matched lines](#duplicated-blocks-measured-in-matched-lines) the limit is the same. Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
-  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,803 blocks from 10 matched lines).
+  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,804 blocks from 10 matched lines).
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
   more often than others of their cognitive complexity.
@@ -333,7 +333,7 @@ and 6,603 files):
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| matched lines        |   5,687 |    2,803 |    1,137 |      530 |      141 |       29 |
+| matched lines        |   5,687 |    2,804 |    1,137 |      530 |      141 |       29 |
 
 Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
 groups separate no better than by its span:

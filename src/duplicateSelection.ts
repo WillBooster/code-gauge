@@ -69,6 +69,8 @@ export function selectMaximalGroups<T extends SelectableRegion>(
     // overlaps a kept region: a larger clone must not displace a clone of the first pass it merely
     // overlaps (one extending a kept run by a few tokens would hide the clone that follows the run).
     let leftOver: T[] = [];
+    // Per fingerprint, the fingerprints of the kept regions that kept a candidate of it out.
+    const blockersByFingerprint = new Map<string, Set<string>>();
     for (const encloses of [false, true]) {
       const candidates = encloses ? leftOver : duplicates;
       leftOver = [];
@@ -92,6 +94,11 @@ export function selectMaximalGroups<T extends SelectableRegion>(
             (enclosedKept ??= []).push(region);
           } else {
             partiallyOverlaps = true;
+            if (encloses) {
+              const blockers = blockersByFingerprint.get(candidate.fingerprint) ?? new Set();
+              blockers.add(region.fingerprint);
+              blockersByFingerprint.set(candidate.fingerprint, blockers);
+            }
             break;
           }
         }
@@ -150,13 +157,26 @@ export function selectMaximalGroups<T extends SelectableRegion>(
       }
     }
 
+    // A failed group that another failed group kept a copy from is not shed before it: shedding
+    // the blocking group can rescue it, while shedding it frees nothing the other waits for.
+    const failed = (fingerprint: string): boolean => {
+      const group = counted.get(fingerprint);
+      return group !== undefined && !isSurvivingGroup(group);
+    };
     let failedFingerprint: string | undefined;
-    let failedTokenCount = -1;
+    let failedRank = -1;
     for (const [fingerprint, group] of counted) {
-      const tokenCount = group[0]?.tokenCount ?? 0;
-      if (!isSurvivingGroup(group) && tokenCount > failedTokenCount) {
+      if (isSurvivingGroup(group)) {
+        continue;
+      }
+      const blockedByFailed = [...(blockersByFingerprint.get(fingerprint) ?? [])].some(
+        (other) => other !== fingerprint && failed(other)
+      );
+      // Unblocked groups first, then the largest.
+      const rank = (blockedByFailed ? 0 : 2 ** 40) + (group[0]?.tokenCount ?? 0);
+      if (rank > failedRank) {
         failedFingerprint = fingerprint;
-        failedTokenCount = tokenCount;
+        failedRank = rank;
       }
     }
     // No failed fingerprint means every counted group met the survivor requirement.
