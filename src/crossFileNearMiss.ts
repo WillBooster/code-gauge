@@ -137,9 +137,12 @@ interface MatchEdge {
  * anchor: it links near-miss copies to the content an exact group already reports, and appears in
  * the near-miss group marked `spanCountedElsewhere` so block counting does not count its span
  * twice; it still counts the lines its partners match outside those spans. A pair matching
- * nothing outside reported spans has nothing to add to them and is dropped before clustering (two
- * blocks wholly covered by reported spans are not even compared), so it neither collapses the
- * blocks' core nodes nor widens a node beyond what the pairs clustering it matched. Any other
+ * nothing outside `listedSpansByFile` has nothing to add to them and is dropped before clustering
+ * (two blocks wholly covered by those spans are not even compared), so it neither collapses the
+ * blocks' core nodes nor widens a node beyond what the pairs clustering it matched. Those are the
+ * reported spans without the groups that hold nested copies: such a group lists a part of larger
+ * copies with a copy standing elsewhere, and the blocks around its copies may be copies as wholes,
+ * which only their pair can list at that size. Any other
  * pair is kept however much of it is reported: what the exact pipeline reports of a copy depends
  * on where its copies stand, and the lines the copy counts must not. A group needs at least one
  * node reported spans do not cover entirely. A block that matched only locally is reported as its matched cores
@@ -148,7 +151,8 @@ interface MatchEdge {
  */
 export function collectCrossFileNearMissGroups(
   files: NearMissSourceFile[],
-  reportedSpansByFile: { startTokenIndex: number; endTokenIndex: number }[][],
+  reportedSpansByFile: TokenSegment[][],
+  listedSpansByFile: TokenSegment[][],
   minTokens: number,
   minSimilarityPercent: number
 ): NearMissOccurrence[][] {
@@ -160,14 +164,12 @@ export function collectCrossFileNearMissGroups(
   const countReported = reportedSpansByFile.map(createReportedTokenCounter);
   const reportedCount = (fileIndex: number, [start, end]: [number, number]): number =>
     countReported[fileIndex]?.(start, end) ?? 0;
-  const unreportedCount = (fileIndex: number, runs: [number, number][]): number =>
-    runs.reduce((sum, run) => sum + run[1] - run[0] - reportedCount(fileIndex, run), 0);
-  const fullyReported = blocks.map((block) => {
-    const span = spanOf(block);
-    return reportedCount(block.fileIndex, span) === span[1] - span[0];
-  });
+  const countListed = listedSpansByFile.map(createReportedTokenCounter);
+  const unlistedCount = (fileIndex: number, runs: [number, number][]): number =>
+    runs.reduce((sum, [start, end]) => sum + end - start - (countListed[fileIndex]?.(start, end) ?? 0), 0);
+  const fullyListed = blocks.map((block) => unlistedCount(block.fileIndex, [spanOf(block)]) === 0);
   const edges: MatchEdge[] = [];
-  forEachCandidatePair(blocks, fullyReported, minSimilarityPercent, (left, right) => {
+  forEachCandidatePair(blocks, fullyListed, minSimilarityPercent, (left, right) => {
     const leftBlock = blocks[left];
     const rightBlock = blocks[right];
     const match = leftBlock && rightBlock && matcher(leftBlock, rightBlock, right);
@@ -181,8 +183,8 @@ export function collectCrossFileNearMissGroups(
     for (const { pair: cores, reordered } of match.cores ?? [{ pair: undefined, reordered: match.reordered }]) {
       const [leftSpan, rightSpan] = cores ?? [spanOf(leftBlock), spanOf(rightBlock)];
       const addsLines = (leftRuns: [number, number][], rightRuns: [number, number][]): boolean =>
-        unreportedCount(leftBlock.fileIndex, leftRuns) + unreportedCount(rightBlock.fileIndex, rightRuns) > 0;
-      // Fully reported spans need no alignment to be dropped.
+        unlistedCount(leftBlock.fileIndex, leftRuns) + unlistedCount(rightBlock.fileIndex, rightRuns) > 0;
+      // Fully listed spans need no alignment to be dropped.
       if (!addsLines([leftSpan], [rightSpan])) {
         continue;
       }
@@ -416,9 +418,7 @@ function mergeOverlappingCores(cores: [number, number][]): [number, number][] {
 }
 
 /** Counts the tokens of [start, end) that the spans cover. */
-function createReportedTokenCounter(
-  spans: { startTokenIndex: number; endTokenIndex: number }[]
-): (start: number, end: number) => number {
+function createReportedTokenCounter(spans: TokenSegment[]): (start: number, end: number) => number {
   const merged = mergeOverlappingCores(spans.map((span) => [span.startTokenIndex, span.endTokenIndex]));
   let covered = 0;
   const coveredBefore = [0];
@@ -480,7 +480,7 @@ function toOccurrence(
 
 /**
  * Visits every cross-file block pair sharing at least `filtrationPercent` of the smaller block's
- * non-stop n-grams, except pairs of two blocks wholly covered by reported spans and pairs whose
+ * non-stop n-grams, except pairs of two blocks wholly covered by listed spans and pairs whose
  * length ratio rules out both
  * whole-block similarity and `maxLengthRatio`. Blocks are
  * indexed in ascending length, so each posting list is scanned backwards only while its blocks
@@ -488,7 +488,7 @@ function toOccurrence(
  */
 function forEachCandidatePair(
   blocks: NormalizedBlock[],
-  fullyReported: boolean[],
+  fullyListed: boolean[],
   minSimilarityPercent: number,
   visit: (left: number, right: number) => void
 ): void {
@@ -504,7 +504,7 @@ function forEachCandidatePair(
 
   // Typed copies keep the posting loop, which dominates this phase, free of object dereferences.
   const fileIndexes = Int32Array.from(blocks, (block) => block.fileIndex);
-  const reportedFlags = Uint8Array.from(fullyReported, Number);
+  const listedFlags = Uint8Array.from(fullyListed, Number);
   const lengths = Int32Array.from(blocks, (block) => block.sequence.length);
   const ngramCounts = Int32Array.from(blocks, (block) => block.ngrams.length);
   const order = [...blocks.keys()].toSorted((left, right) => (lengths[left] ?? 0) - (lengths[right] ?? 0));
@@ -513,7 +513,7 @@ function forEachCandidatePair(
   const touched: number[] = [];
   for (const right of order) {
     const fileIndex = fileIndexes[right];
-    const rightReported = reportedFlags[right] === 1;
+    const rightListed = listedFlags[right] === 1;
     const minLeftLength = Math.min(
       Math.ceil((lengths[right] ?? 0) / maxLengthRatio),
       Math.ceil((minSimilarityPercent * (lengths[right] ?? 0)) / 100)
@@ -530,7 +530,7 @@ function forEachCandidatePair(
         if ((lengths[left] ?? 0) < minLeftLength) {
           break;
         }
-        if (fileIndexes[left] === fileIndex || (rightReported && reportedFlags[left] === 1)) {
+        if (fileIndexes[left] === fileIndex || (rightListed && listedFlags[left] === 1)) {
           continue;
         }
         if (sharedCounts[left] === 0) {

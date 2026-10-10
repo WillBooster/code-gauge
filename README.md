@@ -445,7 +445,8 @@ The `duplication` section tunes how clones are detected:
   `require`s carry no tokens, since every module must spell out its own), with adjacent matches around a small edit merged into gapped (Type-3) clone groups and
   near-miss (Type-3) clones matched by token-LCS similarity (tolerating reordered statements and
   copies embedded in added code), each copy with its line span, its matched lines, and its matched token count,
-  plus duplicated line count and ratio
+  plus duplicated line count and ratio; code standing on its own that copies only a part of larger
+  copies is listed with that part of each of them
 - Cross-file duplication (via `measureCrossFileDuplication`): copy-pasted blocks shared between
   files, matched with the same normalization (exact, gapped, and near-miss clones) and reported as
   groups with the file location, the matched lines, and the matched token count of each copy

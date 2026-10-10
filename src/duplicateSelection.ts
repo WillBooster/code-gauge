@@ -1,12 +1,10 @@
 /**
  * Maximal, non-overlapping duplicate-group selection for the cross-file detector (the native
- * within-file detector mirrors its greedy ranking and shedding, but not the nested-copy retention
- * below, which is cross-file only). Candidates are grouped by fingerprint, ranked by total
- * coverage, kept greedily without overlapping a kept region, and groups that fall below the
- * survivor requirement are shed one at a time (largest first) so their regions stop blocking
- * smaller groups. A copy lying entirely inside a larger group's region stays with its group as a
- * nested copy (whichever group the greedy order kept first), so a standalone copy elsewhere is
- * still reported as duplicating it.
+ * within-file detector ports it as select_maximal_duplicates). Candidates are grouped by
+ * fingerprint, ranked by total coverage, kept greedily without overlapping a kept region, and
+ * groups that fall below the survivor requirement are shed (largest first) so their regions stop
+ * blocking smaller groups. A copy lying entirely inside a larger group's region stays with its
+ * group as a nested copy, so a standalone copy elsewhere is still reported as duplicating it.
  */
 
 export interface SelectableRegion {
@@ -14,10 +12,7 @@ export interface SelectableRegion {
   tokenCount: number;
   startIndex: number;
   endIndex: number;
-  /**
-   * Regions can only overlap within the same bucket. The within-file detector uses one bucket;
-   * the cross-file detector buckets by file index.
-   */
+  /** Regions can only overlap within the same bucket: the file index. */
   regionBucket?: number;
   /**
    * Set by selectMaximalGroups on a copy nested inside a larger group's region: it is reported with
@@ -26,7 +21,10 @@ export interface SelectableRegion {
   nestedInLargerGroup?: boolean;
 }
 
-/** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
+/**
+ * Caps how often the maximal-region selection reruns after shedding one failed duplicate group,
+ * and then how often after shedding every failed group at once.
+ */
 const maxSelectionRerunCount = 20;
 
 /**
@@ -59,63 +57,94 @@ export function selectMaximalGroups<T extends SelectableRegion>(
   // Greedy selection can keep a candidate whose group ends up below the survivor requirement;
   // such an uncounted region must not block smaller groups, so the largest failed group is
   // removed and the selection reruns. One group at a time: freeing a failed group's regions can
-  // rescue another. The rerun cap bounds degenerate inputs; past it the remaining failed groups
-  // are dropped, trading a sliver of recall on such files for bounded runtime.
+  // rescue another. Past the rerun cap, which bounds degenerate inputs, every failed group is
+  // removed at once, which converges in few passes; past the same cap again the remaining failed
+  // groups are dropped, trading a sliver of recall on such files for bounded runtime.
   for (let rerun = 0; ; rerun += 1) {
     const keptRegionsByBucket = new Map<number, T[]>();
     const counted = new Map<string, T[]>();
     const nestedByFingerprint = new Map<string, T[]>();
-    for (const candidate of duplicates) {
-      const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
-      // A plain loop: this runs once per candidate over every kept region of the bucket, so
-      // allocating a filtered array per candidate would dominate project-scale runs. Kept regions
-      // never overlap each other, so a candidate inside one cannot partially overlap another.
-      let containedInKept = false;
-      let partiallyOverlaps = false;
-      let enclosedKept: T[] | undefined;
-      for (const region of keptRegions) {
-        if (region.startIndex >= candidate.endIndex || candidate.startIndex >= region.endIndex) {
+    // Two passes. The first keeps each candidate that overlaps no kept region. The second lets a
+    // candidate left over take the place of the kept copies it encloses, unless it partially
+    // overlaps a kept region: a larger clone must not displace a clone of the first pass it merely
+    // overlaps (one extending a kept run by a few tokens would hide the clone that follows the run).
+    let leftOver: T[] = [];
+    // Per fingerprint, the fingerprints of the kept regions that kept a candidate of it out.
+    const blockersByFingerprint = new Map<string, Set<string>>();
+    for (const encloses of [false, true]) {
+      const candidates = encloses ? leftOver : duplicates;
+      leftOver = [];
+      for (const candidate of candidates) {
+        const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
+        // A plain loop: this runs once per candidate over every kept region of the bucket, so
+        // allocating a filtered array per candidate would dominate project-scale runs. Kept regions
+        // never overlap each other, so a candidate inside one cannot partially overlap another.
+        let containedInKept = false;
+        let partiallyOverlaps = false;
+        let enclosedKept: T[] | undefined;
+        for (const region of keptRegions) {
+          if (region.startIndex >= candidate.endIndex || candidate.startIndex >= region.endIndex) {
+            continue;
+          }
+          if (region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex) {
+            containedInKept = true;
+            break;
+          }
+          if (encloses && candidate.startIndex <= region.startIndex && region.endIndex <= candidate.endIndex) {
+            (enclosedKept ??= []).push(region);
+          } else {
+            partiallyOverlaps = true;
+            if (encloses) {
+              const blockers = blockersByFingerprint.get(candidate.fingerprint) ?? new Set();
+              blockers.add(region.fingerprint);
+              blockersByFingerprint.set(candidate.fingerprint, blockers);
+            }
+            break;
+          }
+        }
+        if (containedInKept) {
+          const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
+          nested.push({ ...candidate, nestedInLargerGroup: true });
+          nestedByFingerprint.set(candidate.fingerprint, nested);
           continue;
         }
-        if (region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex) {
-          containedInKept = true;
-          break;
+        if (partiallyOverlaps) {
+          leftOver.push(candidate);
+          continue;
         }
-        if (candidate.startIndex <= region.startIndex && region.endIndex <= candidate.endIndex) {
-          (enclosedKept ??= []).push(region);
-        } else {
-          partiallyOverlaps = true;
-          break;
+        // The kept copies of smaller groups that the candidate encloses become nested copies of
+        // their groups.
+        const enclosed = enclosedKept;
+        for (const inner of enclosed ?? []) {
+          const group = counted.get(inner.fingerprint) ?? [];
+          const index = group.indexOf(inner);
+          if (index !== -1) {
+            group[index] = { ...inner, nestedInLargerGroup: true };
+          }
         }
+        // The enclosed regions give way to the enclosing one, keeping kept regions mutually
+        // non-overlapping: a later candidate inside this region must see it, not a region it
+        // swallowed (which the candidate could straddle instead).
+        const occupied = enclosed ? keptRegions.filter((region) => !enclosed.includes(region)) : keptRegions;
+        occupied.push(candidate);
+        keptRegionsByBucket.set(candidate.regionBucket ?? 0, occupied);
+        const group = counted.get(candidate.fingerprint) ?? [];
+        group.push(candidate);
+        counted.set(candidate.fingerprint, group);
       }
-      if (containedInKept) {
+    }
+    // A candidate still left over overlapped a kept region partially when its turn came. Where an
+    // enclosing candidate took that region since, the candidate lies inside a kept region now and
+    // is a nested copy like one visited later: containment must not depend on the greedy order.
+    for (const candidate of leftOver) {
+      const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
+      if (
+        keptRegions.some((region) => region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex)
+      ) {
         const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
         nested.push({ ...candidate, nestedInLargerGroup: true });
         nestedByFingerprint.set(candidate.fingerprint, nested);
-        continue;
       }
-      if (partiallyOverlaps) {
-        continue;
-      }
-      // Containment must not depend on greedy order: a candidate enclosing kept copies of smaller
-      // groups occupies its region, and those copies become nested copies of their groups.
-      const enclosed = enclosedKept;
-      for (const inner of enclosed ?? []) {
-        const group = counted.get(inner.fingerprint) ?? [];
-        const index = group.indexOf(inner);
-        if (index !== -1) {
-          group[index] = { ...inner, nestedInLargerGroup: true };
-        }
-      }
-      // The enclosed regions give way to the enclosing one, keeping kept regions mutually
-      // non-overlapping: a later candidate inside this region must see it, not a region it
-      // swallowed (which the candidate could straddle instead).
-      const occupied = enclosed ? keptRegions.filter((region) => !enclosed.includes(region)) : keptRegions;
-      occupied.push(candidate);
-      keptRegionsByBucket.set(candidate.regionBucket ?? 0, occupied);
-      const group = counted.get(candidate.fingerprint) ?? [];
-      group.push(candidate);
-      counted.set(candidate.fingerprint, group);
     }
     // Nested copies join only a group that kept a standalone copy; on their own they would merely
     // restate the larger group.
@@ -128,30 +157,48 @@ export function selectMaximalGroups<T extends SelectableRegion>(
       }
     }
 
+    // A failed group that another failed group kept a copy from is not shed before it: shedding
+    // the blocking group can rescue it, while shedding it frees nothing the other waits for.
+    const failed = (fingerprint: string): boolean => {
+      const group = counted.get(fingerprint);
+      return group !== undefined && !isSurvivingGroup(group);
+    };
     let failedFingerprint: string | undefined;
-    let failedTokenCount = -1;
+    let failedRank = -1;
     for (const [fingerprint, group] of counted) {
-      const tokenCount = group[0]?.tokenCount ?? 0;
-      if (!isSurvivingGroup(group) && tokenCount > failedTokenCount) {
+      if (isSurvivingGroup(group)) {
+        continue;
+      }
+      const blockedByFailed = [...(blockersByFingerprint.get(fingerprint) ?? [])].some(
+        (other) => other !== fingerprint && failed(other)
+      );
+      // Unblocked groups first, then the largest.
+      const rank = (blockedByFailed ? 0 : 2 ** 40) + (group[0]?.tokenCount ?? 0);
+      if (rank > failedRank) {
         failedFingerprint = fingerprint;
-        failedTokenCount = tokenCount;
+        failedRank = rank;
       }
     }
     // No failed fingerprint means every counted group met the survivor requirement.
     if (failedFingerprint === undefined) {
       return counted;
     }
-    if (rerun >= maxSelectionRerunCount) {
+    if (rerun >= 2 * maxSelectionRerunCount) {
       dropFailedGroups(counted, isSurvivingGroup);
       return counted;
     }
 
-    duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
+    const failedFingerprints = new Set(
+      rerun < maxSelectionRerunCount
+        ? [failedFingerprint]
+        : [...counted].filter(([, group]) => !isSurvivingGroup(group)).map(([fingerprint]) => fingerprint)
+    );
+    duplicates = duplicates.filter((candidate) => !failedFingerprints.has(candidate.fingerprint));
   }
 }
 
 /**
- * Past the rerun cap, still-failing groups are dropped without another selection pass. A dropped
+ * Past the rerun caps, still-failing groups are dropped without another selection pass. A dropped
  * group's regions may have been what nested copies of surviving groups lay inside, and such a copy
  * would then be counted by no group at all, so those copies are dropped too and the shrunk groups
  * are re-checked until nothing changes.

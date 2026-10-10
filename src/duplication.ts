@@ -122,12 +122,12 @@ export interface CountedOccurrence {
   exactSegments?: TokenSegment[];
   /**
    * Set on occurrences whose span another reported group already counts: a retained group's
-   * occurrences that a partial gapped merge also paired into a merged group, and cross-file copies
-   * nested inside a larger group's region. Block counting must not count them again.
+   * occurrences that a partial gapped merge also paired into a merged group, and copies nested
+   * inside a larger group's region. Block counting must not count them again.
    */
   spanCountedElsewhere?: boolean;
   /**
-   * Set on cross-file copies nested inside a larger group's region (they also set
+   * Set on copies nested inside a larger group's region (they also set
    * `spanCountedElsewhere`). They never pair in gapped merging, and they do not keep their group's
    * standalone copies from merging, which they are not copies of. They do keep the merged group
    * from taking their group's place, since only the original group reports the nesting.

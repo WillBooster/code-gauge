@@ -381,6 +381,9 @@ struct DuplicateCandidate {
     end_index: usize,
     start_line: usize,
     end_line: usize,
+    /// Set by select_maximal_duplicates on a copy lying inside a larger group's region: it is
+    /// reported with its group, but its span is already counted by that larger group.
+    nested_in_larger_group: bool,
 }
 
 /// A file's normalized token stream with the block and statement structure clone detection
@@ -1375,6 +1378,7 @@ fn to_candidate(
         end_index: last.end_index,
         start_line: first.start_line,
         end_line: last.end_line,
+        nested_in_larger_group: false,
     }
 }
 
@@ -1474,7 +1478,8 @@ fn combine_hashes(hash: i64, value: i64) -> i64 {
     (to_int32(hash).wrapping_mul(31)) as i64 + value
 }
 
-/// Keeps only maximal, non-overlapping duplicates; see selectMaximalGroups in duplicateSelection.ts.
+/// Keeps only maximal, non-overlapping duplicates; a port of selectMaximalGroups in
+/// duplicateSelection.ts, which states the ranking, shedding, and nested-copy rules.
 fn select_maximal_duplicates(
     candidates: Vec<DuplicateCandidate>,
 ) -> IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> {
@@ -1514,49 +1519,191 @@ fn select_maximal_duplicates(
     let mut duplicates: Vec<DuplicateCandidate> = groups.into_iter().flatten().collect();
     duplicates.sort_by_key(|candidate| std::cmp::Reverse(coverage(candidate)));
 
-    // Greedy selection can keep a candidate whose group ends up below two survivors; the largest
-    // failed group is removed and the selection reruns, one group at a time.
+    // Greedy selection can keep a candidate whose group ends up below two survivors; the failed
+    // groups are removed and the selection reruns: the largest one at a time, then all at once.
     let mut rerun = 0;
     loop {
-        let mut kept_regions: Vec<(usize, usize)> = Vec::new();
-        let mut counted: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> = IndexMap::new();
-        for candidate in &duplicates {
-            if kept_regions
-                .iter()
-                .any(|region| region.0 < candidate.end_index && candidate.start_index < region.1)
-            {
-                continue;
+        let (mut counted, blockers) = select_greedily(&duplicates);
+        let failed = |group: &[DuplicateCandidate]| group.len() < 2;
+        // A failed group that another failed group kept a copy from is not shed before it:
+        // shedding the blocking group can rescue it, while shedding it frees nothing the other
+        // waits for.
+        let blocked_by_failed = |fingerprint: &std::rc::Rc<str>| {
+            blockers.get(fingerprint).is_some_and(|blocking| {
+                blocking.iter().any(|other| {
+                    other != fingerprint && counted.get(other).is_some_and(|group| failed(group))
+                })
+            })
+        };
+        let largest_failed = counted
+            .iter()
+            .filter(|(_, group)| failed(group))
+            // The first of the largest, as in selectMaximalGroups.
+            .rev()
+            .max_by_key(|(fingerprint, group)| {
+                (
+                    !blocked_by_failed(fingerprint),
+                    group.first().map_or(0, |first| first.token_count),
+                )
+            })
+            .map(|(fingerprint, _)| fingerprint.clone());
+        // No failed fingerprint means every counted group kept at least two survivors.
+        let Some(largest_failed) = largest_failed else {
+            return counted;
+        };
+        if rerun >= 2 * MAX_SELECTION_RERUN_COUNT {
+            drop_failed_groups(&mut counted);
+            return counted;
+        }
+        if rerun < MAX_SELECTION_RERUN_COUNT {
+            duplicates.retain(|candidate| candidate.fingerprint != largest_failed);
+        } else {
+            duplicates.retain(|candidate| {
+                counted
+                    .get(&candidate.fingerprint)
+                    .is_none_or(|group| !failed(group))
+            });
+        }
+        rerun += 1;
+    }
+}
+
+/// Per fingerprint, the fingerprints of the kept regions that kept a candidate of it from being
+/// selected.
+type BlockersByFingerprint = FxHashMap<std::rc::Rc<str>, Vec<std::rc::Rc<str>>>;
+
+/// One greedy selection in ranking order, in two passes. The first keeps each candidate that
+/// overlaps no kept region and lets a candidate a kept region contains join its group as a nested
+/// copy. The second lets a candidate left over take the place of the kept copies it encloses,
+/// which become nested copies of their groups, unless it partially overlaps a kept region: a
+/// larger clone must not displace a clone of the first pass it merely overlaps. A candidate
+/// lying inside a kept region in the end is a nested copy whenever its turn came. Groups left
+/// without a standalone copy are dropped.
+fn select_greedily(
+    duplicates: &[DuplicateCandidate],
+) -> (
+    IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
+    BlockersByFingerprint,
+) {
+    let is_region = |candidate: &DuplicateCandidate, region: (usize, usize)| {
+        (candidate.start_index, candidate.end_index) == region
+    };
+    // Mutually non-overlapping, each with the fingerprint of the candidate occupying it.
+    let mut kept_regions: Vec<((usize, usize), std::rc::Rc<str>)> = Vec::new();
+    let mut counted: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> = IndexMap::new();
+    let mut nested: Vec<DuplicateCandidate> = Vec::new();
+    let mut left_over: Vec<&DuplicateCandidate> = Vec::new();
+    let mut blockers = BlockersByFingerprint::default();
+    for encloses in [false, true] {
+        let candidates: Vec<&DuplicateCandidate> = if encloses {
+            std::mem::take(&mut left_over)
+        } else {
+            duplicates.iter().collect()
+        };
+        'candidates: for candidate in candidates {
+            let (start, end) = (candidate.start_index, candidate.end_index);
+            let mut enclosed: Vec<usize> = Vec::new();
+            for (index, ((region_start, region_end), blocker)) in kept_regions.iter().enumerate() {
+                let (region_start, region_end) = (*region_start, *region_end);
+                if region_start >= end || start >= region_end {
+                    continue;
+                }
+                if region_start <= start && end <= region_end {
+                    nested.push(DuplicateCandidate {
+                        nested_in_larger_group: true,
+                        ..candidate.clone()
+                    });
+                    continue 'candidates;
+                }
+                if encloses && start <= region_start && region_end <= end {
+                    enclosed.push(index);
+                } else {
+                    left_over.push(candidate);
+                    if encloses {
+                        blockers
+                            .entry(candidate.fingerprint.clone())
+                            .or_default()
+                            .push(blocker.clone());
+                    }
+                    continue 'candidates;
+                }
             }
-            kept_regions.push((candidate.start_index, candidate.end_index));
+            // Descending, so that removing one keeps the indexes of the others.
+            for &index in enclosed.iter().rev() {
+                let (region, fingerprint) = kept_regions.remove(index);
+                if let Some(inner) = counted
+                    .get_mut(&fingerprint)
+                    .and_then(|group| group.iter_mut().find(|inner| is_region(inner, region)))
+                {
+                    inner.nested_in_larger_group = true;
+                }
+            }
+            kept_regions.push(((start, end), candidate.fingerprint.clone()));
             counted
                 .entry(candidate.fingerprint.clone())
                 .or_default()
                 .push(candidate.clone());
         }
-
-        let mut failed_fingerprint: Option<std::rc::Rc<str>> = None;
-        let mut failed_token_count: i64 = -1;
-        for (fingerprint, group) in &counted {
-            let token_count = group
-                .first()
-                .map(|first| first.token_count as i64)
-                .unwrap_or(0);
-            if group.len() < 2 && token_count > failed_token_count {
-                failed_fingerprint = Some(fingerprint.clone());
-                failed_token_count = token_count;
-            }
-        }
-        // No failed fingerprint means every counted group kept at least two survivors.
-        let Some(failed_fingerprint) = failed_fingerprint else {
-            return counted;
+    }
+    // A candidate still left over overlapped a kept region partially when its turn came. Where
+    // an enclosing candidate took that region since, the candidate lies inside a kept region now
+    // and is a nested copy like one visited later.
+    for candidate in left_over {
+        let lies_in = |&((start, end), _): &((usize, usize), std::rc::Rc<str>)| {
+            start <= candidate.start_index && candidate.end_index <= end
         };
-        if rerun >= MAX_SELECTION_RERUN_COUNT {
-            counted.retain(|_, group| group.len() >= 2);
-            return counted;
+        if kept_regions.iter().any(lies_in) {
+            nested.push(DuplicateCandidate {
+                nested_in_larger_group: true,
+                ..candidate.clone()
+            });
         }
+    }
+    for candidate in nested {
+        if let Some(group) = counted.get_mut(&candidate.fingerprint) {
+            group.push(candidate);
+        }
+    }
+    counted.retain(|_, group| {
+        group
+            .iter()
+            .any(|candidate| !candidate.nested_in_larger_group)
+    });
+    (counted, blockers)
+}
 
-        duplicates.retain(|candidate| candidate.fingerprint != failed_fingerprint);
-        rerun += 1;
+/// Past the rerun caps: drops the groups below two copies without another selection pass, and
+/// with them the nested copies left inside no standalone copy, until nothing changes; see
+/// dropFailedGroups in duplicateSelection.ts.
+fn drop_failed_groups(counted: &mut IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>) {
+    loop {
+        let group_count = counted.len();
+        counted.retain(|_, group| {
+            group.len() >= 2
+                && group
+                    .iter()
+                    .any(|candidate| !candidate.nested_in_larger_group)
+        });
+        let standalone: Vec<(usize, usize)> = counted
+            .values()
+            .flatten()
+            .filter(|candidate| !candidate.nested_in_larger_group)
+            .map(|candidate| (candidate.start_index, candidate.end_index))
+            .collect();
+        let mut changed = counted.len() != group_count;
+        for group in counted.values_mut() {
+            let copy_count = group.len();
+            group.retain(|candidate| {
+                !candidate.nested_in_larger_group
+                    || standalone.iter().any(|&(start, end)| {
+                        start <= candidate.start_index && candidate.end_index <= end
+                    })
+            });
+            changed |= group.len() != copy_count;
+        }
+        if !changed {
+            return;
+        }
     }
 }
 
@@ -1583,6 +1730,9 @@ struct CountedOccurrence {
     /// again: a retained group's occurrence that a partial gapped merge also paired into a merged
     /// group, and a near-miss anchor, which overlaps the reported occurrence it was matched through.
     shared_with_merged_group: bool,
+    /// Set on a copy nested inside a larger group's region (it also sets
+    /// `shared_with_merged_group`); see `nestedInLargerGroup` in duplication.ts.
+    nested_in_larger_group: bool,
     /// The token runs of a near-miss copy that its partners match, within its segments;
     /// `None` for an exact or gapped copy, whose segments are matched throughout.
     matched_runs: Option<Vec<(usize, usize)>>,
@@ -1615,7 +1765,8 @@ fn to_counted_groups(
         let mut occurrences: Vec<CountedOccurrence> = group
             .iter()
             .map(|candidate| CountedOccurrence {
-                shared_with_merged_group: false,
+                shared_with_merged_group: candidate.nested_in_larger_group,
+                nested_in_larger_group: candidate.nested_in_larger_group,
                 matched_runs: None,
                 exact_runs: Vec::new(),
                 segments: vec![(candidate.start_token_index, candidate.end_token_index)],
@@ -1636,7 +1787,7 @@ fn to_counted_groups(
 /// Merges duplicate groups separated by a small token gap into one gapped (Type-3) clone group;
 /// see mergeAdjacentGroups in duplication.ts for the pairing, partial-merge (unequal
 /// cardinalities: the fully-paired group is subsumed, the other is retained with all its
-/// occurrences), and fixpoint/termination rules replicated here.
+/// occurrences), nested-copy, and fixpoint/termination rules replicated here.
 fn merge_adjacent_groups(
     mut groups: Vec<Vec<CountedOccurrence>>,
     max_gap_tokens: usize,
@@ -1660,27 +1811,29 @@ fn merge_adjacent_groups(
                 let Some(result) = result else {
                     continue;
                 };
-                let (left_consumed, right_consumed) = if swapped {
-                    (result.second_consumed, result.first_consumed)
+                let (left, right) = if swapped {
+                    (result.second, result.first)
                 } else {
-                    (result.first_consumed, result.second_consumed)
+                    (result.first, result.second)
                 };
-                // A partial merge retains the not-fully-consumed group with ALL its occurrences,
-                // so its paired occurrences now also live inside the merged group's occurrences:
-                // mark them so duplicate_block_count counts each token span once.
-                if left_consumed && right_consumed {
-                    groups[left_index] = result.merged;
-                    groups.remove(right_index);
-                } else if right_consumed {
-                    groups[right_index] = result.merged;
-                    for &occurrence_index in &result.paired_retained_indexes {
-                        groups[left_index][occurrence_index].shared_with_merged_group = true;
+                // A group that stays keeps ALL its occurrences, so its paired occurrences now
+                // also live inside the merged group's occurrences: mark them so
+                // duplicate_block_count counts each token span once.
+                for (group_index, side) in [(left_index, &left), (right_index, &right)] {
+                    if !side.replaced {
+                        for &occurrence_index in &side.paired_indexes {
+                            groups[group_index][occurrence_index].shared_with_merged_group = true;
+                        }
                     }
-                } else {
-                    groups[left_index] = result.merged;
-                    for &occurrence_index in &result.paired_retained_indexes {
-                        groups[right_index][occurrence_index].shared_with_merged_group = true;
+                }
+                match (left.replaced, right.replaced) {
+                    (true, true) => {
+                        groups[left_index] = result.merged;
+                        groups.remove(right_index);
                     }
+                    (false, true) => groups[right_index] = result.merged,
+                    (true, false) => groups[left_index] = result.merged,
+                    (false, false) => groups.push(result.merged),
                 }
                 groups.sort_by_key(|group| group_sort_key(group));
                 restart = true;
@@ -1737,16 +1890,21 @@ fn group_sort_key(group: &[CountedOccurrence]) -> (usize, usize) {
 
 struct MergeResult {
     merged: Vec<CountedOccurrence>,
-    /// Whether every occurrence of the respective input group was paired into the merge.
-    first_consumed: bool,
-    second_consumed: bool,
-    /// Indexes (into the retained, not fully consumed group) of the occurrences that were paired.
-    paired_retained_indexes: Vec<usize>,
+    first: MergedSide,
+    second: MergedSide,
+}
+
+struct MergedSide {
+    /// Whether the merged group takes the input group's place: its standalone occurrences were
+    /// all paired and it holds no nested copies that only it can report.
+    replaced: bool,
+    /// Indexes into the input group of the occurrences that were paired.
+    paired_indexes: Vec<usize>,
 }
 
 /// Pairs `second` occurrences with gap-preceding `first` occurrences, greedily in source order;
 /// a faithful port of mergeGroups in duplication.ts (at least two pairs, at least one group fully
-/// consumed, merged spans never overlap).
+/// paired, merged spans never overlap).
 fn merge_groups(
     first: &[CountedOccurrence],
     second: &[CountedOccurrence],
@@ -1756,13 +1914,21 @@ fn merge_groups(
     // again: their spans already live inside that merged group, so re-pairing them would assemble
     // a second, competing merged group instead of letting the existing merged group extend (and
     // would count the same span twice). Consumption is still judged against the FULL group, so a
-    // group holding shared occurrences is never subsumed away.
-    let leadings: Vec<usize> = (0..first.len())
-        .filter(|&index| !first[index].shared_with_merged_group)
-        .collect();
-    let trailings: Vec<usize> = (0..second.len())
-        .filter(|&index| !second[index].shared_with_merged_group)
-        .collect();
+    // group holding shared occurrences is never subsumed away; nested copies, which the merged
+    // span would not cover anyway, are left out of that judgment so they cannot veto a merge of
+    // the standalone copies.
+    let pairable = |group: &[CountedOccurrence]| -> Vec<usize> {
+        (0..group.len())
+            .filter(|&index| !group[index].shared_with_merged_group)
+            .collect()
+    };
+    let standalone_count = |group: &[CountedOccurrence]| {
+        group
+            .iter()
+            .filter(|occurrence| !occurrence.nested_in_larger_group)
+            .count()
+    };
+    let (leadings, trailings) = (pairable(first), pairable(second));
     let mut pairs: Vec<(usize, usize)> = Vec::new();
     let mut leading_position = 0usize;
     let mut previous_trailing_end: Option<usize> = None;
@@ -1786,17 +1952,18 @@ fn merge_groups(
             }
         }
     }
-    let first_consumed = pairs.len() == first.len();
-    let second_consumed = pairs.len() == second.len();
-    if pairs.len() < 2 || (!first_consumed && !second_consumed) {
+    let first_fully_paired = pairs.len() == standalone_count(first);
+    let second_fully_paired = pairs.len() == standalone_count(second);
+    if pairs.len() < 2 || (!first_fully_paired && !second_fully_paired) {
         return None;
     }
-    let paired_retained_indexes: Vec<usize> = if first_consumed == second_consumed {
-        Vec::new()
-    } else if first_consumed {
-        pairs.iter().map(|&(_, trailing)| trailing).collect()
-    } else {
-        pairs.iter().map(|&(leading, _)| leading).collect()
+    // A group holding nested copies stays even when all its standalone copies pair: the merged
+    // group's content is larger than what those copies matched, so only the original group can
+    // report the nested copies.
+    let holds_no_nested_copy = |group: &[CountedOccurrence]| {
+        group
+            .iter()
+            .all(|occurrence| !occurrence.nested_in_larger_group)
     };
     let merged = pairs
         .iter()
@@ -1806,6 +1973,7 @@ fn merge_groups(
             CountedOccurrence {
                 // A merged occurrence is a fresh span combination; it inherits no shared marks.
                 shared_with_merged_group: false,
+                nested_in_larger_group: false,
                 matched_runs: None,
                 exact_runs: Vec::new(),
                 segments: [leading.segments.clone(), trailing.segments.clone()].concat(),
@@ -1819,9 +1987,14 @@ fn merge_groups(
         .collect();
     Some(MergeResult {
         merged,
-        first_consumed,
-        second_consumed,
-        paired_retained_indexes,
+        first: MergedSide {
+            replaced: first_fully_paired && holds_no_nested_copy(first),
+            paired_indexes: pairs.iter().map(|&(leading, _)| leading).collect(),
+        },
+        second: MergedSide {
+            replaced: second_fully_paired && holds_no_nested_copy(second),
+            paired_indexes: pairs.iter().map(|&(_, trailing)| trailing).collect(),
+        },
     })
 }
 
@@ -1907,28 +2080,39 @@ fn collect_near_miss_groups(
     // longest common subsequence of the same sequences, and any choice among a copy's partners
     // would let their number or their order decide what the copy counts.
     //
-    // A pair matching nothing outside reported content has nothing to add to it and is dropped
+    // A pair matching nothing outside listed content has nothing to add to it and is dropped
     // before clustering, so that it neither collapses the blocks' core nodes nor widens a node
     // beyond what the pairs clustering it matched. Any other pair is kept however much of it is
     // reported: what the exact pipeline reports of a copy depends on where its copies stand, and
     // the lines the copy counts must not.
-    let mut reported_prefix = vec![0usize; tokens.len() + 1];
-    {
+    let reported_prefix_of = |groups: &mut dyn Iterator<Item = &Vec<CountedOccurrence>>| {
         let mut reported = vec![false; tokens.len()];
-        for occurrence in reported_groups.iter().flatten() {
+        for occurrence in groups.flatten() {
             for &(start, end) in &occurrence.segments {
                 reported[start..end].fill(true);
             }
         }
+        let mut prefix = vec![0usize; tokens.len() + 1];
         for (index, &flag) in reported.iter().enumerate() {
-            reported_prefix[index + 1] = reported_prefix[index] + usize::from(flag);
+            prefix[index + 1] = prefix[index] + usize::from(flag);
         }
-    }
+        prefix
+    };
+    let reported_prefix = reported_prefix_of(&mut reported_groups.iter());
     let reported_count =
         |(start, end): (usize, usize)| reported_prefix[end] - reported_prefix[start];
+    // Listed content is the reported content without the groups holding nested copies. Such a
+    // group lists a part of larger copies with a copy standing elsewhere, which makes no pair
+    // redundant: the blocks around its copies may be copies as wholes, which only their pair can
+    // list at that size, taking the group over.
+    let listed_prefix = reported_prefix_of(&mut reported_groups.iter().filter(|group| {
+        group
+            .iter()
+            .all(|occurrence| !occurrence.nested_in_larger_group)
+    }));
     let unreported_count = |runs: &[(usize, usize)]| -> usize {
         runs.iter()
-            .map(|&run| run.1 - run.0 - reported_count(run))
+            .map(|&(start, end)| end - start - (listed_prefix[end] - listed_prefix[start]))
             .sum()
     };
     let block_span = |index: usize| {
@@ -1940,7 +2124,7 @@ fn collect_near_miss_groups(
     let mut edges: Vec<MatchEdge> = Vec::new();
     let mut add_edge = |left: usize, right: usize, cores: Option<CorePair>, alignment| {
         let (left_span, right_span) = cores.unwrap_or((block_span(left), block_span(right)));
-        // Fully reported spans need no alignment to be dropped.
+        // Fully listed spans need no alignment to be dropped.
         if unreported_count(&[left_span, right_span]) == 0 {
             return;
         }
@@ -2092,6 +2276,7 @@ fn collect_near_miss_groups(
                     .collect();
                 CountedOccurrence {
                     shared_with_merged_group: false,
+                    nested_in_larger_group: false,
                     matched_runs: Some(merge_overlapping_cores(&matched_runs)),
                     exact_runs: Vec::new(),
                     token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
@@ -2228,9 +2413,25 @@ fn collect_near_miss_groups(
             }
             merged.extend(to_occurrences(&unanchored_nodes));
             // The rebuild consumed every fully-clustered group, so shared-span marks from earlier
-            // partial merges no longer point at a separate merged group.
+            // partial merges no longer point at a separate merged group. A copy counts the
+            // fragments it took over itself, unless a group left in place still counts all of it:
+            // a larger clone whose matched segments enclose those of the copy, which its
+            // fragments were nested in.
             for occurrence in &mut merged {
-                occurrence.shared_with_merged_group = false;
+                occurrence.shared_with_merged_group = reported_groups
+                    .iter()
+                    .enumerate()
+                    .filter(|(group_index, _)| !fully_clustered.contains(group_index))
+                    .flat_map(|(_, group)| group)
+                    .any(|counting| {
+                        !counting.shared_with_merged_group
+                            && occurrence.segments.iter().all(|segment| {
+                                counting
+                                    .segments
+                                    .iter()
+                                    .any(|matched| matched.0 <= segment.0 && segment.1 <= matched.1)
+                            })
+                    });
             }
             merged.extend(to_anchor_occurrences(&anchor_nodes));
             merged.sort_by_key(|occurrence| {
@@ -2389,6 +2590,7 @@ fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrenc
         .collect();
     CountedOccurrence {
         shared_with_merged_group: false,
+        nested_in_larger_group: false,
         // Without a near-miss part, the segments are matched throughout and say it all.
         exact_runs: if matched_runs.is_some() {
             merge_overlapping_cores(&exact_runs)

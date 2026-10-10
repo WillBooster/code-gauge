@@ -266,15 +266,24 @@ function collectNearMissGroups(
   minTokens: number,
   minSimilarityPercent: number
 ): CrossFileOccurrence[][] {
-  const reportedSpansByFile: { startTokenIndex: number; endTokenIndex: number }[][] = files.map(() => []);
   // Segment by segment: the gap of a gapped clone is not reported content.
-  for (const { fileIndex, segments } of exactGroups.flat()) {
-    const offset = tokenOffsets[fileIndex] ?? 0;
-    for (const segment of segments) {
-      reportedSpansByFile[fileIndex]?.push(shift(segment, -offset));
+  const spansByFile = (groups: CrossFileOccurrence[][]): TokenSegment[][] => {
+    const spans: TokenSegment[][] = files.map(() => []);
+    for (const { fileIndex, segments } of groups.flat()) {
+      const offset = tokenOffsets[fileIndex] ?? 0;
+      for (const segment of segments) {
+        spans[fileIndex]?.push(shift(segment, -offset));
+      }
     }
-  }
-  return collectCrossFileNearMissGroups(files, reportedSpansByFile, minTokens, minSimilarityPercent).map((group) =>
+    return spans;
+  };
+  return collectCrossFileNearMissGroups(
+    files,
+    spansByFile(exactGroups),
+    spansByFile(exactGroups.filter((group) => !group.some((occurrence) => occurrence.nestedInLargerGroup))),
+    minTokens,
+    minSimilarityPercent
+  ).map((group) =>
     group.map((occurrence) => {
       const offset = tokenOffsets[occurrence.fileIndex] ?? 0;
       return {

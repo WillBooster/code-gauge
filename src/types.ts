@@ -184,7 +184,11 @@ export interface DuplicationMetrics {
   duplicateBlockCount: number;
   /** Number of distinct normalized token sequences that appear more than once. */
   duplicateBlockGroupCount: number;
-  /** 1-based line ranges of every counted copy, grouped by shared normalized token sequence. */
+  /**
+   * 1-based line ranges of every counted copy, grouped by shared normalized token sequence. A group
+   * with a copy standing on its own also lists its copies that lie inside the copies of a larger
+   * group; duplicateBlockCount counts those with the larger group only.
+   */
   duplicateBlockGroups: DuplicateBlockOccurrence[][];
   /** Number of distinct lines covered by any counted duplicate occurrence (originals included). */
   duplicateLineCount: number;

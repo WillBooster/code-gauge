@@ -775,7 +775,12 @@ function secondShape(limit, step) {
       }).duplication;
       expect(duplicateLineNumbers.filter((line) => firstLine <= line && line <= lastLine).length).toBe(acrossLineCount);
     }
-    const acrossLineCount = measureJavaScriptFiles(sources).duplicateLineNumbersByFile['2.js']?.length;
+    const across = measureJavaScriptFiles(sources);
+    expect(across.groups.map((group) => group.files)).toEqual([
+      ['0.js', '1.js', '2.js'],
+      ['2.js', '3.js'],
+    ]);
+    const acrossLineCount = across.duplicateLineNumbersByFile['2.js']?.length;
 
     for (const order of [
       [0, 1, 2, 3],
@@ -1399,6 +1404,14 @@ describe('duplication: cross-file grouping and reporting', () => {
   });
 });
 
+const loopStatement = (n: number): string => `  while (v.next(${n})) {\n    total += weigh(v.current, ${n});\n  }\n`;
+const branchStatement = (n: number): string =>
+  `  if (v.count > ${n}) {\n    report(v.count - v.length, "${n}");\n  } else {\n    report(v.size + ${n});\n  }\n`;
+const keysStatement = (n: number): string =>
+  `  for (const key of Object.keys(v.map${n})) {\n    logger.debug(key, ${n});\n  }\n`;
+const pushStatement = (n: number): string => `  v.list${n}.push({ id: ${n}, name: "n${n}", value: v.value * ${n} });\n`;
+const mapStatement = (n: number): string => `  const m${n} = new Map(v.items${n}.map((item) => [item.id, item]));\n`;
+
 const javaMethod = (name: string): string =>
   `  int ${name}(int[] xs) {\n    int total = 0;\n    int count = 0;\n    for (int x : xs) {\n      if (x > 0) {\n        total += x;\n        count += 1;\n      }\n    }\n    return count == 0 ? 0 : total / count;\n  }\n`;
 
@@ -1526,6 +1539,139 @@ describe('duplication: within-file statement runs and containers', () => {
     expect(metrics.duplication.duplicateLineNumbers).toEqual([
       5, 6, 7, 8, 9, 10, 11, 12, 22, 23, 24, 25, 26, 27, 28, 29,
     ]);
+  });
+
+  it('lists a run standing on its own with its copies inside two identical functions', () => {
+    // alpha and beta are identical, and gamma shares only their leading run: its surroundings keep
+    // it from being a copy of them as a whole. The copies of the run inside alpha and beta lie in
+    // the clone the two form; gamma's copy is still listed with them and counts its lines, as many
+    // as when the functions stand in three files, with and without near-miss detection.
+    const functions = [
+      `function alpha(items) {${embeddedRun('items', 'items')}${surroundingsA}\n}\n`,
+      `function beta(items) {${embeddedRun('items', 'items')}${surroundingsA}\n}\n`,
+      `function gamma(rows) {${embeddedRun('rows', 'rows')}${surroundingsB}\n}\n`,
+    ];
+    const code = functions.join('');
+    const gammaFirstLine = code.slice(0, code.indexOf('function gamma')).split('\n').length;
+
+    for (const duplication of [undefined, { minSimilarityPercent: 100, maxGapTokens: 0 }]) {
+      const across = measureJavaScriptFiles(
+        Object.fromEntries(functions.map((source, index) => [`${index}.js`, source])),
+        duplication
+      );
+      const within = measureCode(code, { language: 'javascript', duplication }).duplication;
+
+      expect(within.duplicateBlockGroups.map((group) => group.length)).toEqual([2, 3]);
+      const acrossLineCount = across.duplicateLineNumbersByFile['2.js']?.length;
+      expect(acrossLineCount).toBeGreaterThanOrEqual(8);
+      expect(within.duplicateLineNumbers.filter((line) => line >= gammaFirstLine)).toHaveLength(acrossLineCount ?? 0);
+      // beta duplicates alpha, and gamma the run; the copies of the run in alpha and beta are
+      // counted with those functions.
+      expect(within.duplicateBlockCount).toBe(2);
+      expect(across.duplicateBlockCount).toBe(2);
+    }
+  });
+
+  it('keeps a clone that a longer clone enclosing another kept clone merely overlaps', () => {
+    // The three functions share the leading statements of alpha, and alpha and gamma share the run
+    // too. alpha and beta also match two lines into the run, which beta edits after them: that
+    // longer clone encloses the copies of the leading statements and overlaps the run, and must
+    // not take the place of the run's clone.
+    const run = (edited: boolean): string =>
+      embeddedRun('items', 'items')
+        .slice(1)
+        .replace('second > first', edited ? 'second > first + 1' : 'second > first');
+    const leading = `${surroundingsB.replaceAll('rows', 'items')}\n`;
+    const functions = [
+      `function alpha(items) {\n${leading}${run(false)}}\n`,
+      `function beta(items) {\n${leading}${run(true)}}\n`,
+      `function gamma(items) {\n${run(false)}${leading}}\n`,
+    ];
+    const duplication = { minSimilarityPercent: 100, maxGapTokens: 0 };
+
+    const within = measureCode(functions.join(''), { language: 'javascript', duplication }).duplication;
+    expect(
+      within.duplicateBlockGroups.map((group) => group.map(({ startLine, endLine }) => [startLine, endLine]))
+    ).toEqual([
+      [
+        [2, 8],
+        [19, 25],
+        [44, 50],
+      ],
+      [
+        [9, 16],
+        [36, 43],
+      ],
+    ]);
+    const across = measureJavaScriptFiles(
+      Object.fromEntries(functions.map((source, index) => [`${index}.js`, source])),
+      duplication
+    );
+    expect(across.duplicateLineNumbersByFile['2.js']).toHaveLength(15);
+  });
+
+  it('lists a run whose copies straddle a smaller clone inside two identical functions', () => {
+    // beta and gamma are identical (s0 s1 s2 s3); alpha holds s0 s1 s2 and s1 s2 s3, each standing
+    // on its own. The copies of the second run are kept first, those of the first run in beta and
+    // gamma straddle them, and only then does the clone of the two functions enclose them all:
+    // the first run is still listed, and alpha counts as many lines as in a file of its own.
+    const s0 = `  for (const key of Object.keys(v.map0)) {\n    logger.debug(key, 0);\n  }\n`;
+    const s1 = `  const a1 = compute(v, seed1);\n`;
+    const s2 = `  v.list2.push({ id: 2, name: "n2", value: v.value * 2 });\n`;
+    const s3 = `  const m3 = new Map(v.items3.map((item) => [item.id, item]));\n`;
+    const functions = [
+      `function alpha(v) {\n  switch (v.kind7) {\n    case 7:\n      return v.a;\n    default:\n      break;\n  }\n${s0}${s1}${s2}  try {\n    flush(v, 4);\n  } catch (error) {\n    recover(error, "4");\n  }\n${s1}${s2}${s3}  audit.record(v.size, Date.now(), "8");\n}\n`,
+      `function beta(v) {\n${s0}${s1}${s2}${s3}}\n`,
+      `function gamma(v) {\n${s0}${s1}${s2}${s3}}\n`,
+    ];
+
+    const within = measureCode(functions.join(''), { language: 'javascript' }).duplication;
+    const across = measureJavaScriptFiles(
+      Object.fromEntries(functions.map((source, index) => [`${index}.js`, source]))
+    );
+
+    expect(within.duplicateBlockGroups.map((group) => group.map(({ startLine }) => startLine))).toEqual([
+      [8, 24, 32],
+      [18, 27, 35],
+      [23, 31],
+    ]);
+    expect(within.duplicateLineNumbers.filter((line) => line <= 22)).toHaveLength(8);
+    expect(across.duplicateLineNumbersByFile['0.js']).toHaveLength(8);
+  });
+
+  it('keeps a clone enclosing kept copies when a group that fails anyway overlaps it', () => {
+    // f1 and f3 are identical; f0 and f2 share a run with them and, between themselves, also the
+    // `while` statement before it (lines 8-24 and 60-76). A two-statement candidate ending inside
+    // that clone in f2 is kept first although its group has no other copy left; it must not cost
+    // the clone of f0 and f2, which is shed before it otherwise.
+    const run = `${keysStatement(0)}  switch (v.kind1) {\n    case 1:\n      return v.a;\n    default:\n      break;\n  }\n${branchStatement(2)}`;
+    const identical = `${branchStatement(3)}${mapStatement(4)}${mapStatement(5)}${run}${pushStatement(6)}${pushStatement(7)}`;
+    const functions = [
+      `function f0(v) {\n${loopStatement(13)}${keysStatement(14)}${loopStatement(15)}${run}  const a16 = compute(v, seed16);\n  notify(v.length, ratio * 17, Math.max(big, small17));\n}\n`,
+      `function f1(v) {\n${identical}}\n`,
+      `function f2(v) {\n${pushStatement(8)}${branchStatement(9)}${loopStatement(10)}${run}${loopStatement(11)}  audit.record(v.size, Date.now(), "12");\n}\n`,
+      `function f3(v) {\n${identical}}\n`,
+    ];
+
+    const within = measureCode(functions.join(''), { language: 'javascript' }).duplication;
+    const across = measureJavaScriptFiles(
+      Object.fromEntries(functions.map((source, index) => [`${index}.js`, source]))
+    );
+
+    expect(
+      within.duplicateBlockGroups.map((group) => group.map(({ startLine, endLine }) => [startLine, endLine]))
+    ).toEqual([
+      [
+        [8, 24],
+        [60, 76],
+      ],
+      [
+        [28, 52],
+        [82, 106],
+      ],
+    ]);
+    expect(within.duplicateLineNumbers.filter((line) => line <= 27)).toHaveLength(17);
+    expect(across.duplicateLineNumbersByFile['0.js']).toHaveLength(17);
   });
 
   it('does not report a homogeneous run of identically shaped statements as a clone', () => {
