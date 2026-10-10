@@ -271,7 +271,12 @@ fn find_cpp_lambda_declaration<'t>(parent: Node<'t>, code: &Source<'_>) -> Optio
         // nothing here.
         "field_declaration"
             if parent.child_by_field_name("default_value").is_some()
-                && find_children_by_field_name(parent, "declarator").len() == 1 =>
+                // A comment after a name carries the name's field.
+                && find_children_by_field_name(parent, "declarator")
+                    .iter()
+                    .filter(|child| !child.is_extra())
+                    .count()
+                    == 1 =>
         {
             Some(parent)
         }
