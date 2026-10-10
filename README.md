@@ -137,7 +137,7 @@ that are blank or comment-only do not count, so that a copy has the same length 
 is commented, and neither do the lines the copies do not share: those between the matched parts of
 an edited copy, and those a block that resembles another as a whole (a near-miss clone, at least
 `minSimilarityPercent` similar) adds or rewrites. A line of such a block counts when its copies
-match more than half of the line's tokens between them. Occurrences of at least the warning or the error
+match more than half of the line's tokens between them, or when a part of the block matched exactly reaches it. Occurrences of at least the warning or the error
 `minDuplicateLines` that overlap in a file are reported as one block covering all of them, at the
 level its duplicated lines reach, each line counted once; copies of each other that merely share a
 line (the branches of an `else if` chain) are reported as blocks of their own.

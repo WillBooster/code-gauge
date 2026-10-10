@@ -326,7 +326,7 @@ the lines of the span matched in another copy. Lines that are blank or comment-o
 so that a commented copy and its bare partner have the same length, and neither do the lines the
 copies do not share: those between the matched parts of an edited copy, and those a block
 resembling another as a whole adds or rewrites (a line of it counts when its copies match more than
-half of its tokens between them). Copies of each other that merely share a line are blocks of their own. The limit was
+half of its tokens between them, or when a part of the block matched exactly reaches it). Copies of each other that merely share a line are blocks of their own. The limit was
 re-examined on the same corpus, exported again at its recorded commits (the same 45,123 functions
 and 6,603 files):
 

@@ -983,6 +983,7 @@ export function countRedundantFragments(group: CountedOccurrence[]): number {
  * as indexes into `tokens`. A line of a near-miss copy counts when its partners match more than half
  * of its tokens: a line the copy adds or rewrites is not duplicated, while a longest common
  * subsequence still pairs a stray token of it (a bracket, a separator) with one of the partner.
+ * A line one of `exactSegments` reaches counts in any case.
  */
 export function collectMatchedLines(
   segments: TokenSegment[],

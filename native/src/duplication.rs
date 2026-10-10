@@ -2569,6 +2569,7 @@ fn count_redundant_fragments(group: &[CountedOccurrence]) -> usize {
 /// of line coverage. A line of a near-miss copy counts when its partners match more than half of
 /// its tokens: a line the copy adds or rewrites is not duplicated, while a longest common
 /// subsequence still pairs a stray token of it (a bracket, a separator) with one of the partner.
+/// A line an exact fragment of the copy reaches counts in any case.
 fn collect_matched_lines(
     occurrence: &CountedOccurrence,
     code_line_numbers: &FxHashSet<usize>,
