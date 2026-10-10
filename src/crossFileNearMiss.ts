@@ -269,8 +269,9 @@ export function collectCrossFileNearMissGroups(
   }
   const matchedRunsByNode = nodes.map((): [number, number][] => []);
   for (const [edgeIndex, { matchedRuns }] of edges.entries()) {
-    matchedRunsByNode[edgeNodes[edgeIndex]?.[0] ?? 0]?.push(...matchedRuns[0]);
-    matchedRunsByNode[edgeNodes[edgeIndex]?.[1] ?? 0]?.push(...matchedRuns[1]);
+    const [leftNode = 0, rightNode = 0] = edgeNodes[edgeIndex] ?? [];
+    matchedRunsByNode[leftNode]?.push(...matchedRuns[0]);
+    matchedRunsByNode[rightNode]?.push(...matchedRuns[1]);
   }
 
   const membersByRoot = new Map<number, number[]>();
