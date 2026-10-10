@@ -1456,6 +1456,29 @@ describe('duplication: cross-file near-miss (Type-3) clones', () => {
     expect(metrics.duplicateLineNumbersByFile['c.js']?.length).toBeGreaterThan(10);
   });
 
+  it('does not recount the copies a larger exact group still counts when their group is taken over', () => {
+    // Two identical long functions, an exact copy of their first half, and an edited copy of it:
+    // the long pair keeps counting the halves nested in it, in one file as in four.
+    const half = `  let total = 0;\n  let count = 0;\n  for (const item of items) {\n    if (item.status === 'paid') {\n      total = total + item.amount;\n      count = count + 1;\n    }\n  }\n  report(total, count);\n`;
+    const rest = `  const prepared = prepare(items);\n  const table = new Map();\n  let pending = prepared.records;\n  while (pending.length) {\n    const row = pending.shift();\n    table.set(row.key, row.value);\n    log(row.key, table.size);\n  }\n  return table;\n`;
+    const functions = [
+      `function a(items) {\n${half}${rest}}\n`,
+      `function b(items) {\n${half}${rest}}\n`,
+      `function c(items) {\n${half}}\n`,
+      `function d(items) {\n${half.replace('total + item.amount', 'total - item.amount')}}\n`,
+    ];
+    const duplication = { minSimilarityPercent: 80, maxGapTokens: 0 };
+
+    const across = measureJavaScriptFiles(
+      Object.fromEntries(functions.map((code, index) => [`${index}.js`, code])),
+      duplication
+    );
+    expect(across.duplicateBlockCount).toBe(3);
+    expect(
+      measureCode(functions.join(''), { language: 'javascript', duplication }).duplication.duplicateBlockCount
+    ).toBe(3);
+  });
+
   it('clusters copies in three files into one group', () => {
     const third = scatteredEditClone('totalVolume', 'box', 'volume', '+=');
     const metrics = measureJavaScriptFiles({ 'a.js': first, 'b.js': second, 'c.js': third });
