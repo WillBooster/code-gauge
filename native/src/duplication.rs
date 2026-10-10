@@ -1597,6 +1597,16 @@ struct CountedOccurrence {
     end_line: usize,
 }
 
+impl CountedOccurrence {
+    /// Whether a matched segment overlaps the token range: the gap of a gapped clone is not
+    /// matched content.
+    fn matches_within(&self, (start, end): (usize, usize)) -> bool {
+        self.segments
+            .iter()
+            .any(|&(segment_start, segment_end)| segment_start < end && start < segment_end)
+    }
+}
+
 fn to_counted_groups(
     counted: &IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
 ) -> Vec<Vec<CountedOccurrence>> {
@@ -1863,14 +1873,9 @@ fn collect_near_miss_groups(
             .iter()
             .enumerate()
             .filter(|(_, group)| {
-                group.iter().any(|occurrence| {
-                    occurrence
-                        .segments
-                        .iter()
-                        .any(|&(segment_start, segment_end)| {
-                            segment_start < end && start < segment_end
-                        })
-                })
+                group
+                    .iter()
+                    .any(|occurrence| occurrence.matches_within((start, end)))
             })
             .map(|(group_index, _)| group_index)
             .collect()
@@ -2154,10 +2159,7 @@ fn collect_near_miss_groups(
         let member_block_of = |occurrence: &CountedOccurrence| {
             let mut blocks = members
                 .iter()
-                .filter(|&&index| {
-                    let (start, end) = node_range(index);
-                    occurrence.start_token_index < end && start < occurrence.end_token_index
-                })
+                .filter(|&&index| occurrence.matches_within(node_range(index)))
                 .map(|&index| node_blocks[index]);
             let block = blocks.next()?;
             let mut spans = members
@@ -2201,10 +2203,9 @@ fn collect_near_miss_groups(
             }
             for block_nodes in nodes_by_block.values() {
                 let overlaps_block_node = |occurrence: &&CountedOccurrence| {
-                    block_nodes.iter().any(|&node| {
-                        let (start, end) = node_range(node);
-                        occurrence.start_token_index < end && start < occurrence.end_token_index
-                    })
+                    block_nodes
+                        .iter()
+                        .any(|&node| occurrence.matches_within(node_range(node)))
                 };
                 let mut fragments: Vec<CountedOccurrence> = fully_clustered
                     .iter()

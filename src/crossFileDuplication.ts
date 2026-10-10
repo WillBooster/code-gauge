@@ -147,10 +147,7 @@ function takeOverExactGroups(
   const merged = nearMissGroups.map((copies) => {
     const copyOf = (occurrence: CrossFileOccurrence): CrossFileOccurrence | undefined => {
       const overlapped = copies.filter((copy) =>
-        copy.segments.some(
-          (segment) =>
-            occurrence.startTokenIndex < segment.endTokenIndex && segment.startTokenIndex < occurrence.endTokenIndex
-        )
+        copy.segments.some((segment) => occurrence.segments.some((matched) => overlap(matched, segment)))
       );
       const [copy] = overlapped;
       if (overlapped.length !== 1 || !copy) {
@@ -195,8 +192,9 @@ function takeOverExactGroups(
     });
   });
   // A copy that took its fragments over counts them itself, unless a group left in place still
-  // counts all of it: a larger clone enclosing the copy, which its fragments were nested in. A
-  // smaller run left in place inside the copy counts its own repeats, not the copy.
+  // counts all of it: a larger clone whose matched segments enclose those of the copy, which its
+  // fragments were nested in. A smaller run left in place inside the copy counts its own repeats,
+  // not the copy.
   for (const copy of coalesced) {
     for (const groupIndex of exactGroupIndexesByFile.get(copy.fileIndex) ?? []) {
       const enclosed =
@@ -204,8 +202,12 @@ function takeOverExactGroups(
         exactGroups[groupIndex]?.some(
           (occurrence) =>
             !occurrence.spanCountedElsewhere &&
-            occurrence.startTokenIndex <= copy.startTokenIndex &&
-            copy.endTokenIndex <= occurrence.endTokenIndex
+            copy.segments.every((segment) =>
+              occurrence.segments.some(
+                (matched) =>
+                  matched.startTokenIndex <= segment.startTokenIndex && segment.endTokenIndex <= matched.endTokenIndex
+              )
+            )
         );
       if (enclosed) {
         copy.spanCountedElsewhere = true;
@@ -214,6 +216,10 @@ function takeOverExactGroups(
     }
   }
   return [...exactGroups.filter((_, groupIndex) => !taken.has(groupIndex)), ...merged];
+}
+
+function overlap(left: TokenSegment, right: TokenSegment): boolean {
+  return left.startTokenIndex < right.endTokenIndex && right.startTokenIndex < left.endTokenIndex;
 }
 
 /** The parts of one copy as one occurrence: an exact part is matched throughout, a near-miss part where its partners match it. */
