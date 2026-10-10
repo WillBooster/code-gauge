@@ -192,26 +192,22 @@ function takeOverExactGroups(
     });
   });
   // A copy that took its fragments over counts them itself, unless a group left in place still
-  // counts what it holds: a larger clone its fragments were nested in.
+  // counts all of it: a larger clone enclosing the copy, which its fragments were nested in. A
+  // smaller run left in place inside the copy counts its own repeats, not the copy.
   for (const copy of coalesced) {
     copy.spanCountedElsewhere =
       [...(exactGroupIndexesByFile.get(copy.fileIndex) ?? [])].some(
         (groupIndex) =>
           !taken.has(groupIndex) &&
           exactGroups[groupIndex]?.some(
-            (occurrence) => !occurrence.spanCountedElsewhere && segmentsOverlap(occurrence, copy)
+            (occurrence) =>
+              !occurrence.spanCountedElsewhere &&
+              occurrence.startTokenIndex <= copy.startTokenIndex &&
+              copy.endTokenIndex <= occurrence.endTokenIndex
           )
       ) || undefined;
   }
   return [...exactGroups.filter((_, groupIndex) => !taken.has(groupIndex)), ...merged];
-}
-
-function segmentsOverlap(left: CrossFileOccurrence, right: CrossFileOccurrence): boolean {
-  return left.segments.some((segment) =>
-    right.segments.some(
-      (other) => segment.startTokenIndex < other.endTokenIndex && other.startTokenIndex < segment.endTokenIndex
-    )
-  );
 }
 
 /** The parts of one copy as one occurrence: an exact part is matched throughout, a near-miss part where its partners match it. */
