@@ -1300,6 +1300,10 @@ describe('NCSS: declarations of recent language versions', () => {
     expect(functions.map((fn) => [fn.name, fn.containerName, fn.parameterCount, fn.cyclomaticComplexity])).toEqual([
       ['M', 'A', 1, 2],
     ]);
+    // A destructor split the same way parses as a bare header and a declaration with the body.
+    expect(
+      functionsOf('csharp', 'class A {\n#if X\n ~A()\n#else\n ~A()\n#endif\n { }\n}').map((fn) => fn.name)
+    ).toEqual(['~A']);
     // Without a body, it is a signature like any other.
     expect(
       functionsOf('csharp', 'interface A {\n#if X\n void M(int a)\n#else\n void N(int a, int b)\n#endif\n ;\n}')
