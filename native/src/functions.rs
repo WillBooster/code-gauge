@@ -262,23 +262,29 @@ pub fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     bound
 }
 
-/// The declaration whose variable or field is the C++ lambda held by `parent`.
-fn find_cpp_lambda_declaration<'t>(parent: Node<'t>, code: &Source<'_>) -> Option<Node<'t>> {
-    match parent.kind_name() {
+/// The declaration whose variable or field is the C++ lambda `value` held by `parent`, with the
+/// declarator naming it.
+fn find_cpp_lambda_declaration<'t>(
+    parent: Node<'t>,
+    value: Node<'_>,
+    code: &Source<'_>,
+) -> Option<(Node<'t>, Option<Node<'t>>)> {
+    let declaration = match parent.kind_name() {
         "init_declarator" => Some(parent),
-        // A member initialized in its class (`Handler pick = [] {};`) holds its value directly. A
-        // declaration of several members pairs each with its value by position only, so it names
-        // nothing here.
-        "field_declaration"
-            if parent.child_by_field_name("default_value").is_some()
-                // A comment after a name carries the name's field.
-                && find_children_by_field_name(parent, "declarator")
-                    .iter()
-                    .filter(|child| !child.is_extra())
-                    .count()
-                    == 1 =>
-        {
-            Some(parent)
+        // A member initialized in its class (`Handler pick = [] {};`) holds its value directly, and
+        // a declaration of several members each value after the member it initializes.
+        "field_declaration" => {
+            let mut declarator = None;
+            for index in 0..parent.child_count() {
+                let child = parent.child(index)?;
+                if child.id() == value.id() {
+                    return Some((parent, declarator));
+                }
+                if parent.field_name_for_child(index) == Some("declarator") && !child.is_extra() {
+                    declarator = Some(child);
+                }
+            }
+            None
         }
         "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
             .parent_node()
@@ -293,18 +299,19 @@ fn find_cpp_lambda_declaration<'t>(parent: Node<'t>, code: &Source<'_>) -> Optio
                         .any(|child| !child.is_named() && node_text(*child, code) == "=")
             }),
         _ => None,
-    }
+    }?;
+    Some((declaration, declaration.child_by_field_name("declarator")))
 }
 
 /// The node binding a function written as a value and the value it holds, through the forms
 /// find_function_name names the function by: transparent wrappers, the label or annotation of a
-/// Kotlin lambda, the `lambda`/`proc` call around a Ruby block, and the direct initializer of a
-/// deduced C++ variable.
+/// Kotlin lambda, the `lambda`/`proc` call around a Ruby block, and the C++ initializer of a
+/// variable or of a member declared in its class.
 pub fn find_value_binding<'t>(node: Node<'t>, code: &Source<'_>) -> Option<(Node<'t>, Node<'t>)> {
     let mut value = unwrap_transparent_value_wrappers(node);
     let mut holder = value.parent_node()?;
     if node.kind_name() == "lambda_expression" {
-        if let Some(declaration) = find_cpp_lambda_declaration(holder, code) {
+        if let Some((declaration, _)) = find_cpp_lambda_declaration(holder, value, code) {
             return Some((declaration, value));
         }
     }
@@ -385,8 +392,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // closure itself. With a written type (`std::thread worker([] {})`) the lambda is a constructor
     // argument, and the constructor stores whatever it likes, so it names nothing.
     if node.kind_name() == "lambda_expression" {
-        if let Some(declaration) = find_cpp_lambda_declaration(parent, code) {
-            return unwrap_declarator_name(declaration.child_by_field_name("declarator"), code);
+        if let Some((_, declarator)) = find_cpp_lambda_declaration(parent, bound, code) {
+            return unwrap_declarator_name(declarator, code);
         }
     }
 
