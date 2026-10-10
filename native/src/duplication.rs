@@ -1553,10 +1553,12 @@ fn select_maximal_duplicates(
     }
 }
 
-/// One greedy pass in ranking order: a candidate is kept unless it partially overlaps a kept
-/// region, joins its group as a nested copy when a kept region contains it, and turns the kept
-/// copies it encloses into nested copies of their groups. Groups left without a standalone copy
-/// are dropped.
+/// One greedy selection in ranking order, in two passes. The first keeps each candidate that
+/// overlaps no kept region and lets a candidate a kept region contains join its group as a nested
+/// copy. The second lets a candidate left over take the place of the kept copies it encloses,
+/// which become nested copies of their groups, unless it partially overlaps a kept region: a
+/// larger clone must not displace a clone of the first pass it merely overlaps. Groups left
+/// without a standalone copy are dropped.
 fn select_greedily(
     duplicates: &[DuplicateCandidate],
 ) -> IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> {
@@ -1567,41 +1569,50 @@ fn select_greedily(
     let mut kept_regions: Vec<((usize, usize), std::rc::Rc<str>)> = Vec::new();
     let mut counted: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> = IndexMap::new();
     let mut nested: Vec<DuplicateCandidate> = Vec::new();
-    'candidates: for candidate in duplicates {
-        let (start, end) = (candidate.start_index, candidate.end_index);
-        let mut enclosed: Vec<usize> = Vec::new();
-        for (index, &((region_start, region_end), _)) in kept_regions.iter().enumerate() {
-            if region_start >= end || start >= region_end {
-                continue;
+    let mut left_over: Vec<&DuplicateCandidate> = Vec::new();
+    for encloses in [false, true] {
+        let candidates: Vec<&DuplicateCandidate> = if encloses {
+            std::mem::take(&mut left_over)
+        } else {
+            duplicates.iter().collect()
+        };
+        'candidates: for candidate in candidates {
+            let (start, end) = (candidate.start_index, candidate.end_index);
+            let mut enclosed: Vec<usize> = Vec::new();
+            for (index, &((region_start, region_end), _)) in kept_regions.iter().enumerate() {
+                if region_start >= end || start >= region_end {
+                    continue;
+                }
+                if region_start <= start && end <= region_end {
+                    nested.push(DuplicateCandidate {
+                        nested_in_larger_group: true,
+                        ..candidate.clone()
+                    });
+                    continue 'candidates;
+                }
+                if encloses && start <= region_start && region_end <= end {
+                    enclosed.push(index);
+                } else {
+                    left_over.push(candidate);
+                    continue 'candidates;
+                }
             }
-            if region_start <= start && end <= region_end {
-                nested.push(DuplicateCandidate {
-                    nested_in_larger_group: true,
-                    ..candidate.clone()
-                });
-                continue 'candidates;
+            // Descending, so that removing one keeps the indexes of the others.
+            for &index in enclosed.iter().rev() {
+                let (region, fingerprint) = kept_regions.remove(index);
+                if let Some(inner) = counted
+                    .get_mut(&fingerprint)
+                    .and_then(|group| group.iter_mut().find(|inner| is_region(inner, region)))
+                {
+                    inner.nested_in_larger_group = true;
+                }
             }
-            if start <= region_start && region_end <= end {
-                enclosed.push(index);
-            } else {
-                continue 'candidates;
-            }
+            kept_regions.push(((start, end), candidate.fingerprint.clone()));
+            counted
+                .entry(candidate.fingerprint.clone())
+                .or_default()
+                .push(candidate.clone());
         }
-        // Descending, so that removing one keeps the indexes of the others.
-        for &index in enclosed.iter().rev() {
-            let (region, fingerprint) = kept_regions.remove(index);
-            if let Some(inner) = counted
-                .get_mut(&fingerprint)
-                .and_then(|group| group.iter_mut().find(|inner| is_region(inner, region)))
-            {
-                inner.nested_in_larger_group = true;
-            }
-        }
-        kept_regions.push(((start, end), candidate.fingerprint.clone()));
-        counted
-            .entry(candidate.fingerprint.clone())
-            .or_default()
-            .push(candidate.clone());
     }
     for candidate in nested {
         if let Some(group) = counted.get_mut(&candidate.fingerprint) {

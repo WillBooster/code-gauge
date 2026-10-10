@@ -4,8 +4,7 @@
  * fingerprint, ranked by total coverage, kept greedily without overlapping a kept region, and
  * groups that fall below the survivor requirement are shed (largest first) so their regions stop
  * blocking smaller groups. A copy lying entirely inside a larger group's region stays with its
- * group as a nested copy (whichever group the greedy order kept first), so a standalone copy
- * elsewhere is still reported as duplicating it.
+ * group as a nested copy, so a standalone copy elsewhere is still reported as duplicating it.
  */
 
 export interface SelectableRegion {
@@ -65,57 +64,67 @@ export function selectMaximalGroups<T extends SelectableRegion>(
     const keptRegionsByBucket = new Map<number, T[]>();
     const counted = new Map<string, T[]>();
     const nestedByFingerprint = new Map<string, T[]>();
-    for (const candidate of duplicates) {
-      const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
-      // A plain loop: this runs once per candidate over every kept region of the bucket, so
-      // allocating a filtered array per candidate would dominate project-scale runs. Kept regions
-      // never overlap each other, so a candidate inside one cannot partially overlap another.
-      let containedInKept = false;
-      let partiallyOverlaps = false;
-      let enclosedKept: T[] | undefined;
-      for (const region of keptRegions) {
-        if (region.startIndex >= candidate.endIndex || candidate.startIndex >= region.endIndex) {
+    // Two passes. The first keeps each candidate that overlaps no kept region. The second lets a
+    // candidate left over take the place of the kept copies it encloses, unless it partially
+    // overlaps a kept region: a larger clone must not displace a clone of the first pass it merely
+    // overlaps (one extending a kept run by a few tokens would hide the clone that follows the run).
+    let leftOver: T[] = [];
+    for (const encloses of [false, true]) {
+      const candidates = encloses ? leftOver : duplicates;
+      leftOver = [];
+      for (const candidate of candidates) {
+        const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
+        // A plain loop: this runs once per candidate over every kept region of the bucket, so
+        // allocating a filtered array per candidate would dominate project-scale runs. Kept regions
+        // never overlap each other, so a candidate inside one cannot partially overlap another.
+        let containedInKept = false;
+        let partiallyOverlaps = false;
+        let enclosedKept: T[] | undefined;
+        for (const region of keptRegions) {
+          if (region.startIndex >= candidate.endIndex || candidate.startIndex >= region.endIndex) {
+            continue;
+          }
+          if (region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex) {
+            containedInKept = true;
+            break;
+          }
+          if (encloses && candidate.startIndex <= region.startIndex && region.endIndex <= candidate.endIndex) {
+            (enclosedKept ??= []).push(region);
+          } else {
+            partiallyOverlaps = true;
+            break;
+          }
+        }
+        if (containedInKept) {
+          const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
+          nested.push({ ...candidate, nestedInLargerGroup: true });
+          nestedByFingerprint.set(candidate.fingerprint, nested);
           continue;
         }
-        if (region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex) {
-          containedInKept = true;
-          break;
+        if (partiallyOverlaps) {
+          leftOver.push(candidate);
+          continue;
         }
-        if (candidate.startIndex <= region.startIndex && region.endIndex <= candidate.endIndex) {
-          (enclosedKept ??= []).push(region);
-        } else {
-          partiallyOverlaps = true;
-          break;
+        // The kept copies of smaller groups that the candidate encloses become nested copies of
+        // their groups.
+        const enclosed = enclosedKept;
+        for (const inner of enclosed ?? []) {
+          const group = counted.get(inner.fingerprint) ?? [];
+          const index = group.indexOf(inner);
+          if (index !== -1) {
+            group[index] = { ...inner, nestedInLargerGroup: true };
+          }
         }
+        // The enclosed regions give way to the enclosing one, keeping kept regions mutually
+        // non-overlapping: a later candidate inside this region must see it, not a region it
+        // swallowed (which the candidate could straddle instead).
+        const occupied = enclosed ? keptRegions.filter((region) => !enclosed.includes(region)) : keptRegions;
+        occupied.push(candidate);
+        keptRegionsByBucket.set(candidate.regionBucket ?? 0, occupied);
+        const group = counted.get(candidate.fingerprint) ?? [];
+        group.push(candidate);
+        counted.set(candidate.fingerprint, group);
       }
-      if (containedInKept) {
-        const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
-        nested.push({ ...candidate, nestedInLargerGroup: true });
-        nestedByFingerprint.set(candidate.fingerprint, nested);
-        continue;
-      }
-      if (partiallyOverlaps) {
-        continue;
-      }
-      // Containment must not depend on greedy order: a candidate enclosing kept copies of smaller
-      // groups occupies its region, and those copies become nested copies of their groups.
-      const enclosed = enclosedKept;
-      for (const inner of enclosed ?? []) {
-        const group = counted.get(inner.fingerprint) ?? [];
-        const index = group.indexOf(inner);
-        if (index !== -1) {
-          group[index] = { ...inner, nestedInLargerGroup: true };
-        }
-      }
-      // The enclosed regions give way to the enclosing one, keeping kept regions mutually
-      // non-overlapping: a later candidate inside this region must see it, not a region it
-      // swallowed (which the candidate could straddle instead).
-      const occupied = enclosed ? keptRegions.filter((region) => !enclosed.includes(region)) : keptRegions;
-      occupied.push(candidate);
-      keptRegionsByBucket.set(candidate.regionBucket ?? 0, occupied);
-      const group = counted.get(candidate.fingerprint) ?? [];
-      group.push(candidate);
-      counted.set(candidate.fingerprint, group);
     }
     // Nested copies join only a group that kept a standalone copy; on their own they would merely
     // restate the larger group.

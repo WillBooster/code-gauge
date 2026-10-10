@@ -1564,6 +1564,44 @@ describe('duplication: within-file statement runs and containers', () => {
     }
   });
 
+  it('keeps a clone that a longer clone enclosing another kept clone merely overlaps', () => {
+    // The three functions share the leading statements of alpha, and alpha and gamma share the run
+    // too. alpha and beta also match two lines into the run, which beta edits after them: that
+    // longer clone encloses the copies of the leading statements and overlaps the run, and must
+    // not take the place of the run's clone.
+    const run = (edited: boolean): string =>
+      embeddedRun('items', 'items')
+        .slice(1)
+        .replace('second > first', edited ? 'second > first + 1' : 'second > first');
+    const leading = `${surroundingsB.replaceAll('rows', 'items')}\n`;
+    const functions = [
+      `function alpha(items) {\n${leading}${run(false)}}\n`,
+      `function beta(items) {\n${leading}${run(true)}}\n`,
+      `function gamma(items) {\n${run(false)}${leading}}\n`,
+    ];
+    const duplication = { minSimilarityPercent: 100, maxGapTokens: 0 };
+
+    const within = measureCode(functions.join(''), { language: 'javascript', duplication }).duplication;
+    expect(
+      within.duplicateBlockGroups.map((group) => group.map(({ startLine, endLine }) => [startLine, endLine]))
+    ).toEqual([
+      [
+        [2, 8],
+        [19, 25],
+        [44, 50],
+      ],
+      [
+        [9, 16],
+        [36, 43],
+      ],
+    ]);
+    const across = measureJavaScriptFiles(
+      Object.fromEntries(functions.map((source, index) => [`${index}.js`, source])),
+      duplication
+    );
+    expect(across.duplicateLineNumbersByFile['2.js']).toHaveLength(15);
+  });
+
   it('does not report a homogeneous run of identically shaped statements as a clone', () => {
     // Thirty identical statements could be split into two "copies" of fifteen; a window whose
     // statements all share one shape is a preamble, not copy-paste.
