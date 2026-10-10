@@ -1602,6 +1602,35 @@ describe('duplication: within-file statement runs and containers', () => {
     expect(across.duplicateLineNumbersByFile['2.js']).toHaveLength(15);
   });
 
+  it('lists a run whose copies straddle a smaller clone inside two identical functions', () => {
+    // beta and gamma are identical (s0 s1 s2 s3); alpha holds s0 s1 s2 and s1 s2 s3, each standing
+    // on its own. The copies of the second run are kept first, those of the first run in beta and
+    // gamma straddle them, and only then does the clone of the two functions enclose them all:
+    // the first run is still listed, and alpha counts as many lines as in a file of its own.
+    const s0 = `  for (const key of Object.keys(v.map0)) {\n    logger.debug(key, 0);\n  }\n`;
+    const s1 = `  const a1 = compute(v, seed1);\n`;
+    const s2 = `  v.list2.push({ id: 2, name: "n2", value: v.value * 2 });\n`;
+    const s3 = `  const m3 = new Map(v.items3.map((item) => [item.id, item]));\n`;
+    const functions = [
+      `function alpha(v) {\n  switch (v.kind7) {\n    case 7:\n      return v.a;\n    default:\n      break;\n  }\n${s0}${s1}${s2}  try {\n    flush(v, 4);\n  } catch (error) {\n    recover(error, "4");\n  }\n${s1}${s2}${s3}  audit.record(v.size, Date.now(), "8");\n}\n`,
+      `function beta(v) {\n${s0}${s1}${s2}${s3}}\n`,
+      `function gamma(v) {\n${s0}${s1}${s2}${s3}}\n`,
+    ];
+
+    const within = measureCode(functions.join(''), { language: 'javascript' }).duplication;
+    const across = measureJavaScriptFiles(
+      Object.fromEntries(functions.map((source, index) => [`${index}.js`, source]))
+    );
+
+    expect(within.duplicateBlockGroups.map((group) => group.map(({ startLine }) => startLine))).toEqual([
+      [8, 24, 32],
+      [18, 27, 35],
+      [23, 31],
+    ]);
+    expect(within.duplicateLineNumbers.filter((line) => line <= 22)).toHaveLength(8);
+    expect(across.duplicateLineNumbersByFile['0.js']).toHaveLength(8);
+  });
+
   it('does not report a homogeneous run of identically shaped statements as a clone', () => {
     // Thirty identical statements could be split into two "copies" of fifteen; a window whose
     // statements all share one shape is a preamble, not copy-paste.

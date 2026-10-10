@@ -1557,7 +1557,8 @@ fn select_maximal_duplicates(
 /// overlaps no kept region and lets a candidate a kept region contains join its group as a nested
 /// copy. The second lets a candidate left over take the place of the kept copies it encloses,
 /// which become nested copies of their groups, unless it partially overlaps a kept region: a
-/// larger clone must not displace a clone of the first pass it merely overlaps. Groups left
+/// larger clone must not displace a clone of the first pass it merely overlaps. A candidate
+/// lying inside a kept region in the end is a nested copy whenever its turn came. Groups left
 /// without a standalone copy are dropped.
 fn select_greedily(
     duplicates: &[DuplicateCandidate],
@@ -1612,6 +1613,20 @@ fn select_greedily(
                 .entry(candidate.fingerprint.clone())
                 .or_default()
                 .push(candidate.clone());
+        }
+    }
+    // A candidate still left over overlapped a kept region partially when its turn came. Where
+    // an enclosing candidate took that region since, the candidate lies inside a kept region now
+    // and is a nested copy like one visited later.
+    for candidate in left_over {
+        let lies_in = |&((start, end), _): &((usize, usize), std::rc::Rc<str>)| {
+            start <= candidate.start_index && candidate.end_index <= end
+        };
+        if kept_regions.iter().any(lies_in) {
+            nested.push(DuplicateCandidate {
+                nested_in_larger_group: true,
+                ..candidate.clone()
+            });
         }
     }
     for candidate in nested {

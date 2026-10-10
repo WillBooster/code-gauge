@@ -126,6 +126,19 @@ export function selectMaximalGroups<T extends SelectableRegion>(
         counted.set(candidate.fingerprint, group);
       }
     }
+    // A candidate still left over overlapped a kept region partially when its turn came. Where an
+    // enclosing candidate took that region since, the candidate lies inside a kept region now and
+    // is a nested copy like one visited later: containment must not depend on the greedy order.
+    for (const candidate of leftOver) {
+      const keptRegions = keptRegionsByBucket.get(candidate.regionBucket ?? 0) ?? [];
+      if (
+        keptRegions.some((region) => region.startIndex <= candidate.startIndex && candidate.endIndex <= region.endIndex)
+      ) {
+        const nested = nestedByFingerprint.get(candidate.fingerprint) ?? [];
+        nested.push({ ...candidate, nestedInLargerGroup: true });
+        nestedByFingerprint.set(candidate.fingerprint, nested);
+      }
+    }
     // Nested copies join only a group that kept a standalone copy; on their own they would merely
     // restate the larger group.
     for (const [fingerprint, nested] of nestedByFingerprint) {
