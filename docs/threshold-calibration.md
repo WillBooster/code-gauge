@@ -333,7 +333,7 @@ and 6,603 files):
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| matched lines        |   5,678 |    2,795 |    1,134 |      532 |      141 |       31 |
+| matched lines        |   5,678 |    2,795 |    1,134 |      530 |      141 |       29 |
 
 Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
 groups separate no better than by its span:

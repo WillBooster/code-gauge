@@ -78,11 +78,6 @@ interface CrossFileOccurrence extends CountedOccurrence {
   fileIndex: number;
 }
 
-/** A copy of a near-miss group, with the token range of the block it lies in. */
-interface NearMissCopy extends CrossFileOccurrence {
-  block: TokenSegment;
-}
-
 /**
  * Detects code regions duplicated across files. Per-file candidates (whole block subtrees and full
  * container runs, fingerprinted with the same normalization as within-file duplication) are joined
@@ -128,15 +123,15 @@ export function measureCrossFileDuplication(
  * file (collect_near_miss_groups in native/src/duplication.rs): every occurrence of such a group
  * overlaps exactly one copy of the near-miss group (one overlapping none reports content the copies
  * do not share, and one reaching into two would make one copy take over lines of the next), exceeds
- * its span inside its block by less than `minTokens` (a core is listed at the size it matched, not
- * at that of a clone of its block larger by a reportable part), and no two overlap the same copy
- * (those repeat within the copy, not between the copies).
+ * its span by less than `minTokens` (a copy is listed at the size it matched, not at that of a
+ * clone larger by a reportable part, which may run into code no copy matched), and no two overlap
+ * the same copy (those repeat within the copy, not between the copies).
  * Each copy then becomes one occurrence with the exact fragments it holds, so the copies are
  * listed once.
  */
 function takeOverExactGroups(
   exactGroups: CrossFileOccurrence[][],
-  nearMissGroups: NearMissCopy[][],
+  nearMissGroups: CrossFileOccurrence[][],
   minTokens: number
 ): CrossFileOccurrence[][] {
   const exactGroupIndexesByFile = new Map<number, Set<number>>();
@@ -149,7 +144,7 @@ function takeOverExactGroups(
   }
   const taken = new Set<number>();
   const merged = nearMissGroups.map((copies) => {
-    const copyOf = (occurrence: CrossFileOccurrence): NearMissCopy | undefined => {
+    const copyOf = (occurrence: CrossFileOccurrence): CrossFileOccurrence | undefined => {
       const overlapped = copies.filter((copy) =>
         copy.segments.some(
           (segment) =>
@@ -161,11 +156,11 @@ function takeOverExactGroups(
         return undefined;
       }
       const excess =
-        Math.max(0, copy.startTokenIndex - Math.max(occurrence.startTokenIndex, copy.block.startTokenIndex)) +
-        Math.max(0, Math.min(occurrence.endTokenIndex, copy.block.endTokenIndex) - copy.endTokenIndex);
+        Math.max(0, copy.startTokenIndex - occurrence.startTokenIndex) +
+        Math.max(0, occurrence.endTokenIndex - copy.endTokenIndex);
       return excess < minTokens ? copy : undefined;
     };
-    const fragmentsByCopy = new Map<NearMissCopy, CrossFileOccurrence[]>();
+    const fragmentsByCopy = new Map<CrossFileOccurrence, CrossFileOccurrence[]>();
     const candidateIndexes = new Set(
       copies.flatMap((copy) =>
         copy.spanCountedElsewhere ? [...(exactGroupIndexesByFile.get(copy.fileIndex) ?? [])] : []
@@ -233,14 +228,14 @@ function collectNearMissGroups(
   tokenOffsets: number[],
   minTokens: number,
   minSimilarityPercent: number
-): NearMissCopy[][] {
+): CrossFileOccurrence[][] {
   const reportedSpansByFile: { startTokenIndex: number; endTokenIndex: number }[][] = files.map(() => []);
-  for (const { fileIndex, startTokenIndex, endTokenIndex } of exactGroups.flat()) {
+  // Segment by segment: the gap of a gapped clone is not reported content.
+  for (const { fileIndex, segments } of exactGroups.flat()) {
     const offset = tokenOffsets[fileIndex] ?? 0;
-    reportedSpansByFile[fileIndex]?.push({
-      startTokenIndex: startTokenIndex - offset,
-      endTokenIndex: endTokenIndex - offset,
-    });
+    for (const segment of segments) {
+      reportedSpansByFile[fileIndex]?.push(shift(segment, -offset));
+    }
   }
   return collectCrossFileNearMissGroups(files, reportedSpansByFile, minTokens, minSimilarityPercent).map((group) =>
     group.map((occurrence) => {
@@ -248,7 +243,6 @@ function collectNearMissGroups(
       return {
         ...occurrence,
         file: files[occurrence.fileIndex]?.file ?? '',
-        block: shift(occurrence.block, offset),
         segments: occurrence.segments.map((segment) => shift(segment, offset)),
         matchedRuns: occurrence.matchedRuns?.map((run) => shift(run, offset)),
         startTokenIndex: occurrence.startTokenIndex + offset,

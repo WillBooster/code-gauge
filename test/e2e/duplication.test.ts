@@ -689,6 +689,43 @@ function secondShape(limit, step) {
     expect(withSibling.duplication.duplicateBlockCount).toBe(2);
   });
 
+  it('leaves an exact clone running into the next function out of the group of one function', () => {
+    // alpha with its neighbor repeats exactly; gamma is an edited copy of alpha alone. The exact
+    // clone covers code gamma never matched, so it stays a group of its own.
+    const code = [
+      leadFunction('alpha', 2),
+      neighborFunction('alphaNext'),
+      leadFunction('beta', 2),
+      neighborFunction('betaNext'),
+      leadFunction('gamma', 3),
+    ].join('\n');
+    const { duplicateBlockGroups } = measureCode(code, {
+      language: 'javascript',
+      duplication: { minTokens: 30 },
+    }).duplication;
+
+    expect(duplicateBlockGroups.map((group) => group.map((copy) => `${copy.startLine}-${copy.endLine}`))).toEqual([
+      ['1-19', '21-39'],
+      ['1-8', '21-28', '41-48'],
+    ]);
+  });
+
+  it('counts the same lines of an edited copy joined to its original by a gapped clone, within a file and across files', () => {
+    // The statements between the exact runs differ in one operator; the gaps of the gapped clone
+    // are not reported content in either placement.
+    const duplication = { minTokens: 20, minSimilarityPercent: 80 };
+    const original = gapRepeatedFunction('alpha', '+');
+    const edited = gapRepeatedFunction('gamma', '-');
+    const within = measureCode(original + edited, { language: 'javascript', duplication }).duplication;
+    const across = measureJavaScriptFiles({ 'a.js': original, 'b.js': edited }, duplication);
+
+    const originalLineCount = original.split('\n').length - 1;
+    expect(within.duplicateLineNumbers.filter((line) => line > originalLineCount).length).toBe(
+      across.duplicateLineNumbersByFile['b.js']?.length
+    );
+    expect(across.duplicateLineNumbersByFile['b.js']?.length).toBe(originalLineCount);
+  });
+
   it('counts what an edited copy shares with identical copies when it also holds another clone', () => {
     // alpha and beta are identical; gamma replaces their middle statement with a run pasted from
     // `other`. gamma thus overlaps a reported clone (the run) just as alpha and beta do (each
@@ -824,6 +861,18 @@ describe('duplication: detection options', () => {
     expect(lowered.duplication.duplicateBlockGroupCount).toBeGreaterThanOrEqual(1);
   });
 });
+
+const leadFunction = (name: string, addend: number): string =>
+  `function ${name}(a, b) {\n  const x = a + 1;\n  const y = b + ${addend};\n  const z = x * y;\n  const w = z + 1;\n  const v = w + 2;\n  return v > 10 ? v : 10;\n}\n`;
+const neighborFunction = (name: string): string =>
+  `function ${name}(items) {\n  let count = 0;\n  while (items.length > 0) {\n    const item = items.pop();\n    if (item.active) {\n      count += 1;\n    }\n  }\n  return count;\n}\n`;
+const gapRepeatedFunction = (name: string, operator: string): string =>
+  `function ${name}(items, offset) {\n  let total = 0;\n  let count = 0;\n${[1, 2, 3, 4]
+    .map(
+      (step) =>
+        `  let first${step} = items.length * ${step} + offset;\n  notify(first${step}, items[${step}].name, total, count);\n  const v${step} = total ${operator} count * ${step};\n`
+    )
+    .join('')}  return total + count;\n}\n`;
 
 /** Statements two functions do not share, enough of them that the functions are no copies as wholes. */
 const surroundingsA = `  initialize(items);

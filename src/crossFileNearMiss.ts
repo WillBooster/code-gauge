@@ -27,8 +27,6 @@ export interface NearMissSourceFile {
 /** One copy (a block or its matched cores) in a near-miss group; anchors carry `spanCountedElsewhere` (see collectCrossFileNearMissGroups). */
 export interface NearMissOccurrence extends CountedOccurrence {
   fileIndex: number;
-  /** The token range of the block the copy lies in. */
-  block: TokenSegment;
 }
 
 /** N-gram size of the candidate index and local-match anchors (NIL's default). */
@@ -257,7 +255,6 @@ export function collectCrossFileNearMissGroups(
       block?.range.endTokenIndex ?? 0,
     ];
     return {
-      fileIndex: block?.fileIndex ?? 0,
       length: endTokenIndex - startTokenIndex,
       reported: reportedCount(block?.fileIndex ?? 0, [startTokenIndex, endTokenIndex]),
     };
@@ -462,7 +459,6 @@ function toOccurrence(
   const tokens = files[fileIndex]?.tokens;
   return {
     fileIndex,
-    block: { startTokenIndex: range.startTokenIndex, endTokenIndex: range.endTokenIndex },
     spanCountedElsewhere: anchor || undefined,
     segments,
     matchedRuns: mergeOverlappingCores(matchedRuns).map(([startTokenIndex, endTokenIndex]): TokenSegment => ({

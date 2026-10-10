@@ -2135,10 +2135,10 @@ fn collect_near_miss_groups(
         // every occurrence of the group overlaps the member nodes of exactly one block (one
         // disjoint from all members reports content the cluster does not share, and one reaching
         // into two members would make one copy take over lines of the next), exceeds the span of
-        // those nodes inside the block by less than `min_tokens` (a core is listed at the size
-        // it matched, not at that of a clone of its block larger by a reportable part), and
-        // shares that block with no other occurrence of the group (those repeat within the copy,
-        // not between the copies).
+        // those nodes by less than `min_tokens` (a copy is listed at the size it matched, not at
+        // that of a clone larger by a reportable part, which may run into code no member
+        // matched), and shares that block with no other occurrence of the group (those repeat
+        // within the copy, not between the copies).
         let member_block_of = |occurrence: &CountedOccurrence| {
             let mut blocks = members
                 .iter()
@@ -2154,14 +2154,8 @@ fn collect_near_miss_groups(
                 .map(|&index| node_range(index));
             let first = spans.next()?;
             let span = spans.fold(first, |span, node| (span.0.min(node.0), span.1.max(node.1)));
-            let range = comparable[block];
-            let excess = span
-                .0
-                .saturating_sub(occurrence.start_token_index.max(range.start_token_index))
-                + occurrence
-                    .end_token_index
-                    .min(range.end_token_index)
-                    .saturating_sub(span.1);
+            let excess = span.0.saturating_sub(occurrence.start_token_index)
+                + occurrence.end_token_index.saturating_sub(span.1);
             (blocks.all(|other| other == block) && excess < settings.min_tokens).then_some(block)
         };
         let stands_for_members = |group: &[CountedOccurrence]| {
