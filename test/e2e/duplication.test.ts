@@ -726,6 +726,24 @@ function secondShape(limit, step) {
     expect(across.duplicateLineNumbersByFile['b.js']?.length).toBe(originalLineCount);
   });
 
+  it('keeps the line an exact run ends on when the functions around it are listed as whole copies', () => {
+    // The shared `report(total);` is followed on its line by statements the functions do not
+    // share, so most tokens of the line are unmatched in the whole function, yet the exact run
+    // reaches it.
+    const accumulation = Array.from(
+      { length: 25 },
+      (_, index) => `  total += items.field${index} * items.value${index};`
+    ).join('\n');
+    const first = `function alpha(items) {\n  let total = 0;\n${accumulation}\n  report(total); throw new Error("oops");\n}\n`;
+    const second = `function beta(items) {\n  let total = 0;\n${accumulation}\n  report(total); while (items.length) { items.pop(); }\n}\n`;
+    const duplication = { minTokens: 20 };
+
+    const across = measureJavaScriptFiles({ 'a.js': first, 'b.js': second }, duplication);
+    expect(across.duplicateLineNumbersByFile['b.js']).toContain(28);
+    const within = measureCode(first + second, { language: 'javascript', duplication }).duplication;
+    expect(within.duplicateLineNumbers).toEqual(expect.arrayContaining([28, 57]));
+  });
+
   it('counts what an edited copy shares with identical copies when it also holds another clone', () => {
     // alpha and beta are identical; gamma replaces their middle statement with a run pasted from
     // `other`. gamma thus overlaps a reported clone (the run) just as alpha and beta do (each

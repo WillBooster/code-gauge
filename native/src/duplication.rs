@@ -1586,6 +1586,9 @@ struct CountedOccurrence {
     /// The token runs of a near-miss copy that its partners match, within its segments;
     /// `None` for an exact or gapped copy, whose segments are matched throughout.
     matched_runs: Option<Vec<(usize, usize)>>,
+    /// The exact fragments coalesced into a near-miss copy: each line they reach is duplicated,
+    /// whatever else of the copy shares the line.
+    exact_runs: Vec<(usize, usize)>,
     /// Sum of segment token counts (the gap tokens are not matched content).
     token_count: usize,
     start_token_index: usize,
@@ -1604,6 +1607,7 @@ fn to_counted_groups(
             .map(|candidate| CountedOccurrence {
                 shared_with_merged_group: false,
                 matched_runs: None,
+                exact_runs: Vec::new(),
                 segments: vec![(candidate.start_token_index, candidate.end_token_index)],
                 token_count: candidate.token_count,
                 start_token_index: candidate.start_token_index,
@@ -1793,6 +1797,7 @@ fn merge_groups(
                 // A merged occurrence is a fresh span combination; it inherits no shared marks.
                 shared_with_merged_group: false,
                 matched_runs: None,
+                exact_runs: Vec::new(),
                 segments: [leading.segments.clone(), trailing.segments.clone()].concat(),
                 token_count: leading.token_count + trailing.token_count,
                 start_token_index: leading.start_token_index,
@@ -2077,6 +2082,7 @@ fn collect_near_miss_groups(
                 CountedOccurrence {
                     shared_with_merged_group: false,
                     matched_runs: Some(merge_overlapping_cores(&matched_runs)),
+                    exact_runs: Vec::new(),
                     token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
                     segments,
                     start_token_index: start,
@@ -2366,8 +2372,22 @@ fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrenc
                 .collect();
             merge_overlapping_cores(&runs)
         });
+    let exact_runs: Vec<(usize, usize)> = occurrences
+        .iter()
+        .flat_map(|occurrence| match occurrence.matched_runs {
+            Some(_) => &occurrence.exact_runs,
+            None => &occurrence.segments,
+        })
+        .copied()
+        .collect();
     CountedOccurrence {
         shared_with_merged_group: false,
+        // Without a near-miss part, the segments are matched throughout and say it all.
+        exact_runs: if matched_runs.is_some() {
+            merge_overlapping_cores(&exact_runs)
+        } else {
+            Vec::new()
+        },
         matched_runs,
         token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
         start_token_index: occurrences
@@ -2569,10 +2589,17 @@ fn collect_matched_lines(
             }
         }
     }
+    let exact_rows: FxHashSet<usize> = occurrence
+        .exact_runs
+        .iter()
+        .flat_map(|&(start, end)| &tokens[start..end])
+        .flat_map(|token| token.start_row + 1..=token.end_row + 1)
+        .collect();
     token_counts_by_row
         .into_iter()
         .filter(|(line, (matched_count, token_count))| {
-            code_line_numbers.contains(line) && matched_count * 2 > *token_count
+            code_line_numbers.contains(line)
+                && (matched_count * 2 > *token_count || exact_rows.contains(line))
         })
         .map(|(line, _)| line)
         .collect()

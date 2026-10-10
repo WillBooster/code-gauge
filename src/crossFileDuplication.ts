@@ -197,6 +197,9 @@ function coalesceOccurrences(parts: [CrossFileOccurrence, ...CrossFileOccurrence
     nestedInLargerGroup: undefined,
     segments,
     matchedRuns: mergeSegments(parts.flatMap((part) => part.matchedRuns ?? part.segments)),
+    exactSegments: mergeSegments(
+      parts.flatMap((part) => (part.matchedRuns ? (part.exactSegments ?? []) : part.segments))
+    ),
     tokenCount: segments.reduce((sum, segment) => sum + segment.endTokenIndex - segment.startTokenIndex, 0),
     startTokenIndex: Math.min(...parts.map((part) => part.startTokenIndex)),
     endTokenIndex: Math.max(...parts.map((part) => part.endTokenIndex)),
@@ -421,7 +424,8 @@ function collectOccurrenceLines(
     occurrence.segments.map((segment) => shift(segment, -fileData.offset)),
     occurrence.matchedRuns?.map((run) => shift(run, -fileData.offset)),
     fileData.tokens,
-    fileData.codeLineNumbers
+    fileData.codeLineNumbers,
+    occurrence.exactSegments?.map((segment) => shift(segment, -fileData.offset))
   );
   for (const line of lines) {
     fileLines.add(line);

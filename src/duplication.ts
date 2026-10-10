@@ -116,6 +116,11 @@ export interface CountedOccurrence {
    */
   matchedRuns?: TokenSegment[];
   /**
+   * The exact fragments coalesced into a near-miss copy: each line they reach is duplicated,
+   * whatever else of the copy shares the line.
+   */
+  exactSegments?: TokenSegment[];
+  /**
    * Set on occurrences whose span another reported group already counts: a retained group's
    * occurrences that a partial gapped merge also paired into a merged group, and cross-file copies
    * nested inside a larger group's region. Block counting must not count them again.
@@ -983,8 +988,17 @@ export function collectMatchedLines(
   segments: TokenSegment[],
   matchedRuns: TokenSegment[] | undefined,
   tokens: Token[],
-  codeLineNumbers: Set<number> | undefined
+  codeLineNumbers: Set<number> | undefined,
+  exactSegments: TokenSegment[] = []
 ): Set<number> {
+  const exactLines = new Set<number>();
+  for (const segment of exactSegments) {
+    for (const token of tokens.slice(segment.startTokenIndex, segment.endTokenIndex)) {
+      for (let row = token.startRow; row <= token.endRow; row += 1) {
+        exactLines.add(row + 1);
+      }
+    }
+  }
   const matchedCountByLine = new Map<number, number>();
   const tokenCountByLine = new Map<number, number>();
   let runIndex = 0;
@@ -1003,7 +1017,10 @@ export function collectMatchedLines(
   }
   const lines = new Set<number>();
   for (const [line, tokenCount] of tokenCountByLine) {
-    if ((!codeLineNumbers || codeLineNumbers.has(line)) && (matchedCountByLine.get(line) ?? 0) * 2 > tokenCount) {
+    if (
+      (!codeLineNumbers || codeLineNumbers.has(line)) &&
+      ((matchedCountByLine.get(line) ?? 0) * 2 > tokenCount || exactLines.has(line))
+    ) {
       lines.add(line);
     }
   }
