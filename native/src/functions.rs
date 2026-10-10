@@ -266,8 +266,13 @@ pub fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
 fn find_cpp_lambda_declaration<'t>(parent: Node<'t>, code: &Source<'_>) -> Option<Node<'t>> {
     match parent.kind_name() {
         "init_declarator" => Some(parent),
-        // A member initialized in its class (`auto pick = [] {};`) holds its value directly.
-        "field_declaration" if parent.child_by_field_name("default_value").is_some() => {
+        // A member initialized in its class (`Handler pick = [] {};`) holds its value directly. A
+        // declaration of several members pairs each with its value by position only, so it names
+        // nothing here.
+        "field_declaration"
+            if parent.child_by_field_name("default_value").is_some()
+                && find_children_by_field_name(parent, "declarator").len() == 1 =>
+        {
             Some(parent)
         }
         "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
