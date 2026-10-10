@@ -775,7 +775,12 @@ function secondShape(limit, step) {
       }).duplication;
       expect(duplicateLineNumbers.filter((line) => firstLine <= line && line <= lastLine).length).toBe(acrossLineCount);
     }
-    const acrossLineCount = measureJavaScriptFiles(sources).duplicateLineNumbersByFile['2.js']?.length;
+    const across = measureJavaScriptFiles(sources);
+    expect(across.groups.map((group) => group.files)).toEqual([
+      ['0.js', '1.js', '2.js'],
+      ['2.js', '3.js'],
+    ]);
+    const acrossLineCount = across.duplicateLineNumbersByFile['2.js']?.length;
 
     for (const order of [
       [0, 1, 2, 3],
@@ -1526,6 +1531,37 @@ describe('duplication: within-file statement runs and containers', () => {
     expect(metrics.duplication.duplicateLineNumbers).toEqual([
       5, 6, 7, 8, 9, 10, 11, 12, 22, 23, 24, 25, 26, 27, 28, 29,
     ]);
+  });
+
+  it('lists a run standing on its own with its copies inside two identical functions', () => {
+    // alpha and beta are identical, and gamma shares only their leading run: its surroundings keep
+    // it from being a copy of them as a whole. The copies of the run inside alpha and beta lie in
+    // the clone the two form; gamma's copy is still listed with them and counts its lines, as many
+    // as when the functions stand in three files, with and without near-miss detection.
+    const functions = [
+      `function alpha(items) {${embeddedRun('items', 'items')}${surroundingsA}\n}\n`,
+      `function beta(items) {${embeddedRun('items', 'items')}${surroundingsA}\n}\n`,
+      `function gamma(rows) {${embeddedRun('rows', 'rows')}${surroundingsB}\n}\n`,
+    ];
+    const code = functions.join('');
+    const gammaFirstLine = code.slice(0, code.indexOf('function gamma')).split('\n').length;
+
+    for (const duplication of [undefined, { minSimilarityPercent: 100, maxGapTokens: 0 }]) {
+      const across = measureJavaScriptFiles(
+        Object.fromEntries(functions.map((source, index) => [`${index}.js`, source])),
+        duplication
+      );
+      const within = measureCode(code, { language: 'javascript', duplication }).duplication;
+
+      expect(within.duplicateBlockGroups.map((group) => group.length)).toEqual([2, 3]);
+      const acrossLineCount = across.duplicateLineNumbersByFile['2.js']?.length;
+      expect(acrossLineCount).toBeGreaterThanOrEqual(8);
+      expect(within.duplicateLineNumbers.filter((line) => line >= gammaFirstLine)).toHaveLength(acrossLineCount ?? 0);
+      // beta duplicates alpha, and gamma the run; the copies of the run in alpha and beta are
+      // counted with those functions.
+      expect(within.duplicateBlockCount).toBe(2);
+      expect(across.duplicateBlockCount).toBe(2);
+    }
   });
 
   it('does not report a homogeneous run of identically shaped statements as a clone', () => {

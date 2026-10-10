@@ -1,12 +1,11 @@
 /**
  * Maximal, non-overlapping duplicate-group selection for the cross-file detector (the native
- * within-file detector mirrors its greedy ranking and shedding, but not the nested-copy retention
- * below, which is cross-file only). Candidates are grouped by fingerprint, ranked by total
- * coverage, kept greedily without overlapping a kept region, and groups that fall below the
- * survivor requirement are shed one at a time (largest first) so their regions stop blocking
- * smaller groups. A copy lying entirely inside a larger group's region stays with its group as a
- * nested copy (whichever group the greedy order kept first), so a standalone copy elsewhere is
- * still reported as duplicating it.
+ * within-file detector ports it as select_maximal_duplicates). Candidates are grouped by
+ * fingerprint, ranked by total coverage, kept greedily without overlapping a kept region, and
+ * groups that fall below the survivor requirement are shed (largest first) so their regions stop
+ * blocking smaller groups. A copy lying entirely inside a larger group's region stays with its
+ * group as a nested copy (whichever group the greedy order kept first), so a standalone copy
+ * elsewhere is still reported as duplicating it.
  */
 
 export interface SelectableRegion {
@@ -14,10 +13,7 @@ export interface SelectableRegion {
   tokenCount: number;
   startIndex: number;
   endIndex: number;
-  /**
-   * Regions can only overlap within the same bucket. The within-file detector uses one bucket;
-   * the cross-file detector buckets by file index.
-   */
+  /** Regions can only overlap within the same bucket: the file index. */
   regionBucket?: number;
   /**
    * Set by selectMaximalGroups on a copy nested inside a larger group's region: it is reported with
@@ -26,7 +22,10 @@ export interface SelectableRegion {
   nestedInLargerGroup?: boolean;
 }
 
-/** Caps how often the maximal-region selection reruns after shedding failed duplicate groups. */
+/**
+ * Caps how often the maximal-region selection reruns after shedding one failed duplicate group,
+ * and then how often after shedding every failed group at once.
+ */
 const maxSelectionRerunCount = 20;
 
 /**
@@ -59,8 +58,9 @@ export function selectMaximalGroups<T extends SelectableRegion>(
   // Greedy selection can keep a candidate whose group ends up below the survivor requirement;
   // such an uncounted region must not block smaller groups, so the largest failed group is
   // removed and the selection reruns. One group at a time: freeing a failed group's regions can
-  // rescue another. The rerun cap bounds degenerate inputs; past it the remaining failed groups
-  // are dropped, trading a sliver of recall on such files for bounded runtime.
+  // rescue another. Past the rerun cap, which bounds degenerate inputs, every failed group is
+  // removed at once, which converges in few passes; past the same cap again the remaining failed
+  // groups are dropped, trading a sliver of recall on such files for bounded runtime.
   for (let rerun = 0; ; rerun += 1) {
     const keptRegionsByBucket = new Map<number, T[]>();
     const counted = new Map<string, T[]>();
@@ -141,17 +141,22 @@ export function selectMaximalGroups<T extends SelectableRegion>(
     if (failedFingerprint === undefined) {
       return counted;
     }
-    if (rerun >= maxSelectionRerunCount) {
+    if (rerun >= 2 * maxSelectionRerunCount) {
       dropFailedGroups(counted, isSurvivingGroup);
       return counted;
     }
 
-    duplicates = duplicates.filter((candidate) => candidate.fingerprint !== failedFingerprint);
+    const failedFingerprints = new Set(
+      rerun < maxSelectionRerunCount
+        ? [failedFingerprint]
+        : [...counted].filter(([, group]) => !isSurvivingGroup(group)).map(([fingerprint]) => fingerprint)
+    );
+    duplicates = duplicates.filter((candidate) => !failedFingerprints.has(candidate.fingerprint));
   }
 }
 
 /**
- * Past the rerun cap, still-failing groups are dropped without another selection pass. A dropped
+ * Past the rerun caps, still-failing groups are dropped without another selection pass. A dropped
  * group's regions may have been what nested copies of surviving groups lay inside, and such a copy
  * would then be counted by no group at all, so those copies are dropped too and the shrunk groups
  * are re-checked until nothing changes.
