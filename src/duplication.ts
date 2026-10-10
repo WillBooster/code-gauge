@@ -994,8 +994,9 @@ export function collectMatchedLines(
 ): Set<number> {
   const exactLines = new Set<number>();
   for (const segment of exactSegments) {
-    for (const token of tokens.slice(segment.startTokenIndex, segment.endTokenIndex)) {
-      for (let row = token.startRow; row <= token.endRow; row += 1) {
+    for (let index = segment.startTokenIndex; index < segment.endTokenIndex; index += 1) {
+      const token = tokens[index];
+      for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
         exactLines.add(row + 1);
       }
     }

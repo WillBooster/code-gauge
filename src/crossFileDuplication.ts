@@ -162,11 +162,12 @@ function takeOverExactGroups(
       return excess < minTokens ? copy : undefined;
     };
     const fragmentsByCopy = new Map<CrossFileOccurrence, CrossFileOccurrence[]>();
-    const candidateIndexes = new Set(
-      copies.flatMap((copy) =>
-        copy.spanCountedElsewhere ? [...(exactGroupIndexesByFile.get(copy.fileIndex) ?? [])] : []
-      )
-    );
+    const candidateIndexes = new Set<number>();
+    for (const copy of copies) {
+      for (const groupIndex of (copy.spanCountedElsewhere && exactGroupIndexesByFile.get(copy.fileIndex)) || []) {
+        candidateIndexes.add(groupIndex);
+      }
+    }
     for (const groupIndex of [...candidateIndexes].toSorted((left, right) => left - right)) {
       const group = exactGroups[groupIndex] ?? [];
       const owners = group.map(copyOf);
@@ -177,7 +178,9 @@ function takeOverExactGroups(
       for (const [index, owner] of owners.entries()) {
         const fragment = group[index];
         if (owner && fragment) {
-          fragmentsByCopy.set(owner, [...(fragmentsByCopy.get(owner) ?? []), fragment]);
+          const fragments = fragmentsByCopy.get(owner) ?? [];
+          fragments.push(fragment);
+          fragmentsByCopy.set(owner, fragments);
         }
       }
     }
@@ -195,17 +198,20 @@ function takeOverExactGroups(
   // counts all of it: a larger clone enclosing the copy, which its fragments were nested in. A
   // smaller run left in place inside the copy counts its own repeats, not the copy.
   for (const copy of coalesced) {
-    copy.spanCountedElsewhere =
-      [...(exactGroupIndexesByFile.get(copy.fileIndex) ?? [])].some(
-        (groupIndex) =>
-          !taken.has(groupIndex) &&
-          exactGroups[groupIndex]?.some(
-            (occurrence) =>
-              !occurrence.spanCountedElsewhere &&
-              occurrence.startTokenIndex <= copy.startTokenIndex &&
-              copy.endTokenIndex <= occurrence.endTokenIndex
-          )
-      ) || undefined;
+    for (const groupIndex of exactGroupIndexesByFile.get(copy.fileIndex) ?? []) {
+      const enclosed =
+        !taken.has(groupIndex) &&
+        exactGroups[groupIndex]?.some(
+          (occurrence) =>
+            !occurrence.spanCountedElsewhere &&
+            occurrence.startTokenIndex <= copy.startTokenIndex &&
+            copy.endTokenIndex <= occurrence.endTokenIndex
+        );
+      if (enclosed) {
+        copy.spanCountedElsewhere = true;
+        break;
+      }
+    }
   }
   return [...exactGroups.filter((_, groupIndex) => !taken.has(groupIndex)), ...merged];
 }
