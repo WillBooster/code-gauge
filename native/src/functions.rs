@@ -393,7 +393,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // argument, and the constructor stores whatever it likes, so it names nothing.
     if node.kind_name() == "lambda_expression" {
         if let Some((_, declarator)) = find_cpp_lambda_declaration(parent, bound, code) {
-            return unwrap_declarator_name(declarator, code);
+            return unwrap_declarator_name(declarator, code).filter(|name| !name.is_empty());
         }
     }
 

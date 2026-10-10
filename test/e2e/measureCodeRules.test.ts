@@ -1209,6 +1209,8 @@ describe('owners of functions written as values', () => {
       'A|i',
     ]);
     expect(ownersOf('cpp', 'struct A { Handler f /* c */ = [] {}; };')).toEqual(['A|f']);
+    // A member without a name names nothing.
+    expect(ownersOf('cpp', 'struct A { Handler = [] {}; };')).toEqual(['-|-']);
     expect(
       ownersOf('cpp', 'struct Rules { static int (*pick)(int); }; int (*Rules::pick)(int) = [](int x) { return x; };')
     ).toEqual(['Rules|pick']);
