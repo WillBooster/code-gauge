@@ -1855,15 +1855,21 @@ fn collect_near_miss_groups(
         return Vec::new();
     }
 
-    // Reported-group indices whose occurrences overlap a token range: near-miss nodes covering
-    // such content anchor comparisons but are never re-reported.
+    // Reported-group indices whose occurrences' matched segments overlap a token range (the gap
+    // of a gapped clone is not reported content): near-miss nodes covering such content anchor
+    // comparisons but are never re-reported.
     let touched_groups_in = |start: usize, end: usize| -> Vec<usize> {
         reported_groups
             .iter()
             .enumerate()
             .filter(|(_, group)| {
                 group.iter().any(|occurrence| {
-                    occurrence.start_token_index < end && start < occurrence.end_token_index
+                    occurrence
+                        .segments
+                        .iter()
+                        .any(|&(segment_start, segment_end)| {
+                            segment_start < end && start < segment_end
+                        })
                 })
             })
             .map(|(group_index, _)| group_index)
