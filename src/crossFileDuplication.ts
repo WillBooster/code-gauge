@@ -164,7 +164,7 @@ function takeOverExactGroups(
     const fragmentsByCopy = new Map<CrossFileOccurrence, CrossFileOccurrence[]>();
     const candidateIndexes = new Set<number>();
     for (const copy of copies) {
-      for (const groupIndex of (copy.spanCountedElsewhere && exactGroupIndexesByFile.get(copy.fileIndex)) || []) {
+      for (const groupIndex of copy.spanCountedElsewhere ? (exactGroupIndexesByFile.get(copy.fileIndex) ?? []) : []) {
         candidateIndexes.add(groupIndex);
       }
     }

@@ -420,9 +420,11 @@ function createReportedTokenCounter(
   spans: { startTokenIndex: number; endTokenIndex: number }[]
 ): (start: number, end: number) => number {
   const merged = mergeOverlappingCores(spans.map((span) => [span.startTokenIndex, span.endTokenIndex]));
-  const coveredBefore: number[] = [0];
+  let covered = 0;
+  const coveredBefore = [0];
   for (const [start, end] of merged) {
-    coveredBefore.push((coveredBefore.at(-1) ?? 0) + end - start);
+    covered += end - start;
+    coveredBefore.push(covered);
   }
   const countBefore = (position: number): number => {
     let low = 0;
