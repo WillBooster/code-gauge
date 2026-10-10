@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use tree_sitter::Node;
 
 use crate::near_miss::{
-    Alignment, Block, CorePair, Matcher, PairMatch, FILTRATION_PERCENT, MAX_LENGTH_RATIO,
+    Block, CorePair, Matcher, PairMatch, TokenRuns, FILTRATION_PERCENT, MAX_LENGTH_RATIO,
 };
 use crate::tree_index::NodeExt;
 use crate::types::{
@@ -1815,7 +1815,8 @@ struct MatchEdge {
     left: usize,
     right: usize,
     cores: Option<CorePair>,
-    alignment: Alignment,
+    /// The token runs the pair matches, on the left and on the right.
+    matched_runs: (TokenRuns, TokenRuns),
 }
 
 impl MatchEdge {
@@ -1833,7 +1834,8 @@ impl MatchEdge {
 /// merged), each clustered with its own partners, so code no verified pair matched never counts
 /// as duplicated. A node overlapping a reported occurrence is an anchor: it joins its group at its
 /// own size, so the copies of a block are listed at the size they matched it, and is marked as
-/// counted elsewhere unless the group takes over the reported occurrences it overlaps.
+/// counted elsewhere unless the group takes over the reported occurrences it overlaps. An anchor
+/// still counts the lines its partners match outside those occurrences.
 fn collect_near_miss_groups(
     source: &TokenizedSource<'_>,
     settings: &DuplicationSettings,
@@ -1884,41 +1886,75 @@ fn collect_near_miss_groups(
         settings.min_similarity_percent,
     );
 
-    // Two spans that both overlap reported content have nothing new to contribute to each other.
-    // Their pair is dropped before clustering, so that it neither collapses the blocks' core nodes
-    // nor widens a node beyond what the pairs clustering it matched.
-    let is_touched = |(start, end): (usize, usize)| !touched_groups_in(start, end).is_empty();
-    let block_touched: Vec<bool> = comparable
-        .iter()
-        .map(|range| is_touched((range.start_token_index, range.end_token_index)))
-        .collect();
+    // The lines of a near-miss copy that are duplicated are those a verified partner matches,
+    // which takes the pairing itself. Every pair kept is aligned: verifying it already cost a longest
+    // common subsequence of the same sequences, and any choice among a copy's partners would let
+    // their number or their order decide what the copy counts.
+    //
+    // Two spans that both overlap reported content repeat what it reports unless they match more
+    // outside it: at least `min_tokens` on one side, the size below which no clone is reported.
+    // A pair matching less is dropped before clustering, so that it neither collapses the blocks'
+    // core nodes nor widens a node beyond what the pairs clustering it matched.
+    let mut reported_prefix = vec![0usize; tokens.len() + 1];
+    {
+        let mut reported = vec![false; tokens.len()];
+        for occurrence in reported_groups.iter().flatten() {
+            for &(start, end) in &occurrence.segments {
+                reported[start..end].fill(true);
+            }
+        }
+        for (index, &flag) in reported.iter().enumerate() {
+            reported_prefix[index + 1] = reported_prefix[index] + usize::from(flag);
+        }
+    }
+    let reported_count =
+        |(start, end): (usize, usize)| reported_prefix[end] - reported_prefix[start];
+    let unreported_count = |runs: &[(usize, usize)]| -> usize {
+        runs.iter()
+            .map(|&run| run.1 - run.0 - reported_count(run))
+            .sum()
+    };
+    let block_span = |index: usize| {
+        (
+            comparable[index].start_token_index,
+            comparable[index].end_token_index,
+        )
+    };
     let mut edges: Vec<MatchEdge> = Vec::new();
+    let mut add_edge = |left: usize, right: usize, cores: Option<CorePair>, alignment| {
+        let (left_span, right_span) = cores.unwrap_or((block_span(left), block_span(right)));
+        let both_reported = reported_count(left_span) > 0 && reported_count(right_span) > 0;
+        // Spans with too little outside reported content need no alignment to be dropped.
+        if both_reported
+            && unreported_count(&[left_span]) < settings.min_tokens
+            && unreported_count(&[right_span]) < settings.min_tokens
+        {
+            return;
+        }
+        let matched_runs =
+            matcher.align(&blocks[left], &blocks[right], cores, alignment, &token_keys);
+        if both_reported
+            && unreported_count(&matched_runs.0) < settings.min_tokens
+            && unreported_count(&matched_runs.1) < settings.min_tokens
+        {
+            return;
+        }
+        edges.push(MatchEdge {
+            left,
+            right,
+            cores,
+            matched_runs,
+        });
+    };
     for_each_candidate_pair(
         &blocks,
         settings.min_similarity_percent,
         |left_index, right_index| match matcher.verify(&blocks[left_index], &blocks[right_index]) {
             None => {}
-            Some(PairMatch::Whole(alignment))
-                if !(block_touched[left_index] && block_touched[right_index]) =>
-            {
-                edges.push(MatchEdge {
-                    left: left_index,
-                    right: right_index,
-                    cores: None,
-                    alignment,
-                })
-            }
-            Some(PairMatch::Whole(_)) => {}
+            Some(PairMatch::Whole(alignment)) => add_edge(left_index, right_index, None, alignment),
             Some(PairMatch::Local(cores)) => {
                 for (core_pair, alignment) in cores {
-                    if !(is_touched(core_pair.0) && is_touched(core_pair.1)) {
-                        edges.push(MatchEdge {
-                            left: left_index,
-                            right: right_index,
-                            cores: Some(core_pair),
-                            alignment,
-                        });
-                    }
+                    add_edge(left_index, right_index, Some(core_pair), alignment);
                 }
             }
         },
@@ -2006,21 +2042,10 @@ fn collect_near_miss_groups(
         parent[left_root.max(right_root)] = left_root.min(right_root);
     }
 
-    // The lines of a near-miss copy that are duplicated are those a verified partner matches,
-    // which takes the pairing itself. Every pair is aligned: verifying it already cost a longest
-    // common subsequence of the same sequences, and any choice among a copy's partners would let
-    // their number or their order decide what the copy counts.
     let mut matched_runs_by_node: Vec<Vec<(usize, usize)>> = vec![Vec::new(); node_blocks.len()];
     for (edge, nodes) in edges.iter().zip(&edge_nodes) {
-        let (left_runs, right_runs) = matcher.align(
-            &blocks[edge.left],
-            &blocks[edge.right],
-            edge.cores,
-            edge.alignment,
-            &token_keys,
-        );
-        matched_runs_by_node[nodes[0]].extend(left_runs);
-        matched_runs_by_node[nodes[1]].extend(right_runs);
+        matched_runs_by_node[nodes[0]].extend(&edge.matched_runs.0);
+        matched_runs_by_node[nodes[1]].extend(&edge.matched_runs.1);
     }
 
     let mut members_by_root: IndexMap<usize, Vec<usize>> = IndexMap::new();
@@ -2106,17 +2131,35 @@ fn collect_near_miss_groups(
             }
             continue;
         }
-        if uncovered.is_empty() {
+        if members.iter().all(|&node| {
+            let (start, end) = node_range(node);
+            reported_count((start, end)) == end - start
+        }) {
             continue;
         }
-        // An anchored cluster extends a reported group only when every occurrence of that group
-        // overlaps one of the cluster's member nodes: an occurrence disjoint from all members
-        // reports content the cluster does not share.
-        let overlaps_member = |occurrence: &CountedOccurrence| {
-            members.iter().any(|&index| {
-                let (start, end) = node_range(index);
-                occurrence.start_token_index < end && start < occurrence.end_token_index
-            })
+        // An anchored cluster extends a reported group only when it stands for the same copies:
+        // every occurrence of the group overlaps the member nodes of exactly one block (one
+        // disjoint from all members reports content the cluster does not share, and one reaching
+        // into two members would make one copy take over lines of the next), and shares that
+        // block with no other occurrence of the group (those repeat within the copy, not between
+        // the copies).
+        let member_block_of = |occurrence: &CountedOccurrence| {
+            let mut blocks = members
+                .iter()
+                .filter(|&&index| {
+                    let (start, end) = node_range(index);
+                    occurrence.start_token_index < end && start < occurrence.end_token_index
+                })
+                .map(|&index| node_blocks[index]);
+            let block = blocks.next()?;
+            blocks.all(|other| other == block).then_some(block)
+        };
+        let stands_for_members = |group: &[CountedOccurrence]| {
+            let mut blocks: FxHashSet<usize> = FxHashSet::default();
+            !group.is_empty()
+                && group.iter().all(|occurrence| {
+                    member_block_of(occurrence).is_some_and(|block| blocks.insert(block))
+                })
         };
         // Ascending by construction: BTreeSet iteration is sorted and filter preserves order.
         let fully_clustered: Vec<usize> = covered
@@ -2124,16 +2167,12 @@ fn collect_near_miss_groups(
             .flat_map(|&index| touched_groups_of(index).iter().copied())
             .collect::<std::collections::BTreeSet<usize>>()
             .into_iter()
-            .filter(|&group_index| {
-                let group = &reported_groups[group_index];
-                !group.is_empty() && group.iter().all(&overlaps_member)
-            })
+            .filter(|&group_index| stands_for_members(&reported_groups[group_index]))
             .collect();
         if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
             // Rebuild the component as ONE group with one coalesced occurrence per member block:
-            // the fragments every node of a block overlaps are collected together, since a block's
+            // the fragments the nodes of a block overlap are collected together, since a block's
             // cores are parts of one copy.
-            let mut consumed: FxHashSet<(usize, usize)> = FxHashSet::default();
             let mut merged: Vec<CountedOccurrence> = Vec::new();
             let mut unanchored_nodes: Vec<usize> = Vec::new();
             let mut anchor_nodes: Vec<usize> = Vec::new();
@@ -2145,26 +2184,18 @@ fn collect_near_miss_groups(
                     .push(member_index);
             }
             for block_nodes in nodes_by_block.values() {
-                // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
-                // groups belong to the same copy. Consecutive position-order slices keep the
-                // coalesced spans disjoint.
-                let mut fragments: Vec<(CountedOccurrence, usize)> = Vec::new();
-                for &node in block_nodes {
-                    let (range_start, range_end) = node_range(node);
-                    for &group_index in &fully_clustered {
-                        for (occurrence_index, occurrence) in
-                            reported_groups[group_index].iter().enumerate()
-                        {
-                            if !consumed.contains(&(group_index, occurrence_index))
-                                && occurrence.start_token_index < range_end
-                                && range_start < occurrence.end_token_index
-                            {
-                                consumed.insert((group_index, occurrence_index));
-                                fragments.push((occurrence.clone(), group_index));
-                            }
-                        }
-                    }
-                }
+                let overlaps_block_node = |occurrence: &&CountedOccurrence| {
+                    block_nodes.iter().any(|&node| {
+                        let (start, end) = node_range(node);
+                        occurrence.start_token_index < end && start < occurrence.end_token_index
+                    })
+                };
+                let mut fragments: Vec<CountedOccurrence> = fully_clustered
+                    .iter()
+                    .flat_map(|&group_index| &reported_groups[group_index])
+                    .filter(overlaps_block_node)
+                    .cloned()
+                    .collect();
                 if fragments.is_empty() {
                     let (anchors, plain): (Vec<usize>, Vec<usize>) = block_nodes
                         .iter()
@@ -2174,27 +2205,9 @@ fn collect_near_miss_groups(
                     continue;
                 }
                 // The block's nodes are part of the same copy as its fragments: a block matched
-                // beyond the fragments it holds is a copy at that size. A group index no reported
-                // group uses keeps them in that copy.
-                for occurrence in to_occurrences(block_nodes) {
-                    fragments.push((occurrence, usize::MAX));
-                }
-                fragments.sort_by_key(|(occurrence, _)| {
-                    (occurrence.start_token_index, occurrence.end_token_index)
-                });
-                let mut copy_parts: Vec<CountedOccurrence> = Vec::new();
-                let mut copy_groups: FxHashSet<usize> = FxHashSet::default();
-                for (occurrence, group_index) in fragments {
-                    if copy_groups.contains(&group_index) {
-                        merged.push(coalesce_occurrences(std::mem::take(&mut copy_parts)));
-                        copy_groups.clear();
-                    }
-                    copy_parts.push(occurrence);
-                    copy_groups.insert(group_index);
-                }
-                if !copy_parts.is_empty() {
-                    merged.push(coalesce_occurrences(copy_parts));
-                }
+                // beyond the fragments it holds is a copy at that size.
+                fragments.extend(to_occurrences(block_nodes));
+                merged.push(coalesce_occurrences(fragments));
             }
             merged.extend(to_occurrences(&unanchored_nodes));
             // The rebuild consumed every fully-clustered group, so shared-span marks from earlier

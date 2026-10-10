@@ -413,7 +413,10 @@ The `duplication` section tunes how clones are detected:
   threshold below 34% widens this to whatever the threshold allows): the chain of n-grams unique to
   both blocks (only those continuing a diagonal run) is split at gaps of more than 30 tokens, each
   segment must pass the same threshold on its own, and the verified cores, not the whole blocks,
-  are reported. `100` disables near-miss detection. Applies to within-file detection and to cross-file matching alike; across files,
+  are reported. A block that holds a clone already reported is compared too: two such blocks are
+  listed as copies of each other when they match at least `minTokens` tokens outside those clones
+  on one side, so an edited copy counts what it shares with identical copies beside it.
+  `100` disables near-miss detection. Applies to within-file detection and to cross-file matching alike; across files,
   n-grams shared by more than 1000 blocks (syntax boilerplate) are left out of the filtration index
   so boilerplate cannot make candidate counting quadratic in the block count.
 

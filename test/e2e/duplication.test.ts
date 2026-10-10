@@ -215,8 +215,8 @@ describe('duplication: partial gapped-clone merging', () => {
     // alpha repeats the prefix run AFTER its suffix, so the prefix group (x3: alpha start, beta,
     // alpha tail) survives a partial merge alongside the merged gapped group (alpha, beta), and
     // the two OVERLAP. delta is a near-miss copy of alpha and beta as wholes, so the anchored
-    // rebuild coalesces each function with both groups' fragments in it: overlapping parts must
-    // union, not concatenate, into ONE fragment per copy.
+    // rebuild coalesces each function with the merged group's fragments in it into ONE fragment
+    // per copy. The prefix group repeats within alpha, so it stays a group of its own.
     const longSuffix = `${suffixHalf.replace('  return total + count + big - small;\n', '')}  let more = 0;
   for (const item of items) {
     if (item.flagged) {
@@ -231,14 +231,16 @@ describe('duplication: partial gapped-clone merging', () => {
       .replace('function beta', 'function delta')
       .replaceAll('total = total + item.amount', 'total = total - item.amount')
       .replaceAll('small = small + 1', 'small = small - 1');
-    const metrics = measureCode(alpha + beta + delta, { language: 'javascript' });
+    for (const code of [alpha + beta + delta, delta + beta + alpha, beta + alpha + delta]) {
+      const metrics = measureCode(code, { language: 'javascript' });
 
-    expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
-    expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(4);
-    // The three functions and alpha's second copy of the prefix, one fragment each: all but one.
-    expect(metrics.duplication.duplicateBlockCount).toBe(3);
-    // The largest occurrence is alpha's whole block, each of its tokens counted once.
-    expect(metrics.duplication.maxDuplicateBlockSize).toBe(182);
+      // The three functions, and the three exact copies of the prefix.
+      expect(metrics.duplication.duplicateBlockGroups.map((group) => group.length)).toEqual([3, 3]);
+      // Two redundant functions and alpha's second copy of the prefix.
+      expect(metrics.duplication.duplicateBlockCount).toBe(3);
+      // The largest occurrence is alpha's whole block, each of its tokens counted once.
+      expect(metrics.duplication.maxDuplicateBlockSize).toBe(182);
+    }
   });
 
   // Cross-file nested copies (inside a larger group's region) are not copies of a merged span: they
@@ -658,10 +660,9 @@ function secondShape(limit, step) {
     }
   });
 
-  it('keeps a block-internal self-clone as separate copies when a near-miss sibling joins', () => {
-    // Two occurrences of the SAME exact group are distinct copies (a repeated run inside one
-    // function); anchoring a similar sibling must add a third occurrence, not collapse the two
-    // internal copies into one span.
+  it('keeps a block-internal self-clone as a group of its own when a near-miss sibling joins', () => {
+    // A run repeated inside one function and that function's similar sibling are two things to
+    // extract: the sibling must neither join the run's copies nor collapse them into one span.
     const selfClone = `function alpha(input) {${selfCloneRun('A', 'input')}${selfCloneRun('B', 'input')}}\n`;
     const sibling = `function beta(value) {${selfCloneRun('C', 'value')}${selfCloneRun('D', 'value')}}\n`
       .replaceAll('report(secondC - firstC)', 'report(secondC * firstC)')
@@ -670,10 +671,57 @@ function secondShape(limit, step) {
     const alone = measureCode(selfClone, { language: 'javascript' });
     const withSibling = measureCode(selfClone + sibling, { language: 'javascript' });
 
-    expect(alone.duplication.duplicateBlockGroups[0]?.length).toBe(2);
-    expect(withSibling.duplication.duplicateBlockGroupCount).toBe(1);
-    expect(withSibling.duplication.duplicateBlockGroups[0]?.length).toBe(3);
+    const spans = [alone, withSibling].map(({ duplication }) =>
+      duplication.duplicateBlockGroups.map((group) => group.map((copy) => `${copy.startLine}-${copy.endLine}`))
+    );
+    expect(spans).toEqual([
+      [['2-9', '11-18']],
+      [
+        ['1-19', '20-38'],
+        ['2-9', '11-18'],
+      ],
+    ]);
     expect(withSibling.duplication.duplicateBlockCount).toBe(2);
+  });
+
+  it('counts what an edited copy shares with identical copies when it also holds another clone', () => {
+    // alpha and beta are identical; gamma replaces their middle statement with a run pasted from
+    // `other`. gamma thus overlaps a reported clone (the run) just as alpha and beta do (each
+    // other), and must still be listed with them and count the lines it shares with them: as many
+    // lines as when the four functions stand in four files, in every source order.
+    const family = (name: string, middleStatement: string): string =>
+      logicClone(name, middleStatement).replace(
+        '  return total',
+        '  const ratio = count === 0 ? 0 : total / count;\n  notify(items.length, ratio, Math.max(big, small));\n  return total'
+      );
+    const functions = [
+      family('alpha', 'console.log("midpoint", total);'),
+      family('beta', 'console.log("midpoint", total);'),
+      family('gamma', selfCloneRun('A', 'items').trim()),
+      `function other(input) {${selfCloneRun('B', 'input')}}\n`,
+    ];
+    const gamma = functions[2] ?? '';
+    const across = measureJavaScriptFiles(Object.fromEntries(functions.map((code, index) => [`${index}.js`, code])));
+    const acrossLineCount = across.duplicateLineNumbersByFile['2.js']?.length ?? 0;
+    expect(acrossLineCount).toBeGreaterThan(20);
+
+    for (const order of [
+      [0, 1, 2, 3],
+      [2, 3, 0, 1],
+      [3, 0, 2, 1],
+    ]) {
+      const code = order.map((index) => functions[index]).join('');
+      const firstLine = code.slice(0, code.indexOf(gamma)).split('\n').length;
+      const lastLine = firstLine + gamma.trimEnd().split('\n').length - 1;
+      const { duplication } = measureCode(code, { language: 'javascript' });
+
+      expect(
+        duplication.duplicateBlockGroups.map((group) => group.length).toSorted((left, right) => left - right)
+      ).toEqual([2, 3]);
+      expect(duplication.duplicateLineNumbers.filter((line) => firstLine <= line && line <= lastLine).length).toBe(
+        acrossLineCount
+      );
+    }
   });
 
   it('detects clones nested inside a single enclosing wrapper', () => {
