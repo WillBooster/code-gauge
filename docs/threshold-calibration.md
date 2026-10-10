@@ -347,8 +347,8 @@ groups separate no better than by its span:
 | 30 or more                   |     5 | 60% |    80% |
 
 The limit stays at 15: of the rated groups reaching it, 71% are A or B in matched lines (22 of 31),
-69% in line span (25 of 36), and a lower limit raises that share by three points at most (74% from 13,
-68% from 10) while a limit of 10 reports almost two and a half times the blocks. The same limit in matched lines
+69% in line span (25 of 36), and a lower limit raises that share by three points at most (74% from 13)
+and lowers it further down (68% from 10), while a limit of 10 reports almost two and a half times the blocks. The same limit in matched lines
 reports a quarter fewer blocks; those dropped are the ones that reached 15 lines only through their
 comments, their blank lines, and the lines their copies do not share.
 
