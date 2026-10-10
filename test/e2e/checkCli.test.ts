@@ -204,6 +204,64 @@ export function withVisitor(View: VisitorViewComponent): VisitorHandler {
 }
 `;
 
+/** Three functions: the first holds, back to back, a part the second repeats and a part the third repeats. */
+const stitchedFunctions = `export async function syncAccount(client: Client, accountId: string): Promise<Report> {
+  const account = await client.accounts.fetch(accountId);
+  const invoices = await client.invoices.list({ account: account.id, status: 'open' });
+  const overdue = invoices.filter((invoice) => invoice.dueAt < Date.now());
+  const balance = overdue.reduce((sum, invoice) => sum + invoice.amount, 0);
+  const contact = account.contacts.find((entry) => entry.primary) ?? account.contacts[0];
+  const reminder = buildReminder(contact, balance, account.locale);
+  await client.mail.send(contact.address, reminder.subject, reminder.body);
+  const receipt = await client.audit.record('reminder', account.id, balance);
+  const history = await client.audit.list({ account: account.id, limit: 20 });
+  const repeated = history.filter((entry) => entry.kind === 'reminder').length;
+  return { balance, receipt, repeated };
+}
+
+export async function remindContact(client: Client, contactId: string): Promise<void> {
+  const profile = await client.contacts.fetch(contactId);
+  const account = await client.accounts.fetch(profile.accountId);
+  const invoices = await client.invoices.list({ account: account.id, status: 'unpaid', sort: 'dueAt' });
+  const overdue = invoices.filter((invoice) => invoice.dueAt < Date.now());
+  const balance = overdue.reduce((sum, invoice) => sum + invoice.amount * invoice.rate, 0);
+  const contact = account.contacts.find((entry) => entry.primary) ?? account.contacts[0];
+  logger.info('balance computed', profile.id, contact.id, balance);
+}
+
+export async function auditAccount(client: Client, token: Token): Promise<Report> {
+  const session = await client.sessions.open(token);
+  const account = session.account;
+  const balance = session.balance;
+  const reminder = buildReminder(account.owner, balance, account.locale);
+  await client.mail.send(account.owner.address, reminder.subject, reminder.body);
+  const receipt = await client.audit.record('reminder', account.id, balance);
+  const history = await client.audit.list({ account: account.id, limit: 50, order: 'desc' });
+  const repeated = history.filter((entry) => entry.kind === 'reminder').length;
+  return { balance, receipt, repeated };
+}
+`;
+
+/** One function whose \`else if\` branches are copies of each other, each sharing a line with the next. */
+const branchChain = `export async function dispatch(kind: string, context: Context) {
+  ${['alpha', 'beta', 'gamma']
+    .map(
+      (kind) => `if (kind === '${kind}') {
+    const record = await loadRecord(context, '${kind}Key');
+    const owner = record.owner ?? context.fallbackOwner;
+    const amount = record.entries.reduce((sum, entry) => sum + entry.amount, 0);
+    const label = formatLabel(owner.name, amount, context.locale);
+    const tags = record.tags.filter((tag) => tag.visible).map((tag) => tag.name);
+    await notify(owner, { amount, label, tags });
+    audit.push({ amount, kind, label, owner: owner.id });
+    return { amount, label, owner, tags };
+  }`
+    )
+    .join(' else ')}
+  return undefined;
+}
+`;
+
 /** The report of a check of a directory outside a git repository that holds the given files. */
 function checkProject(args: string[], files: Record<string, string>): string {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-project-'));
@@ -395,8 +453,8 @@ ep\`](value: number): number {
     const more = runCheck(['src/more.cpp']).stdout;
     expect(more).toContain('src/more.cpp:1-1 a::b.near: parameters 7 (max 6)\n');
     expect(more).toContain('src/more.cpp:2-2 a::b::Plain.spelled: parameters 7 (max 6)\n');
-    // A lambda is a value: it keeps the name of what it is bound to and takes no owner.
-    expect(more).toContain('src/more.cpp:3-3 bound: parameters 7 (max 6)\n');
+    // A lambda is a member of the namespace declaring the variable it is bound to.
+    expect(more).toContain('src/more.cpp:3-3 values.bound: parameters 7 (max 6)\n');
     expect(more).toContain('src/more.cpp:5-5 ns::Box.put: parameters 7 (max 6)\n');
     // An inline namespace adds nothing, as a definition outside it spells none.
     expect(more).toContain('src/more.cpp:7-7 lib::Thing.in: parameters 7 (max 6)\n');
@@ -419,22 +477,22 @@ ep\`](value: number): number {
     );
   });
 
-  it('names a function written as a value by what it is bound to, without an owner', () => {
+  it('names a function written as the value of a field with the class declaring the field', () => {
     writeSource(
       'src/Values.java',
       'class Values {\n  Seven member = (a, b, c, d, e, f, g) -> a;\n  int method(int a, int b, int c, int d, int e, int f, int g) { return a; }\n}\ninterface Seven { int apply(int a, int b, int c, int d, int e, int f, int g); }\n'
     );
     const { stdout } = runCheck(['src/Values.java']);
-    expect(stdout).toContain('src/Values.java:2-2 member: parameters 7 (max 6)\n');
+    expect(stdout).toContain('src/Values.java:2-2 Values.member: parameters 7 (max 6)\n');
     expect(stdout).toContain('src/Values.java:3-3 Values.method: parameters 7 (max 6)\n');
   });
 
-  it('leaves a method of an object literal in a class unqualified', () => {
+  it('names a method of an object literal with the path the object is bound to', () => {
     writeSource(
       'src/outer.ts',
       'export class Outer {\n  value = {\n    run(a: number, b: number, c: number, d: number, e: number, f: number, g: number) {\n      return a;\n    },\n  };\n}\n'
     );
-    expect(runCheck(['src/outer.ts']).stdout).toContain('src/outer.ts:3-5 run: parameters 7 (max 6)\n');
+    expect(runCheck(['src/outer.ts']).stdout).toContain('src/outer.ts:3-5 Outer.value.run: parameters 7 (max 6)\n');
   });
 
   it('names a Ruby singleton method with the object it is defined on', () => {
@@ -551,8 +609,14 @@ ep\`](value: number): number {
           endLine: 21,
           name: 'decide',
           exceeded: [
-            { metric: 'functionCognitiveComplexity', value: 24, level: 'warning', limit: 15 },
-            { metric: 'functionNestingDepth', value: 5, level: 'warning', limit: 4 },
+            {
+              metric: 'functionCognitiveComplexity',
+              label: 'cognitive complexity',
+              value: 24,
+              level: 'warning',
+              limit: 15,
+            },
+            { metric: 'functionNestingDepth', label: 'nesting depth', value: 5, level: 'warning', limit: 4 },
           ],
           largestBlocks: [
             { startLine: 4, endLine: 10, cognitiveComplexity: 12 },
@@ -566,7 +630,7 @@ ep\`](value: number): number {
           file: 'src/report.ts',
           startLine: 1,
           endLine: 12,
-          exceeded: [{ metric: 'duplicateLines', value: 12, level: 'warning', limit: 10 }],
+          exceeded: [{ metric: 'duplicateLines', label: 'duplicated lines', value: 12, level: 'warning', limit: 10 }],
           partners: [{ file: 'src/summary.ts', startLine: 1, endLine: 12 }],
         },
         {
@@ -575,7 +639,7 @@ ep\`](value: number): number {
           file: 'src/summary.ts',
           startLine: 1,
           endLine: 12,
-          exceeded: [{ metric: 'duplicateLines', value: 12, level: 'warning', limit: 10 }],
+          exceeded: [{ metric: 'duplicateLines', label: 'duplicated lines', value: 12, level: 'warning', limit: 10 }],
           partners: [{ file: 'src/report.ts', startLine: 1, endLine: 12 }],
         },
       ],
@@ -593,7 +657,7 @@ ep\`](value: number): number {
         file: 'src/calc.ts',
         startLine: 1,
         endLine: 7,
-        exceeded: [{ metric: 'fileNcss', value: 5, level: 'warning', limit: 4 }],
+        exceeded: [{ metric: 'fileNcss', label: 'file NCSS', value: 5, level: 'warning', limit: 4 }],
       },
     ]);
     expect(runCheck(['--warning-max-file-ncss', '4', 'src/calc.ts']).stdout).toContain(
@@ -858,12 +922,63 @@ warning: original.ts:2-11: duplicated lines 10 (max 4), also at edited.ts:2-12
     );
   });
 
-  it('locates a block by the parts of its copies when the copy matched as a whole is not known', () => {
-    // withVisitor resembles withMember as a whole, but withMember is listed as the lines it shares
-    // exactly with withFrame, the only copies the block's clone group names.
-    expect(checkProject([], { 'wrappers.tsx': wrapperFunctions })).toContain(
-      'warning: wrappers.tsx:50-72: duplicated lines 21 (max 14), also at wrappers.tsx:6-13, wrappers.tsx:28-35\n'
+  it('lists a copy that shares lines exactly with another block at the size it resembles the block', () => {
+    // withVisitor resembles withFrame and withMember as wholes, which also share their middle
+    // lines exactly with each other.
+    expect(checkProject([], { 'wrappers.tsx': wrapperFunctions })).toContain(`
+warning: wrappers.tsx:1-21: duplicated lines 17 (max 14), also at wrappers.tsx:23-48, wrappers.tsx:50-72
+warning: wrappers.tsx:23-48: duplicated lines 24 (max 14), also at wrappers.tsx:50-72, wrappers.tsx:1-21
+warning: wrappers.tsx:50-72: duplicated lines 20 (max 14), also at wrappers.tsx:23-48, wrappers.tsx:1-21
+`);
+  });
+
+  it('locates a block by the places repeating its parts when none copies it as a whole', () => {
+    expect(checkProject(['--warning-min-duplicate-lines', '10'], { 'stitched.ts': stitchedFunctions })).toContain(
+      'warning: stitched.ts:2-13: duplicated lines 12 (max 9), also at stitched.ts:28-35, stitched.ts:17-21\n'
     );
+  });
+
+  it('does not count the lines a near-miss copy adds as duplicated, in one file or across files', () => {
+    const original = reportFunction('original');
+    const edited = reportFunction('edited')
+      .replace('  const shifted =', '  audit.scaled = scaled;\n  const shifted =')
+      .replace('  const rounded =', '  audit.clamped = clamped;\n  const rounded =')
+      .replace('  return weighted', '  audit.weighted = weighted;\n  return weighted');
+    // Without gapped merging and with a minimum above the runs between the added lines, only the
+    // resemblance of the functions as wholes matches them.
+    const args = ['--duplication-max-gap-tokens', '0', '--duplication-min-tokens', '100'];
+    // Of a two-token line, the separator alone pairs with one of the other copy.
+    const stopped = reportFunction('edited').replaceAll(
+      /^ {2}const (?:scaled|shifted|rounded) =/gmu,
+      '  debugger;\n$&'
+    );
+    const layouts: Record<string, string>[] = [
+      { 'edited.ts': edited, 'original.ts': original },
+      { 'both.ts': `${edited}\n${original}` },
+      { 'edited.ts': stopped, 'original.ts': original },
+      { 'both.ts': `${stopped}\n${original}` },
+    ];
+    for (const files of layouts) {
+      const report = (limit: number): string =>
+        checkProject([...args, '--warning-min-duplicate-lines', String(limit)], files);
+      expect(report(12).match(/duplicated lines 12 /gu)).toHaveLength(2);
+      expect(report(13)).toMatch(/^No threshold violations/u);
+    }
+  });
+
+  it('reports a block another file copies as one block, whatever copies of each other it holds', () => {
+    const report = checkProject(['--warning-min-duplicate-lines', '8'], { 'a.ts': branchChain, 'b.ts': branchChain });
+    expect(report).toContain('warning: a.ts:1-31: duplicated lines 31 (max 7), also at b.ts:1-31\n');
+    expect(report).toContain('warning: b.ts:1-31: duplicated lines 31 (max 7), also at a.ts:1-31\n');
+    expect(report).toContain('2 duplicated blocks');
+  });
+
+  it('reports copies of each other that share a line as blocks of their own', () => {
+    expect(checkProject(['--warning-min-duplicate-lines', '8'], { 'chain.ts': branchChain })).toContain(`
+warning: chain.ts:2-11: duplicated lines 10 (max 7), also at chain.ts:11-20, chain.ts:20-29
+warning: chain.ts:11-20: duplicated lines 10 (max 7), also at chain.ts:2-11, chain.ts:20-29
+warning: chain.ts:20-29: duplicated lines 10 (max 7), also at chain.ts:2-11, chain.ts:11-20
+`);
   });
 
   it('exits 2 with --base', () => {

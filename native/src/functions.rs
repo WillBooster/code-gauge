@@ -14,7 +14,12 @@ const BODY_REQUIRED_FUNCTION_TYPES: &[&str] = &[
     "function_definition",
     "function_declaration",
     "method_declaration",
+    "conditional_method_declaration",
     "constructor_declaration",
+    "destructor_declaration",
+    "operator_declaration",
+    "conversion_operator_declaration",
+    "local_function_statement",
     "compact_constructor_declaration",
     "function_signature_item",
     "accessor_declaration",
@@ -140,6 +145,7 @@ fn is_void_parameter(node: Node<'_>, code: &Source<'_>) -> bool {
 }
 
 fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
+    let node = find_conditional_signature(node).unwrap_or(node);
     if let Some(direct) = node.child_by_field_name("parameters") {
         return Some(direct);
     }
@@ -250,7 +256,7 @@ fn wrapped_transparent_value(wrapper: Node<'_>) -> Option<Node<'_>> {
 /// Climbs from a value through the transparent wrappers around it (`(() => 1)`, `(() => 2) as Fn`,
 /// `<Fn>(() => 3)`, Rust `(|x| x) as fn(i32) -> i32`) to the outermost one, whose binding site
 /// names the value.
-fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
+pub fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     let mut bound = node;
     while let Some(wrapper) = bound.parent_node().filter(|wrapper| {
         wrapped_transparent_value(*wrapper).is_some_and(|value| value.id() == bound.id())
@@ -260,7 +266,94 @@ fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     bound
 }
 
+/// The declaration whose variable or field is the C++ lambda `value` held by `parent`, with the
+/// declarator naming it.
+fn find_cpp_lambda_declaration<'t>(
+    parent: Node<'t>,
+    value: Node<'_>,
+    code: &Source<'_>,
+) -> Option<(Node<'t>, Option<Node<'t>>)> {
+    let declaration = match parent.kind_name() {
+        "init_declarator" => Some(parent),
+        // A member initialized in its class (`Handler pick = [] {};`) holds its value directly, and
+        // a declaration of several members each value after the member it initializes.
+        "field_declaration" => {
+            let mut declarator = None;
+            for index in 0..parent.child_count() {
+                let child = parent.child(index)?;
+                if child.id() == value.id() {
+                    return Some((parent, declarator));
+                }
+                if parent.field_name_for_child(index) == Some("declarator") && !child.is_extra() {
+                    declarator = Some(child);
+                }
+            }
+            None
+        }
+        "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
+            .parent_node()
+            .filter(|holder| holder.kind_name() == "init_declarator")
+            .filter(|holder| declares_deduced_type(*holder))
+            // `auto f = {[] {}}` deduces a list holding the closure, not the closure itself;
+            // only the direct form `auto f{[] {}}` makes the variable the closure.
+            .filter(|holder| {
+                parent.kind_name() == "argument_list"
+                    || !all_children(*holder)
+                        .iter()
+                        .any(|child| !child.is_named() && node_text(*child, code) == "=")
+            }),
+        _ => None,
+    }?;
+    Some((declaration, declaration.child_by_field_name("declarator")))
+}
+
+/// The node binding a function written as a value and the value it holds, through the forms
+/// find_function_name names the function by: transparent wrappers, the label or annotation of a
+/// Kotlin lambda, the `lambda`/`proc` call around a Ruby block, and the C++ initializer of a
+/// variable or of a member declared in its class.
+pub fn find_value_binding<'t>(node: Node<'t>, code: &Source<'_>) -> Option<(Node<'t>, Node<'t>)> {
+    let mut value = unwrap_transparent_value_wrappers(node);
+    let mut holder = value.parent_node()?;
+    if node.kind_name() == "lambda_expression" {
+        if let Some((declaration, _)) = find_cpp_lambda_declaration(holder, value, code) {
+            return Some((declaration, value));
+        }
+    }
+    if matches!(node.kind_name(), "block" | "do_block") && is_ruby_lambda_call(holder, code) {
+        value = unwrap_transparent_value_wrappers(holder);
+        holder = value.parent_node()?;
+    }
+    while matches!(
+        holder.kind_name(),
+        "labeled_expression" | "annotated_expression"
+    ) {
+        value = holder;
+        holder = value.parent_node()?;
+    }
+    Some((holder, value))
+}
+
+/// A C# method whose header is chosen by `#if` keeps its body outside the directive and its
+/// alternative headers inside; the first one names the method and declares its parameters.
+fn find_conditional_signature(node: Node<'_>) -> Option<Node<'_>> {
+    if node.kind_name() != "conditional_method_declaration" {
+        return None;
+    }
+    let mut pending = named_children(node);
+    pending.reverse();
+    while let Some(current) = pending.pop() {
+        if current.kind_name() == "method_signature" {
+            return Some(current);
+        }
+        if current.kind_name().starts_with("preproc_") {
+            pending.extend(named_children(current).into_iter().rev());
+        }
+    }
+    None
+}
+
 pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let node = find_conditional_signature(node).unwrap_or(node);
     // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
     if let Some(wrapped_name) =
         find_wrapped_component_name(node, code).filter(|name| !name.is_empty())
@@ -303,24 +396,8 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     // closure itself. With a written type (`std::thread worker([] {})`) the lambda is a constructor
     // argument, and the constructor stores whatever it likes, so it names nothing.
     if node.kind_name() == "lambda_expression" {
-        let declaration = match parent.kind_name() {
-            "init_declarator" => Some(parent),
-            "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
-                .parent_node()
-                .filter(|holder| holder.kind_name() == "init_declarator")
-                .filter(|holder| declares_deduced_type(*holder))
-                // `auto f = {[] {}}` deduces a list holding the closure, not the closure itself;
-                // only the direct form `auto f{[] {}}` makes the variable the closure.
-                .filter(|holder| {
-                    parent.kind_name() == "argument_list"
-                        || !all_children(*holder)
-                            .iter()
-                            .any(|child| !child.is_named() && node_text(*child, code) == "=")
-                }),
-            _ => None,
-        };
-        if let Some(declaration) = declaration {
-            return unwrap_declarator_name(declaration.child_by_field_name("declarator"), code);
+        if let Some((_, declarator)) = find_cpp_lambda_declaration(parent, bound, code) {
+            return unwrap_declarator_name(declarator, code).filter(|name| !name.is_empty());
         }
     }
 
@@ -425,7 +502,7 @@ pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
 
 /// The key of a `pair` when it is a plain, Ruby symbol, or string-literal property name; a
 /// computed key (`[k]: ...`), an interpolated string or symbol, or an empty string names nothing.
-fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
+pub fn find_pair_key_name(pair: Node<'_>, code: &Source<'_>) -> Option<String> {
     let key = pair.child_by_field_name("key")?;
     match key.kind_name() {
         // A numeric key (`{ 1: () => {} }`) is as stable a property name as an identifier, signed
@@ -813,7 +890,7 @@ fn find_declared_type_spec<'t>(from: Node<'t>, name: &str, code: &Source<'t>) ->
 /// delimiters and prefixes (`"""k"""`, `r"k"`, `%q(k)`, `:"k"`) never leak into it. JavaScript
 /// splits the content into `string_fragment` and `escape_sequence` siblings; Ruby and Python emit
 /// `string_content` (Python nests escapes inside it). Interpolation makes the key unstable.
-fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<String> {
+pub fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Option<String> {
     let children = named_children(literal);
     if children
         .iter()
@@ -986,7 +1063,7 @@ fn is_value_of_parent(node: Node<'_>, parent: Node<'_>) -> bool {
 /// A value group of a Python or Ruby parallel assignment: the value list itself, or a tuple, list,
 /// or array literal that destructuring takes apart (`a, (b, c) = x, (f, y)`, `a, b = [f, g]`). A set
 /// or a mapping is unordered, so it groups nothing positionally.
-fn is_value_group(node: Node<'_>) -> bool {
+pub fn is_value_group(node: Node<'_>) -> bool {
     matches!(
         node.kind_name(),
         "expression_list" | "right_assignment_list" | "tuple" | "list" | "array"
@@ -1009,6 +1086,12 @@ fn is_target_group(node: Node<'_>) -> bool {
 /// destructuring. The position this value takes in each group it sits in is collected on the way up
 /// to the assignment, then replayed on the target side.
 fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<String> {
+    let (_, target) = find_parallel_assignment_target(value)?;
+    find_assignment_target_text(target, code)
+}
+
+/// The assignment a value of a parallel assignment sits in and the target it is bound to.
+pub fn find_parallel_assignment_target<'t>(value: Node<'t>) -> Option<(Node<'t>, Node<'t>)> {
     let mut positions = Vec::new();
     let mut current = value;
     let assignment = loop {
@@ -1041,7 +1124,7 @@ fn find_parallel_assignment_name(value: Node<'_>, code: &Source<'_>) -> Option<S
         }
         target = aligned_target(*values, *child, target)?;
     }
-    find_assignment_target_text(target, code)
+    Some((assignment, target))
 }
 
 /// The target a value takes within one group. Comments are named children of both sides but bind
@@ -1149,6 +1232,11 @@ fn find_assignment_target_text(target: Node<'_>, code: &Source<'_>) -> Option<St
 /// value: a value that is not an array goes to the first target that is not the star, descending
 /// into a nested group (`a, b = -> { 1 }` and `*a, b = -> { 1 }` both bind the lambda to a name).
 fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<String> {
+    find_assignment_target_text(find_single_assignment_target(assignment)?, code)
+}
+
+/// The target a Ruby or Python assignment of one value binds it to.
+pub fn find_single_assignment_target(assignment: Node<'_>) -> Option<Node<'_>> {
     let left = assignment.child_by_field_name("left")?;
     let mut target = left;
     if matches!(
@@ -1161,7 +1249,7 @@ fn find_ruby_assignment_name(assignment: Node<'_>, code: &Source<'_>) -> Option<
                 .find(|child| !is_splat(child))?;
         }
     }
-    find_assignment_target_text(target, code)
+    Some(target)
 }
 
 fn is_ruby_lambda_call(node: Node<'_>, code: &Source<'_>) -> bool {

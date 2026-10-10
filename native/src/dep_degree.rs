@@ -72,7 +72,6 @@ const DECLARATOR_WRAPPER_TYPES: &[&str] = &[
     "parenthesized_declarator",
     "function_declarator",
     "attributed_declarator",
-    "pointer_type_declarator",
     "qualified_identifier",
 ];
 
@@ -149,16 +148,10 @@ pub fn measure_dep_degree(
     pairs
 }
 
-/// A C++ member-pointer variable (`int C::* p`, also `int C::* arr[1]`) is declared as a
-/// `type_identifier` under the `pointer_type_declarator` spelling `C::*`, possibly through further
-/// declarator wrappers; every other `type_identifier` names a type, not a variable. Kotlin spells
-/// type names as identifiers: in a `user_type`, or as a type parameter's fieldless name (C# puts its
-/// type parameter in a `name` field).
+/// Kotlin spells type names as identifiers: in a `user_type`, or as a type parameter's fieldless
+/// name (C# puts its type parameter in a `name` field).
 fn is_variable_leaf(leaf: &DepDegreeLeaf<'_>) -> bool {
     let node = leaf.node;
-    if node.kind_name() == "type_identifier" {
-        return is_member_pointer_name(node);
-    }
     VARIABLE_NODE_TYPES.contains(&node.kind_name())
         && !node.parent_node().is_some_and(|parent| {
             parent.kind_name() == "user_type"
@@ -166,15 +159,21 @@ fn is_variable_leaf(leaf: &DepDegreeLeaf<'_>) -> bool {
         })
 }
 
+/// Whether the identifier is the name a C++ member pointer declares (`int C::* p`, also
+/// `int C::* arr[1]`): its `pointer_declarator`, possibly around further declarator wrappers, is
+/// the `name` of the `qualified_identifier` spelling the class.
 fn is_member_pointer_name(node: Node<'_>) -> bool {
     let mut current = node;
     while let Some(parent) = current.parent_node() {
-        if parent.kind_name() == "pointer_type_declarator" {
-            return true;
+        // The kind is tested before the field is looked up: this runs for every variable read,
+        // and scanning the children of a high-arity parent (a list of arguments) each time would
+        // cost the square of its length.
+        if parent.kind_name() == "qualified_identifier" {
+            return current.kind_name() == "pointer_declarator"
+                && field_name_in_parent(current, parent) == Some("name");
         }
         // The climb follows the declared-name position only, exactly like unwrap_declarator_wrappers.
         if !DECLARATOR_WRAPPER_TYPES.contains(&parent.kind_name())
-            || parent.kind_name() == "qualified_identifier"
             || field_name_in_parent(current, parent).is_some_and(|field| field != "declarator")
         {
             return false;
@@ -338,7 +337,7 @@ fn is_definition_field(holder: Node<'_>, field_name: Option<&str>) -> bool {
 
 /// Climbs from the identifier through the C/C++ declarator wrappers it is the declared name of
 /// (`reference_declarator` and `parenthesized_declarator` expose no field, so their name is the
-/// fieldless child; a member pointer's `pointer_type_declarator` is the `name` of a
+/// fieldless child; a member pointer's `pointer_declarator` is the `name` of a
 /// `qualified_identifier`; an `array_declarator` size or a nested parameter has another field and
 /// stops the climb) to the outermost wrapper and its field in the declaration.
 fn unwrap_declarator_wrappers<'t>(leaf: &DepDegreeLeaf<'t>) -> (Node<'t>, Option<&'t str>) {
@@ -400,7 +399,7 @@ fn is_parameter_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
         // O(1).
         let continues_member_pointer = declares_member_pointer
             && parent.kind_name() == "qualified_identifier"
-            && (current.kind_name() == "pointer_type_declarator" || in_member_pointer)
+            && (current.kind_name() == "pointer_declarator" || in_member_pointer)
             && field_name_in_parent(current, parent) == Some("name");
         in_member_pointer = continues_member_pointer;
         if depth >= 1

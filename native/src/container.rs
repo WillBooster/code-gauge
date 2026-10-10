@@ -1,7 +1,11 @@
 use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
-use crate::functions::next_declarator;
+use crate::functions::{
+    find_pair_key_name, find_parallel_assignment_target, find_single_assignment_target,
+    find_string_literal_content, find_value_binding, is_value_group, next_declarator,
+    unwrap_transparent_value_wrappers,
+};
 use crate::tree_index::NodeExt;
 use crate::util::{named_children, node_text, Source};
 
@@ -88,19 +92,56 @@ fn explicit_ruby_owner(object: Option<Node<'_>>, code: &Source<'_>) -> Option<St
     (text != "self").then(|| text.to_string())
 }
 
-/// The name of the declaration whose member a declared function is: the nearest class-like
-/// declaration enclosing it, or the owner the function names itself (a Go receiver, a C++ qualified
-/// declarator, the object of a Ruby singleton method).
+/// The name of the declaration whose member a function is: the nearest class-like declaration
+/// enclosing it or, for a function written as a value, the declaration binding it; the owner the
+/// function names itself (a Go receiver, a C++ qualified declarator, the object of a Ruby singleton
+/// method); or the path a JavaScript object literal holding it is bound to.
 pub fn find_container_name(
     node: Node<'_>,
     function_nodes: &FxHashSet<&'static str>,
     code: &Source<'_>,
     inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
-    // A function written as a value belongs to whatever it is passed or assigned to, which the
-    // syntax cannot follow reliably; it keeps the name of what it is bound to and has no owner.
-    if !is_function_declaration(node) {
+    let is_declared = is_function_declaration(node);
+    // A function expression with a name of its own (`pick = function impl() {}`) is reported
+    // under that name, which is no member of what binds the expression.
+    if !is_declared && node.child_by_field_name("name").is_some() {
         return None;
+    }
+    let (holder, bound) = find_value_binding(node, code)?;
+    let member = if holder.kind_name() == "pair" {
+        holder
+    } else {
+        bound
+    };
+    if let Some(object) = member
+        .parent_node()
+        .filter(|parent| parent.kind_name() == "object")
+    {
+        return object_owner(object, function_nodes, code, inline_namespaces);
+    }
+    // A function written as a value belongs to whatever it is passed or assigned to, which the
+    // syntax can follow only where a declaration binds it (a class field, a constant of a
+    // namespace); elsewhere it keeps the name of what it is bound to and has no owner.
+    if !is_declared {
+        // A parallel assignment binds the value to the target at its position.
+        if is_value_group(holder) {
+            let (assignment, target) = find_parallel_assignment_target(bound)?;
+            return assigns_attribute(assignment, target)
+                .then(|| enclosing_owner(assignment, function_nodes, code, inline_namespaces))
+                .flatten();
+        }
+        if !declares_binding(holder, bound) {
+            return None;
+        }
+        // A C++ variable defined outside its class (`int (*Rules::pick)(int) = [] {}`) spells
+        // its owner, as a function defined there does.
+        return match find_qualified_declarator(holder) {
+            Some(qualified) => {
+                cpp_spelled_owner(holder, qualified, function_nodes, code, inline_namespaces)
+            }
+            None => enclosing_owner(holder, function_nodes, code, inline_namespaces),
+        };
     }
     if let Some(receiver) = node.child_by_field_name("receiver") {
         return go_receiver_type(receiver, code);
@@ -111,6 +152,116 @@ pub fn find_container_name(
     // A Ruby `def Other.decide` belongs to the object it names rather than to the class around it.
     explicit_ruby_owner(node.child_by_field_name("object"), code)
         .or_else(|| enclosing_owner(node, function_nodes, code, inline_namespaces))
+}
+
+/// Whether `holder` declares the name its value `bound` is bound to, as a field, a property, or a
+/// variable does.
+fn declares_binding(holder: Node<'_>, bound: Node<'_>) -> bool {
+    let kind = holder.kind_name();
+    if kind == "assignment" {
+        return find_single_assignment_target(holder)
+            .is_some_and(|target| assigns_attribute(holder, target))
+            && holder
+                .child_by_field_name("right")
+                .is_some_and(|value| value.id() == bound.id());
+    }
+    kind.ends_with("_declarator")
+        || kind.ends_with("_declaration")
+        || kind.ends_with("_definition")
+        || matches!(kind, "const_item" | "static_item")
+}
+
+/// Whether an assignment declares `target` as an attribute of the class around it: a Python class
+/// does by assigning to a plain name and a Ruby one a constant, while a plain name assigned in a
+/// Ruby class body is a local variable of that body.
+fn assigns_attribute(assignment: Node<'_>, target: Node<'_>) -> bool {
+    match target.kind_name() {
+        // Only Python wraps an assignment in an `expression_statement`, a chain (`e = f = ...`)
+        // in that of its outermost assignment.
+        "identifier" => {
+            let mut outermost = assignment;
+            while let Some(outer) = outermost
+                .parent_node()
+                .filter(|outer| outer.kind_name() == "assignment")
+            {
+                outermost = outer;
+            }
+            outermost
+                .parent_node()
+                .is_some_and(|statement| statement.kind_name() == "expression_statement")
+        }
+        "constant" => true,
+        _ => false,
+    }
+}
+
+/// The path a JavaScript object literal is bound to, which its members are reached through:
+/// `api` for `const api = { ... }`, `Rules.handlers` for a field of a class, `api.admin` for the
+/// value of a property, `module.exports` for an assignment. An object passed or returned is bound
+/// to nothing the syntax names.
+fn object_owner(
+    object: Node<'_>,
+    function_nodes: &FxHashSet<&'static str>,
+    code: &Source<'_>,
+    inline_namespaces: &InlineNamespaces<'_>,
+) -> Option<String> {
+    let bound = unwrap_transparent_value_wrappers(object);
+    let holder = bound.parent_node()?;
+    let is_value = |field: &str| {
+        holder
+            .child_by_field_name(field)
+            .is_some_and(|value| value.id() == bound.id())
+    };
+    match holder.kind_name() {
+        "variable_declarator" | "field_definition" | "public_field_definition"
+            if is_value("value") =>
+        {
+            let name = holder
+                .child_by_field_name("name")
+                .or_else(|| holder.child_by_field_name("property"))?;
+            // A field may be named by a literal (`"handlers" = {}`); a computed name or a
+            // destructuring pattern names nothing.
+            let name = match name.kind_name() {
+                "string" => find_string_literal_content(name, code)?,
+                "number" => node_text(name, code).to_string(),
+                kind if kind.ends_with("identifier") => node_text(name, code).to_string(),
+                _ => return None,
+            };
+            Some(
+                match enclosing_owner(holder, function_nodes, code, inline_namespaces) {
+                    Some(owner) => format!("{owner}.{name}"),
+                    None => name,
+                },
+            )
+        }
+        "pair" if is_value("value") => {
+            let outer = holder
+                .parent_node()
+                .filter(|outer| outer.kind_name() == "object")?;
+            let owner = object_owner(outer, function_nodes, code, inline_namespaces)?;
+            Some(format!("{owner}.{}", find_pair_key_name(holder, code)?))
+        }
+        "assignment_expression" if is_value("right") => holder
+            .child_by_field_name("left")
+            .and_then(|target| member_path(target, code)),
+        _ => None,
+    }
+}
+
+/// A name or a chain of property accesses on one (`exports`, `Rules.prototype`, `this.handlers`),
+/// spelled without the comments and line breaks its source may hold.
+fn member_path(node: Node<'_>, code: &Source<'_>) -> Option<String> {
+    match node.kind_name() {
+        "identifier" | "this" => Some(node_text(node, code).to_string()),
+        "member_expression" => {
+            let object = member_path(node.child_by_field_name("object")?, code)?;
+            let property = node
+                .child_by_field_name("property")
+                .filter(|property| property.kind_name() == "property_identifier")?;
+            Some(format!("{object}.{}", node_text(property, code)))
+        }
+        _ => None,
+    }
 }
 
 /// A Go method is declared outside its type and names it as its receiver, `(r *Rules)` or

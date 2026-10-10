@@ -1,4 +1,5 @@
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::borrow::Cow;
 
 /// N-gram size for the candidate index and local-match anchors (NIL's default); shared with
 /// crossFileNearMiss.ts.
@@ -40,6 +41,11 @@ pub(crate) struct Block {
     is_content: Vec<bool>,
     /// Identifiers anonymized by first occurrence within the block.
     sequence: Vec<i32>,
+    /// The content of the block as written: per token its content key, or the number of its
+    /// identifier. Equal for equal content wherever it lies, which symbols, numbered by first
+    /// occurrence in the file, are not; ordered like `writtenContent` in crossFileNearMiss.ts, so
+    /// that both detectors take the sides of a pair in the same order.
+    written_content: Vec<i64>,
     pub ngrams: FxHashSet<i32>,
     /// The n-grams occurring exactly once in the block with their offsets, sorted by hash so two
     /// blocks' local-match anchors intersect by merging.
@@ -48,15 +54,18 @@ pub(crate) struct Block {
     /// Matcher::new turns the counts into information-weighted counts.
     content: Vec<(i32, u64)>,
     content_total: u64,
-    /// The sequence with its top-level statements in canonical order, when it has enough of them
-    /// for statement-order-insensitive comparison.
-    canonical_sequence: Option<Vec<i32>>,
+    /// The sequence with its top-level statements in canonical order and the block offset each of
+    /// its tokens comes from, when the block has enough statements for statement-order-insensitive
+    /// comparison.
+    canonical_sequence: Option<(Vec<i32>, Vec<usize>)>,
 }
 
 impl Block {
+    /// `token_keys` holds the content key of each non-identifier token of the file.
     pub fn new(
         symbols: &[i32],
         is_content: &[bool],
+        token_keys: &[i64],
         start: usize,
         end: usize,
         statements: Vec<(usize, usize)>,
@@ -64,16 +73,25 @@ impl Block {
         let symbols = symbols[start..end].to_vec();
         let is_content = is_content[start..end].to_vec();
         // Identifier-blind, so a block copied into different surroundings (renumbering its
-        // identifiers) or with reordered statements still shares its n-grams.
-        let ngram_hashes: Vec<i32> = symbols
+        // identifiers) or with reordered statements still shares its n-grams. Hashed from the
+        // content of the tokens: with symbols, numbered by first occurrence in the file, which
+        // n-grams collide, and so which anchor a match, would depend on where other code stands.
+        let hashed: Vec<i32> = symbols
+            .iter()
+            .zip(&token_keys[start..end])
+            .map(|(&symbol, &token_key)| {
+                if symbol < 0 {
+                    BLIND_IDENTIFIER
+                } else {
+                    (token_key ^ (token_key >> 32)) as i32
+                }
+            })
+            .collect();
+        let ngram_hashes: Vec<i32> = hashed
             .windows(NGRAM_SIZE)
             .map(|window| {
-                window.iter().fold(5381i32, |hash, &symbol| {
-                    hash.wrapping_mul(31).wrapping_add(if symbol < 0 {
-                        BLIND_IDENTIFIER
-                    } else {
-                        symbol
-                    })
+                window.iter().fold(5381i32, |hash, &value| {
+                    hash.wrapping_mul(31).wrapping_add(value)
                 })
             })
             .collect();
@@ -91,14 +109,21 @@ impl Block {
         let canonical_sequence = (statements.len() >= MIN_REORDER_STATEMENT_COUNT).then(|| {
             canonical_sequence(
                 &symbols,
+                &token_keys[start..end],
                 statements.iter().map(|&(statement_start, statement_end)| {
                     (statement_start - start, statement_end - start)
                 }),
             )
         });
+        let sequence = anonymize(&symbols);
         Block {
             start,
-            sequence: anonymize(&symbols),
+            written_content: sequence
+                .iter()
+                .zip(&token_keys[start..end])
+                .map(|(&symbol, &token_key)| content_value(symbol, token_key))
+                .collect(),
+            sequence,
             ngrams: occurrence_counts.into_keys().collect(),
             unique_ngrams,
             content: count_content(&symbols, &is_content),
@@ -112,7 +137,49 @@ impl Block {
     pub fn len(&self) -> usize {
         self.symbols.len()
     }
+
+    /// The content of the block or of a core of it, as written (see `written_content`), with the
+    /// identifiers of a core numbered within it.
+    fn content(&self, core: Option<(usize, usize)>, token_keys: &[i64]) -> Cow<'_, [i64]> {
+        if core.is_none() {
+            return Cow::Borrowed(&self.written_content);
+        }
+        let (sequence, positions) = self.compared(core, false);
+        sequence
+            .iter()
+            .zip(&positions)
+            .map(|(&symbol, &position)| content_value(symbol, token_keys[position]))
+            .collect()
+    }
+
+    /// The sequence a match compared, with the absolute token index of each of its symbols: a core,
+    /// the block with its statements in canonical order, or the block as written.
+    fn compared(
+        &self,
+        core: Option<(usize, usize)>,
+        reordered: bool,
+    ) -> (Cow<'_, [i32]>, Vec<usize>) {
+        match (core, &self.canonical_sequence) {
+            (Some((start, end)), _) => (
+                Cow::Owned(anonymize(
+                    &self.symbols[start - self.start..end - self.start],
+                )),
+                (start..end).collect(),
+            ),
+            (None, Some((sequence, offsets))) if reordered => (
+                Cow::Borrowed(sequence),
+                offsets.iter().map(|offset| self.start + offset).collect(),
+            ),
+            _ => (
+                Cow::Borrowed(&self.sequence),
+                (self.start..self.start + self.len()).collect(),
+            ),
+        }
+    }
 }
+
+/// Runs of tokens, as half-open absolute token ranges in position order.
+pub(crate) type TokenRuns = Vec<(usize, usize)>;
 
 /// A verified core in each block of a pair, as absolute token ranges.
 pub(crate) type CorePair = ((usize, usize), (usize, usize));
@@ -120,8 +187,15 @@ pub(crate) type CorePair = ((usize, usize), (usize, usize));
 /// How a verified pair matched: whole blocks, or every anchored core pair (one per gap-split
 /// chain segment) where the blocks share a copy embedded in different code.
 pub(crate) enum PairMatch {
-    Whole,
-    Local(Vec<CorePair>),
+    Whole(Alignment),
+    Local(Vec<(CorePair, Alignment)>),
+}
+
+/// What Matcher::align needs to recover the tokens a verified match pairs.
+#[derive(Clone, Copy)]
+pub(crate) struct Alignment {
+    /// Whether the blocks matched only with their statements in canonical order.
+    reordered: bool,
 }
 
 /// Verifies near-miss block pairs: token-level LCS against the larger side (NiCad's per-fragment
@@ -182,21 +256,69 @@ impl Matcher {
                 &right.content,
                 right.content_total,
             )
-            && (lcs_length(&left.sequence, &right.sequence) * 100 >= required
-                || self.matches_reordered(left, right, required))
         {
-            return Some(PairMatch::Whole);
+            let in_order = lcs_length(&left.sequence, &right.sequence);
+            if in_order * 100 >= required {
+                return Some(PairMatch::Whole(Alignment { reordered: false }));
+            }
+            // With their top-level statements (each anonymized on its own) in a canonical order,
+            // a copy whose independent statements were swapped still matches.
+            if let (Some((left, _)), Some((right, _))) =
+                (&left.canonical_sequence, &right.canonical_sequence)
+            {
+                let reordered = lcs_length(left, right);
+                if reordered * 100 >= required {
+                    return Some(PairMatch::Whole(Alignment { reordered: true }));
+                }
+            }
+        }
+        // Of the equally long chains of anchors, the one kept depends on which block comes first,
+        // so the blocks are taken in the order of their content rather than of their positions.
+        if right.written_content < left.written_content {
+            return self
+                .match_locally(right, left)
+                .map(|matched| match matched {
+                    PairMatch::Local(cores) => PairMatch::Local(
+                        cores
+                            .into_iter()
+                            .map(|((right_core, left_core), alignment)| {
+                                ((left_core, right_core), alignment)
+                            })
+                            .collect(),
+                    ),
+                    whole => whole,
+                });
         }
         self.match_locally(left, right)
     }
 
-    /// Compares the blocks with their top-level statements (each anonymized on its own) in a
-    /// canonical order, so a copy whose independent statements were swapped still matches.
-    fn matches_reordered(&self, left: &Block, right: &Block, required: usize) -> bool {
-        match (&left.canonical_sequence, &right.canonical_sequence) {
-            (Some(left), Some(right)) => lcs_length(left, right) * 100 >= required,
-            _ => false,
-        }
+    /// The token runs a verified match pairs, per side as absolute token ranges: those of a longest
+    /// common subsequence of what the match compared, `cores` or else the whole blocks. Of the
+    /// equally long subsequences, which one is marked depends on which sequence comes first, so
+    /// the sides are taken in the order of their content rather than of their positions.
+    /// `token_keys` holds the content key of each non-identifier token of the file.
+    pub fn align(
+        &self,
+        left: &Block,
+        right: &Block,
+        cores: Option<CorePair>,
+        alignment: Alignment,
+        token_keys: &[i64],
+    ) -> (TokenRuns, TokenRuns) {
+        let (left_core, right_core) = cores.unzip();
+        let (left_sequence, left_positions) = left.compared(left_core, alignment.reordered);
+        let (right_sequence, right_positions) = right.compared(right_core, alignment.reordered);
+        let (left_matched, right_matched) =
+            if left.content(left_core, token_keys) <= right.content(right_core, token_keys) {
+                mark_lcs(&left_sequence, &right_sequence)
+            } else {
+                let (right_matched, left_matched) = mark_lcs(&right_sequence, &left_sequence);
+                (left_matched, right_matched)
+            };
+        (
+            to_runs(left_positions, left_matched),
+            to_runs(right_positions, right_matched),
+        )
     }
 
     /// Matches the cores two blocks share inside different surroundings (a copy wrapped in added
@@ -242,7 +364,7 @@ impl Matcher {
             .map(|index| anchors[index])
             .collect();
         let chain = longest_increasing_chain(&run_anchors);
-        let cores: Vec<CorePair> = chain_segments(&chain)
+        let cores: Vec<(CorePair, Alignment)> = chain_segments(&chain)
             .filter_map(|segment| {
                 let (first, last) = (segment[0], segment[segment.len() - 1]);
                 let (left_start, left_end) = (first.0, last.0 + NGRAM_SIZE);
@@ -250,23 +372,28 @@ impl Matcher {
                 let (left_length, right_length) = (left_end - left_start, right_end - right_start);
                 let shorter = left_length.min(right_length);
                 let required = self.min_similarity_percent * left_length.max(right_length);
-                let verified = shorter >= self.min_tokens
-                    && shorter * 100 >= required
-                    && anchored_token_count(segment) * 100 >= MIN_ANCHOR_COVERAGE_PERCENT * shorter
-                    && self.spans_share_content(
+                if shorter < self.min_tokens
+                    || shorter * 100 < required
+                    || anchored_token_count(segment) * 100 < MIN_ANCHOR_COVERAGE_PERCENT * shorter
+                    || !self.spans_share_content(
                         left,
                         (left_start, left_end),
                         right,
                         (right_start, right_end),
                     )
-                    && lcs_length(
-                        &anonymize(&left.symbols[left_start..left_end]),
-                        &anonymize(&right.symbols[right_start..right_end]),
-                    ) * 100
-                        >= required;
-                verified.then_some((
-                    (left.start + left_start, left.start + left_end),
-                    (right.start + right_start, right.start + right_end),
+                {
+                    return None;
+                }
+                let lcs_length = lcs_length(
+                    &anonymize(&left.symbols[left_start..left_end]),
+                    &anonymize(&right.symbols[right_start..right_end]),
+                );
+                (lcs_length * 100 >= required).then_some((
+                    (
+                        (left.start + left_start, left.start + left_end),
+                        (right.start + right_start, right.start + right_end),
+                    ),
+                    Alignment { reordered: false },
                 ))
             })
             .collect();
@@ -361,25 +488,43 @@ fn anonymize(symbols: &[i32]) -> Vec<i32> {
 }
 
 /// The block's units (its top-level statements, as block-relative offsets, and the token runs
-/// between them), each anonymized on its own and sorted, concatenated.
+/// between them), each anonymized on its own and sorted, concatenated, with the block offset of
+/// every token. The units are ordered by the content of their tokens (`token_keys`, per token of
+/// the block): symbols, numbered by first occurrence in the file, would order them by where
+/// other code stands.
 fn canonical_sequence(
     symbols: &[i32],
+    token_keys: &[i64],
     statements: impl Iterator<Item = (usize, usize)>,
-) -> Vec<i32> {
-    let mut units: Vec<Vec<i32>> = Vec::new();
+) -> (Vec<i32>, Vec<usize>) {
+    let mut units: Vec<(Vec<i64>, usize, Vec<i32>)> = Vec::new();
+    let mut push_unit = |start: usize, end: usize| {
+        let unit = anonymize(&symbols[start..end]);
+        let content = unit
+            .iter()
+            .zip(&token_keys[start..end])
+            .map(|(&symbol, &token_key)| content_value(symbol, token_key))
+            .collect();
+        units.push((content, start, unit));
+    };
     let mut cursor = 0;
     for (start, end) in statements {
         if cursor < start {
-            units.push(anonymize(&symbols[cursor..start]));
+            push_unit(cursor, start);
         }
-        units.push(anonymize(&symbols[start..end]));
+        push_unit(start, end);
         cursor = end;
     }
     if cursor < symbols.len() {
-        units.push(anonymize(&symbols[cursor..]));
+        push_unit(cursor, symbols.len());
     }
     units.sort_unstable();
-    units.concat()
+    let offsets = units
+        .iter()
+        .flat_map(|(_, start, unit)| *start..*start + unit.len())
+        .collect();
+    let sequence = units.into_iter().flat_map(|(_, _, unit)| unit).collect();
+    (sequence, offsets)
 }
 
 /// The longest chain of anchors increasing in both blocks (anchors arrive sorted by left offset),
@@ -419,13 +564,20 @@ fn chain_segments(chain: &[(usize, usize)]) -> impl Iterator<Item = &[(usize, us
     })
 }
 
-/// Longest-common-subsequence LENGTH via the Allison–Dix bit-parallel recurrence. Only the length
-/// is needed and LCS length is algorithm-independent, so u64 words are safe even though the
-/// TypeScript port in src/duplication.ts uses 32-bit words.
+/// Longest-common-subsequence LENGTH. Only the length is needed and LCS length is
+/// algorithm-independent, so u64 words are safe even though the TypeScript port in
+/// src/duplication.ts uses 32-bit words.
 fn lcs_length(a: &[i32], b: &[i32]) -> usize {
-    if a.is_empty() || b.is_empty() {
-        return 0;
-    }
+    lcs_growth_bits(a, b.iter())
+        .iter()
+        .map(|word| word.count_ones() as usize)
+        .sum()
+}
+
+/// One bit per position of `a`, set where the longest common subsequence of `symbols` with the
+/// prefix of `a` ending there is longer than with the prefix before it, so the set bits up to a
+/// position count that length; via the Allison–Dix bit-parallel recurrence.
+fn lcs_growth_bits<'a>(a: &[i32], symbols: impl Iterator<Item = &'a i32>) -> Vec<u64> {
     let word_count = a.len().div_ceil(64);
     let mut position_masks: FxHashMap<i32, Vec<u64>> = FxHashMap::default();
     for (index, &symbol) in a.iter().enumerate() {
@@ -435,7 +587,7 @@ fn lcs_length(a: &[i32], b: &[i32]) -> usize {
     }
 
     let mut v = vec![0u64; word_count];
-    for symbol in b {
+    for symbol in symbols {
         let match_mask = position_masks.get(symbol);
         // `(v << 1) | 1` shifts a carry bit across words; subtraction borrows across words.
         let mut shift_carry = 1u64;
@@ -451,5 +603,104 @@ fn lcs_length(a: &[i32], b: &[i32]) -> usize {
             *slot = x & !difference;
         }
     }
-    v.iter().map(|word| word.count_ones() as usize).sum()
+    v
+}
+
+/// Which tokens of each sequence a longest common subsequence pairs, by Hirschberg's divide and
+/// conquer over the bit-parallel recurrence, which alone yields lengths but no pairing.
+fn mark_lcs(a: &[i32], b: &[i32]) -> (Vec<bool>, Vec<bool>) {
+    let mut a_matched = vec![false; a.len()];
+    let mut b_matched = vec![false; b.len()];
+    mark_lcs_into(a, b, &mut a_matched, &mut b_matched);
+    (a_matched, b_matched)
+}
+
+fn mark_lcs_into(a: &[i32], b: &[i32], a_matched: &mut [bool], b_matched: &mut [bool]) {
+    // A common prefix or suffix belongs to some longest common subsequence.
+    let prefix = a
+        .iter()
+        .zip(b)
+        .take_while(|(left, right)| left == right)
+        .count();
+    let suffix = a[prefix..]
+        .iter()
+        .rev()
+        .zip(b[prefix..].iter().rev())
+        .take_while(|(left, right)| left == right)
+        .count();
+    let (a_end, b_end) = (a.len() - suffix, b.len() - suffix);
+    a_matched[..prefix].fill(true);
+    b_matched[..prefix].fill(true);
+    a_matched[a_end..].fill(true);
+    b_matched[b_end..].fill(true);
+    let (a, b) = (&a[prefix..a_end], &b[prefix..b_end]);
+    let (a_matched, b_matched) = (&mut a_matched[prefix..a_end], &mut b_matched[prefix..b_end]);
+    if a.is_empty() || b.is_empty() {
+        return;
+    }
+    if a.len() == 1 {
+        if let Some(position) = b.iter().position(|symbol| *symbol == a[0]) {
+            a_matched[0] = true;
+            b_matched[position] = true;
+        }
+        return;
+    }
+    let middle = a.len() / 2;
+    let reversed_b: Vec<i32> = b.iter().rev().copied().collect();
+    let forward = lcs_prefix_lengths(a[..middle].iter(), b);
+    let backward = lcs_prefix_lengths(a[middle..].iter().rev(), &reversed_b);
+    let mut split = 0;
+    for candidate in 1..=b.len() {
+        if forward[candidate] + backward[b.len() - candidate]
+            > forward[split] + backward[b.len() - split]
+        {
+            split = candidate;
+        }
+    }
+    let (a_head, a_tail) = a_matched.split_at_mut(middle);
+    let (b_head, b_tail) = b_matched.split_at_mut(split);
+    mark_lcs_into(&a[..middle], &b[..split], a_head, b_head);
+    mark_lcs_into(&a[middle..], &b[split..], a_tail, b_tail);
+}
+
+/// The longest-common-subsequence length of `a` with every prefix of `b`.
+fn lcs_prefix_lengths<'a>(a: impl Iterator<Item = &'a i32>, b: &[i32]) -> Vec<u32> {
+    let bits = lcs_growth_bits(b, a);
+    let mut lengths = Vec::with_capacity(b.len() + 1);
+    let mut length = 0;
+    lengths.push(length);
+    for index in 0..b.len() {
+        length += (bits[index / 64] >> (index % 64)) as u32 & 1;
+        lengths.push(length);
+    }
+    lengths
+}
+
+/// The maximal runs of the matched positions, as half-open ranges.
+fn to_runs(positions: Vec<usize>, matched: Vec<bool>) -> TokenRuns {
+    let mut matched_positions: Vec<usize> = positions
+        .into_iter()
+        .zip(matched)
+        .filter(|&(_, matched)| matched)
+        .map(|(position, _)| position)
+        .collect();
+    matched_positions.sort_unstable();
+    let mut runs = TokenRuns::new();
+    for position in matched_positions {
+        match runs.last_mut() {
+            Some(last) if last.1 == position => last.1 = position + 1,
+            _ => runs.push((position, position + 1)),
+        }
+    }
+    runs
+}
+
+/// What a token contributes to the content of a range: its content key, or the range-local number
+/// of its identifier.
+fn content_value(symbol: i32, token_key: i64) -> i64 {
+    if symbol < 0 {
+        i64::from(symbol)
+    } else {
+        token_key
+    }
 }

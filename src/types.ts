@@ -99,11 +99,21 @@ export interface FunctionMetrics {
    * find a like-named member of it (`void gauge::f()` inside `namespace gauge` holding a
    * `struct gauge`).
    *
-   * Absent for a function written as a value (a lambda, a closure, a function expression), which
-   * keeps the name of what it is bound to, for a function nested in another function, for a
-   * member of an anonymous class or of an object literal, and for a function local to an
-   * initializer block. So a method of a class declared inside a function has it, and a closure
-   * inside a method does not.
+   * A function written as a value (a lambda, a closure, a function expression) is a member of
+   * what the declaration binding it is declared in, as a declared function would be: the class of
+   * a field it initializes, the declared namespace or module of a constant (a file is neither, so
+   * a constant at its top level has no owner). A member of a JavaScript or TypeScript object literal is reached through the path
+   * the object is bound to: `api` for `const api = { load() {} }`, `Rules.handlers` for the field
+   * of a class, `api.admin` for the value of a property, `module.exports` for an assignment.
+   *
+   * Absent for a function without a name, for a function expression with a name of its own (which
+   * is no member of what binds the expression), for one passed as an argument or assigned to a member,
+   * for a function written as a value inside another function or bound to a plain name in a Ruby
+   * class body (a local variable of that body), for a member of an anonymous class
+   * or of an object literal bound to no name, and for a function local to an initializer block. So
+   * a method of a class declared inside a function has it, as has a member of an object literal a
+   * function binds to a local name (`api` for `const api = { run() {} }`), and a closure inside a
+   * method does not.
    */
   containerName?: string;
   /**
@@ -179,8 +189,8 @@ export interface DuplicationMetrics {
   /** Number of distinct lines covered by any counted duplicate occurrence (originals included). */
   duplicateLineCount: number;
   /**
-   * The 1-based lines behind duplicateLineCount, sorted ascending: code lines carrying matched
-   * tokens. Exposed so consumers combining within-file and cross-file coverage can union exact
+   * The 1-based lines behind duplicateLineCount, sorted ascending: the union of the occurrences'
+   * `lineNumbers`. Exposed so consumers combining within-file and cross-file coverage can union exact
    * line sets instead of over-counting from block bounding ranges (which include the unmatched gap
    * of a merged clone and comment/blank lines).
    */
@@ -200,7 +210,8 @@ export interface DuplicateBlockOccurrence {
   /**
    * The 1-based code lines carrying the occurrence's matched tokens, sorted ascending: the lines
    * from startLine to endLine without comment-only and blank lines, the unmatched gap of a merged
-   * clone, and what lies between the matched cores of a near-miss block.
+   * clone, what lies between the matched cores of a near-miss block, and the lines of a near-miss
+   * block or core no more than half of whose tokens its copies match.
    */
   lineNumbers: number[];
   startLine: number;

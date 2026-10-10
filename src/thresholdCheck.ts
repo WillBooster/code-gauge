@@ -34,6 +34,8 @@ export interface CheckedDuplication {
 
 export interface ExceededLimit {
   metric: string;
+  /** What reports call the metric (`cognitive complexity`, `duplicated lines`). */
+  label: string;
   value: number;
   /** The most severe level whose limit the value violates. */
   level: Level;
@@ -51,8 +53,7 @@ export interface BlockLocation {
 interface CloneOccurrence extends BlockLocation {
   /**
    * Its code lines matched in another copy, whose number is the length of a duplicated block. Its
-   * line span would also count the lines between the matched parts of one copy, which the copies
-   * do not share; a block matched as a whole by a near-miss copy holds all its code lines.
+   * line span would also count the lines the copies do not share.
    */
   lineNumbers: readonly number[];
   tokenCount: number;
@@ -212,7 +213,15 @@ function findExceeded<Subject>(
   const value = threshold.measure(subject);
   const level = levels.findLast((candidate) => violates(value, limits[candidate][threshold.key] as number));
   return level
-    ? [{ metric: metricNameOf(threshold), value, level, limit: limits[level][threshold.key] as number }]
+    ? [
+        {
+          metric: metricNameOf(threshold),
+          label: threshold.label,
+          value,
+          level,
+          limit: limits[level][threshold.key] as number,
+        },
+      ]
     : [];
 }
 
@@ -250,7 +259,8 @@ function indexGroupsByFile(
 /**
  * One violation per duplicated region of the file: its clone occurrences, within-file and
  * cross-file, that hold at least the duplicated lines of a level (with `hunks`, only those
- * overlapping added lines), with overlapping occurrences merged into one region.
+ * overlapping added lines), with overlapping occurrences merged into one region unless they are
+ * copies of each other.
  */
 function collectDuplicationViolations(
   { file, metrics, hunks }: CheckedFile,
@@ -268,13 +278,14 @@ function collectDuplicationViolations(
     block.file === file &&
     findExceededLines(block.lineNumbers.length).length > 0 &&
     (!hunks || hunks.some((hunk) => hunk.headCount > 0 && touchesSpan(hunk, block.startLine, block.endLine)));
-  const groupByBlock = new Map<CloneOccurrence, CloneOccurrence[]>();
-  for (const group of groups) {
-    for (const block of group.filter((occurrence) => isReported(occurrence))) {
-      groupByBlock.set(block, group);
-    }
-  }
-  return mergeOverlapping([...groupByBlock.keys()]).map(({ merged, sources }) => {
+  const groupOf = new Map(groups.flatMap((group) => group.map((occurrence) => [occurrence, group] as const)));
+  // Copies of one group that share a line (the branches of an `else if` chain, the entries of a
+  // list) stay apart: merged, they would be one block without a copy. One lying within another is
+  // a repetition inside that block, not a block beside it.
+  const areCopies = (left: CloneOccurrence, right: CloneOccurrence): boolean =>
+    groupOf.get(left) === groupOf.get(right) && !contains(left, right) && !contains(right, left);
+  const reportedBlocks = groups.flat().filter((occurrence) => isReported(occurrence));
+  return mergeOverlapping(reportedBlocks, areCopies).map(({ merged, sources }) => {
     const listCopies = (minTokenPercent: number): BlockLocation[] =>
       mergeOverlapping(
         sources.flatMap((source) => {
@@ -283,13 +294,17 @@ function collectDuplicationViolations(
           const tokenCount = Math.max(
             ...sources.filter((outer) => contains(outer, source)).map((outer) => outer.tokenCount)
           );
-          return (groupByBlock.get(source) ?? []).filter(
-            (copy) => copy.tokenCount * 100 >= tokenCount * minTokenPercent
+          return (groupOf.get(source) ?? []).filter(
+            (copy) =>
+              copy.tokenCount * 100 >= tokenCount * minTokenPercent &&
+              // The region's own occurrences are among the copies of the groups it belongs to, and
+              // so may be an occurrence within one of them that is not reported itself: a
+              // repetition inside the block, not another place.
+              !sources.some((outer) => contains(outer, copy))
           );
-        })
+        }),
+        areCopies
       )
-        // The region's own occurrences are among the copies of the groups it belongs to.
-        .filter((partner) => !overlaps(partner.merged, merged))
         // The largest say the most about what to share.
         .toSorted((left, right) => sumTokens(right.sources) - sumTokens(left.sources))
         .map((partner) => partner.merged);
@@ -306,9 +321,8 @@ function collectDuplicationViolations(
         // Occurrences that overlap share lines, which count once.
         findExceededLines(new Set(sources.flatMap((source) => source.lineNumbers)).size)
       ),
-      // A group does not always hold the copy a block was matched with as a whole: within a file,
-      // a copy that already belongs to an exact group is listed as its part in that group. The
-      // fragments then are all that locates the block's copies.
+      // A block whose parts were matched with different places has no copy of its size. The
+      // places then are all that locates what it repeats.
       partners: copies.length > 0 ? copies : listCopies(0),
     };
   });
@@ -324,9 +338,13 @@ function sumTokens(occurrences: readonly CloneOccurrence[]): number {
   return occurrences.reduce((sum, occurrence) => sum + occurrence.tokenCount, 0);
 }
 
-/** The locations with those overlapping in the same file merged, ordered by file, then line. */
+/**
+ * The locations with those overlapping in the same file merged, except those `areCopies` holds
+ * for, ordered by file, then line.
+ */
 function mergeOverlapping(
-  locations: readonly CloneOccurrence[]
+  locations: readonly CloneOccurrence[],
+  areCopies: (left: CloneOccurrence, right: CloneOccurrence) => boolean
 ): { merged: BlockLocation; sources: CloneOccurrence[] }[] {
   const regions: { merged: BlockLocation; sources: CloneOccurrence[] }[] = [];
   const ordered = locations.toSorted(
@@ -334,7 +352,13 @@ function mergeOverlapping(
   );
   for (const location of ordered) {
     const last = regions.at(-1);
-    if (last && overlaps(last.merged, location)) {
+    // A block containing the location holds it whatever it is a copy of.
+    const joins =
+      last &&
+      overlaps(last.merged, location) &&
+      (last.sources.some((source) => contains(source, location)) ||
+        !last.sources.some((source) => areCopies(source, location)));
+    if (joins) {
       last.merged.endLine = Math.max(last.merged.endLine, location.endLine);
       last.sources.push(location);
     } else {

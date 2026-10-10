@@ -88,7 +88,7 @@ export interface TokenRange {
 }
 
 /** A contiguous run of matched tokens; gapped (merged) duplicates carry several per occurrence. */
-interface TokenSegment {
+export interface TokenSegment {
   startTokenIndex: number;
   endTokenIndex: number;
 }
@@ -105,8 +105,16 @@ interface DuplicateCandidate {
 }
 
 export interface CountedOccurrence {
-  /** Matched token runs; more than one once gapped groups are merged. */
+  /**
+   * The token runs the occurrence covers, matched throughout except in a near-miss copy (see
+   * `matchedRuns`); more than one once gapped groups are merged.
+   */
   segments: TokenSegment[];
+  /**
+   * The token runs of a near-miss copy that its partners match, within its segments;
+   * absent for an exact or gapped copy, whose segments are matched throughout.
+   */
+  matchedRuns?: TokenSegment[];
   /**
    * Set on occurrences whose span another reported group already counts: a retained group's
    * occurrences that a partial gapped merge also paired into a merged group, and cross-file copies
@@ -416,6 +424,22 @@ export function lcsLength(a: Int32Array, b: Int32Array): number {
  * every `b` compared with it.
  */
 export function createLcsLengthCounter(a: Int32Array): (b: Int32Array) => number {
+  const growthBits = createLcsGrowthBits(a);
+  return (b) => {
+    let length = 0;
+    for (const word of growthBits(b)) {
+      length += popCount(word);
+    }
+    return length;
+  };
+}
+
+/**
+ * Per sequence `b`, one bit per position of `a`, set where the longest common subsequence of `b`
+ * with the prefix of `a` ending there is longer than with the prefix before it, so the set bits up
+ * to a position count that length. The returned words are overwritten by the next call.
+ */
+function createLcsGrowthBits(a: Int32Array): (b: Int32Array) => Uint32Array {
   const wordCount = (a.length + 31) >>> 5;
   const positionMasks = new Map<number, Uint32Array>();
   for (const [index, symbol] of a.entries()) {
@@ -452,13 +476,88 @@ export function createLcsLengthCounter(a: Int32Array): (b: Int32Array) => number
         v[word] = x & ~difference;
       }
     }
-
-    let length = 0;
-    for (const word of v) {
-      length += popCount(word);
-    }
-    return length;
+    return v;
   };
+}
+
+/**
+ * Which symbols of each sequence a longest common subsequence pairs, by Hirschberg's divide and
+ * conquer over the bit-parallel recurrence, which alone yields lengths but no pairing.
+ */
+export function markLcs(a: Int32Array, b: Int32Array): [Uint8Array, Uint8Array] {
+  const aMatched = new Uint8Array(a.length);
+  const bMatched = new Uint8Array(b.length);
+  markLcsInto(a, b, aMatched, bMatched);
+  return [aMatched, bMatched];
+}
+
+function markLcsInto(a: Int32Array, b: Int32Array, aMatched: Uint8Array, bMatched: Uint8Array): void {
+  // A common prefix or suffix belongs to some longest common subsequence.
+  let prefix = 0;
+  while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) {
+    prefix += 1;
+  }
+  let suffix = 0;
+  while (
+    suffix < a.length - prefix &&
+    suffix < b.length - prefix &&
+    a[a.length - 1 - suffix] === b[b.length - 1 - suffix]
+  ) {
+    suffix += 1;
+  }
+  const aEnd = a.length - suffix;
+  const bEnd = b.length - suffix;
+  aMatched.fill(1, 0, prefix).fill(1, aEnd);
+  bMatched.fill(1, 0, prefix).fill(1, bEnd);
+  const aRest = a.subarray(prefix, aEnd);
+  const bRest = b.subarray(prefix, bEnd);
+  const aRestMatched = aMatched.subarray(prefix, aEnd);
+  const bRestMatched = bMatched.subarray(prefix, bEnd);
+  if (aRest.length === 0 || bRest.length === 0) {
+    return;
+  }
+  if (aRest.length === 1) {
+    const position = bRest.indexOf(aRest[0] ?? 0);
+    if (position !== -1) {
+      aRestMatched[0] = 1;
+      bRestMatched[position] = 1;
+    }
+    return;
+  }
+  const middle = aRest.length >>> 1;
+  const forward = lcsPrefixLengths(aRest.subarray(0, middle), bRest);
+  const backward = lcsPrefixLengths(aRest.subarray(middle).toReversed(), bRest.toReversed());
+  let split = 0;
+  let best = -1;
+  for (let candidate = 0; candidate <= bRest.length; candidate += 1) {
+    const length = (forward[candidate] ?? 0) + (backward[bRest.length - candidate] ?? 0);
+    if (length > best) {
+      best = length;
+      split = candidate;
+    }
+  }
+  markLcsInto(
+    aRest.subarray(0, middle),
+    bRest.subarray(0, split),
+    aRestMatched.subarray(0, middle),
+    bRestMatched.subarray(0, split)
+  );
+  markLcsInto(
+    aRest.subarray(middle),
+    bRest.subarray(split),
+    aRestMatched.subarray(middle),
+    bRestMatched.subarray(split)
+  );
+}
+
+/** The longest-common-subsequence length of `a` with every prefix of `b`. */
+function lcsPrefixLengths(a: Int32Array, b: Int32Array): Int32Array {
+  const bits = createLcsGrowthBits(b)(a);
+  const lengths = new Int32Array(b.length + 1);
+  for (let index = 0; index < b.length; index += 1) {
+    lengths[index + 1] = (lengths[index] ?? 0) + (((bits[index >>> 5] ?? 0) >>> (index & 31)) & 1);
+  }
+  return lengths;
 }
 
 function popCount(value: number): number {
@@ -806,9 +905,11 @@ function mergeGroups<T extends CountedOccurrence>(
   const secondReplaced = secondFullyPaired && !second.some((occurrence) => occurrence.nestedInLargerGroup);
   const merged = pairs.map(([leading, trailing]) => ({
     ...leading,
-    // A merged occurrence is a fresh span combination; it never inherits shared-span marks.
+    // A merged occurrence is a fresh span combination; it never inherits shared-span marks, and
+    // its segments are matched throughout.
     spanCountedElsewhere: undefined,
     nestedInLargerGroup: undefined,
+    matchedRuns: undefined,
     segments: [...leading.segments, ...trailing.segments],
     tokenCount: leading.tokenCount + trailing.tokenCount,
     endTokenIndex: trailing.endTokenIndex,
@@ -872,19 +973,39 @@ export function countRedundantFragments(group: CountedOccurrence[]): number {
   return hasSharedOccurrence ? fragmentCount : fragmentCount - maxFragmentCount;
 }
 
-/** Adds the 1-based code lines the segment's matched tokens cover; shared with cross-file coverage. */
-export function collectSegmentLines(
-  segment: { startTokenIndex: number; endTokenIndex: number },
+/**
+ * The 1-based code lines the occurrence's matched tokens cover, given its segments and matched runs
+ * as indexes into `tokens`. A line of a near-miss copy counts when its partners match more than half
+ * of its tokens: a line the copy adds or rewrites is not duplicated, while a longest common
+ * subsequence still pairs a stray token of it (a bracket, a separator) with one of the partner.
+ */
+export function collectMatchedLines(
+  segments: TokenSegment[],
+  matchedRuns: TokenSegment[] | undefined,
   tokens: Token[],
-  codeLineNumbers: Set<number> | undefined,
-  duplicatedLines: Set<number>
-): void {
-  for (let index = segment.startTokenIndex; index < segment.endTokenIndex; index += 1) {
-    const token = tokens[index];
-    for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
-      if (!codeLineNumbers || codeLineNumbers.has(row + 1)) {
-        duplicatedLines.add(row + 1);
+  codeLineNumbers: Set<number> | undefined
+): Set<number> {
+  const matchedCountByLine = new Map<number, number>();
+  const tokenCountByLine = new Map<number, number>();
+  let runIndex = 0;
+  for (const segment of segments) {
+    for (let index = segment.startTokenIndex; index < segment.endTokenIndex; index += 1) {
+      while (matchedRuns && (matchedRuns[runIndex]?.endTokenIndex ?? Infinity) <= index) {
+        runIndex += 1;
+      }
+      const matched = !matchedRuns || (matchedRuns[runIndex]?.startTokenIndex ?? Infinity) <= index;
+      const token = tokens[index];
+      for (let row = token?.startRow ?? 0; row <= (token?.endRow ?? -1); row += 1) {
+        tokenCountByLine.set(row + 1, (tokenCountByLine.get(row + 1) ?? 0) + 1);
+        matchedCountByLine.set(row + 1, (matchedCountByLine.get(row + 1) ?? 0) + (matched ? 1 : 0));
       }
     }
   }
+  const lines = new Set<number>();
+  for (const [line, tokenCount] of tokenCountByLine) {
+    if ((!codeLineNumbers || codeLineNumbers.has(line)) && (matchedCountByLine.get(line) ?? 0) * 2 > tokenCount) {
+      lines.add(line);
+    }
+  }
+  return lines;
 }

@@ -357,6 +357,12 @@ describe('cyclomatic complexity: catch-all switch arms', () => {
     ['csharp', 'class P { int F(int x) => x switch { _ when x > 0 => 1, _ => 0 }; }', 2],
     ['csharp', 'class P { int F(object x) => x switch { var (a, b) => 1, _ => 0 }; }', 2],
     ['kotlin', 'fun f(x: Int) { when (x) { 1 -> println(1); else -> println(0) } }', 2],
+    ['kotlin', 'fun f(x: Any) { when (x) { is Int if x > 0 -> println(1); else -> println(0) } }', 3],
+    [
+      'kotlin',
+      'fun f(x: Any) { when (x) { is Int -> println(1); else if x == 0 -> println(2); else -> println(0) } }',
+      3,
+    ],
     [
       'python',
       'def f(x):\n    match x:\n        case 1:\n            return 1\n        case _ if x:\n            return 2\n',
@@ -1052,7 +1058,8 @@ describe('DepDegree across languages', () => {
         'int f(int* q, std::vector<int> xs) { int* p = q; int& r = *q; for (const auto& x : xs) { r += x; } int a[2] = {1, 2}; int (*fp)(int) = g; return *p + r + a[0] + fp(1); }'
       )
     ).toEqual([9]);
-    // A member pointer declares its name as a type_identifier inside a pointer_type_declarator;
+    // A member pointer declares its name in a pointer_declarator that is the name of the
+    // qualified_identifier spelling the class;
     // a qualified constant in a parameter default is a read, so the body's read pairs with nothing.
     expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* p = q; return p == q; }')).toEqual([3]);
     expect(depDegreeOf('cpp', 'struct C {}; int f(int C::* q) { int C::* arr[1] = {q}; return arr[0] == q; }')).toEqual(
@@ -1164,6 +1171,148 @@ describe('line classification', () => {
   it('treats Python docstrings as code and shebang lines as comments', () => {
     expect(linesOf('def f():\n    """doc\n    string"""\n    return 1\n#!x\n', 'python')).toEqual([6, 4, 1, 1]);
     expect(linesOf('#!/usr/bin/env ruby\n# c\nx = 1\n', 'ruby')).toEqual([4, 1, 2, 1]);
+  });
+});
+
+describe('owners of functions written as values', () => {
+  const ownersOf = (language: string, code: string): string[] =>
+    functionsOf(language, code).map((fn) => `${fn.containerName ?? '-'}|${fn.name ?? '-'}`);
+
+  it('names the declaration binding the value, and nothing for a local or an assigned one', () => {
+    expect(
+      ownersOf(
+        'typescript',
+        'class Rules { decide = async (x: number) => x; static pick = function (y: number) { return y; }; run() { const local = () => 1; return local; } }\nnamespace Shop { export const total = (a: number) => a; }\nconst top = () => 1;'
+      )
+    ).toEqual(['Rules|decide', 'Rules|pick', 'Rules|run', '-|local', 'Shop|total', '-|top']);
+    expect(
+      ownersOf('python', 'class A:\n    pick = lambda self, x: x\n    registry.run = lambda: 1\ntop = lambda: 3\n')
+    ).toEqual(['A|pick', '-|run', '-|top']);
+    expect(ownersOf('kotlin', 'class A { val pick = { x: Int -> x }\n fun m() { val local = { 1 } } }')).toEqual([
+      'A|pick',
+      'A|m',
+      '-|local',
+    ]);
+    expect(ownersOf('java', 'class A { Runnable r = () -> { run(); }; }')).toEqual(['A|r']);
+    expect(ownersOf('csharp', 'class A { Func<int, int> pick = x => x; }')).toEqual(['A|pick']);
+    expect(ownersOf('cpp', 'namespace n { auto pick = [](int x) { return x; }; }')).toEqual(['n|pick']);
+    expect(ownersOf('rust', 'mod m { static PICK: fn(i32) -> i32 = |x| x; }')).toEqual(['m|PICK']);
+    expect(ownersOf('ruby', 'class A\n  PICK = ->(x) { x }\nend\n')).toEqual(['A|PICK']);
+  });
+
+  it('follows the binding forms that name the value', () => {
+    expect(ownersOf('cpp', 'namespace n { auto pick{[](int x) { return x; }}; }')).toEqual(['n|pick']);
+    expect(ownersOf('cpp', 'struct A { std::function<void(int)> cb = [](int x) {}; };')).toEqual(['A|cb']);
+    expect(ownersOf('cpp', 'struct A { Handler f = [] {}, g = [] {}; Handler h, i = [] {}; };')).toEqual([
+      'A|f',
+      'A|g',
+      'A|i',
+    ]);
+    expect(ownersOf('cpp', 'struct A { Handler f /* c */ = [] {}; };')).toEqual(['A|f']);
+    // A member without a name names nothing.
+    expect(ownersOf('cpp', 'struct A { Handler = [] {}; };')).toEqual(['-|-']);
+    expect(
+      ownersOf('cpp', 'struct Rules { static int (*pick)(int); }; int (*Rules::pick)(int) = [](int x) { return x; };')
+    ).toEqual(['Rules|pick']);
+    expect(ownersOf('kotlin', 'class A { val pick = label@ { x: Int -> x } }')).toEqual(['A|pick']);
+    // A plain name assigned in a Ruby class body is a local variable of that body.
+    expect(ownersOf('ruby', 'class A\n  PICK = lambda { |x| x }\n  handler = ->(x) { x }\nend\n')).toEqual([
+      'A|PICK',
+      '-|handler',
+    ]);
+  });
+
+  it('follows a parallel assignment to the target at the position of the value', () => {
+    expect(ownersOf('python', 'class A:\n    pick, other = lambda x: x, 0\n')).toEqual(['A|pick']);
+    expect(ownersOf('python', 'class A:\n    e = f = lambda: 1\n')).toEqual(['A|f']);
+    expect(ownersOf('ruby', 'class A\n  e = f = ->(x) { x }\nend\n')).toEqual(['-|f']);
+    expect(ownersOf('ruby', 'class A\n  PICK, local = ->(x) { x }, ->(y) { y }\nend\n')).toEqual(['A|PICK', '-|local']);
+    // A lone value goes to the first target.
+    expect(ownersOf('ruby', 'class A\n  PICK, OTHER = ->(x) { x }\nend\n')).toEqual(['A|PICK']);
+  });
+
+  it('names no owner for a function expression reported under a name of its own', () => {
+    expect(
+      ownersOf(
+        'typescript',
+        'class A { pick = function impl(x: number) { return x; }; }\nconst api = { run: function inner() {}, go: function () {} };'
+      )
+    ).toEqual(['-|impl', '-|inner', 'api|go']);
+  });
+
+  it('reaches the members of an object literal through the path the object is bound to', () => {
+    expect(
+      ownersOf(
+        'typescript',
+        "export const service = { load() { return 1; }, save: async () => 2, 'quoted-key': () => 3, [computed]: () => 4 } satisfies Service;\nclass Rules { handlers = { click: () => 1, nested: { deep() { return 2; } } }; }\nnamespace Shop { export const api = { get: () => 1 } as const; }\nmodule.exports = { start() {} };\nRules.prototype.extra = { more: () => 1 };"
+      )
+    ).toEqual([
+      'service|load',
+      'service|save',
+      'service|quoted-key',
+      '-|-',
+      'Rules.handlers|click',
+      'Rules.handlers.nested|deep',
+      'Shop.api|get',
+      'module.exports|start',
+      'Rules.prototype.extra|more',
+    ]);
+  });
+
+  it('spells the target of an assignment without the comments in it', () => {
+    expect(ownersOf('javascript', 'module /* why */ .exports // here\n  .api = { load() {} };')).toEqual([
+      'module.exports.api|load',
+    ]);
+  });
+
+  it('reads a field named by a literal like one named by an identifier', () => {
+    expect(
+      ownersOf('typescript', 'class A { "handlers" = { run() {} }; 1 = { go() {} }; [computed] = { no() {} }; }')
+    ).toEqual(['A.handlers|run', 'A.1|go', '-|no']);
+  });
+
+  it('names no owner for an object that is passed, returned, or exported without a name', () => {
+    expect(
+      ownersOf(
+        'javascript',
+        'register({ onEvent() {} });\nexport default { anonymous() {} };\nfunction make() { return { made() {} }; }\nconst list = [{ item() {} }];'
+      )
+    ).toEqual(['-|onEvent', '-|anonymous', '-|make', '-|made', '-|item']);
+  });
+});
+
+describe('NCSS: declarations of recent language versions', () => {
+  it.each([
+    // function, two resource declarations, return.
+    ['typescript', 'async function f() { using x = g(); await using y = h(); return x; }', 4],
+    ['rust', 'pub macro m($x:expr) { $x + 1 }\ntrait A = B + C;', 2],
+    // class, method, if, return: the alternative headers are one declaration.
+    ['csharp', 'class A {\n#if X\n void M(int a)\n#else\n void N(int a, int b)\n#endif\n { if (a > 0) return; }\n}', 4],
+  ])('%s: %s', (language, code, expected) => {
+    expect(measureCode(code, { language }).ncssCount).toBe(expected);
+  });
+
+  it('measures a C# method whose header is chosen by #if under its first header', () => {
+    const functions = functionsOf(
+      'csharp',
+      'class A {\n#if X\n void M(int a)\n#else\n void N(int a, int b)\n#endif\n { if (a > 0) return; }\n}'
+    );
+    expect(functions.map((fn) => [fn.name, fn.containerName, fn.parameterCount, fn.cyclomaticComplexity])).toEqual([
+      ['M', 'A', 1, 2],
+    ]);
+    // A destructor split the same way parses as a bare header and a declaration with the body.
+    expect(
+      functionsOf('csharp', 'class A {\n#if X\n ~A()\n#else\n ~A()\n#endif\n { }\n}').map((fn) => fn.name)
+    ).toEqual(['~A']);
+    // Without a body, it is a signature like any other.
+    expect(
+      functionsOf('csharp', 'interface A {\n#if X\n void M(int a)\n#else\n void N(int a, int b)\n#endif\n ;\n}')
+    ).toEqual([]);
+    expect(
+      functionsOf('csharp', 'class A {\n#if X\n int M(int a)\n#else\n int N(int a, int b)\n#endif\n => a;\n}').map(
+        (fn) => fn.name
+      )
+    ).toEqual(['M']);
   });
 });
 

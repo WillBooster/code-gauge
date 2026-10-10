@@ -214,10 +214,9 @@ describe('duplication: partial gapped-clone merging', () => {
   it('does not double-count spans where a retained group overlaps the merged group', () => {
     // alpha repeats the prefix run AFTER its suffix, so the prefix group (x3: alpha start, beta,
     // alpha tail) survives a partial merge alongside the merged gapped group (alpha, beta), and
-    // the two OVERLAP. delta is a near-miss copy of beta, so the anchored rebuild coalesces both
-    // groups' fragments per copy: overlapping fragments must union, not concatenate — naive
-    // summing reported a duplicated segment with tokenCount 171 (union: 128), inflating
-    // maxDuplicateBlockSize (171 vs 139) and duplicateBlockCount (5 vs 4).
+    // the two OVERLAP. delta is a near-miss copy of alpha and beta as wholes, so the anchored
+    // rebuild coalesces each function with both groups' fragments in it: overlapping parts must
+    // union, not concatenate, into ONE fragment per copy.
     const longSuffix = `${suffixHalf.replace('  return total + count + big - small;\n', '')}  let more = 0;
   for (const item of items) {
     if (item.flagged) {
@@ -236,10 +235,10 @@ describe('duplication: partial gapped-clone merging', () => {
 
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
     expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(4);
-    // Segment counts per occurrence are [2, 1, 2, 1]: sum minus the largest.
-    expect(metrics.duplication.duplicateBlockCount).toBe(4);
-    // The largest occurrence is delta's whole near-miss block, not a double-counted alpha span.
-    expect(metrics.duplication.maxDuplicateBlockSize).toBe(139);
+    // The three functions and alpha's second copy of the prefix, one fragment each: all but one.
+    expect(metrics.duplication.duplicateBlockCount).toBe(3);
+    // The largest occurrence is alpha's whole block, each of its tokens counted once.
+    expect(metrics.duplication.maxDuplicateBlockSize).toBe(182);
   });
 
   // Cross-file nested copies (inside a larger group's region) are not copies of a merged span: they
@@ -539,6 +538,76 @@ function secondShape(limit, step) {
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(0);
   });
 
+  describe('the lines a copy counts do not depend on the order of the copies', () => {
+    it('counts the lines its copies share between them, wherever they stand', () => {
+      // f1 shares all but two of its statements with f2 and those two with f0, so every line of it
+      // is duplicated, which no single copy shows.
+      const copies = rewrittenCopies([[2, 6, 10, 14, 18, 22], [10, 14, 18, 22], [18, 22], [22]]);
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 590, [0, 1, 2, 3])).toEqual([27, 29, 29, 28]);
+        expect(count(copies, 590, [3, 2, 1, 0])).toEqual([27, 29, 29, 28]);
+      }
+    });
+
+    it('counts the same lines of copies matched with their statements in a canonical order', () => {
+      const copies = [[], [0, 6, 12]].map(
+        (rewritten: number[], index) =>
+          `export function copy${index}(items) {\n  let sum = 0;\n${Array.from({ length: 14 }, (_, position) =>
+            rewritten.includes(position) ? `  alt${position} = ${position};\n` : wideStatement(position)
+          ).join('')}  return sum;\n}\n`
+      );
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 700, [1, 0])).toEqual(count(copies, 700, [0, 1]));
+      }
+    });
+
+    it('counts the same lines of two copies of equal length, whichever comes first', () => {
+      // Each rewrites six statements, so their longest common subsequence is not unique and the
+      // one marked depends on the side the alignment starts from.
+      const copies = rewrittenCopies([
+        [3, 4, 8, 13, 14, 19],
+        [5, 8, 11, 12, 17, 23],
+      ]);
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 590, [1, 0])).toEqual(count(copies, 590, [0, 1]));
+      }
+      // Both detectors start the alignment from the same side.
+      expect(countAcrossFiles(copies, 590, [0, 1])).toEqual(countWithinFile(copies, 590, [0, 1]));
+    });
+
+    it('counts the same lines of two copies matched on a core, whichever comes first', () => {
+      // One statement of two halves, exchanged in the second copy, between statements the copies
+      // do not share: only a half matches, and which one follows the side the match starts from.
+      const copies = [0, 1].map((index) => {
+        const halves = ['alpha', 'beta'].map((name) =>
+          Array.from(
+            { length: 10 },
+            (_, term) =>
+              `${name}${term}(incoming) * ${name}${term}Two(incoming)${term % 4 === 3 ? ` + ${term + index * 100}` : ''}`
+          )
+        );
+        const [first = [], second = []] = index === 0 ? halves : halves.toReversed();
+        return `function f${index}(incoming) {\n${unsharedStatements(`pre${index}`, index)}  const mix = ${first.join(' + ')} +\n    ${second.join(' +\n    ')};\n${unsharedStatements(`post${index}`, index + 1)}  return mix;\n}\n`;
+      });
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 50, [1, 0])).toEqual(count(copies, 50, [0, 1]));
+      }
+    });
+
+    it('counts the same lines with two equally similar copies in either order', () => {
+      // f1 is as similar to f0 as to f2, and lays out a statement f0 rewrites over three lines, so
+      // the lines either of them matches alone differ by two.
+      const copies = rewrittenCopies([[2, 6], [6], [6, 10]]);
+      copies[1] = (copies[1] ?? '').replace(
+        'state.value = Math.min(state.value * 3, state.limit) + Math.abs(state.offset);',
+        'state.value =\n    Math.min(state.value * 3, state.limit) +\n    Math.abs(state.offset);'
+      );
+      for (const count of [countWithinFile, countAcrossFiles]) {
+        expect(count(copies, 650, [2, 1, 0])).toEqual(count(copies, 650, [0, 1, 2]));
+      }
+    });
+  });
+
   it('appends an edited third copy to the exact group of its two identical siblings', () => {
     // Copy-paste-then-edit: two identical copies form an exact group; the edited copy must still
     // be found by anchoring on a reported block instead of being suppressed by it.
@@ -573,9 +642,10 @@ function secondShape(limit, step) {
     // A and B share an exact prefix AND an exact suffix, split by over-large differing middles
     // (two exact groups, multi-fragment copies); C carries scattered operator edits so only the
     // near-miss phase finds it. The component must become ONE group with ONE occurrence per copy
-    // (A's and B's prefix+suffix fragments coalesce), and the fragment-weighted count must be 3
-    // in every source order: without the coalescing and sum-minus-max counting, the same family
-    // reported five occurrences and a source-order-dependent count.
+    // (A and B as the whole functions C resembles, their prefix and suffix fragments coalesced
+    // into them), and the count must be 2 in every source order: without the coalescing and
+    // sum-minus-max counting, the same family reported five occurrences and a
+    // source-order-dependent count.
     const exactA = fragmentedCopy('alpha', fragmentedMiddle('bonusA', 'level', 'bonus'), '+', '+');
     const exactB = fragmentedCopy('beta', fragmentedMiddle('bonusB', 'rank', 'extra'), '+', '+');
     const edited = fragmentedCopy('gamma', fragmentedMiddle('bonusC', 'depth', 'weight'), '-', '-');
@@ -584,7 +654,7 @@ function secondShape(limit, step) {
       const metrics = measureCode(code, { language: 'javascript' });
       expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
       expect(metrics.duplication.duplicateBlockGroups[0]?.length).toBe(3);
-      expect(metrics.duplication.duplicateBlockCount).toBe(3);
+      expect(metrics.duplication.duplicateBlockCount).toBe(2);
     }
   });
 
@@ -1320,3 +1390,65 @@ describe('duplication: dependency declarations', () => {
     expect(measureCrossFileDuplication(files, options.duplication).groups).toStrictEqual([]);
   });
 });
+
+/** One function per entry, rewriting the statements at the given positions: the fewer positions two differ in, the closer they are. */
+function rewrittenCopies(rewritten: number[][]): string[] {
+  return rewritten.map(
+    (positions, index) =>
+      `function f${index}(input) {\nconst state = input; const audit = input; const logger = input;\n${Array.from(
+        { length: 25 },
+        (_, position) =>
+          positions.includes(position)
+            ? '  throw new Error("bad");'
+            : `  state.value = Math.min(state.value * ${position + 1}, state.limit) + Math.abs(state.offset);`
+      ).join('\n')}\nreturn input;\n}\n`
+  );
+}
+
+/** Per copy, the lines it counts when the copies stand in one file in the given order. */
+function countWithinFile(copies: string[], minTokens: number, order: number[]): (number | undefined)[] {
+  const { duplicateBlockGroups } = measureCode(order.map((index) => copies[index]).join(''), {
+    language: 'javascript',
+    duplication: { minTokens, maxGapTokens: 0 },
+  }).duplication;
+  expect(duplicateBlockGroups).toHaveLength(1);
+  const counts = duplicateBlockGroups[0]?.map((occurrence) => occurrence.lineNumbers.length) ?? [];
+  return order.map((_, index) => counts[order.indexOf(index)]);
+}
+
+/** Per copy, the lines it counts when the copies are files passed in the given order. */
+function countAcrossFiles(copies: string[], minTokens: number, order: number[]): (number | undefined)[] {
+  const duplication = { minTokens, maxGapTokens: 0 };
+  const { groups } = measureCrossFileDuplication(
+    order.map((index) => ({
+      file: `${index}.js`,
+      ...collectCrossFileDuplicationFileData(copies[index] ?? '', { language: 'javascript', duplication }),
+    })),
+    duplication
+  );
+  expect(groups).toHaveLength(1);
+  return order.map(
+    (_, index) => groups[0]?.occurrences.find((occurrence) => occurrence.file === `${index}.js`)?.lineNumbers?.length
+  );
+}
+
+/** A long declaration whose sixteen terms differ from those of every other position. */
+function wideStatement(position: number): string {
+  return `  const value${position} = ${Array.from(
+    { length: 16 },
+    (_, term) => `${term === 0 ? '' : `${['+', '-', '*'][term % 3]} `}fn${term}(items, ${(position * 17 + term) % 97})`
+  ).join(' ')};\n`;
+}
+
+/** Six declarations no other variant or tag shares the shape of. */
+function unsharedStatements(tag: string, variant: number): string {
+  return Array.from(
+    { length: 6 },
+    (_, index) =>
+      `  const ${tag}${index} = ${Array.from(
+        { length: 1 + ((index + variant * 2) % 4) },
+        (__, term) =>
+          `${term === 0 ? '' : ` ${['+', '*', '-'][(term + variant) % 3]} `}${tag}${index}x${term}(incoming${term})`
+      ).join('')};\n`
+  ).join('');
+}
