@@ -581,7 +581,7 @@ ep\`](value: number): number {
     );
     writeSource('src/sub/full.ts', reportFunction('full'));
     expect(runCheck(['src/sub', '--warning-min-duplicate-lines', '5']).stdout).toContain(
-      'src/sub/full.ts:1-12: duplicated lines 12 (max 4), also at src/report.ts:1-12, src/summary.ts:1-12, src/padded.ts:3-27\n'
+      'src/sub/full.ts:1-12: duplicated lines 12 (max 4), also at src/report.ts:1-12, src/summary.ts:1-12, src/padded.ts:1-29\n'
     );
   });
 
@@ -869,9 +869,9 @@ describe('code-gauge check outside a git repository', () => {
   it('walks the target directory and reports overlapping duplicated ranges of a file as one block', () => {
     const result = runCheck(['--warning-min-duplicate-lines', '5', plainDir], plainDir);
     expect(result.stdout).toContain(`
-warning: a.ts:1-12: duplicated lines 12 (max 4), also at a.ts:14-25, b.ts:3-11
-warning: a.ts:14-25: duplicated lines 12 (max 4), also at a.ts:1-12, b.ts:3-11
-warning: b.ts:3-11: duplicated lines 9 (max 4), also at a.ts:2-10, a.ts:15-23
+warning: a.ts:1-12: duplicated lines 12 (max 4), also at a.ts:14-25, b.ts:1-13
+warning: a.ts:14-25: duplicated lines 12 (max 4), also at a.ts:1-12, b.ts:1-13
+warning: b.ts:1-13: duplicated lines 11 (max 4), also at a.ts:1-12, a.ts:14-25
 `);
   });
 
@@ -891,7 +891,7 @@ warning: b.ts:3-11: duplicated lines 9 (max 4), also at a.ts:2-10, a.ts:15-23
       'm.ts': reportFunction('middle'),
       'z.ts': reportFunction('last'),
     });
-    expect(stdout).toContain('m.ts:1-12: duplicated lines 12 (max 4), also at z.ts:1-12, a.ts:3-27\n');
+    expect(stdout).toContain('m.ts:1-12: duplicated lines 12 (max 4), also at z.ts:1-12, a.ts:1-29\n');
   });
 
   it('does not list a place repeating only a part of a duplicated block among its copies', () => {
@@ -902,7 +902,7 @@ warning: b.ts:3-11: duplicated lines 9 (max 4), also at a.ts:2-10, a.ts:15-23
       'whole.ts': reportFunction('whole'),
     });
     expect(stdout).toContain(`
-warning: part.ts:2-7: duplicated lines 6 (max 4), also at twin.ts:2-7, whole.ts:2-7
+warning: part.ts:1-7: duplicated lines 7 (max 4), also at twin.ts:1-7, whole.ts:1-7
 warning: twin.ts:1-12: duplicated lines 12 (max 4), also at whole.ts:1-12
 warning: whole.ts:1-12: duplicated lines 12 (max 4), also at twin.ts:1-12
 `);
@@ -914,10 +914,10 @@ warning: whole.ts:1-12: duplicated lines 12 (max 4), also at twin.ts:1-12
       'original.ts': reportFunction('original'),
     };
     expect(checkProject(['--warning-min-duplicate-lines', '5'], files)).toContain(`
-warning: edited.ts:2-12: duplicated lines 10 (max 4), also at original.ts:2-11
-warning: original.ts:2-11: duplicated lines 10 (max 4), also at edited.ts:2-12
+warning: edited.ts:1-13: duplicated lines 12 (max 4), also at original.ts:1-12
+warning: original.ts:1-12: duplicated lines 12 (max 4), also at edited.ts:1-13
 `);
-    expect(checkProject(['--warning-min-duplicate-lines', '11'], files)).toBe(
+    expect(checkProject(['--warning-min-duplicate-lines', '13'], files)).toBe(
       'No threshold violations: 2 files, 2 functions checked.\n'
     );
   });

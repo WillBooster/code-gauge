@@ -27,6 +27,8 @@ export interface NearMissSourceFile {
 /** One copy (a block or its matched cores) in a near-miss group; anchors carry `spanCountedElsewhere` (see collectCrossFileNearMissGroups). */
 export interface NearMissOccurrence extends CountedOccurrence {
   fileIndex: number;
+  /** The token range of the block the copy lies in. */
+  block: TokenSegment;
 }
 
 /** N-gram size of the candidate index and local-match anchors (NIL's default). */
@@ -136,13 +138,13 @@ interface MatchEdge {
  * core) overlapping an occurrence of `reportedSpansByFile` (the exact cross-file groups) is an
  * anchor: it links near-miss copies to the content an exact group already reports, and appears in
  * the near-miss group marked `spanCountedElsewhere` so block counting does not count its span
- * twice; it still counts the lines its partners match outside those spans. Two spans that both
- * overlap reported spans repeat what those report unless they match more outside them: at least
- * `minTokens` on one side, the size below which no clone is reported. A pair matching less is
- * dropped before clustering (two blocks wholly covered by reported spans are not even compared),
- * so it neither collapses the blocks' core nodes nor widens a node beyond what the pairs
- * clustering it matched, and a group needs at least one node reported spans do not cover
- * entirely. A block that matched only locally is reported as its matched cores
+ * twice; it still counts the lines its partners match outside those spans. A pair matching
+ * nothing outside reported spans has nothing to add to them and is dropped before clustering (two
+ * blocks wholly covered by reported spans are not even compared), so it neither collapses the
+ * blocks' core nodes nor widens a node beyond what the pairs clustering it matched. Any other
+ * pair is kept however much of it is reported: what the exact pipeline reports of a copy depends
+ * on where its copies stand, and the lines the copy counts must not. A group needs at least one
+ * node reported spans do not cover entirely. A block that matched only locally is reported as its matched cores
  * (overlapping cores merged), each clustered with its own partners, so code no verified pair
  * matched never counts as duplicated.
  */
@@ -180,18 +182,14 @@ export function collectCrossFileNearMissGroups(
     // their number or their order decide what the copy counts.
     for (const { pair: cores, reordered } of match.cores ?? [{ pair: undefined, reordered: match.reordered }]) {
       const [leftSpan, rightSpan] = cores ?? [spanOf(leftBlock), spanOf(rightBlock)];
-      const bothReported =
-        reportedCount(leftBlock.fileIndex, leftSpan) > 0 && reportedCount(rightBlock.fileIndex, rightSpan) > 0;
-      const addsEnough = (leftRuns: [number, number][], rightRuns: [number, number][]): boolean =>
-        !bothReported ||
-        unreportedCount(leftBlock.fileIndex, leftRuns) >= minTokens ||
-        unreportedCount(rightBlock.fileIndex, rightRuns) >= minTokens;
-      // Spans with too little outside reported content need no alignment to be dropped.
-      if (!addsEnough([leftSpan], [rightSpan])) {
+      const addsLines = (leftRuns: [number, number][], rightRuns: [number, number][]): boolean =>
+        unreportedCount(leftBlock.fileIndex, leftRuns) + unreportedCount(rightBlock.fileIndex, rightRuns) > 0;
+      // Fully reported spans need no alignment to be dropped.
+      if (!addsLines([leftSpan], [rightSpan])) {
         continue;
       }
       const matchedRuns = alignPair(leftBlock, rightBlock, { cores, reordered });
-      if (addsEnough(...matchedRuns)) {
+      if (addsLines(...matchedRuns)) {
         edges.push({ left, right, cores, matchedRuns });
       }
     }
@@ -464,6 +462,7 @@ function toOccurrence(
   const tokens = files[fileIndex]?.tokens;
   return {
     fileIndex,
+    block: { startTokenIndex: range.startTokenIndex, endTokenIndex: range.endTokenIndex },
     spanCountedElsewhere: anchor || undefined,
     segments,
     matchedRuns: mergeOverlappingCores(matchedRuns).map(([startTokenIndex, endTokenIndex]): TokenSegment => ({

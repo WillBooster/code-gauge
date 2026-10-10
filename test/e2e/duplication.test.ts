@@ -103,9 +103,11 @@ function ${name}(items) {
 describe('duplication: gapped (Type-3) clones', () => {
   const gapped =
     logicClone('alpha', 'console.log("midpoint", total);') + logicClone('beta', 'console.warn("midpoint", total);');
+  // Near-miss detection would list the two functions as whole copies whatever the gap merging does.
+  const exactOnly = { minSimilarityPercent: 100 };
 
   it('merges the exact halves around a small edit into one clone group', () => {
-    const metrics = measureCode(gapped, { language: 'javascript' });
+    const metrics = measureCode(gapped, { language: 'javascript', duplication: exactOnly });
 
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
     // Each matched fragment still counts: merging consolidates the grouping, not the counting.
@@ -117,14 +119,17 @@ describe('duplication: gapped (Type-3) clones', () => {
   });
 
   it('reports the halves separately when merging is disabled', () => {
-    const metrics = measureCode(gapped, { language: 'javascript', duplication: { maxGapTokens: 0 } });
+    const metrics = measureCode(gapped, {
+      language: 'javascript',
+      duplication: { ...exactOnly, maxGapTokens: 0 },
+    });
 
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(2);
   });
 
   it('does not count the differing gap statement as duplicated lines', () => {
-    const merged = measureCode(gapped, { language: 'javascript' });
-    const split = measureCode(gapped, { language: 'javascript', duplication: { maxGapTokens: 0 } });
+    const merged = measureCode(gapped, { language: 'javascript', duplication: exactOnly });
+    const split = measureCode(gapped, { language: 'javascript', duplication: { ...exactOnly, maxGapTokens: 0 } });
 
     // Merging reassembles the same matched content; the edited line stays uncounted.
     expect(merged.duplication.duplicateLineCount).toBe(split.duplication.duplicateLineCount);
@@ -193,7 +198,7 @@ describe('duplication: partial gapped-clone merging', () => {
     prefixOnly;
 
   it('merges the paired occurrences and retains the exact group with leftovers', () => {
-    const metrics = measureCode(code, { language: 'javascript' });
+    const metrics = measureCode(code, { language: 'javascript', duplication: { minSimilarityPercent: 100 } });
 
     // One merged gapped group (the two full copies) plus the retained prefix group with ALL
     // three occurrences; the fully-paired suffix group is subsumed.
@@ -701,9 +706,21 @@ function secondShape(limit, step) {
       `function other(input) {${selfCloneRun('B', 'input')}}\n`,
     ];
     const gamma = functions[2] ?? '';
-    const across = measureJavaScriptFiles(Object.fromEntries(functions.map((code, index) => [`${index}.js`, code])));
-    const acrossLineCount = across.duplicateLineNumbersByFile['2.js']?.length ?? 0;
-    expect(acrossLineCount).toBeGreaterThan(20);
+    const sources = Object.fromEntries(functions.map((code, index) => [`${index}.js`, code]));
+    // What the exact pipeline reports of gamma differs with the limit and with the placement.
+    for (const minTokens of [40, 60, 100]) {
+      const acrossLineCount = measureJavaScriptFiles(sources, { minTokens }).duplicateLineNumbersByFile['2.js']?.length;
+      expect(acrossLineCount).toBeGreaterThan(20);
+      const code = functions.join('');
+      const firstLine = code.slice(0, code.indexOf(gamma)).split('\n').length;
+      const lastLine = firstLine + gamma.trimEnd().split('\n').length - 1;
+      const { duplicateLineNumbers } = measureCode(code, {
+        language: 'javascript',
+        duplication: { minTokens },
+      }).duplication;
+      expect(duplicateLineNumbers.filter((line) => firstLine <= line && line <= lastLine).length).toBe(acrossLineCount);
+    }
+    const acrossLineCount = measureJavaScriptFiles(sources).duplicateLineNumbersByFile['2.js']?.length;
 
     for (const order of [
       [0, 1, 2, 3],
@@ -784,7 +801,7 @@ describe('duplication: fingerprint integrity', () => {
       logicClone(name, `console.log("midpoint", total.${member});`);
     const metrics = measureCode(caller('alpha', 'p1v') + caller('beta', 'p70'), {
       language: 'javascript',
-      duplication: { maxGapTokens: 0 },
+      duplication: { maxGapTokens: 0, minSimilarityPercent: 100 },
     });
 
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(2);
@@ -807,6 +824,18 @@ describe('duplication: detection options', () => {
     expect(lowered.duplication.duplicateBlockGroupCount).toBeGreaterThanOrEqual(1);
   });
 });
+
+/** Statements two functions do not share, enough of them that the functions are no copies as wholes. */
+const surroundingsA = `  initialize(items);
+  const lookup = new Map(items.map((item) => [item.id, item]));
+  audit.record(lookup.size, Date.now());`;
+const surroundingsB = `  const prepared = prepare(rows);
+  if (!prepared.ready) {
+    throw new Error('not ready');
+  }
+  for (const key of Object.keys(prepared.options)) {
+    logger.debug(key);
+  }`;
 
 const embeddedRun = (a: string, b: string): string => `
   const first = compute(${a}, seed);
@@ -950,8 +979,8 @@ describe('duplication: cross-file clones', () => {
   it('matches a copy-pasted statement run embedded in different surrounding code', () => {
     // The run is neither a catalogued block nor a full container run in either file, so only the
     // project-level window index can see that it repeats.
-    const fileA = `function alpha(items) {\n  initialize(items);${embeddedRun('items', 'items')}}\n`;
-    const fileB = `function beta(rows) {\n  const prepared = prepare(rows);${embeddedRun('rows', 'prepared')}}\n`;
+    const fileA = `function alpha(items) {\n${surroundingsA}${embeddedRun('items', 'items')}}\n`;
+    const fileB = `function beta(rows) {\n${surroundingsB}${embeddedRun('rows', 'prepared')}}\n`;
     const metrics = measureCrossFileDuplication([
       { file: 'a.js', ...collectCrossFileDuplicationFileData(fileA, { language: 'javascript' }) },
       { file: 'b.js', ...collectCrossFileDuplicationFileData(fileB, { language: 'javascript' }) },
@@ -960,7 +989,10 @@ describe('duplication: cross-file clones', () => {
     expect(metrics.groups.length).toBe(1);
     expect(metrics.groups[0]?.files).toEqual(['a.js', 'b.js']);
     // The matched region is the embedded run, not the whole differing function body.
-    expect(metrics.groups[0]?.occurrences[0]?.startLine).toBeGreaterThan(2);
+    expect(metrics.groups[0]?.occurrences.map(({ startLine, endLine }) => [startLine, endLine])).toEqual([
+      [5, 12],
+      [9, 16],
+    ]);
   });
 
   it('merges cross-file fragments split by one edited statement under maxGapTokens', () => {
@@ -974,8 +1006,9 @@ describe('duplication: cross-file clones', () => {
       { file: 'a.js', ...collectCrossFileDuplicationFileData(gappedA, { language: 'javascript' }) },
       { file: 'b.js', ...collectCrossFileDuplicationFileData(gappedB, { language: 'javascript' }) },
     ];
-    const merged = measureCrossFileDuplication(sources);
-    const split = measureCrossFileDuplication(sources, { maxGapTokens: 0 });
+    // Near-miss detection would list the two functions as whole copies whatever the gap merging does.
+    const merged = measureCrossFileDuplication(sources, { minSimilarityPercent: 100 });
+    const split = measureCrossFileDuplication(sources, { maxGapTokens: 0, minSimilarityPercent: 100 });
 
     expect(merged.groups.length).toBe(1);
     expect(merged.groups[0]?.files).toEqual(['a.js', 'b.js']);
@@ -1349,10 +1382,8 @@ describe('duplication: cross-file near-miss (Type-3) clones', () => {
   it('links an edited third copy to an exact cross-file pair without recounting the pair', () => {
     const metrics = measureJavaScriptFiles({ 'a.js': first, 'b.js': first, 'c.js': second });
 
-    const exact = metrics.groups.find((group) => !group.files.includes('c.js'));
-    const nearMiss = metrics.groups.find((group) => group.files.includes('c.js'));
-    expect(exact?.files).toEqual(['a.js', 'b.js']);
-    expect(nearMiss?.files.length).toBeGreaterThanOrEqual(2);
+    // The copies are listed once: the near-miss group takes over the exact pair it extends.
+    expect(metrics.groups.map((group) => group.files)).toEqual([['a.js', 'b.js', 'c.js']]);
     // One redundant copy each: b.js duplicating a.js exactly, and c.js duplicating it with edits.
     expect(metrics.duplicateBlockCount).toBe(2);
     expect(metrics.duplicateLineNumbersByFile['c.js']?.length).toBeGreaterThan(10);
@@ -1370,19 +1401,21 @@ describe('duplication: cross-file near-miss (Type-3) clones', () => {
 describe('duplication: within-file statement runs and containers', () => {
   it('detects a repeated statement run embedded in two functions with different surroundings', () => {
     const code =
-      `function alpha(items) {\n  initialize(items);${embeddedRun('items', 'items')}}\n` +
-      `function beta(rows) {\n  const prepared = prepare(rows);\n  const extra = rows.length;${embeddedRun('rows', 'rows')}}\n`;
+      `function alpha(items) {\n${surroundingsA}${embeddedRun('items', 'items')}}\n` +
+      `function beta(rows) {\n${surroundingsB}${embeddedRun('rows', 'rows')}}\n`;
     const metrics = measureCode(code, { language: 'javascript' });
 
     expect(metrics.duplication.duplicateBlockGroupCount).toBe(1);
-    // The matched region is the embedded run (lines 3-10 and 15-22), not either whole function.
+    // The matched region is the embedded run, not either whole function.
     expect(metrics.duplication.duplicateBlockGroups).toEqual([
       [
-        { startLine: 3, endLine: 10, lineNumbers: [3, 4, 5, 6, 7, 8, 9, 10], tokenCount: 54 },
-        { startLine: 15, endLine: 22, lineNumbers: [15, 16, 17, 18, 19, 20, 21, 22], tokenCount: 54 },
+        { startLine: 5, endLine: 12, lineNumbers: [5, 6, 7, 8, 9, 10, 11, 12], tokenCount: 54 },
+        { startLine: 22, endLine: 29, lineNumbers: [22, 23, 24, 25, 26, 27, 28, 29], tokenCount: 54 },
       ],
     ]);
-    expect(metrics.duplication.duplicateLineNumbers).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 15, 16, 17, 18, 19, 20, 21, 22]);
+    expect(metrics.duplication.duplicateLineNumbers).toEqual([
+      5, 6, 7, 8, 9, 10, 11, 12, 22, 23, 24, 25, 26, 27, 28, 29,
+    ]);
   });
 
   it('does not report a homogeneous run of identically shaped statements as a clone', () => {

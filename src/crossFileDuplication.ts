@@ -78,6 +78,11 @@ interface CrossFileOccurrence extends CountedOccurrence {
   fileIndex: number;
 }
 
+/** A copy of a near-miss group, with the token range of the block it lies in. */
+interface NearMissCopy extends CrossFileOccurrence {
+  block: TokenSegment;
+}
+
 /**
  * Detects code regions duplicated across files. Per-file candidates (whole block subtrees and full
  * container runs, fingerprinted with the same normalization as within-file duplication) are joined
@@ -113,11 +118,112 @@ export function measureCrossFileDuplication(
     (left, right) => left.regionBucket - right.regionBucket || left.startIndex - right.startIndex
   );
   const tokenOffsets = computeTokenOffsets(files, maxGapTokens);
-  const groups = mergeGapAdjacentGroups([...counted.values()], tokenOffsets, maxGapTokens);
-  for (const group of collectNearMissGroups(files, groups, tokenOffsets, minTokens, minSimilarityPercent)) {
-    groups.push(group);
+  const exactGroups = mergeGapAdjacentGroups([...counted.values()], tokenOffsets, maxGapTokens);
+  const nearMissGroups = collectNearMissGroups(files, exactGroups, tokenOffsets, minTokens, minSimilarityPercent);
+  return summarize(takeOverExactGroups(exactGroups, nearMissGroups, minTokens), files, tokenOffsets);
+}
+
+/**
+ * Lets a near-miss group take over the exact groups standing for the same copies, as within a
+ * file (collect_near_miss_groups in native/src/duplication.rs): every occurrence of such a group
+ * overlaps exactly one copy of the near-miss group (one overlapping none reports content the copies
+ * do not share, and one reaching into two would make one copy take over lines of the next), exceeds
+ * its span inside its block by less than `minTokens` (a core is listed at the size it matched, not
+ * at that of a clone of its block larger by a reportable part), and no two overlap the same copy
+ * (those repeat within the copy, not between the copies).
+ * Each copy then becomes one occurrence with the exact fragments it holds, so the copies are
+ * listed once.
+ */
+function takeOverExactGroups(
+  exactGroups: CrossFileOccurrence[][],
+  nearMissGroups: NearMissCopy[][],
+  minTokens: number
+): CrossFileOccurrence[][] {
+  const exactGroupIndexesByFile = new Map<number, Set<number>>();
+  for (const [groupIndex, group] of exactGroups.entries()) {
+    for (const { fileIndex } of group) {
+      const indexes = exactGroupIndexesByFile.get(fileIndex) ?? new Set();
+      indexes.add(groupIndex);
+      exactGroupIndexesByFile.set(fileIndex, indexes);
+    }
   }
-  return summarize(groups, files, tokenOffsets);
+  const taken = new Set<number>();
+  const merged = nearMissGroups.map((copies) => {
+    const copyOf = (occurrence: CrossFileOccurrence): NearMissCopy | undefined => {
+      const overlapped = copies.filter((copy) =>
+        copy.segments.some(
+          (segment) =>
+            occurrence.startTokenIndex < segment.endTokenIndex && segment.startTokenIndex < occurrence.endTokenIndex
+        )
+      );
+      const [copy] = overlapped;
+      if (overlapped.length !== 1 || !copy) {
+        return undefined;
+      }
+      const excess =
+        Math.max(0, copy.startTokenIndex - Math.max(occurrence.startTokenIndex, copy.block.startTokenIndex)) +
+        Math.max(0, Math.min(occurrence.endTokenIndex, copy.block.endTokenIndex) - copy.endTokenIndex);
+      return excess < minTokens ? copy : undefined;
+    };
+    const fragmentsByCopy = new Map<NearMissCopy, CrossFileOccurrence[]>();
+    const candidateIndexes = new Set(
+      copies.flatMap((copy) =>
+        copy.spanCountedElsewhere ? [...(exactGroupIndexesByFile.get(copy.fileIndex) ?? [])] : []
+      )
+    );
+    for (const groupIndex of [...candidateIndexes].toSorted((left, right) => left - right)) {
+      const group = exactGroups[groupIndex] ?? [];
+      const owners = group.map(copyOf);
+      if (taken.has(groupIndex) || owners.includes(undefined) || new Set(owners).size !== owners.length) {
+        continue;
+      }
+      taken.add(groupIndex);
+      for (const [index, owner] of owners.entries()) {
+        const fragment = group[index];
+        if (owner && fragment) {
+          fragmentsByCopy.set(owner, [...(fragmentsByCopy.get(owner) ?? []), fragment]);
+        }
+      }
+    }
+    return copies.map((copy): CrossFileOccurrence => {
+      const fragments = fragmentsByCopy.get(copy);
+      return fragments ? coalesceOccurrences([copy, ...fragments]) : copy;
+    });
+  });
+  return [...exactGroups.filter((_, groupIndex) => !taken.has(groupIndex)), ...merged];
+}
+
+/** The parts of one copy as one occurrence: an exact part is matched throughout, a near-miss part where its partners match it. */
+function coalesceOccurrences(parts: [CrossFileOccurrence, ...CrossFileOccurrence[]]): CrossFileOccurrence {
+  const segments = mergeSegments(parts.flatMap((part) => part.segments));
+  return {
+    ...parts[0],
+    spanCountedElsewhere: undefined,
+    nestedInLargerGroup: undefined,
+    segments,
+    matchedRuns: mergeSegments(parts.flatMap((part) => part.matchedRuns ?? part.segments)),
+    tokenCount: segments.reduce((sum, segment) => sum + segment.endTokenIndex - segment.startTokenIndex, 0),
+    startTokenIndex: Math.min(...parts.map((part) => part.startTokenIndex)),
+    endTokenIndex: Math.max(...parts.map((part) => part.endTokenIndex)),
+    startIndex: Math.min(...parts.map((part) => part.startIndex)),
+    endIndex: Math.max(...parts.map((part) => part.endIndex)),
+    startLine: Math.min(...parts.map((part) => part.startLine)),
+    endLine: Math.max(...parts.map((part) => part.endLine)),
+  };
+}
+
+/** The unions of overlapping segments, in position order. */
+function mergeSegments(segments: TokenSegment[]): TokenSegment[] {
+  const merged: TokenSegment[] = [];
+  for (const segment of segments.toSorted((left, right) => left.startTokenIndex - right.startTokenIndex)) {
+    const last = merged.at(-1);
+    if (last && segment.startTokenIndex < last.endTokenIndex) {
+      last.endTokenIndex = Math.max(last.endTokenIndex, segment.endTokenIndex);
+    } else {
+      merged.push({ ...segment });
+    }
+  }
+  return merged;
 }
 
 /** Near-miss groups among the blocks the exact groups leave unreported, in the project token space. */
@@ -127,7 +233,7 @@ function collectNearMissGroups(
   tokenOffsets: number[],
   minTokens: number,
   minSimilarityPercent: number
-): CrossFileOccurrence[][] {
+): NearMissCopy[][] {
   const reportedSpansByFile: { startTokenIndex: number; endTokenIndex: number }[][] = files.map(() => []);
   for (const { fileIndex, startTokenIndex, endTokenIndex } of exactGroups.flat()) {
     const offset = tokenOffsets[fileIndex] ?? 0;
@@ -142,6 +248,7 @@ function collectNearMissGroups(
       return {
         ...occurrence,
         file: files[occurrence.fileIndex]?.file ?? '',
+        block: shift(occurrence.block, offset),
         segments: occurrence.segments.map((segment) => shift(segment, offset)),
         matchedRuns: occurrence.matchedRuns?.map((run) => shift(run, offset)),
         startTokenIndex: occurrence.startTokenIndex + offset,

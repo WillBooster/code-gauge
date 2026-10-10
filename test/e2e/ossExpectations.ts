@@ -242,7 +242,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       ncssCount: 428,
       duplication: {
         duplicateBlockCount: 3,
-        duplicateBlockGroupCount: 2,
+        duplicateBlockGroupCount: 3,
         duplicateBlockGroups: [
           [
             {
@@ -251,6 +251,20 @@ export const ossExpectations: readonly OssFileExpectation[] = [
               startLine: 121,
               tokenCount: 68,
             },
+            {
+              endLine: 262,
+              lineCount: 8,
+              startLine: 254,
+              tokenCount: 56,
+            },
+            {
+              endLine: 307,
+              lineCount: 10,
+              startLine: 297,
+              tokenCount: 60,
+            },
+          ],
+          [
             {
               endLine: 271,
               lineCount: 16,
@@ -852,7 +866,7 @@ export const ossExpectations: readonly OssFileExpectation[] = [
       nestingDepth: 3,
       ncssCount: 380,
       duplication: {
-        duplicateBlockCount: 3,
+        duplicateBlockCount: 4,
         duplicateBlockGroupCount: 3,
         duplicateBlockGroups: [
           [
@@ -877,6 +891,12 @@ export const ossExpectations: readonly OssFileExpectation[] = [
               tokenCount: 180,
             },
             {
+              endLine: 502,
+              lineCount: 21,
+              startLine: 481,
+              tokenCount: 170,
+            },
+            {
               endLine: 527,
               lineCount: 22,
               startLine: 504,
@@ -898,8 +918,8 @@ export const ossExpectations: readonly OssFileExpectation[] = [
             },
           ],
         ],
-        duplicateLineCount: 71,
-        duplicationRatio: 0.1707,
+        duplicateLineCount: 75,
+        duplicationRatio: 0.1803,
         maxDuplicateBlockSize: 180,
       },
       halstead: {

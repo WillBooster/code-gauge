@@ -1887,14 +1887,15 @@ fn collect_near_miss_groups(
     );
 
     // The lines of a near-miss copy that are duplicated are those a verified partner matches,
-    // which takes the pairing itself. Every pair kept is aligned: verifying it already cost a longest
-    // common subsequence of the same sequences, and any choice among a copy's partners would let
-    // their number or their order decide what the copy counts.
+    // which takes the pairing itself. Every pair kept is aligned: verifying it already cost a
+    // longest common subsequence of the same sequences, and any choice among a copy's partners
+    // would let their number or their order decide what the copy counts.
     //
-    // Two spans that both overlap reported content repeat what it reports unless they match more
-    // outside it: at least `min_tokens` on one side, the size below which no clone is reported.
-    // A pair matching less is dropped before clustering, so that it neither collapses the blocks'
-    // core nodes nor widens a node beyond what the pairs clustering it matched.
+    // A pair matching nothing outside reported content has nothing to add to it and is dropped
+    // before clustering, so that it neither collapses the blocks' core nodes nor widens a node
+    // beyond what the pairs clustering it matched. Any other pair is kept however much of it is
+    // reported: what the exact pipeline reports of a copy depends on where its copies stand, and
+    // the lines the copy counts must not.
     let mut reported_prefix = vec![0usize; tokens.len() + 1];
     {
         let mut reported = vec![false; tokens.len()];
@@ -1923,20 +1924,13 @@ fn collect_near_miss_groups(
     let mut edges: Vec<MatchEdge> = Vec::new();
     let mut add_edge = |left: usize, right: usize, cores: Option<CorePair>, alignment| {
         let (left_span, right_span) = cores.unwrap_or((block_span(left), block_span(right)));
-        let both_reported = reported_count(left_span) > 0 && reported_count(right_span) > 0;
-        // Spans with too little outside reported content need no alignment to be dropped.
-        if both_reported
-            && unreported_count(&[left_span]) < settings.min_tokens
-            && unreported_count(&[right_span]) < settings.min_tokens
-        {
+        // Fully reported spans need no alignment to be dropped.
+        if unreported_count(&[left_span, right_span]) == 0 {
             return;
         }
         let matched_runs =
             matcher.align(&blocks[left], &blocks[right], cores, alignment, &token_keys);
-        if both_reported
-            && unreported_count(&matched_runs.0) < settings.min_tokens
-            && unreported_count(&matched_runs.1) < settings.min_tokens
-        {
+        if unreported_count(&matched_runs.0) + unreported_count(&matched_runs.1) == 0 {
             return;
         }
         edges.push(MatchEdge {
@@ -2140,9 +2134,11 @@ fn collect_near_miss_groups(
         // An anchored cluster extends a reported group only when it stands for the same copies:
         // every occurrence of the group overlaps the member nodes of exactly one block (one
         // disjoint from all members reports content the cluster does not share, and one reaching
-        // into two members would make one copy take over lines of the next), and shares that
-        // block with no other occurrence of the group (those repeat within the copy, not between
-        // the copies).
+        // into two members would make one copy take over lines of the next), exceeds the span of
+        // those nodes inside the block by less than `min_tokens` (a core is listed at the size
+        // it matched, not at that of a clone of its block larger by a reportable part), and
+        // shares that block with no other occurrence of the group (those repeat within the copy,
+        // not between the copies).
         let member_block_of = |occurrence: &CountedOccurrence| {
             let mut blocks = members
                 .iter()
@@ -2152,7 +2148,21 @@ fn collect_near_miss_groups(
                 })
                 .map(|&index| node_blocks[index]);
             let block = blocks.next()?;
-            blocks.all(|other| other == block).then_some(block)
+            let mut spans = members
+                .iter()
+                .filter(|&&index| node_blocks[index] == block)
+                .map(|&index| node_range(index));
+            let first = spans.next()?;
+            let span = spans.fold(first, |span, node| (span.0.min(node.0), span.1.max(node.1)));
+            let range = comparable[block];
+            let excess = span
+                .0
+                .saturating_sub(occurrence.start_token_index.max(range.start_token_index))
+                + occurrence
+                    .end_token_index
+                    .min(range.end_token_index)
+                    .saturating_sub(span.1);
+            (blocks.all(|other| other == block) && excess < settings.min_tokens).then_some(block)
         };
         let stands_for_members = |group: &[CountedOccurrence]| {
             let mut blocks: FxHashSet<usize> = FxHashSet::default();

@@ -284,7 +284,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
 | `maxFunctionNcss`                |      30 |    60 | 2.62% and 0.59% of functions         |
 | `maxFunctionParameterCount`      |       6 |   off | 0.48% of functions                   |
 | `maxFileNcss`                    |     400 |  1000 | 0.89% and 0.11% of files             |
-| `minDuplicateLines`              |      15 |   off | 1,105 duplicated blocks              |
+| `minDuplicateLines`              |      15 |   off | 1,134 duplicated blocks              |
 
 - **Cognitive complexity, 15 and 30.** The share of A rises steadily with the value and the
   conventional limit of 15 is where B takes over from C. Above 30, 27 of 30 functions were A;
@@ -302,7 +302,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   seven of ten between 601 and 1000. The limits flag 0.89% and 0.11% of files; the 99th and 99.9th
   percentiles are 377 and 1042.
 - **Duplicated lines, 15, no error.** In line span here; [in matched lines](#duplicated-blocks-measured-in-matched-lines) the limit is the same. Length separates duplicated blocks poorly: a third of the blocks of 30 lines or more should be shared, a quarter of those of 15–29 lines, a sixth of those
-  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,596 blocks from 10 matched lines).
+  of 10–14 lines. No length reaches the share of A an error needs, and from 10 lines of span on `check` reported 3,209 blocks in the corpus, nearly twice its 1,698 function violations (2,795 blocks from 10 matched lines).
 - **Nesting depth, off.** All 91 functions deeper than 4 also exceed the cognitive-complexity
   warning limit, which already charges nesting, and the rated functions of depth 4 or more were A no
   more often than others of their cognitive complexity.
@@ -316,7 +316,7 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
   which the metric names no change to make. Halstead effort is the product of volume and
   difficulty and was not rated on its own.
 
-With these limits, `check` reports 464 errors and 2,398 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
+With these limits, `check` reports 464 errors and 2,427 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
 
 ## Duplicated blocks measured in matched lines
 
@@ -333,29 +333,29 @@ and 6,603 files):
 | Blocks reported from | 5 lines | 10 lines | 15 lines | 20 lines | 30 lines | 50 lines |
 | -------------------- | ------: | -------: | -------: | -------: | -------: | -------: |
 | line span            |   5,805 |    3,209 |    1,506 |      696 |      223 |       50 |
-| matched lines        |   5,640 |    2,704 |    1,105 |      518 |      138 |       29 |
+| matched lines        |   5,678 |    2,795 |    1,134 |      532 |      141 |       31 |
 
 Regrouped by the matched lines of their longest block as `check` reports it, the 60 rated clone
 groups separate no better than by its span:
 
 | Longest block, matched lines | Rated |   A | A or B |
 | ---------------------------- | ----: | --: | -----: |
-| up to 9                      |    14 | 14% |    50% |
-| 10–14                        |    15 | 20% |    60% |
+| up to 9                      |    13 | 15% |    46% |
+| 10–14                        |    16 | 19% |    62% |
 | 15–19                        |     9 | 22% |    56% |
 | 20–29                        |    17 | 18% |    76% |
 | 30 or more                   |     5 | 60% |    80% |
 
 The limit stays at 15: of the rated groups reaching it, 71% are A or B in matched lines (22 of 31),
-69% in line span (25 of 36), and a lower limit raises that share by two points at most (73% from 13,
-67% from 10) while a limit of 10 reports almost two and a half times the blocks. The same limit in matched lines
+69% in line span (25 of 36), and a lower limit raises that share by three points at most (74% from 13,
+68% from 10) while a limit of 10 reports almost two and a half times the blocks. The same limit in matched lines
 reports a quarter fewer blocks; those dropped are the ones that reached 15 lines only through their
 comments, their blank lines, and the lines their copies do not share.
 
 ## Later grammar versions
 
 The distributions of functions and files above are those of the tree-sitter grammars in use when
-the limits were set; the counts of blocks in matched lines, the 1,105 of the limits table among them,
+the limits were set; the counts of blocks in matched lines, the 1,134 of the limits table among them,
 were measured with the grammars updated since. Measured again with these, the corpus holds the same
 45,123 functions and 6,603 files, as many of them above every limit, and five cells of the
 distributions differ: the 75th percentile of Halstead effort
