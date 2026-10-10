@@ -5,7 +5,7 @@ use std::sync::OnceLock;
 use tree_sitter::Node;
 
 use crate::near_miss::{
-    Alignment, Block, CorePair, Matcher, PairMatch, FILTRATION_PERCENT, MAX_LENGTH_RATIO,
+    Block, CorePair, Matcher, PairMatch, TokenRuns, FILTRATION_PERCENT, MAX_LENGTH_RATIO,
 };
 use crate::tree_index::NodeExt;
 use crate::types::{
@@ -1586,12 +1586,25 @@ struct CountedOccurrence {
     /// The token runs of a near-miss copy that its partners match, within its segments;
     /// `None` for an exact or gapped copy, whose segments are matched throughout.
     matched_runs: Option<Vec<(usize, usize)>>,
+    /// The exact fragments coalesced into a near-miss copy: each line they reach is duplicated,
+    /// whatever else of the copy shares the line.
+    exact_runs: Vec<(usize, usize)>,
     /// Sum of segment token counts (the gap tokens are not matched content).
     token_count: usize,
     start_token_index: usize,
     end_token_index: usize,
     start_line: usize,
     end_line: usize,
+}
+
+impl CountedOccurrence {
+    /// Whether a matched segment overlaps the token range: the gap of a gapped clone is not
+    /// matched content.
+    fn matches_within(&self, (start, end): (usize, usize)) -> bool {
+        self.segments
+            .iter()
+            .any(|&(segment_start, segment_end)| segment_start < end && start < segment_end)
+    }
 }
 
 fn to_counted_groups(
@@ -1604,6 +1617,7 @@ fn to_counted_groups(
             .map(|candidate| CountedOccurrence {
                 shared_with_merged_group: false,
                 matched_runs: None,
+                exact_runs: Vec::new(),
                 segments: vec![(candidate.start_token_index, candidate.end_token_index)],
                 token_count: candidate.token_count,
                 start_token_index: candidate.start_token_index,
@@ -1793,6 +1807,7 @@ fn merge_groups(
                 // A merged occurrence is a fresh span combination; it inherits no shared marks.
                 shared_with_merged_group: false,
                 matched_runs: None,
+                exact_runs: Vec::new(),
                 segments: [leading.segments.clone(), trailing.segments.clone()].concat(),
                 token_count: leading.token_count + trailing.token_count,
                 start_token_index: leading.start_token_index,
@@ -1815,7 +1830,8 @@ struct MatchEdge {
     left: usize,
     right: usize,
     cores: Option<CorePair>,
-    alignment: Alignment,
+    /// The token runs the pair matches, on the left and on the right.
+    matched_runs: (TokenRuns, TokenRuns),
 }
 
 impl MatchEdge {
@@ -1833,7 +1849,8 @@ impl MatchEdge {
 /// merged), each clustered with its own partners, so code no verified pair matched never counts
 /// as duplicated. A node overlapping a reported occurrence is an anchor: it joins its group at its
 /// own size, so the copies of a block are listed at the size they matched it, and is marked as
-/// counted elsewhere unless the group takes over the reported occurrences it overlaps.
+/// counted elsewhere unless the group takes over the reported occurrences it overlaps. An anchor
+/// still counts the lines its partners match outside those occurrences.
 fn collect_near_miss_groups(
     source: &TokenizedSource<'_>,
     settings: &DuplicationSettings,
@@ -1848,16 +1865,17 @@ fn collect_near_miss_groups(
         return Vec::new();
     }
 
-    // Reported-group indices whose occurrences overlap a token range: near-miss nodes covering
-    // such content anchor comparisons but are never re-reported.
+    // Reported-group indices whose occurrences' matched segments overlap a token range (the gap
+    // of a gapped clone is not reported content): near-miss nodes covering such content anchor
+    // comparisons but are never re-reported.
     let touched_groups_in = |start: usize, end: usize| -> Vec<usize> {
         reported_groups
             .iter()
             .enumerate()
             .filter(|(_, group)| {
-                group.iter().any(|occurrence| {
-                    occurrence.start_token_index < end && start < occurrence.end_token_index
-                })
+                group
+                    .iter()
+                    .any(|occurrence| occurrence.matches_within((start, end)))
             })
             .map(|(group_index, _)| group_index)
             .collect()
@@ -1884,41 +1902,69 @@ fn collect_near_miss_groups(
         settings.min_similarity_percent,
     );
 
-    // Two spans that both overlap reported content have nothing new to contribute to each other.
-    // Their pair is dropped before clustering, so that it neither collapses the blocks' core nodes
-    // nor widens a node beyond what the pairs clustering it matched.
-    let is_touched = |(start, end): (usize, usize)| !touched_groups_in(start, end).is_empty();
-    let block_touched: Vec<bool> = comparable
-        .iter()
-        .map(|range| is_touched((range.start_token_index, range.end_token_index)))
-        .collect();
+    // The lines of a near-miss copy that are duplicated are those a verified partner matches,
+    // which takes the pairing itself. Every pair kept is aligned: verifying it already cost a
+    // longest common subsequence of the same sequences, and any choice among a copy's partners
+    // would let their number or their order decide what the copy counts.
+    //
+    // A pair matching nothing outside reported content has nothing to add to it and is dropped
+    // before clustering, so that it neither collapses the blocks' core nodes nor widens a node
+    // beyond what the pairs clustering it matched. Any other pair is kept however much of it is
+    // reported: what the exact pipeline reports of a copy depends on where its copies stand, and
+    // the lines the copy counts must not.
+    let mut reported_prefix = vec![0usize; tokens.len() + 1];
+    {
+        let mut reported = vec![false; tokens.len()];
+        for occurrence in reported_groups.iter().flatten() {
+            for &(start, end) in &occurrence.segments {
+                reported[start..end].fill(true);
+            }
+        }
+        for (index, &flag) in reported.iter().enumerate() {
+            reported_prefix[index + 1] = reported_prefix[index] + usize::from(flag);
+        }
+    }
+    let reported_count =
+        |(start, end): (usize, usize)| reported_prefix[end] - reported_prefix[start];
+    let unreported_count = |runs: &[(usize, usize)]| -> usize {
+        runs.iter()
+            .map(|&run| run.1 - run.0 - reported_count(run))
+            .sum()
+    };
+    let block_span = |index: usize| {
+        (
+            comparable[index].start_token_index,
+            comparable[index].end_token_index,
+        )
+    };
     let mut edges: Vec<MatchEdge> = Vec::new();
+    let mut add_edge = |left: usize, right: usize, cores: Option<CorePair>, alignment| {
+        let (left_span, right_span) = cores.unwrap_or((block_span(left), block_span(right)));
+        // Fully reported spans need no alignment to be dropped.
+        if unreported_count(&[left_span, right_span]) == 0 {
+            return;
+        }
+        let matched_runs =
+            matcher.align(&blocks[left], &blocks[right], cores, alignment, &token_keys);
+        if unreported_count(&matched_runs.0) + unreported_count(&matched_runs.1) == 0 {
+            return;
+        }
+        edges.push(MatchEdge {
+            left,
+            right,
+            cores,
+            matched_runs,
+        });
+    };
     for_each_candidate_pair(
         &blocks,
         settings.min_similarity_percent,
         |left_index, right_index| match matcher.verify(&blocks[left_index], &blocks[right_index]) {
             None => {}
-            Some(PairMatch::Whole(alignment))
-                if !(block_touched[left_index] && block_touched[right_index]) =>
-            {
-                edges.push(MatchEdge {
-                    left: left_index,
-                    right: right_index,
-                    cores: None,
-                    alignment,
-                })
-            }
-            Some(PairMatch::Whole(_)) => {}
+            Some(PairMatch::Whole(alignment)) => add_edge(left_index, right_index, None, alignment),
             Some(PairMatch::Local(cores)) => {
                 for (core_pair, alignment) in cores {
-                    if !(is_touched(core_pair.0) && is_touched(core_pair.1)) {
-                        edges.push(MatchEdge {
-                            left: left_index,
-                            right: right_index,
-                            cores: Some(core_pair),
-                            alignment,
-                        });
-                    }
+                    add_edge(left_index, right_index, Some(core_pair), alignment);
                 }
             }
         },
@@ -2006,21 +2052,10 @@ fn collect_near_miss_groups(
         parent[left_root.max(right_root)] = left_root.min(right_root);
     }
 
-    // The lines of a near-miss copy that are duplicated are those a verified partner matches,
-    // which takes the pairing itself. Every pair is aligned: verifying it already cost a longest
-    // common subsequence of the same sequences, and any choice among a copy's partners would let
-    // their number or their order decide what the copy counts.
     let mut matched_runs_by_node: Vec<Vec<(usize, usize)>> = vec![Vec::new(); node_blocks.len()];
     for (edge, nodes) in edges.iter().zip(&edge_nodes) {
-        let (left_runs, right_runs) = matcher.align(
-            &blocks[edge.left],
-            &blocks[edge.right],
-            edge.cores,
-            edge.alignment,
-            &token_keys,
-        );
-        matched_runs_by_node[nodes[0]].extend(left_runs);
-        matched_runs_by_node[nodes[1]].extend(right_runs);
+        matched_runs_by_node[nodes[0]].extend(&edge.matched_runs.0);
+        matched_runs_by_node[nodes[1]].extend(&edge.matched_runs.1);
     }
 
     let mut members_by_root: IndexMap<usize, Vec<usize>> = IndexMap::new();
@@ -2058,6 +2093,7 @@ fn collect_near_miss_groups(
                 CountedOccurrence {
                     shared_with_merged_group: false,
                     matched_runs: Some(merge_overlapping_cores(&matched_runs)),
+                    exact_runs: Vec::new(),
                     token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
                     segments,
                     start_token_index: start,
@@ -2106,17 +2142,42 @@ fn collect_near_miss_groups(
             }
             continue;
         }
-        if uncovered.is_empty() {
+        if members.iter().all(|&node| {
+            let (start, end) = node_range(node);
+            reported_count((start, end)) == end - start
+        }) {
             continue;
         }
-        // An anchored cluster extends a reported group only when every occurrence of that group
-        // overlaps one of the cluster's member nodes: an occurrence disjoint from all members
-        // reports content the cluster does not share.
-        let overlaps_member = |occurrence: &CountedOccurrence| {
-            members.iter().any(|&index| {
-                let (start, end) = node_range(index);
-                occurrence.start_token_index < end && start < occurrence.end_token_index
-            })
+        // An anchored cluster extends a reported group only when it stands for the same copies:
+        // every occurrence of the group overlaps the member nodes of exactly one block (one
+        // disjoint from all members reports content the cluster does not share, and one reaching
+        // into two members would make one copy take over lines of the next), exceeds the span of
+        // those nodes by less than `min_tokens` (a copy is listed at the size it matched, not at
+        // that of a clone larger by a reportable part, which may run into code no member
+        // matched), and shares that block with no other occurrence of the group (those repeat
+        // within the copy, not between the copies).
+        let member_block_of = |occurrence: &CountedOccurrence| {
+            let mut blocks = members
+                .iter()
+                .filter(|&&index| occurrence.matches_within(node_range(index)))
+                .map(|&index| node_blocks[index]);
+            let block = blocks.next()?;
+            let mut spans = members
+                .iter()
+                .filter(|&&index| node_blocks[index] == block)
+                .map(|&index| node_range(index));
+            let first = spans.next()?;
+            let span = spans.fold(first, |span, node| (span.0.min(node.0), span.1.max(node.1)));
+            let excess = span.0.saturating_sub(occurrence.start_token_index)
+                + occurrence.end_token_index.saturating_sub(span.1);
+            (blocks.all(|other| other == block) && excess < settings.min_tokens).then_some(block)
+        };
+        let stands_for_members = |group: &[CountedOccurrence]| {
+            let mut blocks: FxHashSet<usize> = FxHashSet::default();
+            !group.is_empty()
+                && group.iter().all(|occurrence| {
+                    member_block_of(occurrence).is_some_and(|block| blocks.insert(block))
+                })
         };
         // Ascending by construction: BTreeSet iteration is sorted and filter preserves order.
         let fully_clustered: Vec<usize> = covered
@@ -2124,16 +2185,12 @@ fn collect_near_miss_groups(
             .flat_map(|&index| touched_groups_of(index).iter().copied())
             .collect::<std::collections::BTreeSet<usize>>()
             .into_iter()
-            .filter(|&group_index| {
-                let group = &reported_groups[group_index];
-                !group.is_empty() && group.iter().all(&overlaps_member)
-            })
+            .filter(|&group_index| stands_for_members(&reported_groups[group_index]))
             .collect();
         if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
             // Rebuild the component as ONE group with one coalesced occurrence per member block:
-            // the fragments every node of a block overlaps are collected together, since a block's
+            // the fragments the nodes of a block overlap are collected together, since a block's
             // cores are parts of one copy.
-            let mut consumed: FxHashSet<(usize, usize)> = FxHashSet::default();
             let mut merged: Vec<CountedOccurrence> = Vec::new();
             let mut unanchored_nodes: Vec<usize> = Vec::new();
             let mut anchor_nodes: Vec<usize> = Vec::new();
@@ -2145,26 +2202,17 @@ fn collect_near_miss_groups(
                     .push(member_index);
             }
             for block_nodes in nodes_by_block.values() {
-                // Occurrences of ONE group are distinct copies; only fragments from DIFFERENT
-                // groups belong to the same copy. Consecutive position-order slices keep the
-                // coalesced spans disjoint.
-                let mut fragments: Vec<(CountedOccurrence, usize)> = Vec::new();
-                for &node in block_nodes {
-                    let (range_start, range_end) = node_range(node);
-                    for &group_index in &fully_clustered {
-                        for (occurrence_index, occurrence) in
-                            reported_groups[group_index].iter().enumerate()
-                        {
-                            if !consumed.contains(&(group_index, occurrence_index))
-                                && occurrence.start_token_index < range_end
-                                && range_start < occurrence.end_token_index
-                            {
-                                consumed.insert((group_index, occurrence_index));
-                                fragments.push((occurrence.clone(), group_index));
-                            }
-                        }
-                    }
-                }
+                let overlaps_block_node = |occurrence: &&CountedOccurrence| {
+                    block_nodes
+                        .iter()
+                        .any(|&node| occurrence.matches_within(node_range(node)))
+                };
+                let mut fragments: Vec<CountedOccurrence> = fully_clustered
+                    .iter()
+                    .flat_map(|&group_index| &reported_groups[group_index])
+                    .filter(overlaps_block_node)
+                    .cloned()
+                    .collect();
                 if fragments.is_empty() {
                     let (anchors, plain): (Vec<usize>, Vec<usize>) = block_nodes
                         .iter()
@@ -2174,27 +2222,9 @@ fn collect_near_miss_groups(
                     continue;
                 }
                 // The block's nodes are part of the same copy as its fragments: a block matched
-                // beyond the fragments it holds is a copy at that size. A group index no reported
-                // group uses keeps them in that copy.
-                for occurrence in to_occurrences(block_nodes) {
-                    fragments.push((occurrence, usize::MAX));
-                }
-                fragments.sort_by_key(|(occurrence, _)| {
-                    (occurrence.start_token_index, occurrence.end_token_index)
-                });
-                let mut copy_parts: Vec<CountedOccurrence> = Vec::new();
-                let mut copy_groups: FxHashSet<usize> = FxHashSet::default();
-                for (occurrence, group_index) in fragments {
-                    if copy_groups.contains(&group_index) {
-                        merged.push(coalesce_occurrences(std::mem::take(&mut copy_parts)));
-                        copy_groups.clear();
-                    }
-                    copy_parts.push(occurrence);
-                    copy_groups.insert(group_index);
-                }
-                if !copy_parts.is_empty() {
-                    merged.push(coalesce_occurrences(copy_parts));
-                }
+                // beyond the fragments it holds is a copy at that size.
+                fragments.extend(to_occurrences(block_nodes));
+                merged.push(coalesce_occurrences(fragments));
             }
             merged.extend(to_occurrences(&unanchored_nodes));
             // The rebuild consumed every fully-clustered group, so shared-span marks from earlier
@@ -2349,8 +2379,22 @@ fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrenc
                 .collect();
             merge_overlapping_cores(&runs)
         });
+    let exact_runs: Vec<(usize, usize)> = occurrences
+        .iter()
+        .flat_map(|occurrence| match occurrence.matched_runs {
+            Some(_) => &occurrence.exact_runs,
+            None => &occurrence.segments,
+        })
+        .copied()
+        .collect();
     CountedOccurrence {
         shared_with_merged_group: false,
+        // Without a near-miss part, the segments are matched throughout and say it all.
+        exact_runs: if matched_runs.is_some() {
+            merge_overlapping_cores(&exact_runs)
+        } else {
+            Vec::new()
+        },
         matched_runs,
         token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
         start_token_index: occurrences
@@ -2532,6 +2576,7 @@ fn count_redundant_fragments(group: &[CountedOccurrence]) -> usize {
 /// of line coverage. A line of a near-miss copy counts when its partners match more than half of
 /// its tokens: a line the copy adds or rewrites is not duplicated, while a longest common
 /// subsequence still pairs a stray token of it (a bracket, a separator) with one of the partner.
+/// A line an exact fragment of the copy reaches counts in any case.
 fn collect_matched_lines(
     occurrence: &CountedOccurrence,
     code_line_numbers: &FxHashSet<usize>,
@@ -2552,10 +2597,17 @@ fn collect_matched_lines(
             }
         }
     }
+    let exact_rows: FxHashSet<usize> = occurrence
+        .exact_runs
+        .iter()
+        .flat_map(|&(start, end)| &tokens[start..end])
+        .flat_map(|token| token.start_row + 1..=token.end_row + 1)
+        .collect();
     token_counts_by_row
         .into_iter()
         .filter(|(line, (matched_count, token_count))| {
-            code_line_numbers.contains(line) && matched_count * 2 > *token_count
+            code_line_numbers.contains(line)
+                && (matched_count * 2 > *token_count || exact_rows.contains(line))
         })
         .map(|(line, _)| line)
         .collect()

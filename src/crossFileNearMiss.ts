@@ -123,10 +123,12 @@ interface Alignment {
 type PairMatch = (Alignment & { cores?: undefined }) | { cores: (Alignment & { pair: CorePair })[] };
 
 /** A verified near-miss pair of blocks; without `cores`, the blocks match as wholes. */
-interface MatchEdge extends Alignment {
+interface MatchEdge {
   left: number;
   right: number;
   cores?: CorePair;
+  /** The token runs the pair matches, on the left and on the right. */
+  matchedRuns: [[number, number][], [number, number][]];
 }
 
 /**
@@ -134,10 +136,13 @@ interface MatchEdge extends Alignment {
  * core) overlapping an occurrence of `reportedSpansByFile` (the exact cross-file groups) is an
  * anchor: it links near-miss copies to the content an exact group already reports, and appears in
  * the near-miss group marked `spanCountedElsewhere` so block counting does not count its span
- * twice. A pair of two spans that both overlap reported spans is dropped before clustering (blocks
- * wholly covered by reported spans are not even compared), so it neither collapses the blocks' core
- * nodes nor widens a node beyond what the pairs clustering it matched, and a group needs at least
- * one non-anchor node. A block that matched only locally is reported as its matched cores
+ * twice; it still counts the lines its partners match outside those spans. A pair matching
+ * nothing outside reported spans has nothing to add to them and is dropped before clustering (two
+ * blocks wholly covered by reported spans are not even compared), so it neither collapses the
+ * blocks' core nodes nor widens a node beyond what the pairs clustering it matched. Any other
+ * pair is kept however much of it is reported: what the exact pipeline reports of a copy depends
+ * on where its copies stand, and the lines the copy counts must not. A group needs at least one
+ * node reported spans do not cover entirely. A block that matched only locally is reported as its matched cores
  * (overlapping cores merged), each clustered with its own partners, so code no verified pair
  * matched never counts as duplicated.
  */
@@ -152,12 +157,15 @@ export function collectCrossFileNearMissGroups(
   }
   const blocks = normalizeBlocks(files);
   const matcher = createMatcher(blocks, minTokens, minSimilarityPercent);
-  const overlapsReportedSpan = reportedSpansByFile.map(createOverlapTest);
-  const coveredByReportedSpans = reportedSpansByFile.map(createCoverageTest);
-  const fullyReported = blocks.map(({ fileIndex, range }) => coveredByReportedSpans[fileIndex]?.(range) ?? false);
-  const touchesReported = blocks.map(({ fileIndex, range }) => overlapsReportedSpan[fileIndex]?.(range) ?? false);
-  const touchesCore = ({ fileIndex }: NormalizedBlock, [startTokenIndex, endTokenIndex]: [number, number]): boolean =>
-    overlapsReportedSpan[fileIndex]?.({ startTokenIndex, endTokenIndex }) ?? false;
+  const countReported = reportedSpansByFile.map(createReportedTokenCounter);
+  const reportedCount = (fileIndex: number, [start, end]: [number, number]): number =>
+    countReported[fileIndex]?.(start, end) ?? 0;
+  const unreportedCount = (fileIndex: number, runs: [number, number][]): number =>
+    runs.reduce((sum, run) => sum + run[1] - run[0] - reportedCount(fileIndex, run), 0);
+  const fullyReported = blocks.map((block) => {
+    const span = spanOf(block);
+    return reportedCount(block.fileIndex, span) === span[1] - span[0];
+  });
   const edges: MatchEdge[] = [];
   forEachCandidatePair(blocks, fullyReported, minSimilarityPercent, (left, right) => {
     const leftBlock = blocks[left];
@@ -166,15 +174,21 @@ export function collectCrossFileNearMissGroups(
     if (!match) {
       return;
     }
-    if (!match.cores) {
-      if (!(touchesReported[left] && touchesReported[right])) {
-        edges.push({ left, right, reordered: match.reordered });
+    // The lines of a near-miss copy that are duplicated are those a verified partner matches,
+    // which takes the pairing itself. Every pair kept is aligned: verifying it already cost a longest
+    // common subsequence of the same sequences, and any choice among a copy's partners would let
+    // their number or their order decide what the copy counts.
+    for (const { pair: cores, reordered } of match.cores ?? [{ pair: undefined, reordered: match.reordered }]) {
+      const [leftSpan, rightSpan] = cores ?? [spanOf(leftBlock), spanOf(rightBlock)];
+      const addsLines = (leftRuns: [number, number][], rightRuns: [number, number][]): boolean =>
+        unreportedCount(leftBlock.fileIndex, leftRuns) + unreportedCount(rightBlock.fileIndex, rightRuns) > 0;
+      // Fully reported spans need no alignment to be dropped.
+      if (!addsLines([leftSpan], [rightSpan])) {
+        continue;
       }
-      return;
-    }
-    for (const { pair, reordered } of match.cores) {
-      if (!(touchesCore(leftBlock, pair[0]) && touchesCore(rightBlock, pair[1]))) {
-        edges.push({ left, right, cores: pair, reordered });
+      const matchedRuns = alignPair(leftBlock, rightBlock, { cores, reordered });
+      if (addsLines(...matchedRuns)) {
+        edges.push({ left, right, cores, matchedRuns });
       }
     }
   });
@@ -234,21 +248,31 @@ export function collectCrossFileNearMissGroups(
   };
   // Anchoring is judged per node: a core is an anchor only when a reported span overlaps the core
   // itself, not merely elsewhere in its block.
-  const anchored = nodes.map(({ blockIndex, core }) => {
+  const nodeRanges = nodes.map(({ blockIndex, core }) => {
     const block = blocks[blockIndex];
     const [startTokenIndex, endTokenIndex] = core ?? [
       block?.range.startTokenIndex ?? 0,
       block?.range.endTokenIndex ?? 0,
     ];
-    return overlapsReportedSpan[block?.fileIndex ?? 0]?.({ startTokenIndex, endTokenIndex }) ?? false;
+    return {
+      length: endTokenIndex - startTokenIndex,
+      reported: reportedCount(block?.fileIndex ?? 0, [startTokenIndex, endTokenIndex]),
+    };
   });
+  const anchored = nodeRanges.map(({ reported }) => reported > 0);
+  const reported = nodeRanges.map((range) => range.reported === range.length);
   const edgeNodes = edges.map((edge) => sidesOf(edge).map(([index, core]) => nodeOf(index, core)));
   for (const [leftNode = 0, rightNode = 0] of edgeNodes) {
     const leftRoot = find(leftNode);
     const rightRoot = find(rightNode);
     parent[Math.max(leftRoot, rightRoot)] = Math.min(leftRoot, rightRoot);
   }
-  const matchedRunsByNode = alignPairs(blocks, edges, edgeNodes, nodes.length);
+  const matchedRunsByNode = nodes.map((): [number, number][] => []);
+  for (const [edgeIndex, { matchedRuns }] of edges.entries()) {
+    const [leftNode = 0, rightNode = 0] = edgeNodes[edgeIndex] ?? [];
+    matchedRunsByNode[leftNode]?.push(...matchedRuns[0]);
+    matchedRunsByNode[rightNode]?.push(...matchedRuns[1]);
+  }
 
   const membersByRoot = new Map<number, number[]>();
   for (const node of nodes.keys()) {
@@ -260,7 +284,7 @@ export function collectCrossFileNearMissGroups(
   const groups: NearMissOccurrence[][] = [];
   for (const members of membersByRoot.values()) {
     // Components form only through cross-file pairs, so two members always span two files.
-    if (members.length < 2 || members.every((node) => anchored[node])) {
+    if (members.length < 2 || members.every((node) => reported[node])) {
       continue;
     }
     // A group's nodes from one block become ONE occurrence whose segments are its cores, so the
@@ -291,6 +315,10 @@ interface BlockCopy {
   matchedRuns: [number, number][];
 }
 
+function spanOf({ range }: NormalizedBlock): [number, number] {
+  return [range.startTokenIndex, range.endTokenIndex];
+}
+
 /** The (block, core) on each side of a pair. */
 function sidesOf({ left, right, cores }: MatchEdge): [number, [number, number] | undefined][] {
   return [
@@ -300,38 +328,13 @@ function sidesOf({ left, right, cores }: MatchEdge): [number, [number, number] |
 }
 
 /**
- * Per node, the token runs its partners match. The lines of a near-miss copy that are duplicated
- * are those a verified partner matches, which takes the pairing itself. Every pair is aligned:
- * verifying it already cost a longest common subsequence of the same sequences, and any choice
- * among a copy's partners would let their number or their order decide what the copy counts.
- */
-function alignPairs(
-  blocks: NormalizedBlock[],
-  edges: MatchEdge[],
-  edgeNodes: number[][],
-  nodeCount: number
-): [number, number][][] {
-  const matchedRunsByNode = Array.from({ length: nodeCount }, (): [number, number][] => []);
-  for (const [edgeIndex, edge] of edges.entries()) {
-    const left = blocks[edge.left];
-    const right = blocks[edge.right];
-    if (left && right) {
-      const [leftRuns, rightRuns] = alignPair(left, right, edge);
-      matchedRunsByNode[edgeNodes[edgeIndex]?.[0] ?? 0]?.push(...leftRuns);
-      matchedRunsByNode[edgeNodes[edgeIndex]?.[1] ?? 0]?.push(...rightRuns);
-    }
-  }
-  return matchedRunsByNode;
-}
-
-/**
  * The token runs a verified match pairs, per side as file token ranges: those of a longest common
  * subsequence of what the match compared, its cores or else the whole blocks.
  */
 function alignPair(
   left: NormalizedBlock,
   right: NormalizedBlock,
-  { cores, reordered }: MatchEdge
+  { cores, reordered }: Alignment & { cores?: CorePair }
 ): [[number, number][], [number, number][]] {
   const leftCompared = comparedSequence(left, cores?.[0], reordered);
   const rightCompared = comparedSequence(right, cores?.[1], reordered);
@@ -412,64 +415,31 @@ function mergeOverlappingCores(cores: [number, number][]): [number, number][] {
   return merged;
 }
 
-/** Whether the spans, merged, cover every token of a range. */
-function createCoverageTest(
+/** Counts the tokens of [start, end) that the spans cover. */
+function createReportedTokenCounter(
   spans: { startTokenIndex: number; endTokenIndex: number }[]
-): (range: { startTokenIndex: number; endTokenIndex: number }) => boolean {
-  // Touching spans merge too: together they cover a range across their boundary.
-  const merged: [number, number][] = [];
-  for (const { startTokenIndex, endTokenIndex } of spans.toSorted(
-    (left, right) => left.startTokenIndex - right.startTokenIndex
-  )) {
-    const last = merged.at(-1);
-    if (last && startTokenIndex <= last[1]) {
-      last[1] = Math.max(last[1], endTokenIndex);
-    } else {
-      merged.push([startTokenIndex, endTokenIndex]);
-    }
+): (start: number, end: number) => number {
+  const merged = mergeOverlappingCores(spans.map((span) => [span.startTokenIndex, span.endTokenIndex]));
+  let covered = 0;
+  const coveredBefore = [0];
+  for (const [start, end] of merged) {
+    covered += end - start;
+    coveredBefore.push(covered);
   }
-  return (range) => {
+  const countBefore = (position: number): number => {
     let low = 0;
     let high = merged.length;
     while (low < high) {
       const middle = (low + high) >>> 1;
-      if ((merged[middle]?.[0] ?? 0) <= range.startTokenIndex) {
+      if ((merged[middle]?.[0] ?? 0) < position) {
         low = middle + 1;
       } else {
         high = middle;
       }
     }
-    return (merged[low - 1]?.[1] ?? -1) >= range.endTokenIndex;
+    return (coveredBefore[low] ?? 0) - Math.max(0, (merged[low - 1]?.[1] ?? 0) - position);
   };
-}
-
-/**
- * Whether a range overlaps any of the spans: among the spans starting before the range ends
- * (binary search over sorted starts), the furthest end reaches past the range's start.
- */
-function createOverlapTest(
-  spans: { startTokenIndex: number; endTokenIndex: number }[]
-): (range: { startTokenIndex: number; endTokenIndex: number }) => boolean {
-  const sorted = spans.toSorted((left, right) => left.startTokenIndex - right.startTokenIndex);
-  const maxEndPrefix = new Int32Array(sorted.length);
-  let maxEnd = -1;
-  for (const [index, span] of sorted.entries()) {
-    maxEnd = Math.max(maxEnd, span.endTokenIndex);
-    maxEndPrefix[index] = maxEnd;
-  }
-  return (range) => {
-    let low = 0;
-    let high = sorted.length;
-    while (low < high) {
-      const middle = (low + high) >>> 1;
-      if ((sorted[middle]?.startTokenIndex ?? 0) < range.endTokenIndex) {
-        low = middle + 1;
-      } else {
-        high = middle;
-      }
-    }
-    return low > 0 && (maxEndPrefix[low - 1] ?? -1) > range.startTokenIndex;
-  };
+  return (start, end) => countBefore(end) - countBefore(start);
 }
 
 /**
