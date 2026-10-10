@@ -1479,6 +1479,26 @@ describe('duplication: cross-file near-miss (Type-3) clones', () => {
     ).toBe(3);
   });
 
+  it('counts whole copies that hold a run a smaller group left in place repeats', () => {
+    // a and b hold the run twice, c is their edited partner, and d repeats only the run. The run's
+    // group stays in place and counts its three repeats; it encloses no function, so the functions
+    // count their two redundant copies as well.
+    const run = prefixHalf.replaceAll('let ', 'var ');
+    const tail = suffixHalf.replaceAll('let ', 'var ');
+    const functions = [
+      `function a(items) {${run}  report(total);${tail.replace('  return', `${run.slice(1)}  return`)}}\n`,
+      `function b(items) {${run}${run.slice(1)}  report(total);${tail}}\n`,
+      `function c(items) {${run.replaceAll(' + ', ' - ')}  while (items.length) { items.pop(); }${tail}}\n`,
+      `function d(items) {${run}  return total * count;\n}\n`,
+    ];
+
+    const across = measureJavaScriptFiles(Object.fromEntries(functions.map((code, index) => [`${index}.js`, code])));
+    expect(across.groups.map((group) => group.occurrences.length).toSorted((left, right) => left - right)).toEqual([
+      3, 5,
+    ]);
+    expect(across.duplicateBlockCount).toBe(5);
+  });
+
   it('clusters copies in three files into one group', () => {
     const third = scatteredEditClone('totalVolume', 'box', 'volume', '+=');
     const metrics = measureJavaScriptFiles({ 'a.js': first, 'b.js': second, 'c.js': third });
