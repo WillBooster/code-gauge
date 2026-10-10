@@ -1202,6 +1202,7 @@ describe('owners of functions written as values', () => {
 
   it('follows the binding forms that name the value', () => {
     expect(ownersOf('cpp', 'namespace n { auto pick{[](int x) { return x; }}; }')).toEqual(['n|pick']);
+    expect(ownersOf('cpp', 'struct A { std::function<void(int)> cb = [](int x) {}; };')).toEqual(['A|cb']);
     expect(
       ownersOf('cpp', 'struct Rules { static int (*pick)(int); }; int (*Rules::pick)(int) = [](int x) { return x; };')
     ).toEqual(['Rules|pick']);

@@ -262,10 +262,14 @@ pub fn unwrap_transparent_value_wrappers(node: Node<'_>) -> Node<'_> {
     bound
 }
 
-/// The `init_declarator` whose variable is the C++ lambda held by `parent`.
+/// The declaration whose variable or field is the C++ lambda held by `parent`.
 fn find_cpp_lambda_declaration<'t>(parent: Node<'t>, code: &Source<'_>) -> Option<Node<'t>> {
     match parent.kind_name() {
         "init_declarator" => Some(parent),
+        // A member initialized in its class (`auto pick = [] {};`) holds its value directly.
+        "field_declaration" if parent.child_by_field_name("default_value").is_some() => {
+            Some(parent)
+        }
         "argument_list" | "initializer_list" if binding_children(parent).len() == 1 => parent
             .parent_node()
             .filter(|holder| holder.kind_name() == "init_declarator")
