@@ -16,7 +16,9 @@ regex = "1"
 rustc-hash = "2"
 
 # Grammar crates are pinned exactly: every metric (and the golden-based test suite) is calibrated
-# against these grammar versions, so upgrades are deliberate, test-verified changes. The
+# against these grammar versions, so upgrades are deliberate, test-verified changes. A release that
+# only regenerates a grammar's parse tables can still change how sources with syntax errors are
+# recovered, and with that their metrics, so an upgrade is compared on malformed input as well. The
 # `willbooster-*` crates are WillBooster's forks of the runtime and grammars. Every grammar crate
 # depends only on `tree-sitter-language`, never on upstream's `tree-sitter` crate, whose
 # `links = "tree-sitter"` would conflict with the forked runtime's.
