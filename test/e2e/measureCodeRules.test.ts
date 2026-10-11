@@ -14,6 +14,26 @@ import {
 // Halstead operator/operand classification, line classification) so a regression reports the
 // rule and language that broke instead of a changed aggregate.
 
+function cyclomaticOf(language: string, code: string): number[] {
+  return functionsOf(language, code).map((fn) => fn.cyclomaticComplexity);
+}
+
+function nestingOf(language: string, code: string): number[] {
+  return functionsOf(language, code).map((fn) => fn.nestingDepth);
+}
+
+function parametersOf(language: string, code: string): [string | undefined, number][] {
+  return functionsOf(language, code).map((fn) => [fn.name, fn.parameterCount]);
+}
+
+function depDegreeOf(language: string, code: string): number[] {
+  return functionsOf(language, code).map((fn) => fn.depDegree);
+}
+
+function ownersOf(language: string, code: string): string[] {
+  return functionsOf(language, code).map((fn) => `${fn.containerName ?? '-'}|${fn.name ?? '-'}`);
+}
+
 function functionsOf(language: string, code: string): FunctionMetrics[] {
   return measureCode(code, { language }).functions;
 }
@@ -233,9 +253,6 @@ describe('cognitive complexity: language-specific decision constructs', () => {
 });
 
 describe('cyclomatic complexity: NIST SP 500-235 counting', () => {
-  const cyclomaticOf = (language: string, code: string): number[] =>
-    functionsOf(language, code).map((fn) => fn.cyclomaticComplexity);
-
   it.each([
     // Short-circuit operators add a path wherever they appear; full-evaluation `&`/`|` do not.
     ['java', 'class A { boolean f(boolean a, boolean b) { boolean x = a && b; return x || a; } }', 3],
@@ -343,9 +360,6 @@ describe('cyclomatic complexity: file totals over McCabe components', () => {
 });
 
 describe('cyclomatic complexity: catch-all switch arms', () => {
-  const cyclomaticOf = (language: string, code: string): number[] =>
-    functionsOf(language, code).map((fn) => fn.cyclomaticComplexity);
-
   // An arm that matches every value adds no path; only its guard does.
   it.each([
     ['csharp', 'class P { int F(int x) { switch (x) { case 1: return 1; default: return 0; } } }', 2],
@@ -395,9 +409,6 @@ describe('cyclomatic complexity: catch-all switch arms', () => {
 });
 
 describe('nesting depth', () => {
-  const nestingOf = (language: string, code: string): number[] =>
-    functionsOf(language, code).map((fn) => fn.nestingDepth);
-
   it('counts one level per nesting construct, with switch cases nesting under the switch', () => {
     // if (1) -> case (2) -> if (3).
     expect(nestingOf('javascript', 'function f(a,b){ if (a) { switch (b) { case 1: if (c) {} } } }')).toEqual([3]);
@@ -439,9 +450,6 @@ describe('nesting depth', () => {
 });
 
 describe('parameter counts', () => {
-  const parametersOf = (language: string, code: string): [string | undefined, number][] =>
-    functionsOf(language, code).map((fn) => [fn.name, fn.parameterCount]);
-
   it('counts JavaScript/TypeScript defaults, rest, destructuring, bare arrows, and parameter properties', () => {
     expect(
       parametersOf(
@@ -1009,9 +1017,6 @@ describe('function names from binding sites', () => {
 });
 
 describe('DepDegree across languages', () => {
-  const depDegreeOf = (language: string, code: string): number[] =>
-    functionsOf(language, code).map((fn) => fn.depDegree);
-
   it('pairs reads inside nested closures with outer definitions, but not outer reads with inner definitions', () => {
     // xs, sum (compound read), x, sum = 4 for f; the callback alone pairs only x.
     expect(
@@ -1175,9 +1180,6 @@ describe('line classification', () => {
 });
 
 describe('owners of functions written as values', () => {
-  const ownersOf = (language: string, code: string): string[] =>
-    functionsOf(language, code).map((fn) => `${fn.containerName ?? '-'}|${fn.name ?? '-'}`);
-
   it('names the declaration binding the value, and nothing for a local or an assigned one', () => {
     expect(
       ownersOf(

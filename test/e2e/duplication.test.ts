@@ -74,6 +74,55 @@ describe('duplication: per-language clone detection', () => {
 
 const jsClonePair = readFileSync(path.join(fixturesDir, 'duplication', 'clones.js'), 'utf8');
 
+function expectNestedThirdCopy(extra: (name: string) => string): void {
+  const metrics = measureCrossFileDuplication([
+    {
+      file: 'a.js',
+      ...collectCrossFileDuplicationFileData(midpointClone('alpha') + extra('alphaExtra'), {
+        language: 'javascript',
+      }),
+    },
+    {
+      file: 'b.js',
+      ...collectCrossFileDuplicationFileData(midpointClone('beta') + extra('betaExtra'), { language: 'javascript' }),
+    },
+    {
+      file: 'c.js',
+      ...collectCrossFileDuplicationFileData(`export const k = 1;\n${midpointClone('gamma')}`, {
+        language: 'javascript',
+      }),
+    },
+  ]);
+
+  expect(metrics.groups.map((group) => group.files)).toEqual([
+    ['a.js', 'b.js'],
+    ['a.js', 'b.js', 'c.js'],
+  ]);
+  expect(metrics.duplicateBlockCount).toBe(2);
+  expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 2, 'c.js': 1 });
+}
+
+function familyClone(name: string, middleStatement: string): string {
+  return logicClone(name, middleStatement).replace(
+    '  return total',
+    '  const ratio = count === 0 ? 0 : total / count;\n  notify(items.length, ratio, Math.max(big, small));\n  return total'
+  );
+}
+
+function memberClone(name: string, member: string): string {
+  return logicClone(name, `console.log("midpoint", total.${member});`);
+}
+
+function midpointClone(name: string): string {
+  return logicClone(name, 'console.log("midpoint", total);');
+}
+
+function overlappingRun(edited: boolean): string {
+  return embeddedRun('items', 'items')
+    .slice(1)
+    .replace('second > first', edited ? 'second > first + 1' : 'second > first');
+}
+
 function logicClone(name: string, middleStatement: string): string {
   return `
 function ${name}(items) {
@@ -749,15 +798,10 @@ function secondShape(limit, step) {
     // `other`. gamma thus overlaps a reported clone (the run) just as alpha and beta do (each
     // other), and must still be listed with them and count the lines it shares with them: as many
     // lines as when the four functions stand in four files, in every source order.
-    const family = (name: string, middleStatement: string): string =>
-      logicClone(name, middleStatement).replace(
-        '  return total',
-        '  const ratio = count === 0 ? 0 : total / count;\n  notify(items.length, ratio, Math.max(big, small));\n  return total'
-      );
     const functions = [
-      family('alpha', 'console.log("midpoint", total);'),
-      family('beta', 'console.log("midpoint", total);'),
-      family('gamma', selfCloneRun('A', 'items').trim()),
+      familyClone('alpha', 'console.log("midpoint", total);'),
+      familyClone('beta', 'console.log("midpoint", total);'),
+      familyClone('gamma', selfCloneRun('A', 'items').trim()),
       `function other(input) {${selfCloneRun('B', 'input')}}\n`,
     ];
     const gamma = functions[2] ?? '';
@@ -857,9 +901,7 @@ describe('duplication: fingerprint integrity', () => {
     // fingerprints would collide and the two functions would match exactly (one group even with
     // gap merging disabled). The correct result under maxGapTokens: 0 is the two exact halves
     // around the differing member access, i.e. two groups.
-    const caller = (name: string, member: string): string =>
-      logicClone(name, `console.log("midpoint", total.${member});`);
-    const metrics = measureCode(caller('alpha', 'p1v') + caller('beta', 'p70'), {
+    const metrics = measureCode(memberClone('alpha', 'p1v') + memberClone('beta', 'p70'), {
       language: 'javascript',
       duplication: { maxGapTokens: 0, minSimilarityPercent: 100 },
     });
@@ -1235,8 +1277,6 @@ const arithmetic = (name: string): string =>
   `function ${name}(a, b) {\n  const x = a + b;\n  const y = a * b;\n  const z = x - y;\n  const w = x * y - z;\n  const v = [x, y, z, w].map((n) => n * 2);\n  const u = v.filter((n) => n > a);\n  return [x, y, z, w, v, u, a, b];\n}\n`;
 
 describe('duplication: cross-file grouping and reporting', () => {
-  const copy = (name: string): string => logicClone(name, 'console.log("midpoint", total);');
-
   it('groups three files sharing one clone and orders groups by size', () => {
     // a.js and c.js additionally share a small statement run, separated from the big clone by a
     // statement unique to each file so the two files do not match as a whole; gap merging is off
@@ -1246,12 +1286,14 @@ describe('duplication: cross-file grouping and reporting', () => {
       [
         {
           file: 'a.js',
-          ...collectCrossFileDuplicationFileData(`${copy('alpha')}alpha(1);\n${smallRun}`, { language: 'javascript' }),
+          ...collectCrossFileDuplicationFileData(`${midpointClone('alpha')}alpha(1);\n${smallRun}`, {
+            language: 'javascript',
+          }),
         },
-        { file: 'b.js', ...collectCrossFileDuplicationFileData(copy('beta'), { language: 'javascript' }) },
+        { file: 'b.js', ...collectCrossFileDuplicationFileData(midpointClone('beta'), { language: 'javascript' }) },
         {
           file: 'c.js',
-          ...collectCrossFileDuplicationFileData(`${copy('gamma')}gamma(1, 2);\n${smallRun}`, {
+          ...collectCrossFileDuplicationFileData(`${midpointClone('gamma')}gamma(1, 2);\n${smallRun}`, {
             language: 'javascript',
           }),
         },
@@ -1286,30 +1328,6 @@ describe('duplication: cross-file grouping and reporting', () => {
     });
   }
 
-  function expectNestedThirdCopy(extra: (name: string) => string): void {
-    const metrics = measureCrossFileDuplication([
-      {
-        file: 'a.js',
-        ...collectCrossFileDuplicationFileData(copy('alpha') + extra('alphaExtra'), { language: 'javascript' }),
-      },
-      {
-        file: 'b.js',
-        ...collectCrossFileDuplicationFileData(copy('beta') + extra('betaExtra'), { language: 'javascript' }),
-      },
-      {
-        file: 'c.js',
-        ...collectCrossFileDuplicationFileData(`export const k = 1;\n${copy('gamma')}`, { language: 'javascript' }),
-      },
-    ]);
-
-    expect(metrics.groups.map((group) => group.files)).toEqual([
-      ['a.js', 'b.js'],
-      ['a.js', 'b.js', 'c.js'],
-    ]);
-    expect(metrics.duplicateBlockCount).toBe(2);
-    expect(metrics.duplicateBlockGroupCountByFile).toEqual({ 'a.js': 2, 'b.js': 2, 'c.js': 1 });
-  }
-
   // The inner block group ranks above the whole-file group by coverage (four copies against two),
   // so the whole-file clone is kept after the region it encloses. Both must still be reported: the
   // block copies in a.js and b.js are nested in the whole-file clone, and c.js and d.js, which
@@ -1318,21 +1336,26 @@ describe('duplication: cross-file grouping and reporting', () => {
     const metrics = measureCrossFileDuplication([
       {
         file: 'a.js',
-        ...collectCrossFileDuplicationFileData(copy('alpha') + arithmetic('alphaX'), { language: 'javascript' }),
-      },
-      {
-        file: 'b.js',
-        ...collectCrossFileDuplicationFileData(copy('beta') + arithmetic('betaX'), { language: 'javascript' }),
-      },
-      {
-        file: 'c.js',
-        ...collectCrossFileDuplicationFileData(`class Holder { constructor() { this.value = 1; } }\n${copy('gamma')}`, {
+        ...collectCrossFileDuplicationFileData(midpointClone('alpha') + arithmetic('alphaX'), {
           language: 'javascript',
         }),
       },
       {
+        file: 'b.js',
+        ...collectCrossFileDuplicationFileData(midpointClone('beta') + arithmetic('betaX'), { language: 'javascript' }),
+      },
+      {
+        file: 'c.js',
+        ...collectCrossFileDuplicationFileData(
+          `class Holder { constructor() { this.value = 1; } }\n${midpointClone('gamma')}`,
+          {
+            language: 'javascript',
+          }
+        ),
+      },
+      {
         file: 'd.js',
-        ...collectCrossFileDuplicationFileData(`while (ready) { poll(); }\n${copy('delta')}`, {
+        ...collectCrossFileDuplicationFileData(`while (ready) { poll(); }\n${midpointClone('delta')}`, {
           language: 'javascript',
         }),
       },
@@ -1376,7 +1399,7 @@ describe('duplication: cross-file grouping and reporting', () => {
     const metrics = measureCrossFileDuplication([
       { file: 'empty.js', ...collectCrossFileDuplicationFileData('', { language: 'javascript' }) },
       { file: 'tiny.js', ...collectCrossFileDuplicationFileData('export const x = 1;\n', { language: 'javascript' }) },
-      { file: 'a.js', ...collectCrossFileDuplicationFileData(copy('alpha'), { language: 'javascript' }) },
+      { file: 'a.js', ...collectCrossFileDuplicationFileData(midpointClone('alpha'), { language: 'javascript' }) },
     ]);
     expect(metrics).toEqual({
       duplicateBlockCount: 0,
@@ -1387,10 +1410,10 @@ describe('duplication: cross-file grouping and reporting', () => {
   });
 
   it('excludes comment and blank lines inside a cross-file occurrence from its line numbers', () => {
-    const commented = copy('alpha').replace('  let count = 0;', '  // note\n\n  let count = 0;');
+    const commented = midpointClone('alpha').replace('  let count = 0;', '  // note\n\n  let count = 0;');
     const metrics = measureCrossFileDuplication([
       { file: 'a.js', ...collectCrossFileDuplicationFileData(commented, { language: 'javascript' }) },
-      { file: 'b.js', ...collectCrossFileDuplicationFileData(copy('beta'), { language: 'javascript' }) },
+      { file: 'b.js', ...collectCrossFileDuplicationFileData(midpointClone('beta'), { language: 'javascript' }) },
     ]);
     const occurrence = metrics.groups[0]?.occurrences.find(({ file }) => file === 'a.js');
     const lines = metrics.duplicateLineNumbersByFile['a.js'] ?? [];
@@ -1577,15 +1600,11 @@ describe('duplication: within-file statement runs and containers', () => {
     // too. alpha and beta also match two lines into the run, which beta edits after them: that
     // longer clone encloses the copies of the leading statements and overlaps the run, and must
     // not take the place of the run's clone.
-    const run = (edited: boolean): string =>
-      embeddedRun('items', 'items')
-        .slice(1)
-        .replace('second > first', edited ? 'second > first + 1' : 'second > first');
     const leading = `${surroundingsB.replaceAll('rows', 'items')}\n`;
     const functions = [
-      `function alpha(items) {\n${leading}${run(false)}}\n`,
-      `function beta(items) {\n${leading}${run(true)}}\n`,
-      `function gamma(items) {\n${run(false)}${leading}}\n`,
+      `function alpha(items) {\n${leading}${overlappingRun(false)}}\n`,
+      `function beta(items) {\n${leading}${overlappingRun(true)}}\n`,
+      `function gamma(items) {\n${overlappingRun(false)}${leading}}\n`,
     ];
     const duplication = { minSimilarityPercent: 100, maxGapTokens: 0 };
 
