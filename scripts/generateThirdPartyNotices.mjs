@@ -31,8 +31,6 @@ const upstreamCopyrights = {
   'napi-derive@3.5.10': 'Copyright (c) 2020-present LongYinan',
   'napi-derive-backend@5.1.2': 'Copyright (c) 2020-present LongYinan',
   'napi-sys@3.2.3': 'Copyright (c) 2020-present LongYinan',
-  'tree-sitter-java@0.23.5': 'Copyright (c) 2017 Ayman Nadeem',
-  'tree-sitter-ruby@0.23.1': 'Copyright (c) 2016 Rob Rix',
 };
 
 const metadata = JSON.parse(
