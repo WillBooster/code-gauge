@@ -511,7 +511,7 @@ does not skip generated files (e.g. `.d.ts`, `.min.js`) or test files.
 ### Cloudflare Workers
 
 Workers cannot load native addons, so the package's `workerd` export runs the same API on a
-WebAssembly build of the Rust engine (about 2.3 MB gzipped). Wrangler resolves that export
+WebAssembly build of the Rust engine (about 3.5 MB gzipped). Wrangler resolves that export
 automatically, and no `nodejs_compat` flag is needed:
 
 ```ts
