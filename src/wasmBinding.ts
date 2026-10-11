@@ -164,7 +164,6 @@ function createWasiImports(
   stderr: string[]
 ): Record<string, (...args: never[]) => number> {
   const view = (): DataView => new DataView(getMemory().buffer);
-  const unavailable = (): number => WASI_ERRNO_BADF;
   return {
     environ_get: () => WASI_ERRNO_SUCCESS,
     environ_sizes_get: (countPointer: number, sizePointer: number) => {
@@ -207,4 +206,8 @@ function createWasiImports(
       throw new Error(`The code-gauge WebAssembly module exited with code ${code}`);
     },
   };
+}
+
+function unavailable(): number {
+  return WASI_ERRNO_BADF;
 }
