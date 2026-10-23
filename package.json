@@ -4,34 +4,22 @@
   "description": "Measure code metrics with tree-sitter.",
   "keywords": [
     "cli",
-    "tree-sitter",
-    "metrics",
-    "loc",
     "cognitive-complexity",
-    "ncss",
-    "duplication",
     "csharp",
+    "duplication",
     "kotlin",
-    "refactoring"
+    "loc",
+    "metrics",
+    "ncss",
+    "refactoring",
+    "tree-sitter"
   ],
+  "license": "Apache-2.0",
+  "author": "WillBooster Inc.",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/WillBooster/code-gauge.git"
   },
-  "license": "Apache-2.0",
-  "author": "WillBooster Inc.",
-  "type": "module",
-  "exports": {
-    ".": {
-      "types": "./dist/index.d.ts",
-      "workerd": "./dist/worker.js",
-      "require": "./dist/index.cjs",
-      "import": "./dist/index.js"
-    }
-  },
-  "main": "dist/index.cjs",
-  "module": "dist/index.js",
-  "types": "dist/index.d.ts",
   "bin": "dist/cli.js",
   "files": [
     "dist/",
@@ -44,6 +32,22 @@
     "scripts/installNative.mjs",
     "THIRD-PARTY-NOTICES.txt"
   ],
+  "type": "module",
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "workerd": "./dist/worker.js",
+      "require": "./dist/index.cjs",
+      "import": "./dist/index.js"
+    }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "scripts": {
     "benchmark": "node scripts/benchmark.mjs",
     "build": "build-ts lib -i src/index.ts -i src/cli.ts -i src/worker.ts --external ../native/code-gauge.wasm",
@@ -73,25 +77,18 @@
     "@tsconfig/node-ts": "23.6.4",
     "@types/bun": "1.4.3",
     "@types/node": "25.9.4",
-    "@willbooster/oxfmt-config": "1.2.2",
-    "@willbooster/oxlint-config": "1.4.8",
-    "@willbooster/wb": "22.27.0",
+    "@willbooster/oxlint-config": "1.4.9",
+    "@willbooster/wb": "22.29.1",
     "build-ts": "21.0.27",
     "conventional-changelog-conventionalcommits": "9.3.1",
     "lefthook": "2.2.2",
-    "oxfmt": "0.73.0",
     "oxlint": "1.88.0",
     "oxlint-tsgolint": "7.0.2004",
     "semantic-release": "25.0.5",
-    "sort-package-json": "4.1.0",
     "vitest": "4.1.9",
     "wrangler": "4.135.0"
   },
   "engines": {
     "node": ">=24"
-  },
-  "publishConfig": {
-    "access": "public",
-    "registry": "https://registry.npmjs.org/"
   }
 }

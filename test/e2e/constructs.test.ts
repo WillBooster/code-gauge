@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
-import { measureCode, supportedLanguages, type LanguageName } from '../../src/index.js';
+
+import { type LanguageName, measureCode, supportedLanguages } from '../../src/index.js';
 import { fixturesDir } from './fixtureCorpus.js';
 
 // Per-language construct catalogs under test/fixtures/constructs: each file exercises the control

@@ -1,18 +1,20 @@
 import { readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
-import { loadConfig, resolveOptions, type CliOptions, type ResolvedOptions } from './cliConfig.js';
+
+import { type CliOptions, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
+  type ChangedFile,
   isIgnored,
+  type LineHunk,
   listChangedFiles,
   listLineHunks,
   listRepositoryFiles,
   resolveMergeBase,
   resolveRepoRoot,
-  type ChangedFile,
-  type LineHunk,
 } from './git.js';
 import {
   addCrossFileDuplication,
@@ -22,20 +24,20 @@ import {
   isWithinDirectory,
   resolveTarget,
   scanListedFiles,
+  type ScanResult,
   scanTarget,
   writeStderr,
   writeStdout,
-  type ScanResult,
 } from './scan.js';
 import {
-  checkThresholds,
   type BlockLocation,
-  type CheckedFile,
   type CheckedDuplication,
+  type CheckedFile,
   type CheckResult,
+  checkThresholds,
   type Violation,
 } from './thresholdCheck.js';
-import { metricNameOf, resolveLimits, thresholds, type LimitsByLevel } from './thresholds.js';
+import { type LimitsByLevel, metricNameOf, resolveLimits, thresholds } from './thresholds.js';
 
 /** Raw options of the `check` subcommand; every field is undefined unless the flag was passed. */
 export interface CheckCliOptions extends CliOptions {

@@ -1,6 +1,8 @@
 import path from 'node:path';
-import { createTestHarness, type TestHarness } from 'wrangler';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { createTestHarness, type TestHarness } from 'wrangler';
+
 import * as codeGauge from '../../src/index.js';
 import { run } from '../helpers/globalSetup.js';
 import { loadFixtureCorpus } from './fixtureCorpus.js';

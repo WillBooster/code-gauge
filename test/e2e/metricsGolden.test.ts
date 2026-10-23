@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { measureCode } from '../../src/index.js';
 import { loadFixtureCorpus } from './fixtureCorpus.js';
 

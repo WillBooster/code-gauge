@@ -1,4 +1,5 @@
 import assert from 'node:assert';
+
 import type {
   CrossFileDuplicateBlockGroup,
   CrossFileDuplicateOccurrence,
@@ -9,10 +10,10 @@ import {
   duplicationThreshold,
   fileThresholds,
   functionThresholds,
-  levels,
-  metricNameOf,
   type Level,
+  levels,
   type LimitsByLevel,
+  metricNameOf,
   type Threshold,
 } from './thresholds.js';
 import type { CodeMetrics, CognitiveBlock, FunctionMetrics } from './types.js';

@@ -1,16 +1,18 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { beforeAll, describe, expect, it } from 'vitest';
+
 import {
-  measureCode,
-  supportedLanguages,
   type CodeMetrics,
   type DuplicationMetrics,
   type FunctionMetrics,
   type HalsteadMetrics,
+  measureCode,
+  supportedLanguages,
 } from '../../src/index.js';
 import { fixturesDir, loadFixtureCorpus } from './fixtureCorpus.js';
-import { ossExpectations, type OracleMetric } from './ossExpectations.js';
+import { type OracleMetric, ossExpectations } from './ossExpectations.js';
 
 // Measures every supported metric on real-world files from famous OSS projects (pinned to release
 // tags) and checks them against expectations verified with major existing tools — PMD, gocognit,

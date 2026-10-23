@@ -12,6 +12,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { wasiLibcCommit } from './wasiSdk.mjs';
 
 const packageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');

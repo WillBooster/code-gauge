@@ -1,8 +1,8 @@
 import {
+  type CountedOccurrence,
   createLcsLengthCounter,
   lcsLength,
   markLcs,
-  type CountedOccurrence,
   type Token,
   type TokenRange,
   type TokenSegment,
@@ -1038,8 +1038,8 @@ function anonymize(symbols: Int32Array): Int32Array {
  * hash bits collide.
  */
 function tokenKey(token: Token): number {
-  const primary = token.textHash ^ Math.imul(token.literalHash ?? 0, 0x9E_37_79_B1);
-  const secondary = token.textHash2 ^ Math.imul(token.literalHash2 ?? 0, 0x85_EB_CA_6B);
+  const primary = token.textHash ^ Math.imul(token.literalHash ?? 0, 0x9e_37_79_b1);
+  const secondary = token.textHash2 ^ Math.imul(token.literalHash2 ?? 0, 0x85_eb_ca_6b);
   return (primary >>> 0) * 0x20_00_00 + (secondary >>> 11);
 }
 

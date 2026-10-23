@@ -9,6 +9,7 @@ import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+
 import { wasiLibcCommit, wasiSdkVersion } from './wasiSdk.mjs';
 
 const target = 'wasm32-wasip1';

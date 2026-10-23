@@ -1,33 +1,34 @@
 #!/usr/bin/env node
 
-import { Command, InvalidArgumentError } from 'commander';
 import { getErrorMessage, parsePositiveInteger } from '@willbooster/shared-lib';
+import { Command, InvalidArgumentError } from 'commander';
+
+import { type CheckCliOptions, runCheckCommand } from './checkCommand.js';
 import { type CliOptions, configFileName, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import type { CrossFileDuplicationMetrics } from './crossFileDuplication.js';
-import { runCheckCommand, type CheckCliOptions } from './checkCommand.js';
 import { loadExclusion } from './exclusion.js';
 import {
   addCrossFileDuplication,
   collectDuplicatedLineNumbers,
   configSearchDirectory,
+  type FileMetrics,
   formatPath,
   resolveTarget,
+  type ScanResult,
   scanTarget,
   writeStderr,
   writeStdout,
-  type FileMetrics,
-  type ScanResult,
 } from './scan.js';
+import { qualifyFunctionName } from './thresholdCheck.js';
 import {
   duplicationThreshold,
   fileThresholds,
   functionThresholds,
-  levels,
-  thresholds,
   type Level,
+  levels,
   type Limits,
+  thresholds,
 } from './thresholds.js';
-import { qualifyFunctionName } from './thresholdCheck.js';
 import type { FunctionMetrics } from './types.js';
 
 /** The worst (highest-cognitive-complexity) function of a file, reported as the ranking evidence. */

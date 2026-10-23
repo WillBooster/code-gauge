@@ -1,8 +1,10 @@
 import { lstat, readdir, readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+
 import { getErrorMessage } from '@willbooster/shared-lib';
-import { measureCrossFileDuplication, type CrossFileDuplicationMetrics } from './crossFileDuplication.js';
+
+import { type CrossFileDuplicationMetrics, measureCrossFileDuplication } from './crossFileDuplication.js';
 import type { CrossFileDuplicationFileData } from './duplication.js';
 import type { Exclusion } from './exclusion.js';
 import { detectLanguage } from './languages.js';

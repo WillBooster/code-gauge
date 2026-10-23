@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 // These tests exercise `code-gauge check` (built by test/helpers/globalSetup.ts) as a real

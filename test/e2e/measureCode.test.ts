@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
+
 import { collectCrossFileDuplicationFileData, measureCode, supportedLanguages } from '../../src/index.js';
 
 // Cognitive complexity follows the SonarSource specification (cross-validated against PMD's Java

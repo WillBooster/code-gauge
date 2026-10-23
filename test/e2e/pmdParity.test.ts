@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
-import { measureCode, type CodeMetrics } from '../../src/index.js';
+
+import { type CodeMetrics, measureCode } from '../../src/index.js';
 import { fixturesDir } from './fixtureCorpus.js';
 
 /**

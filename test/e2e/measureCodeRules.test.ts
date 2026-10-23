@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
+
 import {
-  TreeMeasurer,
   collectCrossFileDuplicationFileData,
   collectFunctionTokenSequences,
   defaultLanguages,
+  type FunctionMetrics,
   measureCode,
   supportedLanguages,
-  type FunctionMetrics,
+  TreeMeasurer,
 } from '../../src/index.js';
 
 // Rule-by-rule matrices over small snippets, one per metric: each case names the rule it pins

@@ -1,21 +1,23 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { describe, expect, it } from 'vitest';
+
 import {
-  collectCrossFileDuplicationFileData,
-  measureCode,
-  measureCrossFileDuplication,
-  type CrossFileDuplicationMetrics,
-  type DuplicationOptions,
-  type LanguageName,
-} from '../../src/index.js';
-import {
+  type CountedOccurrence,
   countRedundantFragments,
   mergeAdjacentGroups,
-  type CountedOccurrence,
   type Token,
   type TokenRange,
 } from '../../src/duplication.js';
+import {
+  collectCrossFileDuplicationFileData,
+  type CrossFileDuplicationMetrics,
+  type DuplicationOptions,
+  type LanguageName,
+  measureCode,
+  measureCrossFileDuplication,
+} from '../../src/index.js';
 import { fixturesDir } from './fixtureCorpus.js';
 
 // End-to-end coverage of the duplication detector across every supported language, plus the

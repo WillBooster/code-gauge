@@ -7,6 +7,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
+
 import { measureCode } from '../dist/index.js';
 
 const repoRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
