@@ -1,4 +1,5 @@
 import { clamp } from '@willbooster/shared-lib';
+
 import type { DuplicationOptions } from './types.js';
 
 /**
@@ -29,7 +30,7 @@ export function resolveDuplicationOptions(options?: DuplicationOptions): Require
 }
 
 function resolveOption(value: number | undefined, fallback: number): number {
-  return value === undefined || Number.isNaN(value) ? fallback : clamp(Math.trunc(value), 0, 0xFF_FF_FF_FF);
+  return value === undefined || Number.isNaN(value) ? fallback : clamp(Math.trunc(value), 0, 0xff_ff_ff_ff);
 }
 
 /** Minimum consecutive statements for a statement-sequence duplicate candidate. */
@@ -568,7 +569,7 @@ function lcsPrefixLengths(a: Int32Array, b: Int32Array): Int32Array {
 function popCount(value: number): number {
   let count = value - ((value >>> 1) & 0x55_55_55_55);
   count = (count & 0x33_33_33_33) + ((count >>> 2) & 0x33_33_33_33);
-  return (Math.imul((count + (count >>> 4)) & 0x0F_0F_0F_0F, 0x01_01_01_01) >>> 24) & 0xFF;
+  return (Math.imul((count + (count >>> 4)) & 0x0f_0f_0f_0f, 0x01_01_01_01) >>> 24) & 0xff;
 }
 
 function toCandidate(

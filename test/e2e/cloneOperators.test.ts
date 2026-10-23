@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { collectCrossFileDuplicationFileData, measureCode, measureCrossFileDuplication } from '../../src/index.js';
 
 // Recall per edit type: each clone operator (the Type-1/2/3 edit taxonomy of mutation-based

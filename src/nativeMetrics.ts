@@ -1,4 +1,5 @@
 import { clamp, getErrorMessage } from '@willbooster/shared-lib';
+
 import type { CrossFileDuplicateCandidate, Token, TokenRange } from './duplication.js';
 import type { CodeMetrics, DuplicationOptions, FunctionMetrics } from './types.js';
 
@@ -155,7 +156,7 @@ function toWellFormed(code: string): string {
  * instead.
  */
 function clampToU32(value: number | undefined): number | undefined {
-  return value === undefined || Number.isNaN(value) ? undefined : clamp(Math.trunc(value), 0, 0xFF_FF_FF_FF);
+  return value === undefined || Number.isNaN(value) ? undefined : clamp(Math.trunc(value), 0, 0xff_ff_ff_ff);
 }
 
 /**

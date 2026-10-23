@@ -1,6 +1,7 @@
 import { realpath } from 'node:fs/promises';
 import path from 'node:path';
-import { readLinguistAttributes, resolveRepoRoot, type LinguistAttributes } from './git.js';
+
+import { type LinguistAttributes, readLinguistAttributes, resolveRepoRoot } from './git.js';
 
 /**
  * Files left out of measurement beyond the built-in directory and file-name rules: configured

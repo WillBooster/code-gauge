@@ -1,5 +1,6 @@
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+
 import { detectLanguage, type LanguageName } from '../../src/index.js';
 
 export interface CorpusEntry {

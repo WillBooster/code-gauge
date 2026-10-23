@@ -1,15 +1,17 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
+
 import { getErrorMessage, isRecord } from '@willbooster/shared-lib';
+
 import { defaultDuplicationOptions } from './duplication.js';
 import type { ExcludePatterns } from './exclusion.js';
 import { supportedLanguages } from './languages.js';
 import {
-  levels,
-  thresholds,
   type Level,
+  levels,
   type LevelThresholdsConfig,
   type Limits,
+  thresholds,
   type ThresholdsConfig,
 } from './thresholds.js';
 import type { DuplicationOptions } from './types.js';

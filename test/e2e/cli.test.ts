@@ -11,6 +11,7 @@ import {
 } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 // These tests exercise the built CLI (dist/cli.js) as a real subprocess so the whole pipeline is

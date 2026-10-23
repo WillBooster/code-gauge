@@ -1,15 +1,15 @@
 import { collectCrossFileNearMissGroups } from './crossFileNearMiss.js';
-import { selectMaximalGroups, type SelectableRegion } from './duplicateSelection.js';
+import { type SelectableRegion, selectMaximalGroups } from './duplicateSelection.js';
 import {
   buildLiteralCountPrefix,
   collectMatchedLines,
   collectSequenceWindowCandidates,
-  countRedundantFragments,
-  mergeAdjacentGroups,
-  resolveDuplicationOptions,
   type CountedOccurrence,
+  countRedundantFragments,
   type CrossFileDuplicateCandidate,
   type CrossFileDuplicationFileData,
+  mergeAdjacentGroups,
+  resolveDuplicationOptions,
   type SequenceWindowContext,
   type TokenSegment,
 } from './duplication.js';
