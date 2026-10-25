@@ -788,6 +788,37 @@ warning: src/legacy.ts:1: code-gauge-allow functionCognitiveComplexity 24: value
 `);
   });
 
+  it('reports a directive whose value grew to the error level as outgrown', () => {
+    writeSource('src/legacy.ts', allowDecide(20));
+    const result = runCheck(['src/legacy.ts', '--error-max-function-cognitive-complexity', '22']);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      'warning: src/legacy.ts:1: code-gauge-allow functionCognitiveComplexity 20: the value grew above 20; reduce it or reconsider the directive\n'
+    );
+  });
+
+  it('covers the functions nested in the function a directive precedes', () => {
+    writeSource(
+      'src/nested.ts',
+      `// code-gauge-allow functionParameterCount 8 -- the handlers take the protocol's fields\nexport function outer(a, b, c, d, e, f, g) {\n  return (h, i, j, k, l, m, n, o) => a + h;\n}\n`
+    );
+    expect(runCheck(['src/nested.ts']).stdout).toBe(
+      'No threshold violations: 1 files, 2 functions checked, 2 exceeded limits allowed by directives.\n'
+    );
+  });
+
+  it('does not attach a directive above a decorated declaration other than a function to a later function', () => {
+    writeSource(
+      'src/wide.py',
+      `# code-gauge-allow functionParameterCount 8 -- registered handlers\n@registered(\n    name="empty",\n)\nclass Empty:\n    pass\n\n\ndef later(a, b, c, d, e, f, g, h):\n    return a\n`
+    );
+    const { stdout } = runCheck(['src/wide.py']);
+    expect(stdout).toContain('warning: src/wide.py:9-10 later: parameters 8 (max 6)\n');
+    expect(stdout).toContain(
+      'warning: src/wide.py:1: no function starts on line 5; use code-gauge-allow-file for the whole file\n'
+    );
+  });
+
   it('allows the duplicated blocks starting in the function it precedes, each copy on its own', () => {
     writeSource(
       'src/report.ts',
@@ -828,7 +859,7 @@ ${calc}
 ${calc.replace('total', 'sum')}
 // code-gauge-allow fileNcss 40 -- a file metric
 // code-gauge-allow functionLength 40 -- unknown
-export const offset = 1; // code-gauge-allow functionNcss 40 -- trailing
+export const offset = '// code-gauge-allow functionNcss 40 -- in a string';
 
 // code-gauge-allow functionNcss 40 -- followed by a blank line
 
@@ -858,11 +889,6 @@ export const scale = 2;
       },
       {
         file: 'src/calc.ts',
-        line: 21,
-        message: 'a directive must be on a comment line of its own: `code-gauge-allow <metric> <max> -- <reason>`',
-      },
-      {
-        file: 'src/calc.ts',
         line: 23,
         message: 'code-gauge-allow must directly precede a function; use code-gauge-allow-file for the whole file',
       },
@@ -886,6 +912,27 @@ export const scale = 2;
     writeSource('src/legacy.ts', readSource('src/legacy.ts').replace('return 0;', 'return 1;'));
     expect(runCheck(['--base', 'HEAD']).stdout).toContain(
       'warning: src/legacy.ts:30: code-gauge-allow functionNcss 40: allows no warning; remove the directive\n'
+    );
+  });
+
+  it.each([
+    ['removing', ''],
+    ['lowering', '// code-gauge-allow functionCognitiveComplexity 20 -- each branch is a documented rule\n'],
+  ])('with --base, reports the function after %s its directive', (_, replacement) => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('src/legacy.ts', `export const offset = 1;\n\n${allowDecide(24)}`);
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'allow']);
+
+    writeSource(
+      'src/legacy.ts',
+      readSource('src/legacy.ts').replace(
+        '// code-gauge-allow functionCognitiveComplexity 24 -- each branch is a documented rule\n',
+        replacement
+      )
+    );
+    expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
+      /\nwarning: src\/legacy\.ts:\d+-\d+ decide: cognitive complexity 24 /u
     );
   });
 });
