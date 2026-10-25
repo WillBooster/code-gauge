@@ -35,6 +35,8 @@ const syntax = `\`${allowKeyword} <metric> <max> -- <reason>\``;
 // keyword; any other text before it makes the comment prose mentioning a directive.
 const directivePattern = /^[\s!#*/]*(code-gauge-allow(?:-file)?)(?![\w-])(.*)$/u;
 const decoratorPattern = /^\s*(?:@|#\[)/u;
+// A string on one line, whose brackets do not open or close a decorator's arguments.
+const stringLiteralPattern = /(["'`])(?:\\.|(?!\1).)*\1/gu;
 const argumentsPattern = /^(\w+)\s+(\d+(?:\.\d+)?)\s+--\s+\S/u;
 
 const fileMetrics = new Set(fileThresholds.map((threshold) => metricNameOf(threshold)));
@@ -157,7 +159,8 @@ function skipDecorators(line: number, lines: readonly string[], codeLines: Reado
     if (!codeLines.has(current)) continue;
     const text = lines[current - 1] ?? '';
     if (depth === 0 && !decoratorPattern.test(text)) break;
-    depth += (text.match(/[([{]/gu)?.length ?? 0) - (text.match(/[)\]}]/gu)?.length ?? 0);
+    const code = text.replaceAll(stringLiteralPattern, '');
+    depth = Math.max(depth + (code.match(/[([{]/gu)?.length ?? 0) - (code.match(/[)\]}]/gu)?.length ?? 0), 0);
   }
   return current;
 }

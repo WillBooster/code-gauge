@@ -843,7 +843,7 @@ warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts
   it('applies a directive above a decorator to the function it decorates', () => {
     writeSource(
       'src/wide.py',
-      `# code-gauge-allow functionParameterCount 8 -- the route passes every query parameter\n@route('/search')\n@cached\ndef search(a, b, c, d, e, f, g, h):\n    return a\n`
+      `# code-gauge-allow functionParameterCount 8 -- the route passes every query parameter\n@route('/search(')\n@cached(\n    key=")",\n)\ndef search(a, b, c, d, e, f, g, h):\n    return a\n`
     );
     expect(runCheck(['src/wide.py']).stdout).toBe(
       'No threshold violations: 1 files, 1 functions checked, 1 exceeded limits allowed by directives.\n'
