@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
+import { parseAllowDirectives } from './allowDirectives.js';
 import { type CliOptions, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
@@ -35,6 +36,7 @@ import {
   type CheckedFile,
   type CheckResult,
   checkThresholds,
+  type LocatedDirectiveProblem,
   type Violation,
 } from './thresholdCheck.js';
 import { type LimitsByLevel, metricNameOf, resolveLimits, thresholds } from './thresholds.js';
@@ -74,7 +76,8 @@ export async function runCheckCommand(
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
     const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options);
-    const result = checkThresholds(scope.files, scope.duplication, resolveLimits(cliLimits, config.config.thresholds));
+    const files = await attachAllowDirectives(scope.files, scope.root);
+    const result = checkThresholds(files, scope.duplication, resolveLimits(cliLimits, config.config.thresholds));
     await endFileViolationsAtLastLine(result.violations, scope.root);
 
     if (options.json) {
@@ -91,6 +94,13 @@ export async function runCheckCommand(
     writeStderr(`Error: ${getErrorMessage(error)}\n`);
     process.exitCode = 2;
   }
+}
+
+async function attachAllowDirectives(files: readonly CheckedFile[], root: string): Promise<CheckedFile[]> {
+  return await mapConcurrently(files, os.availableParallelism() * 2, async (checked) => ({
+    ...checked,
+    allowDirectives: parseAllowDirectives(await readFile(path.join(root, checked.file), 'utf8'), checked.metrics),
+  }));
 }
 
 function hasErrors(violations: readonly Violation[]): boolean {
@@ -293,7 +303,9 @@ function measureDuplication(scan: ScanResult, options: ResolvedOptions): Checked
 
 function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result: CheckResult): void {
   const { violations } = result;
-  const checked = `${scope.files.length} ${cliOptions.base === undefined ? '' : 'changed '}files, ${result.checkedFunctionCount} functions checked${describeBase(cliOptions, scope)}`;
+  const allowed =
+    result.allowedLimitCount > 0 ? `, ${result.allowedLimitCount} exceeded limits allowed by directives` : '';
+  const checked = `${scope.files.length} ${cliOptions.base === undefined ? '' : 'changed '}files, ${result.checkedFunctionCount} functions checked${allowed}${describeBase(cliOptions, scope)}`;
   if (scope.errors.length > 0) {
     // Unmeasured files were not checked, so "no violations" would be vacuous; never claim a pass.
     writeStdout(
@@ -306,6 +318,9 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   }
   for (const violation of violations) {
     writeStdout(`${formatViolation(violation)}\n`);
+  }
+  for (const problem of result.directiveProblems) {
+    writeStdout(`${formatDirectiveProblem(problem)}\n`);
   }
 
   const violatedMetrics = new Set(violations.flatMap(({ exceeded }) => exceeded.map(({ metric }) => metric)));
@@ -323,6 +338,10 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   for (const error of scope.errors) {
     writeStderr(`Error: ${error}\n`);
   }
+}
+
+function formatDirectiveProblem({ file, line, message }: LocatedDirectiveProblem): string {
+  return `warning: ${file}:${line}: ${message}`;
 }
 
 function describeBase(cliOptions: CheckCliOptions, scope: CheckScope): string {
@@ -415,8 +434,10 @@ function printJsonReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
           ...countViolations(result.violations),
           checkedFileCount: scope.files.length,
           checkedFunctionCount: result.checkedFunctionCount,
+          allowedLimitCount: result.allowedLimitCount,
         },
         violations: result.violations,
+        directiveProblems: result.directiveProblems,
         errors: scope.errors,
         warnings: scope.warnings,
       },

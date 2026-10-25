@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -40,6 +40,10 @@ function runGit(args: string[]): void {
   if (result.status !== 0) {
     throw new Error(`git ${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`);
   }
+}
+
+function readSource(relativePath: string): string {
+  return readFileSync(path.join(repoDir, relativePath), 'utf8');
 }
 
 function writeSource(relativePath: string, content: string): void {
@@ -262,6 +266,11 @@ const branchChain = `export async function dispatch(kind: string, context: Conte
   return undefined;
 }
 `;
+
+/** `legacy` with directives allowing the warnings of `decide`, its cognitive complexity up to the given max. */
+function allowDecide(cognitiveComplexity: number): string {
+  return `// code-gauge-allow functionCognitiveComplexity ${cognitiveComplexity} -- each branch is a documented rule\n// code-gauge-allow functionNestingDepth 5 -- the rules nest as the spec does\n${legacy}`;
+}
 
 /** The report of a check of a directory outside a git repository that holds the given files. */
 function checkProject(args: string[], files: Record<string, string>): string {
@@ -600,6 +609,7 @@ ep\`](value: number): number {
         duplicationViolationCount: 2,
         checkedFileCount: 4,
         checkedFunctionCount: 5,
+        allowedLimitCount: 0,
       },
       violations: [
         {
@@ -644,6 +654,7 @@ ep\`](value: number): number {
           partners: [{ file: 'src/report.ts', startLine: 1, endLine: 12 }],
         },
       ],
+      directiveProblems: [],
       errors: [],
       warnings: [],
     });
@@ -749,6 +760,133 @@ describe('code-gauge check: thresholds', () => {
     const result = runCheck(['--warning-max-function-ncss', 'none']);
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('Expected a non-negative number or "off".');
+  });
+});
+
+describe('code-gauge check: allow directives', () => {
+  it('allows the warnings of the function a directive precedes up to its max', () => {
+    writeSource('src/legacy.ts', allowDecide(24));
+    expect(runCheck(['src/legacy.ts']).stdout).toBe(
+      'No threshold violations: 1 files, 2 functions checked, 2 exceeded limits allowed by directives.\n'
+    );
+
+    writeSource('src/legacy.ts', allowDecide(23));
+    expect(runCheck(['src/legacy.ts']).stdout)
+      .toContain(`(1 files, 2 functions checked, 1 exceeded limits allowed by directives).
+warning: src/legacy.ts:3-23 decide: cognitive complexity 24 (max 15; largest parts L6-12 12, L18 2, L19 2)
+warning: src/legacy.ts:1: code-gauge-allow functionCognitiveComplexity 23: the value grew above 23; reduce it or reconsider the directive
+`);
+  });
+
+  it('never allows an error', () => {
+    writeSource('src/legacy.ts', allowDecide(24));
+    const result = runCheck(['src/legacy.ts', '--error-max-function-cognitive-complexity', '20']);
+    expect(result.status).toBe(1);
+    expect(result.stdout)
+      .toContain(`error: src/legacy.ts:3-23 decide: cognitive complexity 24 (max 20; largest parts L6-12 12, L18 2, L19 2)
+warning: src/legacy.ts:1: code-gauge-allow functionCognitiveComplexity 24: values above 20 are errors, which a directive cannot allow
+`);
+  });
+
+  it('allows the duplicated blocks starting in the function it precedes, each copy on its own', () => {
+    writeSource(
+      'src/report.ts',
+      `/** Sums the report. */\n// code-gauge-allow duplicateLines 12 -- the summary may diverge soon\n${reportFunction('reportTotal')}`
+    );
+    expect(runCheck([]).stdout).toContain(`
+warning: src/legacy.ts:1-21 decide: cognitive complexity 24 (max 15; largest parts L4-10 12, L16 2, L17 2), nesting depth 5 (max 4)
+warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:3-14
+`);
+  });
+
+  it('allows the warnings of every function and block of the file with code-gauge-allow-file', () => {
+    writeSource(
+      'src/wide.py',
+      `"""Benchmark helpers."""\n# code-gauge-allow-file functionParameterCount 8 -- each benchmark passes its whole setup\n\n@measure\ndef run(a, b, c, d, e, f, g, h):\n    return a\n\n\ndef rest(a, b, c, d, e, f, g):\n    return a\n`
+    );
+    expect(runCheck(['src/wide.py']).stdout).toBe(
+      'No threshold violations: 1 files, 2 functions checked, 2 exceeded limits allowed by directives.\n'
+    );
+  });
+
+  it('applies a directive above a decorator to the function it decorates', () => {
+    writeSource(
+      'src/wide.py',
+      `# code-gauge-allow functionParameterCount 8 -- the route passes every query parameter\n@route('/search')\n@cached\ndef search(a, b, c, d, e, f, g, h):\n    return a\n`
+    );
+    expect(runCheck(['src/wide.py']).stdout).toBe(
+      'No threshold violations: 1 files, 1 functions checked, 1 exceeded limits allowed by directives.\n'
+    );
+  });
+
+  it('reports directives it cannot apply and those allowing nothing, without failing', () => {
+    writeSource(
+      'src/calc.ts',
+      `// code-gauge-allow functionNcss 40
+${calc}
+// code-gauge-allow functionNcss 40 -- unused
+${calc.replace('total', 'sum')}
+// code-gauge-allow fileNcss 40 -- a file metric
+// code-gauge-allow functionLength 40 -- unknown
+export const offset = 1; // code-gauge-allow functionNcss 40 -- trailing
+
+// code-gauge-allow functionNcss 40 -- followed by a blank line
+
+export const scale = 2;
+`
+    );
+    const result = runCheck(['src/calc.ts', '--json']);
+    expect(result.status).toBe(0);
+    expect((JSON.parse(result.stdout) as { directiveProblems: unknown }).directiveProblems).toEqual([
+      {
+        file: 'src/calc.ts',
+        line: 1,
+        message: 'malformed directive; expected `code-gauge-allow <metric> <max> -- <reason>` with a reason',
+      },
+      {
+        file: 'src/calc.ts',
+        line: 10,
+        message: 'code-gauge-allow functionNcss 40: allows no warning; remove the directive',
+      },
+      { file: 'src/calc.ts', line: 19, message: 'fileNcss is measured per file; allow it with code-gauge-allow-file' },
+      {
+        file: 'src/calc.ts',
+        line: 20,
+        message: expect.stringMatching(
+          /^unknown metric functionLength; expected one of functionCognitiveComplexity, /u
+        ),
+      },
+      {
+        file: 'src/calc.ts',
+        line: 21,
+        message: 'a directive must be on a comment line of its own: `code-gauge-allow <metric> <max> -- <reason>`',
+      },
+      {
+        file: 'src/calc.ts',
+        line: 23,
+        message: 'code-gauge-allow must directly precede a function; use code-gauge-allow-file for the whole file',
+      },
+    ]);
+  });
+
+  it('with --base, keeps allowing a touched function and reports a directive only where the change touches it', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource(
+      'src/legacy.ts',
+      `${allowDecide(24)}\n// code-gauge-allow functionNcss 40 -- unused\nexport function spare(): number {\n  return 0;\n}\n`
+    );
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'allow']);
+
+    writeSource('src/legacy.ts', readSource('src/legacy.ts').replace('return fallback;', 'return fallback + 0;'));
+    expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
+      /^No threshold violations: 1 changed files, 1 functions checked, 2 exceeded limits allowed by directives; base HEAD, merge-base [0-9a-f]{12}\.\n$/u
+    );
+
+    writeSource('src/legacy.ts', readSource('src/legacy.ts').replace('return 0;', 'return 1;'));
+    expect(runCheck(['--base', 'HEAD']).stdout).toContain(
+      'warning: src/legacy.ts:30: code-gauge-allow functionNcss 40: allows no warning; remove the directive\n'
+    );
   });
 });
 
