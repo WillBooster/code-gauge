@@ -10,6 +10,8 @@ const maxOutputBytes = 512 * 1024 * 1024;
 export interface LineHunk {
   headStart: number;
   headCount: number;
+  /** The base lines the hunk deletes or replaces. */
+  deletedLines?: readonly string[];
 }
 
 /** One entry of the working tree's diff against the merge-base commit. */
@@ -160,15 +162,19 @@ export async function listLineHunks(
     '--',
     ...paths,
   ]);
-  const hunks: LineHunk[] = [];
-  for (const match of output.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gmu)) {
-    const [, headStart, headCount] = match;
-    hunks.push({
+  const headers = [...output.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@.*$/gmu)];
+  return headers.map((match, index) => {
+    const [header, headStart, headCount] = match;
+    const body = output.slice(match.index + header.length, headers[index + 1]?.index ?? output.length);
+    return {
       headStart: Number(headStart),
       headCount: headCount === undefined ? 1 : Number(headCount),
-    });
-  }
-  return hunks;
+      deletedLines: body
+        .split('\n')
+        .filter((line) => line.startsWith('-'))
+        .map((line) => line.slice(1)),
+    };
+  });
 }
 
 /** A file's `linguist-generated` / `linguist-vendored` attributes; undefined when unspecified. */

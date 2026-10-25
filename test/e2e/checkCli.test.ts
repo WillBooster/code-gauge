@@ -807,7 +807,7 @@ warning: src/legacy.ts:1: code-gauge-allow functionCognitiveComplexity 24: value
     );
   });
 
-  it('does not attach a directive above a decorated declaration other than a function to a later function', () => {
+  it('attaches a directive only to a function starting on the next code line', () => {
     writeSource(
       'src/wide.py',
       `# code-gauge-allow functionParameterCount 8 -- registered handlers\n@registered(\n    name="empty",\n)\nclass Empty:\n    pass\n\n\ndef later(a, b, c, d, e, f, g, h):\n    return a\n`
@@ -815,14 +815,16 @@ warning: src/legacy.ts:1: code-gauge-allow functionCognitiveComplexity 24: value
     const { stdout } = runCheck(['src/wide.py']);
     expect(stdout).toContain('warning: src/wide.py:9-10 later: parameters 8 (max 6)\n');
     expect(stdout).toContain(
-      'warning: src/wide.py:1: code-gauge-allow must directly precede a function or its decorators; use code-gauge-allow-file for the whole file\n'
+      "warning: src/wide.py:1: no function starts on line 2, the code after code-gauge-allow; put it right above the line a function starts on (below decorators the function's span leaves out), or use code-gauge-allow-file\n"
     );
 
     writeSource(
-      'src/wide.py',
-      `# code-gauge-allow functionParameterCount 8 -- parses every field\n@route("/parse")\n\ndef parse(a, b, c, d, e, f, g, h):\n    return a\n`
+      'src/calc.ts',
+      `// code-gauge-allow functionParameterCount 8 -- followed by a blank line\n\nexport function wide(a, b, c, d, e, f, g, h) {\n  return a;\n}\n`
     );
-    expect(runCheck(['src/wide.py']).stdout).toContain('warning: src/wide.py:4-5 parse: parameters 8 (max 6)\n');
+    expect(runCheck(['src/calc.ts']).stdout).toContain(
+      'warning: src/calc.ts:1: code-gauge-allow must directly precede a function; use code-gauge-allow-file for the whole file\n'
+    );
   });
 
   it('allows the duplicated blocks starting in the function it precedes, each copy on its own', () => {
@@ -846,10 +848,10 @@ warning: src/summary.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts
     );
   });
 
-  it('applies a directive above a decorator to the function it decorates', () => {
+  it('applies a directive below the decorators a function span leaves out', () => {
     writeSource(
       'src/wide.py',
-      `# code-gauge-allow functionParameterCount 8 -- the route passes every query parameter\n@route('/search(')\n@cached(\n    key=")",\n)\ndef search(a, b, c, d, e, f, g, h):\n    return a\n`
+      `@route("/search(")\n# code-gauge-allow functionParameterCount 8 -- the route passes every query parameter\ndef search(a, b, c, d, e, f, g, h):\n    return a\n`
     );
     expect(runCheck(['src/wide.py']).stdout).toBe(
       'No threshold violations: 1 files, 1 functions checked, 1 exceeded limits allowed by directives.\n'
@@ -896,8 +898,7 @@ export const scale = 2;
       {
         file: 'src/calc.ts',
         line: 23,
-        message:
-          'code-gauge-allow must directly precede a function or its decorators; use code-gauge-allow-file for the whole file',
+        message: 'code-gauge-allow must directly precede a function; use code-gauge-allow-file for the whole file',
       },
     ]);
   });
@@ -943,17 +944,43 @@ export const scale = 2;
     );
   });
 
-  it('with --base, reports a function after removing the directive above its decorators', () => {
+  it.each([
+    [
+      'removing a code-gauge-allow-file line',
+      (source: string) => source.replace(/^# code-gauge-allow-file .*\n/mu, ''),
+      'warning: src/wide.py:3-4 first: parameters 8 (max 6)\n',
+    ],
+    [
+      'inserting a blank line below a directive',
+      (source: string) => source.replace('handlers\n', 'handlers\n\n'),
+      'warning: src/wide.py:9: code-gauge-allow must directly precede a function; use code-gauge-allow-file for the whole file\n',
+    ],
+  ])('with --base, checks the whole file after %s', (_, edit, expected) => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource(
       'src/wide.py',
-      `# code-gauge-allow functionParameterCount 8 -- registered handlers\n@registered(\n    name="empty",\n)\ndef empty(a, b, c, d, e, f, g, h):\n    return a\n`
+      `# code-gauge-allow-file functionParameterCount 8 -- each benchmark passes its whole setup\n\n\ndef first(a, b, c, d, e, f, g, h):\n    return a\n\n\n@registered\n# code-gauge-allow functionParameterCount 8 -- registered handlers\ndef empty(a, b, c, d, e, f, g, h):\n    return a\n`
     );
     runGit(['add', '-A']);
     runGit(['commit', '-q', '-m', 'allow']);
 
-    writeSource('src/wide.py', readSource('src/wide.py').split('\n').slice(1).join('\n'));
-    expect(runCheck(['--base', 'HEAD']).stdout).toContain('warning: src/wide.py:4-5 empty: parameters 8 (max 6)\n');
+    writeSource('src/wide.py', edit(readSource('src/wide.py')));
+    expect(runCheck(['--base', 'HEAD']).stdout).toContain(expected);
+  });
+
+  it('with --base, does not check a function for a deletion above it outside any directive', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource(
+      'src/wide.py',
+      'def first(a):\n    x = a\n    print(x)\n    return x\n\n\ndef wide(a, b, c, d, e, f, g, h):\n    return a\n'
+    );
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'wide']);
+
+    writeSource('src/wide.py', readSource('src/wide.py').replace('    return x\n', ''));
+    expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
+      /^No threshold violations: 1 changed files, 1 functions checked/u
+    );
   });
 });
 

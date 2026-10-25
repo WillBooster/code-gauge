@@ -151,15 +151,14 @@ disables it. The command line wins over the whole config file, per-language over
 With `--base <ref>`, the check covers only what the working tree changed since the merge-base of
 `<ref>` and `HEAD` (committed, staged, unstaged, and untracked changes; nothing is checked out):
 
-- a function, when a diff hunk touches its span or edits its head (the comment, decorator, and
-  attribute lines directly above it, where its [directives](#allowing-a-warning-in-the-code) are),
-  or deletes lines between its head and the code above; deleting lines inside the span counts, and so does
+- a function, when a diff hunk touches its span; deleting lines inside the span counts, and so does
   deleting lines after the last line of a Python function (blank and comment-only lines aside), which may have been its
   tail;
 - a file-level threshold, when the change adds or deletes lines of the file (a rename or a mode
   change alone does not count);
-- a duplicated block, when it overlaps lines the change added or the span of a function whose head
-  the change edits as above.
+- a duplicated block, when it overlaps lines the change added;
+- the whole file, when the change touches a [directive](#allowing-a-warning-in-the-code): it adds
+  or edits lines from a directive to the next code line, or deletes a line holding one.
 
 `--base` only filters the report: the files measured and the duplication found are those of the
 check without it, so code pasted from an unchanged file is reported where it was pasted. A
@@ -223,10 +222,12 @@ export function createClient(host, port, user, password, database, timeout, retr
 # code-gauge-allow-file functionParameterCount 9 -- each benchmark passes its whole setup
 ```
 
-- `code-gauge-allow <metric> <max> -- <reason>` covers the function starting on the next line,
-  the functions nested in it, and the duplicated blocks starting in it. Comment lines may stand
-  between the directive and the function, and so may the function's decorators and attributes,
-  but not a blank line. A directive after code on the same line is not read.
+- `code-gauge-allow <metric> <max> -- <reason>` covers the function starting on the next code
+  line, the functions nested in it, and the duplicated blocks starting in it. Only comment lines
+  may stand between the directive and that line. Where a function's span starts below its
+  decorators or attributes (Python, TypeScript, and Rust), the directive goes below them; where the
+  span includes them (Java, Kotlin, and C#), above them. A directive after code on the same line is
+  not read.
 - `code-gauge-allow-file <metric> <max> -- <reason>` covers the whole file, and is the only way to
   allow `fileNcss`.
 - `<metric>` is a metric name of the [JSON report](#json-report) (`functionCognitiveComplexity`,
@@ -238,9 +239,7 @@ usual, so code that grows worse is reported again, and an error is fixed or its 
 needs a directive of its own. The report counts the limits directives allowed, and lists as
 warnings, which never fail the check, each directive that is malformed, misplaced, allows an
 error-level value, is outgrown by the value, or allows nothing; with `--base`, only those whose
-line or covered code the change touches. With `--base`, editing a `code-gauge-allow-file` line
-checks the whole file, but removing one does not, as removing an `exclude` pattern does not
-check the files it excluded.
+line or covered code the change touches.
 
 ### JSON report
 

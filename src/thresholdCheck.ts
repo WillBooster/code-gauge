@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 
-import type { AllowDirective, AllowDirectives } from './allowDirectives.js';
+import { type AllowDirective, type AllowDirectives, allowKeyword } from './allowDirectives.js';
 import type {
   CrossFileDuplicateBlockGroup,
   CrossFileDuplicateOccurrence,
@@ -167,38 +167,17 @@ export function checkThresholds(
 }
 
 /**
- * The change's hunks, extended over each function whose head (its comment, decorator, and
- * attribute lines) the change edits or deletes lines in or right above, and over the whole file when
- * it edits a `code-gauge-allow-file` line: such a change may alter what a directive allows.
- * Removing a `code-gauge-allow-file` line leaves no line to tell it by, as removing an `exclude`
- * pattern leaves the files it excluded unchanged.
+ * The change's hunks or, when the change touches a directive (it adds or edits lines from one to
+ * the next code line, or deletes a line holding one), the whole file: such a change may alter what
+ * any directive of the file allows.
  */
 function expandHunks({ metrics, hunks, allowDirectives }: CheckedFile): readonly LineHunk[] | undefined {
-  if (!hunks || hunks.length === 0 || !allowDirectives) {
-    return hunks;
-  }
-  const editsFileDirective = allowDirectives.directives.some(
-    ({ line, target }) => !target && hunks.some((hunk) => touchesSpan(hunk, line, line))
+  const touchesDirective = hunks?.some(
+    (hunk) =>
+      hunk.deletedLines?.some((line) => line.includes(allowKeyword)) ||
+      allowDirectives?.attachmentSpans.some(({ startLine, endLine }) => touchesSpan(hunk, startLine, endLine))
   );
-  if (editsFileDirective) {
-    return [{ headStart: 1, headCount: metrics.lines.total }];
-  }
-  const expanded = [...hunks];
-  for (const fn of metrics.functions) {
-    const head = allowDirectives.functionHeads.get(fn) ?? fn.startLine;
-    // A deletion between the head and the code above it may have removed the head's directives;
-    // Python deletions are anchored to that code.
-    const codeAbove = metrics.codeLineNumbers.findLast((line) => line < head) ?? 0;
-    const changesHead = hunks.some((hunk) =>
-      hunk.headCount === 0
-        ? hunk.headStart >= codeAbove && hunk.headStart < fn.startLine
-        : hunk.headStart < fn.startLine && hunk.headStart + hunk.headCount > head
-    );
-    if (changesHead) {
-      expanded.push({ headStart: head, headCount: fn.endLine - head + 1 });
-    }
-  }
-  return expanded;
+  return touchesDirective ? [{ headStart: 1, headCount: metrics.lines.total }] : hunks;
 }
 
 /** Allows the warnings of the directives covering them, recording which directives applied. */
