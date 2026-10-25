@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 
-import { type AllowDirective, type AllowDirectives, isDirectiveLine } from './allowDirectives.js';
+import type { AllowDirective, AllowDirectives } from './allowDirectives.js';
 import type {
   CrossFileDuplicateBlockGroup,
   CrossFileDuplicateOccurrence,
@@ -168,13 +168,13 @@ export function checkThresholds(
 
 /**
  * The change's hunks or, when the change touches a directive (it changes a line of a directive's
- * attachment span, deletes lines right after one, or deletes a line holding a directive), the whole
+ * attachment span, deletes lines right after one, or deletes a directive), the whole
  * file: such a change may alter what any directive of the file allows.
  */
 function expandHunks({ metrics, hunks, allowDirectives }: CheckedFile): readonly LineHunk[] | undefined {
   const touchesDirective = hunks?.some(
     (hunk) =>
-      hunk.deletedLines?.some((line) => isDirectiveLine(line)) ||
+      hunk.deletesDirective ||
       allowDirectives?.attachmentSpans.some(({ startLine, endLine }) =>
         hunk.headCount === 0
           ? hunk.headStart >= startLine && hunk.headStart <= endLine

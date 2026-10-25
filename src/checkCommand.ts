@@ -4,7 +4,7 @@ import path from 'node:path';
 
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
-import { parseAllowDirectives } from './allowDirectives.js';
+import { isDirectiveLine, parseAllowDirectives } from './allowDirectives.js';
 import { type CliOptions, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
@@ -14,9 +14,11 @@ import {
   listChangedFiles,
   listLineHunks,
   listRepositoryFiles,
+  readFileAt,
   resolveMergeBase,
   resolveRepoRoot,
 } from './git.js';
+import { measureCode } from './metrics.js';
 import {
   addCrossFileDuplication,
   configSearchDirectory,
@@ -266,12 +268,37 @@ async function attachHunks(
       changed.basePath === undefined
         ? [wholeFile]
         : await listLineHunks(repoRoot, mergeBase, changed.basePath, changed.headPath);
+    if (changed.basePath !== undefined) {
+      await markDeletedDirectives(hunks, metrics.language, () =>
+        readFileAt(repoRoot, mergeBase, changed.basePath ?? '')
+      );
+    }
     if (metrics.language === 'python' && hunks.some(({ headCount }) => headCount === 0)) {
       anchorDeletionsToCode(hunks, await readFile(path.join(repoRoot, changed.headPath), 'utf8'));
     }
     return [{ ...measured, hunks }];
   });
   return files.flat();
+}
+
+/**
+ * Marks the hunks deleting a directive. A deleted line reads like one when it holds the directive
+ * syntax, but only a comment-only line of the base file is one, not a line of a multi-line string,
+ * so the base file is measured when a deleted line reads like one.
+ */
+async function markDeletedDirectives(
+  hunks: LineHunk[],
+  language: string,
+  readBase: () => Promise<string>
+): Promise<void> {
+  const candidates = hunks.filter(({ deletedLines }) => deletedLines?.some((line) => isDirectiveLine(line)));
+  if (candidates.length === 0) return;
+  const baseCodeLines = new Set(measureCode(await readBase(), { language }).codeLineNumbers);
+  for (const hunk of candidates) {
+    hunk.deletesDirective = (hunk.deletedLines ?? []).some(
+      (line, index) => isDirectiveLine(line) && !baseCodeLines.has((hunk.baseStart ?? 0) + index)
+    );
+  }
 }
 
 /**

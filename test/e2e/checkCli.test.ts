@@ -986,6 +986,21 @@ export const scale = 2;
     );
   });
 
+  it('with --base, does not take a deleted line of a multi-line string for a directive', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource(
+      'src/calc.ts',
+      'export function wide(a, b, c, d, e, f, g, h) {\n  return a;\n}\n\nexport const usage = `\n// code-gauge-allow functionNcss 40 -- an example\n`;\n'
+    );
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'usage']);
+
+    writeSource('src/calc.ts', readSource('src/calc.ts').replace('an example', 'the example'));
+    expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
+      /^No threshold violations: 1 changed files, 0 functions checked/u
+    );
+  });
+
   it('with --base, does not check a function for a deletion above it or of text mentioning a directive', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource(

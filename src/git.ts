@@ -10,8 +10,11 @@ const maxOutputBytes = 512 * 1024 * 1024;
 export interface LineHunk {
   headStart: number;
   headCount: number;
-  /** The base lines the hunk deletes or replaces. */
+  /** The base lines the hunk deletes or replaces, from line `baseStart` of the base file on. */
   deletedLines?: readonly string[];
+  baseStart?: number;
+  /** Whether a deleted line is a `code-gauge-allow` directive; set by the check. */
+  deletesDirective?: boolean;
 }
 
 /** One entry of the working tree's diff against the merge-base commit. */
@@ -162,19 +165,25 @@ export async function listLineHunks(
     '--',
     ...paths,
   ]);
-  const headers = [...output.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@.*$/gmu)];
+  const headers = [...output.matchAll(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,(\d+))? @@.*$/gmu)];
   return headers.map((match, index) => {
-    const [header, headStart, headCount] = match;
+    const [header, baseStart, headStart, headCount] = match;
     const body = output.slice(match.index + header.length, headers[index + 1]?.index ?? output.length);
     return {
       headStart: Number(headStart),
       headCount: headCount === undefined ? 1 : Number(headCount),
+      baseStart: Number(baseStart),
       deletedLines: body
         .split('\n')
         .filter((line) => line.startsWith('-'))
         .map((line) => line.slice(1)),
     };
   });
+}
+
+/** The content of a file at a commit. */
+export async function readFileAt(repoRoot: string, commit: string, file: string): Promise<string> {
+  return await runGit(repoRoot, ['show', `${commit}:${file}`]);
 }
 
 /** A file's `linguist-generated` / `linguist-vendored` attributes; undefined when unspecified. */
