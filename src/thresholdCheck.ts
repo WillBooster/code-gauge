@@ -1,5 +1,6 @@
 import assert from 'node:assert';
 
+import type { AllowDirective, AllowDirectives } from './allowDirectives.js';
 import type {
   CrossFileDuplicateBlockGroup,
   CrossFileDuplicateOccurrence,
@@ -15,6 +16,7 @@ import {
   type LimitsByLevel,
   metricNameOf,
   type Threshold,
+  thresholds,
 } from './thresholds.js';
 import type { CodeMetrics, CognitiveBlock, FunctionMetrics } from './types.js';
 
@@ -24,6 +26,7 @@ export interface CheckedFile {
   metrics: CodeMetrics;
   /** The change to the file; when set, only what the change touches is checked. */
   hunks?: readonly LineHunk[];
+  allowDirectives?: AllowDirectives;
 }
 
 /** The duplication of the measured files, in which duplicated blocks and their copies are found. */
@@ -77,10 +80,29 @@ export interface Violation extends BlockLocation {
   partners?: BlockLocation[];
 }
 
+export interface LocatedDirectiveProblem {
+  file: string;
+  line: number;
+  message: string;
+}
+
 export interface CheckResult {
   violations: Violation[];
   checkedFunctionCount: number;
+  /** The exceeded limits a directive allowed, which `violations` leaves out. */
+  allowedLimitCount: number;
+  /** Ordered by path, then line. */
+  directiveProblems: LocatedDirectiveProblem[];
 }
+
+/** The directives that allowed a warning, and those covering a value above their max. */
+interface DirectiveUsage {
+  used: Set<AllowDirective>;
+  outgrown: Set<AllowDirective>;
+}
+
+/** The limits `exceeded` keeps: those no directive `covers` allows. */
+type Allow = (exceeded: ExceededLimit[], covers: (directive: AllowDirective) => boolean) => ExceededLimit[];
 
 const violationKinds: readonly Violation['kind'][] = ['file', 'function', 'duplication'];
 
@@ -92,7 +114,10 @@ const nestedInclusiveMetrics = new Set(
     .map((threshold) => metricNameOf(threshold))
 );
 
-/** Every limit the files exceed, errors first, then ordered by path, then line. */
+/**
+ * Every limit the files exceed and no directive allows, errors first, then ordered by path, then
+ * line.
+ */
 export function checkThresholds(
   files: readonly CheckedFile[],
   duplication: CheckedDuplication,
@@ -100,31 +125,159 @@ export function checkThresholds(
 ): CheckResult {
   const crossFileGroupsByFile = indexGroupsByFile(duplication.crossFile, new Set(files.map(({ file }) => file)));
   const violations: Violation[] = [];
+  const directiveProblems: LocatedDirectiveProblem[] = [];
   let checkedFunctionCount = 0;
-  for (const checkedFile of files) {
-    const { file, metrics, hunks } = checkedFile;
-    const limits = limitsOf(metrics.language);
-    // A rename or a mode change lists the file as changed without touching any of its lines.
-    const fileExceeded = hunks?.length === 0 ? [] : collectExceeded(fileThresholds, metrics, limits);
-    if (fileExceeded.length > 0) {
-      violations.push(toViolation({ file, startLine: 1, endLine: metrics.lines.total }, 'file', fileExceeded));
-    }
-    const checkedFunctions = listCheckedFunctions(checkedFile);
-    checkedFunctionCount += checkedFunctions.length;
-    const exceedingFunctions = checkedFunctions
-      .map((fn) => ({ fn, exceeded: collectExceeded(functionThresholds, fn, limits) }))
-      .filter(({ exceeded }) => exceeded.length > 0);
-    for (const { fn, exceeded } of exceedingFunctions) {
-      const ownExceeded = exceeded.filter((limit) => !isReportedByEnclosingFunction(limit, fn, exceedingFunctions));
-      if (ownExceeded.length > 0) {
-        violations.push(toFunctionViolation(file, fn, ownExceeded));
-      }
-    }
-    violations.push(
-      ...collectDuplicationViolations(checkedFile, crossFileGroupsByFile.get(file) ?? [], limits, duplication)
+  let allowedLimitCount = 0;
+  for (const changedFile of files) {
+    const checkedFile = { ...changedFile, hunks: expandHunks(changedFile) };
+    const limits = limitsOf(checkedFile.metrics.language);
+    const crossFileGroups = crossFileGroupsByFile.get(checkedFile.file) ?? [];
+    const directives = checkedFile.allowDirectives?.directives ?? [];
+    const usage: DirectiveUsage = { used: new Set(), outgrown: new Set() };
+    const checked = checkFile(
+      checkedFile,
+      crossFileGroups,
+      limits,
+      duplication,
+      createAllow(directives, usage, () => allowedLimitCount++)
     );
+    violations.push(...checked.violations);
+    checkedFunctionCount += checked.checkedFunctionCount;
+    // What the change does not touch may use a directive too, so whether one is used is decided on
+    // the whole file.
+    if (checkedFile.hunks && directives.length > 0) {
+      checkFile(
+        { ...checkedFile, hunks: undefined },
+        crossFileGroups,
+        limits,
+        duplication,
+        createAllow(directives, usage, () => {})
+      );
+    }
+    directiveProblems.push(...collectDirectiveProblems(checkedFile, usage, limits));
   }
-  return { violations: violations.toSorted(compareViolations), checkedFunctionCount };
+  return {
+    violations: violations.toSorted(compareViolations),
+    checkedFunctionCount,
+    allowedLimitCount,
+    directiveProblems: directiveProblems.toSorted(
+      (left, right) => compareStrings(left.file, right.file) || left.line - right.line
+    ),
+  };
+}
+
+/**
+ * The change's hunks or, when the change touches a directive (it changes or deletes lines of a
+ * directive's attachment span, or deletes a directive), the whole
+ * file: such a change may alter what any directive of the file allows.
+ */
+function expandHunks({ metrics, hunks, allowDirectives }: CheckedFile): readonly LineHunk[] | undefined {
+  const touchesDirective = hunks?.some(
+    (hunk) =>
+      hunk.deletesDirective ||
+      allowDirectives?.attachmentSpans.some(({ startLine, endLine, endsAtFunction }) =>
+        // An edit of the function's first line touches the function itself, but a deletion right
+        // above it lies between the function and its directive.
+        touchesSpan(hunk, startLine, hunk.headCount > 0 && endsAtFunction ? endLine - 1 : endLine)
+      )
+  );
+  return touchesDirective ? [{ headStart: 1, headCount: metrics.lines.total }] : hunks;
+}
+
+/** Allows the warnings of the directives covering them, recording which directives applied. */
+function createAllow(directives: readonly AllowDirective[], usage: DirectiveUsage, onAllowed: () => void): Allow {
+  return (exceeded, covers) =>
+    exceeded.filter((limit) => {
+      const applying = directives.filter((directive) => directive.metric === limit.metric && covers(directive));
+      const allowing = limit.level === 'warning' ? applying.filter((directive) => limit.value <= directive.max) : [];
+      for (const directive of applying) {
+        if (allowing.includes(directive)) {
+          usage.used.add(directive);
+        } else if (limit.value > directive.max) {
+          usage.outgrown.add(directive);
+        }
+      }
+      if (allowing.length > 0) onAllowed();
+      return allowing.length === 0;
+    });
+}
+
+function checkFile(
+  checkedFile: CheckedFile,
+  crossFileGroups: readonly CrossFileDuplicateBlockGroup[],
+  limits: LimitsByLevel,
+  duplication: CheckedDuplication,
+  allow: Allow
+): { violations: Violation[]; checkedFunctionCount: number } {
+  const { file, metrics, hunks } = checkedFile;
+  const violations: Violation[] = [];
+  // A rename or a mode change lists the file as changed without touching any of its lines.
+  const fileExceeded =
+    hunks?.length === 0 ? [] : allow(collectExceeded(fileThresholds, metrics, limits), ({ target }) => !target);
+  if (fileExceeded.length > 0) {
+    violations.push(toViolation({ file, startLine: 1, endLine: metrics.lines.total }, 'file', fileExceeded));
+  }
+  const checkedFunctions = listCheckedFunctions(checkedFile);
+  const exceedingFunctions = checkedFunctions
+    .map((fn) => ({ fn, exceeded: collectExceeded(functionThresholds, fn, limits) }))
+    .filter(({ exceeded }) => exceeded.length > 0);
+  for (const { fn, exceeded } of exceedingFunctions) {
+    const ownExceeded = allow(
+      exceeded.filter((limit) => !isReportedByEnclosingFunction(limit, fn, exceedingFunctions)),
+      ({ target }) => !target || target === fn || encloses(target, fn)
+    );
+    if (ownExceeded.length > 0) {
+      violations.push(toFunctionViolation(file, fn, ownExceeded));
+    }
+  }
+  violations.push(...collectDuplicationViolations(checkedFile, crossFileGroups, limits, duplication, allow));
+  return { violations, checkedFunctionCount: checkedFunctions.length };
+}
+
+/**
+ * The parse problems of the file's directives and the problems of each directive; with `hunks`,
+ * those whose line or covered code the change touches.
+ */
+function collectDirectiveProblems(
+  { file, metrics, hunks, allowDirectives }: CheckedFile,
+  usage: DirectiveUsage,
+  limits: LimitsByLevel
+): LocatedDirectiveProblem[] {
+  const isTouched = (startLine: number, endLine: number): boolean =>
+    !hunks || hunks.some((hunk) => touchesSpan(hunk, startLine, endLine));
+  const problems = (allowDirectives?.problems ?? []).filter(({ line }) => isTouched(line, line));
+  for (const directive of allowDirectives?.directives ?? []) {
+    const { line, target } = directive;
+    if (target ? isTouched(line, target.endLine) : isTouched(1, metrics.lines.total)) {
+      problems.push(...describeDirectiveProblems(directive, usage, limits).map((message) => ({ line, message })));
+    }
+  }
+  return problems.map((problem) => ({ file, ...problem }));
+}
+
+/** Whether the directive's max reaches the error level, which it cannot allow, and whether a value outgrew it or it allows nothing. */
+function describeDirectiveProblems(
+  directive: AllowDirective,
+  { used, outgrown }: DirectiveUsage,
+  limits: LimitsByLevel
+): string[] {
+  const { metric, max, target } = directive;
+  const prefix = `${target ? 'code-gauge-allow' : 'code-gauge-allow-file'} ${metric} ${max}`;
+  const messages: string[] = [];
+  const threshold = thresholds.find((candidate) => metricNameOf(candidate) === metric);
+  const errorLimit = threshold ? (limits.error[threshold.key] as number) : Infinity;
+  // A duplicated block violates from its limit on, so the largest value it allows is below it.
+  const errorMax = threshold === duplicationThreshold ? Math.max(Math.ceil(errorLimit) - 1, 0) : errorLimit;
+  const allowsErrors = max > errorMax;
+  if (allowsErrors) {
+    messages.push(`${prefix}: values above ${errorMax} are errors, which a directive cannot allow`);
+  }
+  if (outgrown.has(directive)) {
+    messages.push(`${prefix}: the value grew above ${max}; reduce it or reconsider the directive`);
+  } else if (!used.has(directive) && !allowsErrors) {
+    messages.push(`${prefix}: allows no warning; remove the directive`);
+  }
+  return messages;
 }
 
 // The kind is compared before the end line because a file violation's end line is corrected after
@@ -267,7 +420,8 @@ function collectDuplicationViolations(
   { file, metrics, hunks }: CheckedFile,
   crossFileGroups: readonly CrossFileDuplicateBlockGroup[],
   limits: LimitsByLevel,
-  { minSimilarityPercent }: CheckedDuplication
+  { minSimilarityPercent }: CheckedDuplication,
+  allow: Allow
 ): Violation[] {
   const findExceededLines = (duplicatedLineCount: number): ExceededLimit[] =>
     findExceeded(duplicationThreshold, { duplicatedLineCount }, limits, (value, limit) => value >= limit);
@@ -286,7 +440,15 @@ function collectDuplicationViolations(
   const areCopies = (left: CloneOccurrence, right: CloneOccurrence): boolean =>
     groupOf.get(left) === groupOf.get(right) && !contains(left, right) && !contains(right, left);
   const reportedBlocks = groups.flat().filter((occurrence) => isReported(occurrence));
-  return mergeOverlapping(reportedBlocks, areCopies).map(({ merged, sources }) => {
+  return mergeOverlapping(reportedBlocks, areCopies).flatMap(({ merged, sources }) => {
+    // Occurrences that overlap share lines, which count once.
+    const exceeded = allow(
+      findExceededLines(new Set(sources.flatMap((source) => source.lineNumbers)).size),
+      ({ target }) => !target || (target.startLine <= merged.startLine && merged.startLine <= target.endLine)
+    );
+    if (exceeded.length === 0) {
+      return [];
+    }
     const listCopies = (minTokenPercent: number): BlockLocation[] =>
       mergeOverlapping(
         sources.flatMap((source) => {
@@ -316,12 +478,7 @@ function collectDuplicationViolations(
     // number of lines.
     const copies = listCopies(minSimilarityPercent);
     return {
-      ...toViolation(
-        merged,
-        'duplication',
-        // Occurrences that overlap share lines, which count once.
-        findExceededLines(new Set(sources.flatMap((source) => source.lineNumbers)).size)
-      ),
+      ...toViolation(merged, 'duplication', exceeded),
       // A block whose parts were matched with different places has no copy of its size. The
       // places then are all that locates what it repeats.
       partners: copies.length > 0 ? copies : listCopies(0),

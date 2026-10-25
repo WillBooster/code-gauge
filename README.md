@@ -156,7 +156,11 @@ With `--base <ref>`, the check covers only what the working tree changed since t
   tail;
 - a file-level threshold, when the change adds or deletes lines of the file (a rename or a mode
   change alone does not count);
-- a duplicated block, when it overlaps lines the change added.
+- a duplicated block, when it overlaps lines the change added;
+- the whole file, when the change touches a [directive](#allowing-a-warning-in-the-code): it edits
+  a directive's line or the lines between it and its function (through the next code line for a
+  directive attached to no function), or deletes a line holding one. Editing the function itself
+  only touches the function.
 
 `--base` only filters the report: the files measured and the duplication found are those of the
 check without it, so code pasted from an unchanged file is reported where it was pasted. A
@@ -206,6 +210,39 @@ repository are warnings on stderr.
 `check` accepts `--config`, `--include-tests`, `--json`, and the `--duplication-*` options of the
 ranking command.
 
+### Allowing a warning in the code
+
+When code exceeding a warning limit is deliberately kept, a comment on a line of its own allows the
+value it has, with the reason:
+
+```ts
+// code-gauge-allow functionParameterCount 8 -- mirrors the positional API of the vendor SDK
+export function createClient(host, port, user, password, database, timeout, retries, logger) {
+```
+
+```py
+# code-gauge-allow-file functionParameterCount 9 -- each benchmark passes its whole setup
+```
+
+- `code-gauge-allow <metric> <max> -- <reason>` covers the function starting on the next code
+  line, the functions nested in it, and the duplicated blocks starting in it. Only comment lines
+  may stand between the directive and that line. Where a function's span starts below its
+  decorators or attributes (Python, TypeScript, and Rust), the directive goes below them; where the
+  span includes them (Java, Kotlin, and C#), above them. A directive after code on the same line is
+  not read.
+- `code-gauge-allow-file <metric> <max> -- <reason>` covers the whole file, and is the only way to
+  allow `fileNcss`.
+- `<metric>` is a metric name of the [JSON report](#json-report) (`functionCognitiveComplexity`,
+  `duplicateLines`, ...), `<max>` the largest value allowed, and the reason is required.
+
+A directive allows warnings only: a value above `<max>` or above an error limit is reported as
+usual, so code that grows worse is reported again, and an error is fixed or its limit changed in the
+[config](#configuration). A copy of a duplicated block is reported in its own place, so each copy
+needs a directive of its own. The report counts the limits directives allowed, and lists as
+warnings, which never fail the check, each directive that is malformed, misplaced, allows an
+error-level value, is outgrown by the value, or allows nothing; with `--base`, only those whose
+line or covered code the change touches.
+
 ### JSON report
 
 `code-gauge check --json` prints:
@@ -223,7 +260,8 @@ ranking command.
     "fileViolationCount": 0,
     "duplicationViolationCount": 1,
     "checkedFileCount": 2,
-    "checkedFunctionCount": 2
+    "checkedFunctionCount": 2,
+    "allowedLimitCount": 0
   },
   "violations": [
     {
@@ -267,6 +305,7 @@ ranking command.
       "partners": [{ "file": "src/report.ts", "startLine": 1, "endLine": 18 }]
     }
   ],
+  "directiveProblems": [],
   "errors": [],
   "warnings": []
 }
@@ -276,7 +315,8 @@ ranking command.
 - `base`, `mergeBase`: the `--base` ref and the commit compared against; absent without `--base`.
 - `summary`: the violation counts in total, per level, and per kind, and the number of files and
   functions checked: those under the target or, with `--base`, the changed files under it and the
-  functions the change touches.
+  functions the change touches, and `allowedLimitCount`, the exceeded limits that
+  [directives](#allowing-a-warning-in-the-code) allowed, which `violations` leaves out.
 - `violations`: the errors first, each level ordered by `file`, then `startLine`. Each has
   - `kind`: `function`, `file`, or `duplication`;
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
@@ -297,6 +337,8 @@ ranking command.
     place repeating only a part of the block (less than `minSimilarityPercent` of its tokens) is
     not a copy of it, and is listed only for a block that no place copies as a whole, its parts
     being repeated in different places.
+- `directiveProblems`: the directives the text report lists as warnings, each with its `file`,
+  `line`, and `message`, ordered by `file`, then `line`.
 - `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
   `error` level of a violation.
 - `warnings`: files measured without cross-file duplication data, and unmeasured files of the

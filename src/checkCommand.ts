@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
+import { isDirectiveLine, parseAllowDirectives } from './allowDirectives.js';
 import { type CliOptions, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
 import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
@@ -13,9 +14,11 @@ import {
   listChangedFiles,
   listLineHunks,
   listRepositoryFiles,
+  readFileAt,
   resolveMergeBase,
   resolveRepoRoot,
 } from './git.js';
+import { measureCode } from './metrics.js';
 import {
   addCrossFileDuplication,
   configSearchDirectory,
@@ -35,6 +38,7 @@ import {
   type CheckedFile,
   type CheckResult,
   checkThresholds,
+  type LocatedDirectiveProblem,
   type Violation,
 } from './thresholdCheck.js';
 import { type LimitsByLevel, metricNameOf, resolveLimits, thresholds } from './thresholds.js';
@@ -74,7 +78,8 @@ export async function runCheckCommand(
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
     const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options);
-    const result = checkThresholds(scope.files, scope.duplication, resolveLimits(cliLimits, config.config.thresholds));
+    const files = await attachAllowDirectives(scope.files, scope.root);
+    const result = checkThresholds(files, scope.duplication, resolveLimits(cliLimits, config.config.thresholds));
     await endFileViolationsAtLastLine(result.violations, scope.root);
 
     if (options.json) {
@@ -91,6 +96,13 @@ export async function runCheckCommand(
     writeStderr(`Error: ${getErrorMessage(error)}\n`);
     process.exitCode = 2;
   }
+}
+
+async function attachAllowDirectives(files: readonly CheckedFile[], root: string): Promise<CheckedFile[]> {
+  return await mapConcurrently(files, os.availableParallelism() * 2, async (checked) => ({
+    ...checked,
+    allowDirectives: parseAllowDirectives(await readFile(path.join(root, checked.file), 'utf8'), checked.metrics),
+  }));
 }
 
 function hasErrors(violations: readonly Violation[]): boolean {
@@ -256,6 +268,11 @@ async function attachHunks(
       changed.basePath === undefined
         ? [wholeFile]
         : await listLineHunks(repoRoot, mergeBase, changed.basePath, changed.headPath);
+    if (changed.basePath !== undefined) {
+      await markDeletedDirectives(hunks, metrics.language, () =>
+        readFileAt(repoRoot, mergeBase, changed.basePath ?? '')
+      );
+    }
     if (metrics.language === 'python' && hunks.some(({ headCount }) => headCount === 0)) {
       anchorDeletionsToCode(hunks, await readFile(path.join(repoRoot, changed.headPath), 'utf8'));
     }
@@ -265,7 +282,27 @@ async function attachHunks(
 }
 
 /**
- * Moves each pure deletion up to the last code line before it. A Python function ends at its last
+ * Marks the hunks deleting a directive. A deleted line reads like one when it holds the directive
+ * syntax, but only a comment-only line of the base file is one, not a line of a multi-line string,
+ * so the base file is measured when a deleted line reads like one.
+ */
+async function markDeletedDirectives(
+  hunks: LineHunk[],
+  language: string,
+  readBase: () => Promise<string>
+): Promise<void> {
+  const candidates = hunks.filter(({ deletedLines }) => deletedLines?.some((line) => isDirectiveLine(line)));
+  if (candidates.length === 0) return;
+  const baseCodeLines = new Set(measureCode(await readBase(), { language }).codeLineNumbers);
+  for (const hunk of candidates) {
+    hunk.deletesDirective = (hunk.deletedLines ?? []).some(
+      (line, index) => isDirectiveLine(line) && !baseCodeLines.has((hunk.baseStart ?? 0) + index)
+    );
+  }
+}
+
+/**
+ * Moves each pure deletion up to the last code line or directive before it. A Python function ends at its last
  * statement, so the blank and comment-only lines left above a deleted tail lie outside the span the
  * deletion shortened; anchored to that statement, the deletion counts as touching the function.
  */
@@ -273,10 +310,15 @@ function anchorDeletionsToCode(hunks: LineHunk[], content: string): void {
   const lines = content.split(/\r\n|\n|\r/u);
   for (const hunk of hunks) {
     if (hunk.headCount > 0) continue;
-    while (hunk.headStart > 0 && /^\s*(?:#.*)?$/u.test(lines[hunk.headStart - 1] ?? '')) {
+    while (hunk.headStart > 0 && isPassedByAnchoring(lines[hunk.headStart - 1] ?? '')) {
       hunk.headStart -= 1;
     }
   }
+}
+
+// A deletion right below a directive stays there, where it may have attached or detached it.
+function isPassedByAnchoring(line: string): boolean {
+  return /^\s*(?:#.*)?$/u.test(line) && !isDirectiveLine(line);
 }
 
 /** A run-wide failure (a missing target or native addon) leaves nothing to check. */
@@ -293,7 +335,9 @@ function measureDuplication(scan: ScanResult, options: ResolvedOptions): Checked
 
 function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result: CheckResult): void {
   const { violations } = result;
-  const checked = `${scope.files.length} ${cliOptions.base === undefined ? '' : 'changed '}files, ${result.checkedFunctionCount} functions checked${describeBase(cliOptions, scope)}`;
+  const allowed =
+    result.allowedLimitCount > 0 ? `, ${result.allowedLimitCount} exceeded limits allowed by directives` : '';
+  const checked = `${scope.files.length} ${cliOptions.base === undefined ? '' : 'changed '}files, ${result.checkedFunctionCount} functions checked${allowed}${describeBase(cliOptions, scope)}`;
   if (scope.errors.length > 0) {
     // Unmeasured files were not checked, so "no violations" would be vacuous; never claim a pass.
     writeStdout(
@@ -306,6 +350,9 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   }
   for (const violation of violations) {
     writeStdout(`${formatViolation(violation)}\n`);
+  }
+  for (const problem of result.directiveProblems) {
+    writeStdout(`${formatDirectiveProblem(problem)}\n`);
   }
 
   const violatedMetrics = new Set(violations.flatMap(({ exceeded }) => exceeded.map(({ metric }) => metric)));
@@ -323,6 +370,10 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   for (const error of scope.errors) {
     writeStderr(`Error: ${error}\n`);
   }
+}
+
+function formatDirectiveProblem({ file, line, message }: LocatedDirectiveProblem): string {
+  return `warning: ${file}:${line}: ${message}`;
 }
 
 function describeBase(cliOptions: CheckCliOptions, scope: CheckScope): string {
@@ -415,8 +466,10 @@ function printJsonReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
           ...countViolations(result.violations),
           checkedFileCount: scope.files.length,
           checkedFunctionCount: result.checkedFunctionCount,
+          allowedLimitCount: result.allowedLimitCount,
         },
         violations: result.violations,
+        directiveProblems: result.directiveProblems,
         errors: scope.errors,
         warnings: scope.warnings,
       },
