@@ -815,8 +815,14 @@ warning: src/legacy.ts:1: code-gauge-allow functionCognitiveComplexity 24: value
     const { stdout } = runCheck(['src/wide.py']);
     expect(stdout).toContain('warning: src/wide.py:9-10 later: parameters 8 (max 6)\n');
     expect(stdout).toContain(
-      'warning: src/wide.py:1: no function starts on line 5; use code-gauge-allow-file for the whole file\n'
+      'warning: src/wide.py:1: code-gauge-allow must directly precede a function or its decorators; use code-gauge-allow-file for the whole file\n'
     );
+
+    writeSource(
+      'src/wide.py',
+      `# code-gauge-allow functionParameterCount 8 -- parses every field\n@route("/parse")\n\ndef parse(a, b, c, d, e, f, g, h):\n    return a\n`
+    );
+    expect(runCheck(['src/wide.py']).stdout).toContain('warning: src/wide.py:4-5 parse: parameters 8 (max 6)\n');
   });
 
   it('allows the duplicated blocks starting in the function it precedes, each copy on its own', () => {
@@ -890,7 +896,8 @@ export const scale = 2;
       {
         file: 'src/calc.ts',
         line: 23,
-        message: 'code-gauge-allow must directly precede a function; use code-gauge-allow-file for the whole file',
+        message:
+          'code-gauge-allow must directly precede a function or its decorators; use code-gauge-allow-file for the whole file',
       },
     ]);
   });
@@ -934,6 +941,19 @@ export const scale = 2;
     expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
       /\nwarning: src\/legacy\.ts:\d+-\d+ decide: cognitive complexity 24 /u
     );
+  });
+
+  it('with --base, reports a function after removing the directive above its decorators', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource(
+      'src/wide.py',
+      `# code-gauge-allow functionParameterCount 8 -- registered handlers\n@registered(\n    name="empty",\n)\ndef empty(a, b, c, d, e, f, g, h):\n    return a\n`
+    );
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'allow']);
+
+    writeSource('src/wide.py', readSource('src/wide.py').split('\n').slice(1).join('\n'));
+    expect(runCheck(['--base', 'HEAD']).stdout).toContain('warning: src/wide.py:4-5 empty: parameters 8 (max 6)\n');
   });
 });
 

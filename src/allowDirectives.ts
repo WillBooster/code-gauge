@@ -35,7 +35,9 @@ const syntax = `\`${allowKeyword} <metric> <max> -- <reason>\``;
 // keyword; any other text before it makes the comment prose mentioning a directive.
 const directivePattern = /^[\s!#*/]*(code-gauge-allow(?:-file)?)(?![\w-])(.*)$/u;
 const decoratorPattern = /^\s*(?:@|#\[)/u;
-// A string on one line, whose brackets do not open or close a decorator's arguments.
+// Ruby has no decorators; a line starting with `@` assigns an instance variable.
+const languagesWithoutDecorators = new Set(['ruby']);
+// A string on one line, whose brackets do not open or close the arguments of a decorator.
 const stringLiteralPattern = /(["'`])(?:\\.|(?!\1).)*\1/gu;
 const argumentsPattern = /^(\w+)\s+(\d+(?:\.\d+)?)\s+--\s+\S/u;
 
@@ -56,13 +58,18 @@ export function parseAllowDirectives(content: string, metrics: CodeMetrics): All
   const result: AllowDirectives = {
     directives: [],
     problems: [],
-    functionHeads: findFunctionHeads(lines, codeLines, metrics.functions),
+    functionHeads: findFunctionHeads(
+      lines,
+      codeLines,
+      metrics.functions,
+      languagesWithoutDecorators.has(metrics.language) ? undefined : decoratorPattern
+    ),
   };
   if (!content.includes(allowKeyword)) {
     return result;
   }
   for (let line = 1; line <= lines.length; line++) {
-    const parsed = codeLines.has(line) ? undefined : parseLine(line, lines, codeLines, metrics.functions);
+    const parsed = codeLines.has(line) ? undefined : parseLine(line, lines[line - 1] ?? '', result.functionHeads);
     if (typeof parsed === 'string') {
       result.problems.push({ line, message: parsed });
     } else if (parsed) {
@@ -72,19 +79,35 @@ export function parseAllowDirectives(content: string, metrics: CodeMetrics): All
   return result;
 }
 
+/**
+ * Walks up from each function over the comment lines and, outside the brackets of a decorator or
+ * attribute spanning lines, the lines opening one, stopping at a blank line or other code.
+ */
 function findFunctionHeads(
   lines: readonly string[],
   codeLines: ReadonlySet<number>,
-  functions: readonly FunctionMetrics[]
+  functions: readonly FunctionMetrics[],
+  decorator: RegExp | undefined
 ): Map<FunctionMetrics, number> {
-  const isHeadLine = (line: number): boolean => {
-    const text = lines[line - 1] ?? '';
-    return text.trim() !== '' && (!codeLines.has(line) || decoratorPattern.test(text));
-  };
   const heads = new Map<FunctionMetrics, number>();
   for (const fn of functions) {
     let head = fn.startLine;
-    while (head > 1 && isHeadLine(head - 1)) head--;
+    // The brackets closed below the current line and not yet opened, counted bottom-up.
+    let depth = 0;
+    for (let line = fn.startLine - 1; line >= 1 && depth >= 0; line--) {
+      const text = lines[line - 1] ?? '';
+      if (codeLines.has(line)) {
+        const code = text.replaceAll(stringLiteralPattern, '');
+        depth += (code.match(/[)\]}]/gu)?.length ?? 0) - (code.match(/[([{]/gu)?.length ?? 0);
+        if (depth > 0) continue;
+        if (depth < 0 || !decorator?.test(text)) break;
+      } else if (depth > 0) {
+        continue;
+      } else if (text.trim() === '') {
+        break;
+      }
+      head = line;
+    }
     if (head < fn.startLine) heads.set(fn, head);
   }
   return heads;
@@ -93,18 +116,23 @@ function findFunctionHeads(
 /** The directive on a comment-only line, what is wrong with it, or undefined when it holds none. */
 function parseLine(
   line: number,
-  lines: readonly string[],
-  codeLines: ReadonlySet<number>,
-  functions: readonly FunctionMetrics[]
+  text: string,
+  functionHeads: ReadonlyMap<FunctionMetrics, number>
 ): AllowDirective | string | undefined {
-  const match = directivePattern.exec(lines[line - 1] ?? '');
+  const match = directivePattern.exec(text);
   if (!match) return undefined;
   const [, keyword = '', rest = ''] = match;
   const parsed = parseDirective(keyword, rest.replace(/\*\/\s*$/u, '').trim());
   if (typeof parsed === 'string') return parsed;
   if (keyword === allowFileKeyword) return { line, ...parsed };
-  const target = findTarget(line, lines, codeLines, functions);
-  return typeof target === 'string' ? target : { line, ...parsed, target };
+  // The outermost function whose head holds the directive.
+  const [target] = [...functionHeads]
+    .filter(([fn, head]) => head <= line && line < fn.startLine)
+    .map(([fn]) => fn)
+    .toSorted((left, right) => left.startColumn - right.startColumn);
+  return target
+    ? { line, ...parsed, target }
+    : `${allowKeyword} must directly precede a function or its decorators; use ${allowFileKeyword} for the whole file`;
 }
 
 /** The metric and max of a directive, or what is wrong with it. */
@@ -122,45 +150,4 @@ function parseDirective(keyword: string, rest: string): { metric: string; max: n
     return `${metric} is measured per file; allow it with ${allowFileKeyword}`;
   }
   return `unknown metric ${metric}; expected one of ${[...allowed].join(', ')}`;
-}
-
-/**
- * The outermost function starting on the line after the directive's comment block or, when that
- * line opens decorators or attributes a function's span leaves out, on the line after them.
- */
-function findTarget(
-  directiveLine: number,
-  lines: readonly string[],
-  codeLines: ReadonlySet<number>,
-  functions: readonly FunctionMetrics[]
-): FunctionMetrics | string {
-  let next = directiveLine + 1;
-  while (next <= lines.length && !codeLines.has(next) && (lines[next - 1] ?? '').trim() !== '') {
-    next++;
-  }
-  if (!codeLines.has(next)) {
-    return `${allowKeyword} must directly precede a function; use ${allowFileKeyword} for the whole file`;
-  }
-  const outermostStartingOn = (line: number): FunctionMetrics | undefined =>
-    functions
-      .filter((fn) => fn.startLine === line)
-      .toSorted((left, right) => left.startColumn - right.startColumn)
-      .at(0);
-  const declarationLine = skipDecorators(next, lines, codeLines);
-  const target = outermostStartingOn(next) ?? outermostStartingOn(declarationLine);
-  return target ?? `no function starts on line ${declarationLine}; use ${allowFileKeyword} for the whole file`;
-}
-
-/** The first code line from `line` on that is neither a decorator nor an attribute nor inside one. */
-function skipDecorators(line: number, lines: readonly string[], codeLines: ReadonlySet<number>): number {
-  let depth = 0;
-  let current = line;
-  for (; current <= lines.length; current++) {
-    if (!codeLines.has(current)) continue;
-    const text = lines[current - 1] ?? '';
-    if (depth === 0 && !decoratorPattern.test(text)) break;
-    const code = text.replaceAll(stringLiteralPattern, '');
-    depth = Math.max(depth + (code.match(/[([{]/gu)?.length ?? 0) - (code.match(/[)\]}]/gu)?.length ?? 0), 0);
-  }
-  return current;
 }
