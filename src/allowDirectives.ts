@@ -79,10 +79,6 @@ export function parseAllowDirectives(content: string, metrics: CodeMetrics): All
   return result;
 }
 
-/**
- * Walks up from each function over the comment lines and, outside the brackets of a decorator or
- * attribute spanning lines, the lines opening one, stopping at a blank line or other code.
- */
 function findFunctionHeads(
   lines: readonly string[],
   codeLines: ReadonlySet<number>,
@@ -91,26 +87,45 @@ function findFunctionHeads(
 ): Map<FunctionMetrics, number> {
   const heads = new Map<FunctionMetrics, number>();
   for (const fn of functions) {
-    let head = fn.startLine;
-    // The brackets closed below the current line and not yet opened, counted bottom-up.
-    let depth = 0;
-    for (let line = fn.startLine - 1; line >= 1 && depth >= 0; line--) {
-      const text = lines[line - 1] ?? '';
-      if (codeLines.has(line)) {
-        const code = text.replaceAll(stringLiteralPattern, '');
-        depth += (code.match(/[)\]}]/gu)?.length ?? 0) - (code.match(/[([{]/gu)?.length ?? 0);
-        if (depth > 0) continue;
-        if (depth < 0 || !decorator?.test(text)) break;
-      } else if (depth > 0) {
-        continue;
-      } else if (text.trim() === '') {
-        break;
-      }
-      head = line;
-    }
+    const head = findHead(fn.startLine, lines, codeLines, decorator);
     if (head < fn.startLine) heads.set(fn, head);
   }
   return heads;
+}
+
+/**
+ * Walks up from the line over the comment lines and, outside the brackets of a decorator or
+ * attribute spanning lines, the lines opening one, stopping at a blank line or other code.
+ */
+function findHead(
+  startLine: number,
+  lines: readonly string[],
+  codeLines: ReadonlySet<number>,
+  decorator: RegExp | undefined
+): number {
+  let head = startLine;
+  // The brackets closed below the current line and not yet opened, counted bottom-up.
+  let depth = 0;
+  for (let line = startLine - 1; line >= 1; line--) {
+    const text = lines[line - 1] ?? '';
+    if (codeLines.has(line)) {
+      depth -= countOpenedBrackets(text);
+      if (depth > 0) continue;
+      if (depth < 0 || !decorator?.test(text)) break;
+    } else if (depth > 0) {
+      continue;
+    } else if (text.trim() === '') {
+      break;
+    }
+    head = line;
+  }
+  return head;
+}
+
+/** The brackets the line opens minus those it closes, outside single-line strings. */
+function countOpenedBrackets(text: string): number {
+  const code = text.replaceAll(stringLiteralPattern, '');
+  return (code.match(/[([{]/gu)?.length ?? 0) - (code.match(/[)\]}]/gu)?.length ?? 0);
 }
 
 /** The directive on a comment-only line, what is wrong with it, or undefined when it holds none. */
