@@ -60,18 +60,9 @@ export function parseAllowDirectives(content: string, metrics: CodeMetrics): All
   for (let line = 1; line <= lines.length; line++) {
     const match = codeLines.has(line) ? undefined : directivePattern.exec(lines[line - 1] ?? '');
     if (!match) continue;
-    const following = metrics.codeLineNumbers.find((codeLine) => codeLine > line);
-    const isBlankBetween = lines.slice(line, (following ?? lines.length + 1) - 1).some((text) => text.trim() === '');
-    const next = isBlankBetween ? undefined : following;
     const [, keyword = '', rest = ''] = match;
-    const parsed = parseDirective(keyword, rest.replace(/\*\/\s*$/u, '').trim());
-    const isAttachable = typeof parsed !== 'string' && keyword !== allowFileKeyword;
-    const directive = isAttachable ? attachToFunction(parsed, next, metrics.functions) : parsed;
-    // An edit of the function's first line touches the function itself; an edit of the code line
-    // a directive fails to attach to may be what detached it.
-    const isAttached = isAttachable && typeof directive !== 'string';
-    const endLine = isAttachable ? (isAttached ? (next ?? line) - 1 : (following ?? lines.length)) : line;
-    result.attachmentSpans.push({ startLine: line, endLine: Math.max(endLine, line) });
+    const { directive, endLine } = readDirective(line, keyword, rest, lines, metrics);
+    result.attachmentSpans.push({ startLine: line, endLine });
     if (typeof directive === 'string') {
       result.problems.push({ line, message: directive });
     } else {
@@ -79,6 +70,28 @@ export function parseAllowDirectives(content: string, metrics: CodeMetrics): All
     }
   }
   return result;
+}
+
+/** The directive on the line or what is wrong with it, and the end of its attachment span. */
+function readDirective(
+  line: number,
+  keyword: string,
+  rest: string,
+  lines: readonly string[],
+  metrics: CodeMetrics
+): { directive: Omit<AllowDirective, 'line'> | string; endLine: number } {
+  const parsed = parseDirective(keyword, rest.replace(/\*\/\s*$/u, '').trim());
+  if (typeof parsed === 'string' || keyword === allowFileKeyword) {
+    return { directive: parsed, endLine: line };
+  }
+  const following = metrics.codeLineNumbers.find((codeLine) => codeLine > line);
+  const isBlankBetween = lines.slice(line, (following ?? lines.length + 1) - 1).some((text) => text.trim() === '');
+  const directive = attachToFunction(parsed, isBlankBetween ? undefined : following, metrics.functions);
+  // An edit of the function's first line touches the function itself; an edit of the code line
+  // a directive fails to attach to may be what detached it.
+  const endLine =
+    typeof directive === 'string' ? (following ?? lines.length) : Math.max(directive.target.startLine - 1, line);
+  return { directive, endLine };
 }
 
 /** The metric and max of a directive, or what is wrong with it. */
