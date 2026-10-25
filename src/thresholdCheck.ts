@@ -167,18 +167,18 @@ export function checkThresholds(
 }
 
 /**
- * The change's hunks or, when the change touches a directive (it changes a line of a directive's
- * attachment span, deletes lines right after one, or deletes a directive), the whole
+ * The change's hunks or, when the change touches a directive (it changes or deletes lines of a
+ * directive's attachment span, or deletes a directive), the whole
  * file: such a change may alter what any directive of the file allows.
  */
 function expandHunks({ metrics, hunks, allowDirectives }: CheckedFile): readonly LineHunk[] | undefined {
   const touchesDirective = hunks?.some(
     (hunk) =>
       hunk.deletesDirective ||
-      allowDirectives?.attachmentSpans.some(({ startLine, endLine }) =>
-        hunk.headCount === 0
-          ? hunk.headStart >= startLine && hunk.headStart <= endLine
-          : touchesSpan(hunk, startLine, endLine)
+      allowDirectives?.attachmentSpans.some(({ startLine, endLine, endsAtFunction }) =>
+        // An edit of the function's first line touches the function itself, but a deletion right
+        // above it lies between the function and its directive.
+        touchesSpan(hunk, startLine, hunk.headCount > 0 && endsAtFunction ? endLine - 1 : endLine)
       )
   );
   return touchesDirective ? [{ headStart: 1, headCount: metrics.lines.total }] : hunks;

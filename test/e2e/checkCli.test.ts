@@ -1015,6 +1015,21 @@ export const scale = 2;
     expect(runCheck(['--base', 'HEAD']).stdout).toContain('warning: src/calc.ts:1-3 wide: parameters 8 (max 6)\n');
   });
 
+  it('with --base, does not check the whole file for a deletion right below code-gauge-allow-file', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource(
+      'src/calc.ts',
+      `// code-gauge-allow-file functionNcss 40 -- generated-like tables\nimport { a } from './a';\n\nexport function wide(a, b, c, d, e, f, g, h) {\n  return a;\n}\n`
+    );
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'allow']);
+
+    writeSource('src/calc.ts', readSource('src/calc.ts').replace("import { a } from './a';\n", ''));
+    expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
+      /^No threshold violations: 1 changed files, 0 functions checked/u
+    );
+  });
+
   it('with --base, does not take a deleted line of a multi-line string for a directive', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource(

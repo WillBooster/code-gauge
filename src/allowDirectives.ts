@@ -17,15 +17,22 @@ export interface DirectiveProblem {
   message: string;
 }
 
+export interface AttachmentSpan {
+  startLine: number;
+  endLine: number;
+  endsAtFunction?: true;
+}
+
 export interface AllowDirectives {
   directives: AllowDirective[];
   problems: DirectiveProblem[];
   /**
-   * The lines whose change may change what a directive allows: those from the directive to the line
-   * before the function it attaches to or, when it attaches to none, through the next code line; a
-   * `code-gauge-allow-file` or malformed directive's own line.
+   * The lines whose change may change what a directive allows: those from the directive to the
+   * first line of the function it attaches to, which `endsAtFunction` marks as the function's own,
+   * or, when it attaches to none, through the next code line; a `code-gauge-allow-file` or
+   * malformed directive's own line.
    */
-  attachmentSpans: { startLine: number; endLine: number }[];
+  attachmentSpans: AttachmentSpan[];
 }
 
 const allowKeyword = 'code-gauge-allow';
@@ -61,8 +68,8 @@ export function parseAllowDirectives(content: string, metrics: CodeMetrics): All
     const match = codeLines.has(line) ? undefined : directivePattern.exec(lines[line - 1] ?? '');
     if (!match) continue;
     const [, keyword = '', rest = ''] = match;
-    const { directive, endLine } = readDirective(line, keyword, rest, lines, metrics);
-    result.attachmentSpans.push({ startLine: line, endLine });
+    const { directive, span } = readDirective(line, keyword, rest, lines, metrics);
+    result.attachmentSpans.push(span);
     if (typeof directive === 'string') {
       result.problems.push({ line, message: directive });
     } else {
@@ -87,19 +94,20 @@ function readDirective(
   rest: string,
   lines: readonly string[],
   metrics: CodeMetrics
-): { directive: Omit<AllowDirective, 'line'> | string; endLine: number } {
+): { directive: Omit<AllowDirective, 'line'> | string; span: AttachmentSpan } {
   const parsed = parseDirective(keyword, rest.replace(/\*\/\s*$/u, '').trim());
   if (typeof parsed === 'string' || keyword === allowFileKeyword) {
-    return { directive: parsed, endLine: line };
+    return { directive: parsed, span: { startLine: line, endLine: line } };
   }
   const following = metrics.codeLineNumbers.find((codeLine) => codeLine > line);
   const isBlankBetween = lines.slice(line, (following ?? lines.length + 1) - 1).some((text) => text.trim() === '');
   const directive = attachToFunction(parsed, isBlankBetween ? undefined : following, metrics.functions);
-  // An edit of the function's first line touches the function itself; an edit of the code line
-  // a directive fails to attach to may be what detached it.
-  const endLine =
-    typeof directive === 'string' ? (following ?? lines.length) : Math.max(directive.target.startLine - 1, line);
-  return { directive, endLine };
+  // An edit of the code line a directive fails to attach to may be what detached it.
+  const span: AttachmentSpan =
+    typeof directive === 'string'
+      ? { startLine: line, endLine: following ?? lines.length }
+      : { startLine: line, endLine: directive.target.startLine, endsAtFunction: true };
+  return { directive, span };
 }
 
 /** The metric and max of a directive, or what is wrong with it. */
