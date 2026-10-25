@@ -1,6 +1,6 @@
 import assert from 'node:assert';
 
-import { type AllowDirective, type AllowDirectives, allowKeyword } from './allowDirectives.js';
+import { type AllowDirective, type AllowDirectives, isDirectiveLine } from './allowDirectives.js';
 import type {
   CrossFileDuplicateBlockGroup,
   CrossFileDuplicateOccurrence,
@@ -174,7 +174,7 @@ export function checkThresholds(
 function expandHunks({ metrics, hunks, allowDirectives }: CheckedFile): readonly LineHunk[] | undefined {
   const touchesDirective = hunks?.some(
     (hunk) =>
-      hunk.deletedLines?.some((line) => line.includes(allowKeyword)) ||
+      hunk.deletedLines?.some((line) => isDirectiveLine(line)) ||
       allowDirectives?.attachmentSpans.some(({ startLine, endLine }) =>
         hunk.headCount === 0
           ? hunk.headStart >= startLine && hunk.headStart <= endLine

@@ -986,7 +986,7 @@ export const scale = 2;
     );
   });
 
-  it('with --base, does not check a function for a deletion above it outside any directive', () => {
+  it('with --base, does not check a function for a deletion above it or of text mentioning a directive', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource(
       'src/wide.py',
@@ -996,6 +996,19 @@ export const scale = 2;
     runGit(['commit', '-q', '-m', 'wide']);
 
     writeSource('src/wide.py', readSource('src/wide.py').replace('    return x\n', ''));
+    expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
+      /^No threshold violations: 1 changed files, 1 functions checked/u
+    );
+
+    writeSource(
+      'src/wide.py',
+      readSource('src/wide.py').replace('print(x)', 'print("// code-gauge-allow is documented")')
+    );
+    runGit(['commit', '-q', '-am', 'hint']);
+    writeSource(
+      'src/wide.py',
+      readSource('src/wide.py').replace('// code-gauge-allow is documented', 'see the README')
+    );
     expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
       /^No threshold violations: 1 changed files, 1 functions checked/u
     );

@@ -28,7 +28,7 @@ export interface AllowDirectives {
   attachmentSpans: { startLine: number; endLine: number }[];
 }
 
-export const allowKeyword = 'code-gauge-allow';
+const allowKeyword = 'code-gauge-allow';
 const allowFileKeyword = 'code-gauge-allow-file';
 const syntax = `\`${allowKeyword} <metric> <max> -- <reason>\``;
 
@@ -70,6 +70,14 @@ export function parseAllowDirectives(content: string, metrics: CodeMetrics): All
     }
   }
   return result;
+}
+
+/**
+ * Whether the line reads as a directive when comment-only, for a line whose measurement is not at
+ * hand, such as one a change deleted.
+ */
+export function isDirectiveLine(text: string): boolean {
+  return directivePattern.test(text);
 }
 
 /** The directive on the line or what is wrong with it, and the end of its attachment span. */
