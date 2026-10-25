@@ -21,8 +21,9 @@ export interface AllowDirectives {
   directives: AllowDirective[];
   problems: DirectiveProblem[];
   /**
-   * The lines from each directive, applicable or not, to the next code line: a change to them may
-   * change what the directive allows.
+   * The lines whose change may change what a directive allows: those from the directive to the line
+   * before the function it attaches to or, when it attaches to none, through the next code line; a
+   * `code-gauge-allow-file` or malformed directive's own line.
    */
   attachmentSpans: { startLine: number; endLine: number }[];
 }
@@ -60,15 +61,17 @@ export function parseAllowDirectives(content: string, metrics: CodeMetrics): All
     const match = codeLines.has(line) ? undefined : directivePattern.exec(lines[line - 1] ?? '');
     if (!match) continue;
     const following = metrics.codeLineNumbers.find((codeLine) => codeLine > line);
-    result.attachmentSpans.push({ startLine: line, endLine: following ?? lines.length });
     const isBlankBetween = lines.slice(line, (following ?? lines.length + 1) - 1).some((text) => text.trim() === '');
     const next = isBlankBetween ? undefined : following;
     const [, keyword = '', rest = ''] = match;
     const parsed = parseDirective(keyword, rest.replace(/\*\/\s*$/u, '').trim());
-    const directive =
-      typeof parsed === 'string' || keyword === allowFileKeyword
-        ? parsed
-        : attachToFunction(parsed, next, metrics.functions);
+    const isAttachable = typeof parsed !== 'string' && keyword !== allowFileKeyword;
+    const directive = isAttachable ? attachToFunction(parsed, next, metrics.functions) : parsed;
+    // An edit of the function's first line touches the function itself; an edit of the code line
+    // a directive fails to attach to may be what detached it.
+    const isAttached = isAttachable && typeof directive !== 'string';
+    const endLine = isAttachable ? (isAttached ? (next ?? line) - 1 : (following ?? lines.length)) : line;
+    result.attachmentSpans.push({ startLine: line, endLine: Math.max(endLine, line) });
     if (typeof directive === 'string') {
       result.problems.push({ line, message: directive });
     } else {

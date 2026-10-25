@@ -167,15 +167,19 @@ export function checkThresholds(
 }
 
 /**
- * The change's hunks or, when the change touches a directive (it adds or edits lines from one to
- * the next code line, or deletes a line holding one), the whole file: such a change may alter what
- * any directive of the file allows.
+ * The change's hunks or, when the change touches a directive (it changes a line of a directive's
+ * attachment span, deletes lines right after one, or deletes a line holding a directive), the whole
+ * file: such a change may alter what any directive of the file allows.
  */
 function expandHunks({ metrics, hunks, allowDirectives }: CheckedFile): readonly LineHunk[] | undefined {
   const touchesDirective = hunks?.some(
     (hunk) =>
       hunk.deletedLines?.some((line) => line.includes(allowKeyword)) ||
-      allowDirectives?.attachmentSpans.some(({ startLine, endLine }) => touchesSpan(hunk, startLine, endLine))
+      allowDirectives?.attachmentSpans.some(({ startLine, endLine }) =>
+        hunk.headCount === 0
+          ? hunk.headStart >= startLine && hunk.headStart <= endLine
+          : touchesSpan(hunk, startLine, endLine)
+      )
   );
   return touchesDirective ? [{ headStart: 1, headCount: metrics.lines.total }] : hunks;
 }

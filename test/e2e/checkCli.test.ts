@@ -968,6 +968,24 @@ export const scale = 2;
     expect(runCheck(['--base', 'HEAD']).stdout).toContain(expected);
   });
 
+  it('with --base, checks only the function when a change edits its first line below a directive', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource(
+      'src/calc.ts',
+      `export function other(a, b, c, d, e, f, g, h) {\n  return a;\n}\n\n// code-gauge-allow functionParameterCount 8 -- vendor api\nexport function create(a, b, c, d, e, f, g, h) {\n  return a;\n}\n`
+    );
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'allow']);
+
+    writeSource(
+      'src/calc.ts',
+      readSource('src/calc.ts').replace('create(a, b, c, d, e, f, g, h)', 'create(a, b, c, d, e, f, g, hh)')
+    );
+    expect(runCheck(['--base', 'HEAD']).stdout).toMatch(
+      /^No threshold violations: 1 changed files, 1 functions checked, 1 exceeded limits allowed by directives;/u
+    );
+  });
+
   it('with --base, does not check a function for a deletion above it outside any directive', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource(

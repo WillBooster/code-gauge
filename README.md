@@ -157,8 +157,10 @@ With `--base <ref>`, the check covers only what the working tree changed since t
 - a file-level threshold, when the change adds or deletes lines of the file (a rename or a mode
   change alone does not count);
 - a duplicated block, when it overlaps lines the change added;
-- the whole file, when the change touches a [directive](#allowing-a-warning-in-the-code): it adds
-  or edits lines from a directive to the next code line, or deletes a line holding one.
+- the whole file, when the change touches a [directive](#allowing-a-warning-in-the-code): it edits
+  a directive's line or the lines between it and its function (through the next code line for a
+  directive attached to no function), or deletes a line holding one. Editing the function itself
+  only touches the function.
 
 `--base` only filters the report: the files measured and the duplication found are those of the
 check without it, so code pasted from an unchanged file is reported where it was pasted. A
