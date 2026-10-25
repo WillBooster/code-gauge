@@ -302,7 +302,7 @@ async function markDeletedDirectives(
 }
 
 /**
- * Moves each pure deletion up to the last code line before it. A Python function ends at its last
+ * Moves each pure deletion up to the last code line or directive before it. A Python function ends at its last
  * statement, so the blank and comment-only lines left above a deleted tail lie outside the span the
  * deletion shortened; anchored to that statement, the deletion counts as touching the function.
  */
@@ -310,10 +310,15 @@ function anchorDeletionsToCode(hunks: LineHunk[], content: string): void {
   const lines = content.split(/\r\n|\n|\r/u);
   for (const hunk of hunks) {
     if (hunk.headCount > 0) continue;
-    while (hunk.headStart > 0 && /^\s*(?:#.*)?$/u.test(lines[hunk.headStart - 1] ?? '')) {
+    while (hunk.headStart > 0 && isPassedByAnchoring(lines[hunk.headStart - 1] ?? '')) {
       hunk.headStart -= 1;
     }
   }
+}
+
+// A deletion right below a directive stays there, where it may have attached or detached it.
+function isPassedByAnchoring(line: string): boolean {
+  return /^\s*(?:#.*)?$/u.test(line) && !isDirectiveLine(line);
 }
 
 /** A run-wide failure (a missing target or native addon) leaves nothing to check. */

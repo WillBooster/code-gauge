@@ -986,6 +986,35 @@ export const scale = 2;
     );
   });
 
+  it('with --base, checks the whole file after deleting a blank line below a Python directive', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource(
+      'src/wide.py',
+      'x = 1\n# code-gauge-allow functionParameterCount 7 -- registered handlers\n\ndef wide(a, b, c, d, e, f, g, h):\n    return a\n'
+    );
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'allow']);
+
+    writeSource('src/wide.py', readSource('src/wide.py').replace('handlers\n\n', 'handlers\n'));
+    expect(runCheck(['--base', 'HEAD']).stdout).toContain(
+      'warning: src/wide.py:2: code-gauge-allow functionParameterCount 7: the value grew above 7; reduce it or reconsider the directive\n'
+    );
+  });
+
+  it('with --base, reports the function after removing its directive from a CRLF file', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    runGit(['config', 'core.autocrlf', 'false']);
+    writeSource(
+      'src/calc.ts',
+      '// code-gauge-allow functionParameterCount 8 -- vendor api\r\nexport function wide(a, b, c, d, e, f, g, h) {\r\n  return a;\r\n}\r\n'
+    );
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'allow']);
+
+    writeSource('src/calc.ts', readSource('src/calc.ts').split('\r\n').slice(1).join('\r\n'));
+    expect(runCheck(['--base', 'HEAD']).stdout).toContain('warning: src/calc.ts:1-3 wide: parameters 8 (max 6)\n');
+  });
+
   it('with --base, does not take a deleted line of a multi-line string for a directive', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource(

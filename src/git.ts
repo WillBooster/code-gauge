@@ -176,7 +176,8 @@ export async function listLineHunks(
       deletedLines: body
         .split('\n')
         .filter((line) => line.startsWith('-'))
-        .map((line) => line.slice(1)),
+        // A CRLF file's lines keep their carriage return after splitting the diff on line feeds.
+        .map((line) => line.slice(1).replace(/\r$/u, '')),
     };
   });
 }
