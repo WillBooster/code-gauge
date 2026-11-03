@@ -234,6 +234,7 @@ const STRING_FRAGMENT_TYPES: &[&str] = &[
     "raw_string_content",
     "interpreted_string_literal_content",
     "raw_string_literal_content",
+    "format_specifier",
     "raw_string_start",
     "raw_string_end",
     "escape_sequence",
@@ -299,6 +300,7 @@ const STRING_CONTENT_FRAGMENT_TYPES: &[&str] = &[
     "raw_string_content",
     "interpreted_string_literal_content",
     "raw_string_literal_content",
+    "format_specifier",
     "escape_sequence",
     "heredoc_content",
 ];
@@ -570,6 +572,9 @@ fn collect_tokens<'a>(
         statement_list_statements: &mut Vec<TokenRange>,
     ) -> TokenRange {
         let start_token_index = tokens.len();
+        // The span of the node's tokens, which can be narrower than the node: a Python block
+        // starts at its header's colon, and a Rust declaration starts at its doc comment.
+        let mut token_span: Option<SourceSpan> = None;
         let is_token = is_token(node);
         let atomic_kind = if is_token {
             None
@@ -602,6 +607,7 @@ fn collect_tokens<'a>(
                     container_statement_ranges,
                     &mut child_statements,
                 );
+                token_span = widen_token_span(token_span, &child_range);
                 // A Kotlin lambda's parameters sit beside its statements.
                 if is_container
                     && child.is_named()
@@ -625,13 +631,19 @@ fn collect_tokens<'a>(
             }
         }
 
-        let range = TokenRange {
-            start_token_index,
-            end_token_index: tokens.len(),
+        let span = token_span.unwrap_or(SourceSpan {
             start_index: node.start_byte(),
             end_index: node.end_byte(),
             start_line: node.start_position().row + 1,
             end_line: node.end_position().row + 1,
+        });
+        let range = TokenRange {
+            start_token_index,
+            end_token_index: tokens.len(),
+            start_index: span.start_index,
+            end_index: span.end_index,
+            start_line: span.start_line,
+            end_line: span.end_line,
         };
         if is_duplicate_block(node) {
             block_ranges.push(TokenRange { ..range });
@@ -647,6 +659,28 @@ fn collect_tokens<'a>(
         container_statement_ranges,
         &mut Vec::new(),
     );
+}
+
+#[derive(Clone, Copy)]
+struct SourceSpan {
+    start_index: usize,
+    end_index: usize,
+    start_line: usize,
+    end_line: usize,
+}
+
+/// `span` extended to the end of `child`'s tokens, or `child`'s token span when `span` is empty;
+/// a child without tokens leaves it as it is.
+fn widen_token_span(span: Option<SourceSpan>, child: &TokenRange) -> Option<SourceSpan> {
+    if child.start_token_index == child.end_token_index {
+        return span;
+    }
+    Some(SourceSpan {
+        start_index: span.map_or(child.start_index, |span| span.start_index),
+        end_index: child.end_index,
+        start_line: span.map_or(child.start_line, |span| span.start_line),
+        end_line: child.end_line,
+    })
 }
 
 /// Comments and dependency declarations contribute no tokens, so no clone consists of them; the

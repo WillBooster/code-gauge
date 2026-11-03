@@ -155,6 +155,12 @@ pub fn to_int32(value: i64) -> i32 {
     value as i32
 }
 
+/// A Rust `else if`: tree-sitter-rust flattens the chain into `else_clause`s that hold the
+/// condition of the `if` they continue, while a final `else` holds only its block.
+pub fn is_else_if_clause(node: Node<'_>) -> bool {
+    node.kind_name() == "else_clause" && node.child_by_field_name("condition").is_some()
+}
+
 /// Kotlin's `try { } catch { }` shares its node kind with Rust's `?` operator; only the Kotlin form
 /// starts with the `try` keyword.
 pub fn is_kotlin_try_expression(node: Node<'_>) -> bool {

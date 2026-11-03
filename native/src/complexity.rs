@@ -302,11 +302,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         let relative_nesting = current_nesting + function_nesting_bonus - entry_cognitive_nesting;
         let counts_for_own_body = !inside_nested_region && !opens_frame;
 
-        // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
-        // `if` keyword token), so only named nodes count as decisions.
-        let is_decision = current.is_named()
-            && self.sets.decision_nodes.contains(current.kind_name())
-            && !is_pathless_switch_branch(current, self.code);
+        let is_decision = self.is_decision(current);
         let is_case_clause =
             current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind_name());
         // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
@@ -513,6 +509,15 @@ impl FunctionBodyPass<'_, '_, '_> {
         }
     }
 
+    fn is_decision(&self, node: Node<'_>) -> bool {
+        // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
+        // `if` keyword token), so only named nodes count as decisions.
+        node.is_named()
+            && (self.sets.decision_nodes.contains(node.kind_name())
+                || crate::util::is_else_if_clause(node))
+            && !is_pathless_switch_branch(node)
+    }
+
     fn top_frame(&mut self) -> &mut FunctionBodyFrame {
         self.frames
             .last_mut()
@@ -534,6 +539,9 @@ fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64
         return u64::from(!is_case_else_parent(parent));
     }
     if kind == "else_clause" {
+        if crate::util::is_else_if_clause(current) {
+            return 0;
+        }
         let has_if_like_child = crate::util::named_children(current)
             .iter()
             .any(|child| IF_LIKE_NODE_TYPES.contains(&child.kind_name()));
@@ -671,10 +679,11 @@ fn is_pattern_guard(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
             .any(|child| !child.is_named() && child.kind_name() == "if")
 }
 
-/// Ruby `elsif`, Python `elif`, and `else if` (an if node in an else/alternative position).
+/// Ruby `elsif`, Python `elif`, Rust `else if` clauses, and `else if` (an if node in an
+/// else/alternative position).
 fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     let kind = node.kind_name();
-    if kind == "elsif" || kind == "elif_clause" {
+    if kind == "elsif" || kind == "elif_clause" || crate::util::is_else_if_clause(node) {
         return true;
     }
     if kind != "if_statement" && kind != "if_expression" && kind != "if" {
@@ -683,9 +692,9 @@ fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool 
     let Some(parent) = parent else {
         return false;
     };
-    // JS/C/C++/Rust/C# wrap `else if` in an else clause; Java/Go/Kotlin put it directly in
-    // `alternative`.
-    parent.kind_name() == "else_clause"
+    // JS/C/C++/C# wrap `else if` in an else clause; Java/Go/Kotlin put it directly in
+    // `alternative`. An if inside a Rust else-if clause is its condition, not a continuation.
+    (parent.kind_name() == "else_clause" && !crate::util::is_else_if_clause(parent))
         || parent
             .child_by_field_name("alternative")
             .is_some_and(|alternative| alternative.id() == node.id())
@@ -696,7 +705,7 @@ fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool 
 /// unless one of its stacked labels is an unguarded default or catch-all (`case 3: default: g();`
 /// and `default: case 3: g();` are the default outcome) or all of them are catch-alls. Guards are
 /// charged separately, so a guarded catch-all never absorbs a case stacked with it.
-fn is_pathless_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
+fn is_pathless_switch_branch(node: Node<'_>) -> bool {
     if is_label_only_case(node) {
         return true;
     }
@@ -713,10 +722,8 @@ fn is_pathless_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     }
     stacked
         .iter()
-        .any(|label| is_default_switch_branch(*label, code) && !has_pattern_guard(*label))
-        || stacked
-            .iter()
-            .all(|label| is_default_switch_branch(*label, code))
+        .any(|label| is_default_switch_branch(*label) && !has_pattern_guard(*label))
+        || stacked.iter().all(|label| is_default_switch_branch(*label))
 }
 
 /// A guard directly on the arm (C# `when`, Python `if`, Ruby `if`/`unless`) or inside its label or
@@ -754,7 +761,7 @@ fn is_label_only_case(node: Node<'_>) -> bool {
     }
 }
 
-fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
+fn is_default_switch_branch(node: Node<'_>) -> bool {
     let kind = node.kind_name();
     if kind == "switch_default" {
         return true;
@@ -764,17 +771,16 @@ fn is_default_switch_branch(node: Node<'_>, code: &Source<'_>) -> bool {
     }
 
     // Java `default:` groups and `default ->` rules: a label with no expression or pattern, or a
-    // `case null, default` label, whose `default` the grammar parses as an identifier.
+    // `case null, default` label, which holds the `default` keyword after the `null`.
     if kind == "switch_block_statement_group" || kind == "switch_rule" {
         return non_comment_children(node)
             .into_iter()
             .filter(|child| child.kind_name() == "switch_label")
             .any(|label| {
-                let parts = non_comment_children(label);
-                parts.is_empty()
-                    || parts.iter().any(|part| {
-                        part.kind_name() == "identifier" && node_text(*part, code) == "default"
-                    })
+                non_comment_children(label).is_empty()
+                    || crate::util::all_children(label)
+                        .iter()
+                        .any(|part| !part.is_named() && part.kind_name() == "default")
             });
     }
 

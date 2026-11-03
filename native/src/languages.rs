@@ -434,9 +434,8 @@ const RUST_NCSS_NODES: &[&str] = &[
     "else_clause",
     "match_arm",
 ];
-// `else_clause` is a container so `else if` chains count the nested if_expression; a plain
-// `else { ... }` is unaffected because its only child is a `block`, itself a container.
-const RUST_NCSS_CONTAINERS: &[&str] = &["block", "else_clause"];
+
+const RUST_NCSS_CONTAINERS: &[&str] = &["block"];
 
 const JAVA_NCSS_NODES: &[&str] = &[
     "package_declaration",

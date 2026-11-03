@@ -227,8 +227,8 @@ export function createClient(host, port, user, password, database, timeout, retr
 - `code-gauge-allow <metric> <max> -- <reason>` covers the function starting on the next code
   line, the functions nested in it, and the duplicated blocks starting in it. Only comment lines
   may stand between the directive and that line. Where a function's span starts below its
-  decorators or attributes (Python, TypeScript, and Rust), the directive goes below them; where the
-  span includes them (Java, Kotlin, and C#), above them. A directive after code on the same line is
+  decorators or attributes (Python and Rust), the directive goes below them; where the span
+  includes them (Java, Kotlin, C#, and TypeScript), above them. A directive after code on the same line is
   not read.
 - `code-gauge-allow-file <metric> <max> -- <reason>` covers the whole file, and is the only way to
   allow `fileNcss`.
@@ -553,7 +553,7 @@ does not skip generated files (e.g. `.d.ts`, `.min.js`) or test files.
 ### Cloudflare Workers
 
 Workers cannot load native addons, so the package's `workerd` export runs the same API on a
-WebAssembly build of the Rust engine (about 3.2 MB gzipped). Wrangler resolves that export
+WebAssembly build of the Rust engine (about 5.3 MB gzipped). Wrangler resolves that export
 automatically, and no `nodejs_compat` flag is needed:
 
 ```ts
