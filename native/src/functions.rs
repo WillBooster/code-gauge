@@ -904,7 +904,8 @@ pub fn find_string_literal_content(literal: Node<'_>, code: &Source<'_>) -> Opti
             "string_content"
             | "string_fragment"
             | "interpreted_string_literal_content"
-            | "raw_string_literal_content" => {
+            | "raw_string_literal_content"
+            | "format_specifier" => {
                 has_content_node = true;
                 content.push_str(node_text(*child, code));
             }
