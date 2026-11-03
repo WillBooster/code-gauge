@@ -693,8 +693,8 @@ fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool 
         return false;
     };
     // JS/C/C++/C# wrap `else if` in an else clause; Java/Go/Kotlin put it directly in
-    // `alternative`.
-    parent.kind_name() == "else_clause"
+    // `alternative`. An if inside a Rust else-if clause is its condition, not a continuation.
+    (parent.kind_name() == "else_clause" && !crate::util::is_else_if_clause(parent))
         || parent
             .child_by_field_name("alternative")
             .is_some_and(|alternative| alternative.id() == node.id())

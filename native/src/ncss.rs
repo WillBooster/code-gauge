@@ -249,12 +249,18 @@ fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
             child.kind_name() == "declaration" || child.kind_name() == "function_definition"
         });
     }
-    // A Rust item-position macro invocation (`foo! {}` at module level) has no expression_statement
-    // wrapper; the semicolon form does and already counts through it.
-    if node.kind_name() == "macro_invocation"
-        && (parent_kind == Some("source_file") || parent_kind == Some("declaration_list"))
-    {
-        return true;
+    // A Rust item-position macro invocation (`foo! {}` at module level, possibly attributed) has no
+    // expression_statement wrapper; the semicolon form does and already counts through it.
+    if node.kind_name() == "macro_invocation" {
+        let item_parent = match parent {
+            Some(wrapper) if wrapper.kind_name() == "attributed_declaration" => {
+                wrapper.parent_node()
+            }
+            _ => parent,
+        };
+        return item_parent.is_some_and(|item_parent| {
+            matches!(item_parent.kind_name(), "source_file" | "declaration_list")
+        });
     }
     // Go struct fields and interface members count like other languages' member declarations, but
     // only inside a named type declaration; inline anonymous types (`var x struct{ ... }`,
