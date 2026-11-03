@@ -8,9 +8,9 @@ pub const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comm
 
 /// Nodes never counted positionally inside NCSS containers: metadata, empty statements, Ruby
 /// heredoc bodies (tree-sitter emits them as siblings of the statement that opened the heredoc),
-/// Ruby statement parentheses (transparent wrappers whose children count instead), Kotlin enum
-/// entries (Java enum constants are not counted either), and Kotlin lambda parameters (siblings of
-/// the lambda's statements). Kotlin's `try_expression` is excluded contextually below because Rust
+/// TRANSPARENT_WRAPPER_TYPES (their children count instead), Kotlin enum entries (Java enum
+/// constants are not counted either), and Kotlin lambda parameters (siblings of the lambda's
+/// statements). Kotlin's `try_expression` is excluded contextually below because Rust
 /// shares its name: Rust's `?` operator must keep counting as a tail expression.
 const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "attribute_item",
@@ -18,6 +18,7 @@ const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "empty_statement",
     "heredoc_body",
     "parenthesized_statements",
+    "attributed_declaration",
     "annotation",
     "file_annotation",
     "shebang",
@@ -92,6 +93,12 @@ pub fn ncss_contribution(
         contribution += 1;
     }
 
+    // A Rust `else if` clause also stands for the `if` that other grammars nest in their else
+    // clause and charge separately.
+    if crate::util::is_else_if_clause(node) {
+        contribution += 1;
+    }
+
     // A bare else branch (Java/Go/Kotlin `alternative:` without an else-clause wrapper) counts 1
     // like the `else` keyword does in PMD; an `else if` chain charges the nested if separately on
     // top.
@@ -117,15 +124,19 @@ fn counts_through_node_type(node: Node<'_>, countable: &FxHashSet<&'static str>)
     true
 }
 
-/// Direct container children count positionally; Ruby's `(foo; bar)` statement parentheses are
-/// transparent, so their children count when the parentheses themselves sit in a container.
+/// Ruby's `(foo; bar)` statement parentheses and Rust's attributes-plus-declaration pairs: their
+/// children count when the wrapper itself sits in a container.
+const TRANSPARENT_WRAPPER_TYPES: &[&str] = &["parenthesized_statements", "attributed_declaration"];
+
+/// Direct container children count positionally, as do the children of TRANSPARENT_WRAPPER_TYPES
+/// in that position.
 fn is_in_container_position(
     parent: Option<Node<'_>>,
     containers: &FxHashSet<&'static str>,
 ) -> bool {
     let mut ancestor = parent;
     while let Some(current) = ancestor {
-        if current.kind_name() != "parenthesized_statements" {
+        if !TRANSPARENT_WRAPPER_TYPES.contains(&current.kind_name()) {
             return containers.contains(current.kind_name());
         }
         ancestor = current.parent_node();

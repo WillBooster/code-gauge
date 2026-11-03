@@ -71,11 +71,13 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
         return 0;
     };
 
-    // A Java bare lambda parameter (`x -> x + 1`) puts a lone identifier in the `parameters` field;
-    // a C# one (`x => x + 1`) is an `implicit_parameter` leaf.
-    if parameters_node.kind_name() == "identifier"
-        || parameters_node.kind_name() == "implicit_parameter"
-    {
+    // A Java bare lambda parameter (`x -> x + 1`, `_ -> 1`) puts a lone identifier or unnamed
+    // `underscore_pattern` in the `parameters` field; a C# one (`x => x + 1`) is an
+    // `implicit_parameter` leaf.
+    if matches!(
+        parameters_node.kind_name(),
+        "identifier" | "underscore_pattern" | "implicit_parameter"
+    ) {
         return 1;
     }
     // Kotlin default values (`x: Int = 0`) are siblings of their `parameter`, not children.
@@ -127,12 +129,7 @@ pub fn count_parameters(node: Node<'_>, code: &Source<'_>) -> usize {
             1
         };
     }
-    // C++ C-style varargs (`int f(int a, ...)`) leave `...` as an anonymous token.
-    let anonymous_variadic_count = all_children(parameters_node)
-        .iter()
-        .filter(|child| !child.is_named() && node_text(**child, code) == "...")
-        .count();
-    count + anonymous_variadic_count + usize::from(!csharp_params_array_ids.is_empty())
+    count + usize::from(!csharp_params_array_ids.is_empty())
 }
 
 /// C/C++ `int f(void)` has a `parameter_declaration` whose type is a bare `void` with no declarator.
