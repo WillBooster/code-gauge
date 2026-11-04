@@ -331,6 +331,8 @@ impl<'t> LeafWalk<'t> {
             function_spans: FxHashMap::default(),
         };
         walk.visit(root, None, 0, function_nodes, function_ids, true);
+        // The walked subtree's own scope encloses every scope opened inside it.
+        walk.last_nested_scopes[0] = walk.last_nested_scopes.len() - 1;
         walk
     }
 
