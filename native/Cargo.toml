@@ -22,13 +22,13 @@ rustc-hash = "2"
 # `willbooster-*` crates are WillBooster's forks of the runtime and grammars. Every grammar crate
 # depends only on `tree-sitter-language`, never on upstream's `tree-sitter` crate, whose
 # `links = "tree-sitter"` would conflict with the forked runtime's.
-tree-sitter = { package = "willbooster-tree-sitter", version = "17" }
-tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=34.0.0" }
+tree-sitter = { package = "willbooster-tree-sitter", version = "18" }
+tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=34.0.1" }
 tree-sitter-c-sharp = { package = "willbooster-tree-sitter-c-sharp", version = "=19.0.0" }
 tree-sitter-cpp = { package = "willbooster-tree-sitter-cpp", version = "=28.0.0" }
 tree-sitter-go = { package = "willbooster-tree-sitter-go", version = "=9.0.0" }
-tree-sitter-java = { package = "willbooster-tree-sitter-java", version = "=32.0.0" }
-tree-sitter-javascript = { package = "willbooster-tree-sitter-javascript", version = "=21.1.0" }
+tree-sitter-java = { package = "willbooster-tree-sitter-java", version = "=32.0.1" }
+tree-sitter-javascript = { package = "willbooster-tree-sitter-javascript", version = "=22.0.1" }
 tree-sitter-kotlin = { package = "willbooster-tree-sitter-kotlin", version = "=19.0.0" }
 tree-sitter-python = { package = "willbooster-tree-sitter-python", version = "=16.0.0" }
 tree-sitter-ruby = { package = "willbooster-tree-sitter-ruby", version = "=15.0.0" }
