@@ -122,20 +122,15 @@ impl Drop for TreeIndex<'_> {
 
 fn erase_lifetime(node: Node<'_>) -> Node<'static> {
     // SAFETY: Node only borrows its tree; the erased node is stored in NODES and CHILDREN, which
-    // the TreeIndex borrowing that tree empties before the tree can be dropped.
+    // the TreeIndex borrowing that tree empties before the tree can be dropped. Lookups are keyed
+    // by node id, an address inside the indexed tree, so a node handed back for a node of the
+    // indexed tree belongs to the tree that node borrows.
     unsafe { std::mem::transmute::<Node<'_>, Node<'static>>(node) }
 }
 
 fn erase_field_lifetime(field_name: Option<&str>) -> Option<&'static str> {
     // SAFETY: as in erase_lifetime; field names borrow the tree's language as nodes borrow the tree.
     unsafe { std::mem::transmute::<Option<&str>, Option<&'static str>>(field_name) }
-}
-
-fn restore_lifetime<'t>(node: Node<'static>) -> Node<'t> {
-    // SAFETY: only called on nodes found under the id of a node borrowing the tree for 't: ids
-    // are addresses inside the indexed tree, which outlives the index, so a hit means the stored
-    // node belongs to that same tree.
-    unsafe { std::mem::transmute::<Node<'static>, Node<'t>>(node) }
 }
 
 /// Calls `visit` with the node's children and their field names (TreeCursor::field_name), or
@@ -151,14 +146,6 @@ pub fn with_indexed_children<'t, R>(
     })?;
     CHILDREN.with_borrow(|children| {
         let children = &children[first_child..first_child + child_count];
-        // SAFETY: as in restore_lifetime; the tuples differ from the stored ones only in their
-        // lifetimes.
-        let children = unsafe {
-            std::mem::transmute::<
-                &[(Node<'static>, Option<&'static str>)],
-                &[(Node<'t>, Option<&'t str>)],
-            >(children)
-        };
         Some(visit(children))
     })
 }
@@ -180,7 +167,6 @@ impl<'t> NodeExt<'t> for Node<'t> {
         }
         NODES
             .with_borrow(|nodes| nodes.get(&self.id()).map(|entry| entry.parent))
-            .map(|parent| parent.map(restore_lifetime))
             .unwrap_or_else(|| self.parent())
     }
 
