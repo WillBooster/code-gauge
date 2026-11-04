@@ -2,7 +2,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use tree_sitter::Node;
 
 use crate::complexity::is_function_boundary;
-use crate::tree_index::NodeExt;
+use crate::tree_index::{KindSet, NodeExt};
 use crate::util::{node_text, Source};
 
 /// Leaf node types treated as variable references by the def-use approximation.
@@ -89,63 +89,151 @@ const DEFINITION_LIST_HOLDER_TYPES: &[&str] = &[
 /// Parameter-position fields that annotate or initialize rather than bind (`x: T`, `x = default`).
 const NON_BINDING_PARAMETER_FIELDS: &[&str] = &["type", "value"];
 
-/// One leaf of the def-use walk: its field in the parent and its function-scope chain.
+/// One leaf of the def-use walk: its field in the parent and its function scope.
 struct DepDegreeLeaf<'t> {
     node: Node<'t>,
     field_name: Option<&'t str>,
-    /// Chain of nested-function scope ids below the measured function: "" for its own body,
-    /// then "/0", "/0/1", ...
-    scope: String,
+    /// Preorder number of the innermost function scope holding the leaf (see LeafWalk).
+    scope: usize,
 }
 
-/// Approximate def-use pairs of the function's subtree.
-pub fn measure_dep_degree(
-    function_node: Node<'_>,
+/// The non-comment leaves of a subtree in walk order, with the function scopes they lie in.
+struct LeafWalk<'t> {
+    leaves: Vec<DepDegreeLeaf<'t>>,
+    /// The last scope nested in each scope, by preorder number; scope 0 is the walked subtree's
+    /// own, and scope `outer` encloses scope `inner` exactly when
+    /// `outer <= inner && inner <= last_nested_scopes[outer]`.
+    last_nested_scopes: Vec<usize>,
+    /// The leaf range and body scope of each function, by node id, whose subtree the walk entered.
+    function_spans: FxHashMap<usize, (std::ops::Range<usize>, usize)>,
+}
+
+/// What a variable leaf does in the def-use walk, which depends only on the leaf and the leaf
+/// after it.
+#[derive(Clone, Copy)]
+struct VariableUse<'a> {
+    name: &'a str,
+    next_operator: Option<AssignmentOperator>,
+    /// Whether the leaf is a definition even when no assignment operator follows it.
+    is_binding: bool,
+}
+
+#[derive(Clone, Copy, PartialEq)]
+enum AssignmentOperator {
+    Pure,
+    Compound,
+}
+
+/// Approximate def-use pairs of the subtree of each function in `functions`, by node id: one walk
+/// of the file gathers every function's leaves, since a function's leaves and the scopes they lie
+/// in are the same wherever the walk starts.
+pub fn measure_dep_degrees(
+    root: Node<'_>,
+    functions: &[Node<'_>],
     code: &Source<'_>,
-    function_nodes: &FxHashSet<&'static str>,
-) -> u64 {
-    let mut leaves = Vec::new();
-    let mut next_scope_id = 0usize;
-    collect_dep_degree_leaves(
-        function_node,
-        None,
-        "",
-        &mut next_scope_id,
+    function_nodes: &KindSet,
+) -> FxHashMap<usize, u64> {
+    let walk = LeafWalk::new(
+        root,
         function_nodes,
-        &mut leaves,
-        true,
+        &functions.iter().map(Node::id).collect(),
     );
-    let mut definition_scopes_by_name: FxHashMap<&str, Vec<String>> = FxHashMap::default();
+    let mut variable_uses = vec![None; walk.leaves.len()];
+    functions
+        .iter()
+        .map(|&function_node| {
+            let (leaf_range, body_scope) = walk
+                .function_spans
+                .get(&function_node.id())
+                .expect("the walk enters every function boundary");
+            let pairs = count_pairs(
+                &walk,
+                leaf_range.clone(),
+                *body_scope,
+                function_node,
+                code,
+                &mut variable_uses,
+            );
+            (function_node.id(), pairs)
+        })
+        .collect()
+}
+
+/// The def-use pairs among the leaves in `leaf_range` of the function whose own body is
+/// `body_scope`; `variable_uses` caches what each leaf of the walk does, as `Some(None)` for a
+/// leaf that is no variable.
+fn count_pairs<'a>(
+    walk: &LeafWalk<'_>,
+    leaf_range: std::ops::Range<usize>,
+    body_scope: usize,
+    function_node: Node<'_>,
+    code: &Source<'a>,
+    variable_uses: &mut [Option<Option<VariableUse<'a>>>],
+) -> u64 {
+    let is_visible = |definition_scopes: Option<&Vec<usize>>, scope: usize| {
+        definition_scopes.is_some_and(|scopes| {
+            scopes
+                .iter()
+                .any(|&outer| outer <= scope && scope <= walk.last_nested_scopes[outer])
+        })
+    };
+    let mut definition_scopes_by_name: FxHashMap<&str, Vec<usize>> = FxHashMap::default();
     for name in implicit_accessor_definitions(function_node, code) {
-        add_definition(&mut definition_scopes_by_name, name, "");
+        add_definition(&mut definition_scopes_by_name, name, body_scope);
     }
+    let leaf_end = leaf_range.end;
     let mut pairs = 0u64;
-    for index in 0..leaves.len() {
-        let leaf = &leaves[index];
-        if !is_variable_leaf(leaf) {
+    for index in leaf_range {
+        let leaf = &walk.leaves[index];
+        let Some(variable_use) =
+            *variable_uses[index].get_or_insert_with(|| variable_use(&walk.leaves, index, code))
+        else {
             continue;
-        }
-        let name = node_text(leaf.node, code);
-        let next_text = leaves.get(index + 1).map(|next| node_text(next.node, code));
-        if next_text.is_some_and(|next| COMPOUND_ASSIGNMENT_OPERATORS.contains(&next)) {
-            if is_definition_visible(definition_scopes_by_name.get(name), &leaf.scope) {
+        };
+        let name = variable_use.name;
+        // The function's last leaf has no next leaf within the function.
+        let next_operator = variable_use.next_operator.filter(|_| index + 1 != leaf_end);
+        if next_operator == Some(AssignmentOperator::Compound) {
+            if is_visible(definition_scopes_by_name.get(name), leaf.scope) {
                 pairs += 1;
             }
-            add_definition(&mut definition_scopes_by_name, name, &leaf.scope);
+            add_definition(&mut definition_scopes_by_name, name, leaf.scope);
             continue;
         }
-        if next_text.is_some_and(|next| PURE_ASSIGNMENT_OPERATORS.contains(&next))
-            || is_structural_definition(leaf)
-            || is_parameter_definition(leaf)
-        {
-            add_definition(&mut definition_scopes_by_name, name, &leaf.scope);
+        if next_operator == Some(AssignmentOperator::Pure) || variable_use.is_binding {
+            add_definition(&mut definition_scopes_by_name, name, leaf.scope);
             continue;
         }
-        if is_definition_visible(definition_scopes_by_name.get(name), &leaf.scope) {
+        if is_visible(definition_scopes_by_name.get(name), leaf.scope) {
             pairs += 1;
         }
     }
     pairs
+}
+
+fn variable_use<'a>(
+    leaves: &[DepDegreeLeaf<'_>],
+    index: usize,
+    code: &Source<'a>,
+) -> Option<VariableUse<'a>> {
+    let leaf = &leaves[index];
+    if !is_variable_leaf(leaf) {
+        return None;
+    }
+    let next_text = leaves.get(index + 1).map(|next| node_text(next.node, code));
+    Some(VariableUse {
+        name: node_text(leaf.node, code),
+        next_operator: next_text.and_then(|next| {
+            if COMPOUND_ASSIGNMENT_OPERATORS.contains(&next) {
+                Some(AssignmentOperator::Compound)
+            } else if PURE_ASSIGNMENT_OPERATORS.contains(&next) {
+                Some(AssignmentOperator::Pure)
+            } else {
+                None
+            }
+        }),
+        is_binding: is_structural_definition(leaf) || is_parameter_definition(leaf),
+    })
 }
 
 /// Kotlin spells type names as identifiers: in a `user_type`, or as a type parameter's fieldless
@@ -215,79 +303,84 @@ fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>)
     names
 }
 
-/// Collects non-comment leaves with their parent field (one cursor pass, so children of
-/// high-arity nodes cost O(1)) and function-scope chain; mirrors collectDepDegreeLeaves.
-#[allow(clippy::too_many_arguments)]
-fn collect_dep_degree_leaves<'t>(
-    node: Node<'t>,
-    field_name: Option<&'t str>,
-    scope: &str,
-    next_scope_id: &mut usize,
-    function_nodes: &FxHashSet<&'static str>,
-    leaves: &mut Vec<DepDegreeLeaf<'t>>,
-    is_measured_root: bool,
-) {
-    if matches!(
-        node.kind_name(),
-        "comment" | "line_comment" | "block_comment"
+impl<'t> LeafWalk<'t> {
+    /// Walks the subtree of `root`, recording the span of each function in `function_ids` it
+    /// enters.
+    fn new(
+        root: Node<'t>,
+        function_nodes: &KindSet,
+        function_ids: &FxHashSet<usize>,
+    ) -> LeafWalk<'t> {
+        let mut walk = LeafWalk {
+            leaves: Vec::new(),
+            last_nested_scopes: vec![0],
+            function_spans: FxHashMap::default(),
+        };
+        walk.visit(root, None, 0, function_nodes, function_ids);
+        // The walked subtree's own scope encloses every scope opened inside it.
+        walk.last_nested_scopes[0] = walk.last_nested_scopes.len() - 1;
+        walk
+    }
+
+    fn visit(
+        &mut self,
+        node: Node<'t>,
+        field_name: Option<&'t str>,
+        scope: usize,
+        function_nodes: &KindSet,
+        function_ids: &FxHashSet<usize>,
     ) {
-        return;
-    }
-    if crate::util::is_token(node) {
-        leaves.push(DepDegreeLeaf {
-            node,
-            field_name,
-            scope: scope.to_string(),
-        });
-        return;
-    }
-    let child_scope = if !is_measured_root && is_function_boundary(node, function_nodes) {
-        let scope = format!("{scope}/{next_scope_id}");
-        *next_scope_id += 1;
-        scope
-    } else {
-        scope.to_string()
-    };
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            collect_dep_degree_leaves(
-                cursor.node(),
-                cursor.field_name(),
-                &child_scope,
-                next_scope_id,
+        if matches!(
+            node.kind_name(),
+            "comment" | "line_comment" | "block_comment"
+        ) {
+            return;
+        }
+        if crate::util::is_token(node) {
+            self.leaves.push(DepDegreeLeaf {
+                node,
+                field_name,
+                scope,
+            });
+            return;
+        }
+        let opens_scope = is_function_boundary(node, function_nodes);
+        let child_scope = if opens_scope {
+            self.last_nested_scopes.push(0);
+            self.last_nested_scopes.len() - 1
+        } else {
+            scope
+        };
+        let first_leaf = self.leaves.len();
+        for (child, child_field_name) in crate::util::children_with_field_names(node) {
+            self.visit(
+                child,
+                child_field_name,
+                child_scope,
                 function_nodes,
-                leaves,
-                false,
+                function_ids,
             );
-            if !cursor.goto_next_sibling() {
-                break;
-            }
+        }
+        if opens_scope {
+            self.last_nested_scopes[child_scope] = self.last_nested_scopes.len() - 1;
+        }
+        // Every measured function is a function boundary.
+        if opens_scope && function_ids.contains(&node.id()) {
+            self.function_spans
+                .insert(node.id(), (first_leaf..self.leaves.len(), child_scope));
         }
     }
 }
 
 fn add_definition<'a>(
-    definition_scopes_by_name: &mut FxHashMap<&'a str, Vec<String>>,
+    definition_scopes_by_name: &mut FxHashMap<&'a str, Vec<usize>>,
     name: &'a str,
-    scope: &str,
+    scope: usize,
 ) {
     let scopes = definition_scopes_by_name.entry(name).or_default();
-    if !scopes.iter().any(|existing| existing == scope) {
-        scopes.push(scope.to_string());
+    if !scopes.contains(&scope) {
+        scopes.push(scope);
     }
-}
-
-/// A definition reaches a read only from the read's own or an enclosing function scope.
-fn is_definition_visible(definition_scopes: Option<&Vec<String>>, scope: &str) -> bool {
-    definition_scopes.is_some_and(|scopes| {
-        scopes.iter().any(|definition_scope| {
-            scope == definition_scope
-                || (scope.len() > definition_scope.len()
-                    && scope.starts_with(definition_scope.as_str())
-                    && scope.as_bytes()[definition_scope.len()] == b'/')
-        })
-    })
 }
 
 fn is_structural_definition(leaf: &DepDegreeLeaf<'_>) -> bool {
