@@ -142,35 +142,21 @@ pub fn measure_dep_degrees(
     functions
         .iter()
         .map(|&function_node| {
-            let pairs = match walk.function_spans.get(&function_node.id()) {
-                Some((leaf_range, body_scope)) => count_pairs(
-                    &walk,
-                    leaf_range.clone(),
-                    *body_scope,
-                    function_node,
-                    code,
-                    &mut variable_uses,
-                ),
-                // The walk does not enter a function that is a token itself or lies in a comment.
-                None => measure_dep_degree(function_node, code, function_nodes),
-            };
+            let (leaf_range, body_scope) = walk
+                .function_spans
+                .get(&function_node.id())
+                .expect("the walk enters every function boundary");
+            let pairs = count_pairs(
+                &walk,
+                leaf_range.clone(),
+                *body_scope,
+                function_node,
+                code,
+                &mut variable_uses,
+            );
             (function_node.id(), pairs)
         })
         .collect()
-}
-
-/// Approximate def-use pairs of the function's subtree.
-fn measure_dep_degree(function_node: Node<'_>, code: &Source<'_>, function_nodes: &KindSet) -> u64 {
-    let walk = LeafWalk::new(function_node, function_nodes, &FxHashSet::default());
-    let mut variable_uses = vec![None; walk.leaves.len()];
-    count_pairs(
-        &walk,
-        0..walk.leaves.len(),
-        0,
-        function_node,
-        code,
-        &mut variable_uses,
-    )
 }
 
 /// The def-use pairs among the leaves in `leaf_range` of the function whose own body is
@@ -330,7 +316,7 @@ impl<'t> LeafWalk<'t> {
             last_nested_scopes: vec![0],
             function_spans: FxHashMap::default(),
         };
-        walk.visit(root, None, 0, function_nodes, function_ids, true);
+        walk.visit(root, None, 0, function_nodes, function_ids);
         // The walked subtree's own scope encloses every scope opened inside it.
         walk.last_nested_scopes[0] = walk.last_nested_scopes.len() - 1;
         walk
@@ -343,7 +329,6 @@ impl<'t> LeafWalk<'t> {
         scope: usize,
         function_nodes: &KindSet,
         function_ids: &FxHashSet<usize>,
-        is_walked_root: bool,
     ) {
         if matches!(
             node.kind_name(),
@@ -359,7 +344,7 @@ impl<'t> LeafWalk<'t> {
             });
             return;
         }
-        let opens_scope = !is_walked_root && is_function_boundary(node, function_nodes);
+        let opens_scope = is_function_boundary(node, function_nodes);
         let child_scope = if opens_scope {
             self.last_nested_scopes.push(0);
             self.last_nested_scopes.len() - 1
@@ -374,15 +359,13 @@ impl<'t> LeafWalk<'t> {
                 child_scope,
                 function_nodes,
                 function_ids,
-                false,
             );
         }
         if opens_scope {
             self.last_nested_scopes[child_scope] = self.last_nested_scopes.len() - 1;
         }
-        // Every measured function is a function boundary; one the walk does not record is
-        // measured on its own.
-        if (opens_scope || is_walked_root) && function_ids.contains(&node.id()) {
+        // Every measured function is a function boundary.
+        if opens_scope && function_ids.contains(&node.id()) {
             self.function_spans
                 .insert(node.id(), (first_leaf..self.leaves.len(), child_scope));
         }
