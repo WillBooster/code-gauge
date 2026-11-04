@@ -4,6 +4,8 @@ use tree_sitter::Node;
 use crate::tree_index::NodeExt;
 use crate::util::{all_children, find_children_by_field_name, named_children, node_text, Source};
 
+// code-gauge-allow-file fileNcss 648 -- holds the function-recognition and naming rules of every language
+
 /// Declarations without a body have no control flow, so they are signatures, not functions: C++
 /// pure-virtual/`= default`/`= delete` members, abstract/interface/extern methods (Java, C#,
 /// Kotlin), Go assembly-backed function declarations, and Rust trait method signatures, matching
@@ -194,11 +196,11 @@ fn find_parameters_node(node: Node<'_>) -> Option<Node<'_>> {
     })
 }
 
-pub fn collect_nodes<'t>(root: Node<'t>, matches: impl Fn(&str) -> bool) -> Vec<Node<'t>> {
+pub fn collect_nodes<'t>(root: Node<'t>, matches: impl Fn(Node<'t>) -> bool) -> Vec<Node<'t>> {
     let mut nodes = Vec::new();
 
-    fn visit<'t>(node: Node<'t>, matches: &impl Fn(&str) -> bool, nodes: &mut Vec<Node<'t>>) {
-        if matches(node.kind_name()) {
+    fn visit<'t>(node: Node<'t>, matches: &impl Fn(Node<'t>) -> bool, nodes: &mut Vec<Node<'t>>) {
+        if matches(node) {
             nodes.push(node);
         }
 

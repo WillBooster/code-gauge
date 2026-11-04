@@ -36,7 +36,7 @@ enum GrammarId {
     Tsx,
 }
 
-const GRAMMAR_COUNT: usize = GrammarId::Tsx as usize + 1;
+pub const GRAMMAR_COUNT: usize = GrammarId::Tsx as usize + 1;
 
 impl LanguageDefinition {
     pub fn grammar(&self) -> Language {
@@ -54,6 +54,11 @@ impl LanguageDefinition {
             GrammarId::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
             GrammarId::Tsx => tree_sitter_typescript::LANGUAGE_TSX.into(),
         }
+    }
+
+    /// Distinct for each grammar, below GRAMMAR_COUNT.
+    pub fn grammar_index(&self) -> usize {
+        self.grammar_id as usize
     }
 
     /// The grammar's node kind names, indexed by kind id.

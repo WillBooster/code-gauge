@@ -1,34 +1,38 @@
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
+use std::sync::OnceLock;
 use tree_sitter::Node;
 
-use crate::tree_index::NodeExt;
+use crate::languages::LANGUAGES;
+use crate::tree_index::{KindSet, NodeExt};
 use crate::types::CognitiveBlock;
 use crate::util::{all_children, node_text, Source};
 
-/// Node-type lookup sets built once per measurement from the language definition.
+/// Node-type lookup sets of a language.
 pub struct LanguageSets {
-    pub function_nodes: FxHashSet<&'static str>,
-    pub decision_nodes: FxHashSet<&'static str>,
-    pub nesting_nodes: FxHashSet<&'static str>,
-    pub ncss_nodes: FxHashSet<&'static str>,
-    pub ncss_containers: FxHashSet<&'static str>,
-    pub ncss_bare_body_parents: FxHashSet<&'static str>,
+    pub function_nodes: KindSet,
+    pub decision_nodes: KindSet,
+    pub nesting_nodes: KindSet,
+    pub ncss_nodes: KindSet,
+    pub ncss_containers: KindSet,
+    pub ncss_bare_body_parents: KindSet,
 }
 
 impl LanguageSets {
-    pub fn new(language: &crate::languages::LanguageDefinition) -> Self {
-        LanguageSets {
-            function_nodes: language.function_node_types.iter().copied().collect(),
-            decision_nodes: language.decision_node_types.iter().copied().collect(),
-            nesting_nodes: language.nesting_node_types.iter().copied().collect(),
-            ncss_nodes: language.ncss_node_types.iter().copied().collect(),
-            ncss_containers: language.ncss_container_node_types.iter().copied().collect(),
-            ncss_bare_body_parents: language
-                .ncss_bare_body_parent_node_types
-                .iter()
-                .copied()
-                .collect(),
-        }
+    pub fn of(language: &crate::languages::LanguageDefinition) -> &'static LanguageSets {
+        static SETS: [OnceLock<LanguageSets>; LANGUAGES.len()] =
+            [const { OnceLock::new() }; LANGUAGES.len()];
+        let index = LANGUAGES
+            .iter()
+            .position(|candidate| candidate.name == language.name)
+            .expect("every language is listed in LANGUAGES");
+        SETS[index].get_or_init(|| LanguageSets {
+            function_nodes: KindSet::new(language.function_node_types),
+            decision_nodes: KindSet::new(language.decision_node_types),
+            nesting_nodes: KindSet::new(language.nesting_node_types),
+            ncss_nodes: KindSet::new(language.ncss_node_types),
+            ncss_containers: KindSet::new(language.ncss_container_node_types),
+            ncss_bare_body_parents: KindSet::new(language.ncss_bare_body_parent_node_types),
+        })
     }
 }
 
@@ -54,15 +58,15 @@ pub fn is_lambda_body_block(node: Node<'_>) -> bool {
 /// A function node with a body of its own: bodyless declarations (abstract methods, auto-property
 /// accessors, accessor-list properties) open no nesting frame, so members inside them are not
 /// charged as nested functions.
-pub fn is_function_boundary(node: Node<'_>, function_nodes: &FxHashSet<&'static str>) -> bool {
-    function_nodes.contains(node.kind_name())
+pub fn is_function_boundary(node: Node<'_>, function_nodes: &KindSet) -> bool {
+    function_nodes.contains(node)
         && !is_lambda_body_block(node)
         && crate::functions::is_implemented_function(node)
 }
 
 // Sonar cognitive complexity charges a switch/match once as a whole, not per case label. Only
 // named nodes are consulted, so anonymous keyword tokens never match.
-const SWITCH_LIKE_NODE_TYPES: &[&str] = &[
+static SWITCH_LIKE_KINDS: KindSet = KindSet::new(&[
     "switch_statement",
     "switch_expression",
     "expression_switch_statement",
@@ -73,10 +77,10 @@ const SWITCH_LIKE_NODE_TYPES: &[&str] = &[
     "when_expression",
     "case",
     "case_match",
-];
+]);
 
 // Per-case decision nodes: cyclomatic-only, because the switch itself carries the cognitive cost.
-const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
+static CASE_CLAUSE_KINDS: KindSet = KindSet::new(&[
     "case_clause",
     "switch_case",
     "switch_block_statement_group",
@@ -91,7 +95,7 @@ const CASE_CLAUSE_NODE_TYPES: &[&str] = &[
     "when_entry",
     "when",
     "in_clause",
-];
+]);
 
 const IF_LIKE_NODE_TYPES: &[&str] = &["if_statement", "if_expression", "if", "unless"];
 
@@ -303,13 +307,12 @@ impl FunctionBodyPass<'_, '_, '_> {
         let counts_for_own_body = !inside_nested_region && !opens_frame;
 
         let is_decision = self.is_decision(current);
-        let is_case_clause =
-            current.is_named() && CASE_CLAUSE_NODE_TYPES.contains(&current.kind_name());
+        let is_case_clause = current.is_named() && CASE_CLAUSE_KINDS.contains(current);
         // Ruby's `case ... else` arm is an `else` node; like every other language's default branch
         // it nests its contents inside the switch (it cannot go in the Ruby nesting set because
         // `if`/`begin` else branches would then double-nest under their already-nesting parent).
         let is_nesting = current.is_named()
-            && (self.sets.nesting_nodes.contains(current.kind_name())
+            && (self.sets.nesting_nodes.contains(current)
                 || (current.kind_name() == "else" && is_case_else_parent(parent)));
         // `elsif`/`elif`/`else if` continue a flat chain: they add a decision without a nesting
         // surcharge (Sonar cognitive-complexity semantics).
@@ -317,8 +320,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         let is_boolean_operator = is_boolean_operator(current, parent, self.code);
         let is_pattern_guard = is_pattern_guard(current, parent);
 
-        let is_switch_like =
-            current.is_named() && SWITCH_LIKE_NODE_TYPES.contains(&current.kind_name());
+        let is_switch_like = current.is_named() && SWITCH_LIKE_KINDS.contains(current);
         // Opened before the node's own increments so that the block includes them. The sentinel
         // frame's blocks would be those of top-level code, which no function reports.
         if self.frames.len() > 1
@@ -513,8 +515,7 @@ impl FunctionBodyPass<'_, '_, '_> {
         // Anonymous keyword tokens can share a type with named nodes (Ruby's `if` node contains an
         // `if` keyword token), so only named nodes count as decisions.
         node.is_named()
-            && (self.sets.decision_nodes.contains(node.kind_name())
-                || crate::util::is_else_if_clause(node))
+            && (self.sets.decision_nodes.contains(node) || crate::util::is_else_if_clause(node))
             && !is_pathless_switch_branch(node)
     }
 

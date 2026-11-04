@@ -1,6 +1,6 @@
 use tree_sitter::Node;
 
-use crate::tree_index::NodeExt;
+use crate::tree_index::{with_indexed_children, NodeExt};
 
 /// The measured source. Trees are parsed from UTF-16 (matching node-tree-sitter, which parses
 /// JavaScript strings as UTF-16 — tree-sitter's error recovery can differ between encodings), so
@@ -69,13 +69,44 @@ pub fn is_token(node: Node<'_>) -> bool {
 }
 
 pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
-    let mut cursor = node.walk();
-    node.named_children(&mut cursor).collect()
+    with_indexed_children(node, |children| {
+        children
+            .iter()
+            .map(|&(child, _)| child)
+            .filter(Node::is_named)
+            .collect()
+    })
+    .unwrap_or_else(|| {
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor).collect()
+    })
 }
 
 pub fn all_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
-    let mut cursor = node.walk();
-    node.children(&mut cursor).collect()
+    with_indexed_children(node, |children| {
+        children.iter().map(|&(child, _)| child).collect()
+    })
+    .unwrap_or_else(|| {
+        let mut cursor = node.walk();
+        node.children(&mut cursor).collect()
+    })
+}
+
+/// The children with their field names as a TreeCursor reports them.
+pub fn children_with_field_names<'t>(node: Node<'t>) -> Vec<(Node<'t>, Option<&'t str>)> {
+    with_indexed_children(node, <[_]>::to_vec).unwrap_or_else(|| {
+        let mut children = Vec::new();
+        let mut cursor = node.walk();
+        if cursor.goto_first_child() {
+            loop {
+                children.push((cursor.node(), cursor.field_name()));
+                if !cursor.goto_next_sibling() {
+                    break;
+                }
+            }
+        }
+        children
+    })
 }
 
 /// Children carrying the field, with node-tree-sitter's vendored-core semantics: extra children

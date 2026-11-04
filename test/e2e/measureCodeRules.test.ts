@@ -1120,6 +1120,10 @@ function countsOf(language: string, code: string): [number, number, number, numb
   return [distinctOperators, distinctOperands, totalOperators, totalOperands];
 }
 
+function cppLambdaOf(code: string): FunctionMetrics | undefined {
+  return functionsOf('cpp', code).find((fn) => fn.nodeType === 'lambda_expression');
+}
+
 describe('Halstead operator and operand classification', () => {
   it('counts symbolic and keyword operators, and identifiers/literals as operands', () => {
     expect(countsOf('javascript', 'a = b + 1;')).toEqual([2, 3, 2, 3]);
@@ -1143,6 +1147,17 @@ describe('Halstead operator and operand classification', () => {
     // fragment and interpolated identifier.
     expect(countsOf('javascript', 'x = "a" + "a" + `t${y}`;')).toEqual([2, 4, 3, 5]);
     expect(countsOf('javascript', '// only a comment\n/* and another */')).toEqual([0, 0, 0, 0]);
+  });
+
+  it('measures a function inside an atomic operand like the same function elsewhere', () => {
+    // The file's count does not descend into a constrained placeholder type, which holds a lambda.
+    const lambda = '[](int x) { int y = x; y += x; return y; }';
+    const inside = cppLambdaOf(
+      `template <typename T> concept C = true;\nvoid f() { C<decltype(${lambda})> auto v = 1; }`
+    );
+    const alone = cppLambdaOf(`void f() { auto l = ${lambda}; }`);
+    expect(inside?.halstead.volume).toBeGreaterThan(0);
+    expect([inside?.halstead, inside?.depDegree]).toEqual([alone?.halstead, alone?.depDegree]);
   });
 });
 

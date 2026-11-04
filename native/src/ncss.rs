@@ -1,7 +1,6 @@
-use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
-use crate::tree_index::NodeExt;
+use crate::tree_index::{KindSet, NodeExt};
 use crate::util::find_children_by_field_name;
 
 pub const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
@@ -12,7 +11,7 @@ pub const COMMENT_NODE_TYPES: &[&str] = &["comment", "line_comment", "block_comm
 /// constants are not counted either), and Kotlin lambda parameters (siblings of the lambda's
 /// statements). Kotlin's `try_expression` is excluded contextually below because Rust
 /// shares its name: Rust's `?` operator must keep counting as a tail expression.
-const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
+static POSITIONAL_EXCLUSION_KINDS: KindSet = KindSet::new(&[
     "attribute_item",
     "inner_attribute_item",
     "empty_statement",
@@ -24,7 +23,7 @@ const POSITIONAL_EXCLUSION_TYPES: &[&str] = &[
     "shebang",
     "enum_entry",
     "lambda_parameters",
-];
+]);
 
 /// TypeScript interface members count like Java interface members, but the same node types appear
 /// inside object-type annotations (`let x: { a: number }`), which are part of one declaration, so
@@ -59,9 +58,9 @@ const BODYLESS_NCSS_SPECIFIER_TYPES: &[&str] = &[
 pub fn ncss_contribution(
     node: Node<'_>,
     parent: Option<Node<'_>>,
-    countable: &FxHashSet<&'static str>,
-    containers: &FxHashSet<&'static str>,
-    bare_body_parents: &FxHashSet<&'static str>,
+    countable: &KindSet,
+    containers: &KindSet,
+    bare_body_parents: &KindSet,
 ) -> u64 {
     if !node.is_named()
         || COMMENT_NODE_TYPES.contains(&node.kind_name())
@@ -82,8 +81,8 @@ pub fn ncss_contribution(
     // it stands like any other expression.
     let positional = (is_in_container_position(parent, containers)
         || is_bare_body(node, parent, bare_body_parents))
-        && (!containers.contains(node.kind_name()) || node.kind_name() == "lambda_literal")
-        && !POSITIONAL_EXCLUSION_TYPES.contains(&node.kind_name())
+        && (!containers.contains(node) || node.kind_name() == "lambda_literal")
+        && !POSITIONAL_EXCLUSION_KINDS.contains(node)
         && !crate::util::is_kotlin_try_expression(node);
     if (counts_through_node_type(node, countable)
         || positional
@@ -109,8 +108,8 @@ pub fn ncss_contribution(
     contribution
 }
 
-fn counts_through_node_type(node: Node<'_>, countable: &FxHashSet<&'static str>) -> bool {
-    if !countable.contains(node.kind_name()) {
+fn counts_through_node_type(node: Node<'_>, countable: &KindSet) -> bool {
+    if !countable.contains(node) {
         return false;
     }
     if BODYLESS_NCSS_SPECIFIER_TYPES.contains(&node.kind_name()) {
@@ -130,14 +129,11 @@ const TRANSPARENT_WRAPPER_TYPES: &[&str] = &["parenthesized_statements", "attrib
 
 /// Direct container children count positionally, as do the children of TRANSPARENT_WRAPPER_TYPES
 /// in that position.
-fn is_in_container_position(
-    parent: Option<Node<'_>>,
-    containers: &FxHashSet<&'static str>,
-) -> bool {
+fn is_in_container_position(parent: Option<Node<'_>>, containers: &KindSet) -> bool {
     let mut ancestor = parent;
     while let Some(current) = ancestor {
         if !TRANSPARENT_WRAPPER_TYPES.contains(&current.kind_name()) {
-            return containers.contains(current.kind_name());
+            return containers.contains(current);
         }
         ancestor = current.parent_node();
     }
@@ -146,12 +142,8 @@ fn is_in_container_position(
 
 /// A braceless branch or loop body (`if (x) foo()`) stands for the single statement a braced body
 /// would hold.
-fn is_bare_body(
-    node: Node<'_>,
-    parent: Option<Node<'_>>,
-    bare_body_parents: &FxHashSet<&'static str>,
-) -> bool {
-    parent.is_some_and(|parent| bare_body_parents.contains(parent.kind_name()))
+fn is_bare_body(node: Node<'_>, parent: Option<Node<'_>>, bare_body_parents: &KindSet) -> bool {
+    parent.is_some_and(|parent| bare_body_parents.contains(parent))
         && ["consequence", "alternative", "body"]
             .iter()
             .any(|field_name| is_field_of_parent(node, parent, field_name))
@@ -159,13 +151,13 @@ fn is_bare_body(
 
 /// `export const x = 1` nests a countable declaration inside `export_statement`; only the inner
 /// declaration counts, mirroring how PMD counts one statement per declared entity.
-fn is_declaration_wrapper(node: Node<'_>, countable: &FxHashSet<&'static str>) -> bool {
+fn is_declaration_wrapper(node: Node<'_>, countable: &KindSet) -> bool {
     if node.kind_name() != "export_statement" {
         return false;
     }
     node.child_by_field_name("declaration")
         .is_some_and(|declaration| {
-            countable.contains(declaration.kind_name())
+            countable.contains(declaration)
                 || declaration.kind_name() == "internal_module"
                 || declaration.kind_name() == "ambient_declaration"
         })

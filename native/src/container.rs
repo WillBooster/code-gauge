@@ -1,4 +1,3 @@
-use rustc_hash::FxHashSet;
 use tree_sitter::Node;
 
 use crate::functions::{
@@ -6,7 +5,7 @@ use crate::functions::{
     find_string_literal_content, find_value_binding, is_value_group, next_declarator,
     unwrap_transparent_value_wrappers,
 };
-use crate::tree_index::NodeExt;
+use crate::tree_index::{KindSet, NodeExt};
 use crate::util::{named_children, node_text, Source};
 
 const CONTAINER_NODE_TYPES: &[&str] = &[
@@ -58,7 +57,7 @@ const CPP_SCOPE_NODE_TYPES: &[&str] = &[
 /// enclosing it.
 fn enclosing_cpp_scopes<'s>(
     node: Node<'_>,
-    function_nodes: &FxHashSet<&'static str>,
+    function_nodes: &KindSet,
     code: &Source<'s>,
     namespaces_only: bool,
 ) -> Vec<&'s str> {
@@ -98,7 +97,7 @@ fn explicit_ruby_owner(object: Option<Node<'_>>, code: &Source<'_>) -> Option<St
 /// method); or the path a JavaScript object literal holding it is bound to.
 pub fn find_container_name(
     node: Node<'_>,
-    function_nodes: &FxHashSet<&'static str>,
+    function_nodes: &KindSet,
     code: &Source<'_>,
     inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
@@ -201,7 +200,7 @@ fn assigns_attribute(assignment: Node<'_>, target: Node<'_>) -> bool {
 /// to nothing the syntax names.
 fn object_owner(
     object: Node<'_>,
-    function_nodes: &FxHashSet<&'static str>,
+    function_nodes: &KindSet,
     code: &Source<'_>,
     inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
@@ -293,7 +292,7 @@ fn find_qualified_declarator(node: Node<'_>) -> Option<Node<'_>> {
 fn cpp_spelled_owner(
     node: Node<'_>,
     qualified: Node<'_>,
-    function_nodes: &FxHashSet<&'static str>,
+    function_nodes: &KindSet,
     code: &Source<'_>,
     inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
@@ -431,7 +430,7 @@ fn holds_namespaces_without_scope(node: Node<'_>) -> bool {
 /// the function no member of it.
 fn enclosing_owner(
     node: Node<'_>,
-    function_nodes: &FxHashSet<&'static str>,
+    function_nodes: &KindSet,
     code: &Source<'_>,
     inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
@@ -463,7 +462,7 @@ fn enclosing_owner(
 fn spell_owner(
     container: Node<'_>,
     is_friend: bool,
-    function_nodes: &FxHashSet<&'static str>,
+    function_nodes: &KindSet,
     code: &Source<'_>,
     inline_namespaces: &InlineNamespaces<'_>,
 ) -> Option<String> {
