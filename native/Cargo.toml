@@ -23,7 +23,7 @@ rustc-hash = "2"
 # depends only on `tree-sitter-language`, never on upstream's `tree-sitter` crate, whose
 # `links = "tree-sitter"` would conflict with the forked runtime's.
 tree-sitter = { package = "willbooster-tree-sitter", version = "18" }
-tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=34.0.1" }
+tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=34.0.2" }
 tree-sitter-c-sharp = { package = "willbooster-tree-sitter-c-sharp", version = "=19.0.0" }
 tree-sitter-cpp = { package = "willbooster-tree-sitter-cpp", version = "=28.0.0" }
 tree-sitter-go = { package = "willbooster-tree-sitter-go", version = "=9.0.0" }
