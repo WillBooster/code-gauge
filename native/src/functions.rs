@@ -354,148 +354,117 @@ fn find_conditional_signature(node: Node<'_>) -> Option<Node<'_>> {
 pub fn find_function_name(node: Node<'_>, code: &Source<'_>) -> Option<String> {
     let node = find_conditional_signature(node).unwrap_or(node);
     // JS truthiness: empty strings from MISSING nodes act like "no name" at every `if (name)`.
-    if let Some(wrapped_name) =
-        find_wrapped_component_name(node, code).filter(|name| !name.is_empty())
-    {
-        return Some(wrapped_name);
+    find_wrapped_component_name(node, code)
+        .filter(|name| !name.is_empty())
+        .or_else(|| find_member_function_name(node, code))
+        .or_else(|| {
+            node.child_by_field_name("name")
+                .map(|name| node_text(name, code).to_string())
+        })
+        .or_else(|| {
+            unwrap_declarator_name(node.child_by_field_name("declarator"), code)
+                .filter(|name| !name.is_empty())
+        })
+        .or_else(|| {
+            let bound = unwrap_transparent_value_wrappers(node);
+            let parent = bound.parent_node()?;
+            find_closure_binding_name(node, bound, parent, code)
+                .unwrap_or_else(|| find_parent_binding_name(bound, parent, code))
+        })
+}
+
+fn find_closure_binding_name(
+    node: Node<'_>,
+    bound: Node<'_>,
+    parent: Node<'_>,
+    code: &Source<'_>,
+) -> Option<Option<String>> {
+    match node.kind_name() {
+        "closure_expression" if parent.kind_name() == "let_declaration" => Some(
+            parent
+                .child_by_field_name("pattern")
+                .filter(|pattern| pattern.kind_name() == "identifier")
+                .map(|pattern| node_text(pattern, code).to_string()),
+        ),
+        // With a written type (`std::thread worker([] {})`) the lambda is a constructor argument
+        // rather than a deduced closure (`auto f{[] {}}`), so `find_cpp_lambda_declaration` yields
+        // `None` and names nothing.
+        "lambda_expression" => find_cpp_lambda_declaration(parent, bound, code)
+            .map(|(_, decl)| unwrap_declarator_name(decl, code).filter(|name| !name.is_empty())),
+        "func_literal" if parent.kind_name() == "expression_list" => {
+            Some(find_go_func_literal_name(bound, parent, code))
+        }
+        "lambda" if parent.kind_name() == "assignment" => {
+            Some(find_ruby_assignment_name(parent, code))
+        }
+        "lambda" if is_value_group(parent) => Some(find_parallel_assignment_name(bound, code)),
+        "lambda_literal" | "anonymous_function" => find_kotlin_lambda_name(parent, code),
+        // A `lambda { }` / `proc { }` block is measured, but the call around it is what gets bound.
+        "block" | "do_block" if is_ruby_lambda_call(parent, code) => {
+            let call = unwrap_transparent_value_wrappers(parent);
+            Some(
+                call.parent_node()
+                    .and_then(|holder| match holder.kind_name() {
+                        "assignment" => find_ruby_assignment_name(holder, code),
+                        "pair" => find_pair_key_name(holder, code),
+                        _ if is_value_group(holder) => find_parallel_assignment_name(call, code),
+                        _ => None,
+                    }),
+            )
+        }
+        _ => None,
     }
+}
 
-    if let Some(member_name) = find_member_function_name(node, code) {
-        return Some(member_name);
-    }
-
-    if let Some(name_node) = node.child_by_field_name("name") {
-        return Some(node_text(name_node, code).to_string());
-    }
-
-    // C/C++ definitions name the function inside the (possibly pointer-wrapped) declarator chain.
-    if let Some(declarator_name) =
-        unwrap_declarator_name(node.child_by_field_name("declarator"), code)
-            .filter(|name| !name.is_empty())
-    {
-        return Some(declarator_name);
-    }
-
-    let bound = unwrap_transparent_value_wrappers(node);
-    let parent = bound.parent_node()?;
-
-    // A Rust closure bound to a simple `let` identifier takes that identifier as its name.
-    if node.kind_name() == "closure_expression" && parent.kind_name() == "let_declaration" {
-        let pattern_node = parent.child_by_field_name("pattern");
-        return match pattern_node {
-            Some(pattern) if pattern.kind_name() == "identifier" => {
-                Some(node_text(pattern, code).to_string())
-            }
-            _ => None,
+fn find_kotlin_lambda_name(parent: Node<'_>, code: &Source<'_>) -> Option<Option<String>> {
+    let mut holder = parent;
+    while matches!(
+        holder.kind_name(),
+        "labeled_expression" | "annotated_expression"
+    ) {
+        let Some(next) = holder.parent_node() else {
+            return Some(None);
         };
+        holder = next;
     }
+    match holder.kind_name() {
+        "property_declaration" => Some(find_kotlin_property_name(holder, code)),
+        "assignment" => Some(find_assignment_target_name(holder, code)),
+        _ => None,
+    }
+}
 
-    // A C++ lambda assigned to a variable (`auto f = [](int x) { ... };`) takes the variable name,
-    // as does one that direct-initializes a deduced variable (`auto f{[] {}}`), whose type is the
-    // closure itself. With a written type (`std::thread worker([] {})`) the lambda is a constructor
-    // argument, and the constructor stores whatever it likes, so it names nothing.
-    if node.kind_name() == "lambda_expression" {
-        if let Some((_, declarator)) = find_cpp_lambda_declaration(parent, bound, code) {
-            return unwrap_declarator_name(declarator, code).filter(|name| !name.is_empty());
-        }
-    }
-
-    // A Go func literal bound via `add := func...`, `var add = func...`, or `add = func...` takes
-    // the identifier (or selector field) at the same list position.
-    if node.kind_name() == "func_literal" && parent.kind_name() == "expression_list" {
-        return find_go_func_literal_name(bound, parent, code);
-    }
-
-    // Ruby and Python lambdas assigned to a name take that name.
-    if node.kind_name() == "lambda" && parent.kind_name() == "assignment" {
-        return find_ruby_assignment_name(parent, code);
-    }
-    if node.kind_name() == "lambda" && is_value_group(parent) {
-        return find_parallel_assignment_name(bound, code);
-    }
-
-    // A Kotlin lambda or anonymous function initializing a property (`val f = { ... }`, also through
-    // a label or annotation prefix) takes the property name; one assigned to a variable or member
-    // (`run = { ... }`, `obj.run = { ... }`) takes the assigned name.
-    if node.kind_name() == "lambda_literal" || node.kind_name() == "anonymous_function" {
-        let mut holder = parent;
-        while matches!(
-            holder.kind_name(),
-            "labeled_expression" | "annotated_expression"
-        ) {
-            holder = holder.parent_node()?;
-        }
-        if holder.kind_name() == "property_declaration" {
-            return find_kotlin_property_name(holder, code);
-        }
-        if holder.kind_name() == "assignment" {
-            return find_assignment_target_name(holder, code);
-        }
-    }
-    // A `lambda { }` / `proc { }` block is measured, but the call around it is what gets bound.
-    if (node.kind_name() == "block" || node.kind_name() == "do_block")
-        && is_ruby_lambda_call(parent, code)
-    {
-        let call = unwrap_transparent_value_wrappers(parent);
-        return match call.parent_node() {
-            Some(holder) if holder.kind_name() == "assignment" => {
-                find_ruby_assignment_name(holder, code)
-            }
-            Some(holder) if holder.kind_name() == "pair" => find_pair_key_name(holder, code),
-            Some(holder) if is_value_group(holder) => find_parallel_assignment_name(call, code),
-            _ => None,
-        };
-    }
-
-    // An object-literal or Ruby hash property (`{ run: () => {} }`, `{ run: -> {} }`) names its value
-    // after the key; an assignment
-    // (`obj.run = () => {}`, `run = () => {}`, Rust/C++ `self.cb = |x| x`, C++ `N::run = [] {}`,
-    // C# `this.Run = () => 1`) after its target.
-    if parent.kind_name() == "pair" {
-        return find_pair_key_name(parent, code);
-    }
-    // A Go keyed composite-literal element (`S{run: func() {}}`) names its value after the key.
-    if parent.kind_name() == "literal_element" {
-        return find_go_keyed_element_name(parent, code);
-    }
-    // A Rust struct-literal field (`S { cb: || 1 }`) names its closure after the field.
-    if parent.kind_name() == "field_initializer" {
-        return parent
+fn find_parent_binding_name(
+    bound: Node<'_>,
+    parent: Node<'_>,
+    code: &Source<'_>,
+) -> Option<String> {
+    match parent.kind_name() {
+        "pair" => find_pair_key_name(parent, code),
+        "literal_element" => find_go_keyed_element_name(parent, code),
+        "field_initializer" => parent
             .child_by_field_name("field")
-            .map(|field| node_text(field, code).to_string());
-    }
-    // A C++20 designated initializer (`S s{.run = []{}}`) likewise names its value after the field;
-    // an array designator (`{[0] = ...}`) names nothing, like a subscript assignment target.
-    if parent.kind_name() == "initializer_pair" {
-        return find_children_by_field_name(parent, "designator")
+            .map(|field| node_text(field, code).to_string()),
+        // An array designator (`{[0] = ...}`) names nothing, like a subscript assignment target.
+        "initializer_pair" => find_children_by_field_name(parent, "designator")
             .last()
             .filter(|designator| designator.kind_name() == "field_designator")
             .and_then(|designator| designator.named_child(0))
-            .map(|field| node_text(field, code).to_string());
-    }
-    if parent.kind_name() == "assignment_expression" {
-        return find_assignment_target_name(parent, code);
-    }
-
-    // A JavaScript class field (`handle = () => {}`) names its property through the `property`
-    // field; TypeScript's `public_field_definition` exposes the same thing as `name`. A computed
-    // key is as unstable here as in an object literal, and a string key is read the same way.
-    let field_name = if parent.kind_name() == "field_definition" {
-        "property"
-    } else {
-        "name"
-    };
-    let name = parent.child_by_field_name(field_name)?;
-    // Checked only once a name exists, so a high-arity parent without one still costs O(1): the
-    // parent names the function only when the function is its value. A receiver borrows nothing
-    // (`((Runnable) () -> 1).run()` is not named `run`).
-    if !is_value_of_parent(bound, parent) {
-        return None;
-    }
-    match name.kind_name() {
-        "computed_property_name" => None,
-        "string" => find_string_literal_content(name, code),
-        _ => Some(node_text(name, code).to_string()),
+            .map(|field| node_text(field, code).to_string()),
+        "assignment_expression" => find_assignment_target_name(parent, code),
+        _ => {
+            // Checked only once a name exists, so a high-arity parent without one still costs O(1):
+            // the parent names the function only when the function is its value. A receiver borrows
+            // nothing (`((Runnable) () -> 1).run()` is not named `run`).
+            let name = parent
+                .child_by_field_name("name")
+                .filter(|_| is_value_of_parent(bound, parent))?;
+            match name.kind_name() {
+                "computed_property_name" => None,
+                "string" => find_string_literal_content(name, code),
+                _ => Some(node_text(name, code).to_string()),
+            }
+        }
     }
 }
 
