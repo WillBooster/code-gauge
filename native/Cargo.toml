@@ -31,7 +31,7 @@ tree-sitter-java = { package = "willbooster-tree-sitter-java", version = "=34.0.
 tree-sitter-javascript = { package = "willbooster-tree-sitter-javascript", version = "=25.0.0" }
 tree-sitter-kotlin = { package = "willbooster-tree-sitter-kotlin", version = "=21.0.0" }
 tree-sitter-python = { package = "willbooster-tree-sitter-python", version = "=19.0.0" }
-tree-sitter-ruby = { package = "willbooster-tree-sitter-ruby", version = "=17.0.0" }
+tree-sitter-ruby = { package = "willbooster-tree-sitter-ruby", version = "=17.0.1" }
 tree-sitter-rust = { package = "willbooster-tree-sitter-rust", version = "=19.0.0" }
 tree-sitter-typescript = { package = "willbooster-tree-sitter-typescript", version = "=29.0.0" }
 

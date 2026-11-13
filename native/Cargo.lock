@@ -529,9 +529,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-ruby"
-version = "17.0.0"
+version = "17.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "129e7229c07e3029de6477f7fb60dddb5eafb0a1ba3de860138326b377153d70"
+checksum = "151968f325e7e2e2fad7a2e93772c36d78d9c62173f11b3da5a9d9bb14ad6049"
 dependencies = [
  "cc",
  "tree-sitter-language",
