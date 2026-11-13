@@ -321,7 +321,6 @@ const JS_NCSS_NODES: &[&str] = &[
     "abstract_method_signature",
     "class_static_block",
     "field_definition",
-    "public_field_definition",
     "type_alias_declaration",
     "interface_declaration",
     "enum_declaration",

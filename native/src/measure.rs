@@ -339,13 +339,25 @@ fn parse_source(
     source: &Source<'_>,
     language: &LanguageDefinition,
 ) -> Result<tree_sitter::Tree, String> {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&language.grammar())
-        .map_err(|error| error.to_string())?;
-    parser
-        .parse_utf16_le(source.to_utf16(), None)
-        .ok_or_else(|| "parse failed".to_string())
+    thread_local! {
+        static PARSER: std::cell::RefCell<(tree_sitter::Parser, Option<usize>)> =
+            std::cell::RefCell::new((tree_sitter::Parser::new(), None));
+    }
+    let utf16 = source.to_utf16();
+    PARSER.with_borrow_mut(|(parser, grammar_index)| {
+        if *grammar_index != Some(language.grammar_index()) {
+            *grammar_index = None;
+            parser
+                .set_language(&language.grammar())
+                .map_err(|error| error.to_string())?;
+            *grammar_index = Some(language.grammar_index());
+        }
+        let tree = parser.parse_utf16_le(utf16);
+        if tree.is_none() {
+            parser.reset();
+        }
+        tree.ok_or_else(|| "parse failed".to_string())
+    })
 }
 
 struct CommentSpan {

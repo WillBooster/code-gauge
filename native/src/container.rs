@@ -212,12 +212,8 @@ fn object_owner(
             .is_some_and(|value| value.id() == bound.id())
     };
     match holder.kind_name() {
-        "variable_declarator" | "field_definition" | "public_field_definition"
-            if is_value("value") =>
-        {
-            let name = holder
-                .child_by_field_name("name")
-                .or_else(|| holder.child_by_field_name("property"))?;
+        "variable_declarator" | "field_definition" if is_value("value") => {
+            let name = holder.child_by_field_name("name")?;
             // A field may be named by a literal (`"handlers" = {}`); a computed name or a
             // destructuring pattern names nothing.
             let name = match name.kind_name() {
