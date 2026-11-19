@@ -1,3 +1,4 @@
 [tools]
 node = "26.13.1"
 bun = "1.4.4"
+rust = { version = "1.100.0", profile = "minimal", components = ["clippy", "rustfmt"] }

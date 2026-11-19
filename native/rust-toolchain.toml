@@ -2,5 +2,5 @@
 # runners) compile with one rustc instead of drifting on "latest stable"; the reusable test-rust
 # workflow warns when this file is absent.
 [toolchain]
-channel = "1.97.1"
+channel = "1.100.0"
 profile = "minimal"
