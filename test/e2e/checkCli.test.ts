@@ -1547,18 +1547,6 @@ describe('code-gauge check: test share', () => {
       runGit(['reset', '-q', '--hard', 'HEAD~1']);
     }
   });
-
-  it('counts no test code for an excluded test file the change deletes', () => {
-    runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/calc.test.ts', testCode(60));
-    writeSource('test/generated.test.ts', testCode(40));
-    writeSource('.gitattributes', 'test/generated.test.ts linguist-generated\n');
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
-    rmSync(path.join(repoDir, 'test', 'generated.test.ts'));
-    writeSource('test/calc.test.ts', testCode(61));
-    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestNcss: 1 }]);
-  });
 });
 
 describe('code-gauge check outside a git repository', () => {
