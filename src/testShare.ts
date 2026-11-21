@@ -77,6 +77,10 @@ async function scanWithTests({
     new Set(),
     targetPath
   );
+  // A failure of the measurement itself (a missing native addon) ends the check, as the check's own scan does.
+  if (scan.fatalError) {
+    throw new Error(scan.fatalError);
+  }
   return {
     files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics })),
     errors: scan.errors,
