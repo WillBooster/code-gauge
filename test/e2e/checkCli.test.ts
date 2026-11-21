@@ -875,7 +875,9 @@ export const scale = 2;
     const result = runCheck(['src/calc.ts', '--json']);
     expect(result.status).toBe(1);
     const malformed = 'malformed directive; expected `code-gauge-allow <metric> -- <reason>` with a reason';
-    expect((JSON.parse(result.stdout) as { directiveProblems: unknown }).directiveProblems).toEqual([
+    const report = JSON.parse(result.stdout) as { passed: boolean; directiveProblems: unknown };
+    expect(report.passed).toBe(false);
+    expect(report.directiveProblems).toEqual([
       { file: 'src/calc.ts', line: 1, message: malformed },
       { file: 'src/calc.ts', line: 10, message: malformed },
       {
@@ -986,14 +988,15 @@ export const scale = 2;
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource(
       'src/wide.py',
-      'x = 1\n# code-gauge-allow functionNcss -- registered handlers\n\ndef wide(a, b, c, d, e, f, g, h):\n    return a\n'
+      'def other(a, b, c, d, e, f, g, h):\n    return a\n\n\n# code-gauge-allow functionNcss -- registered handlers\n\ndef wide(a):\n    return a\n'
     );
     runGit(['add', '-A']);
     runGit(['commit', '-q', '-m', 'allow']);
 
     writeSource('src/wide.py', readSource('src/wide.py').replace('handlers\n\n', 'handlers\n'));
+    // `other` lies outside the change, so only checking the whole file reports it.
     expect(runCheck(['--base', 'HEAD']).stdout).toContain(
-      'error: src/wide.py:2: code-gauge-allow functionNcss: no functionNcss limit is exceeded; remove the directive\n'
+      'error: src/wide.py:5: code-gauge-allow functionNcss: no functionNcss limit is exceeded; remove the directive\nwarning: src/wide.py:1-2 other: parameters 8 (max 6)\n'
     );
   });
 
