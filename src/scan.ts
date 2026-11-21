@@ -19,6 +19,11 @@ export interface ScanOptions {
   /** Set when only each file's metrics are used: no cross-file duplication data is collected. */
   metricsOnly?: boolean;
   /**
+   * Whether to measure the path chosen for a real file (absolute); unset measures all. Choosing
+   * among every listed path first keeps the choice what a full scan makes.
+   */
+  measuresChosenPath?: (absolutePath: string) => boolean;
+  /**
    * Loads the exclusion covering the files a directory scan found (absolute paths); an explicitly
    * targeted file is always measured.
    */
@@ -250,7 +255,7 @@ async function measureCandidates(context: ScanContext): Promise<void> {
       return;
     }
     const chosen = await chooseMeasuredPath(realFile, candidates, exclusion);
-    if (chosen !== undefined) {
+    if (chosen !== undefined && (context.options.measuresChosenPath?.(chosen.file) ?? true)) {
       await measureFile(chosen.file, chosen.language, 'directory', context, realFile);
     }
   }

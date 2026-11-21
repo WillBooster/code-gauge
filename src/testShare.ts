@@ -60,6 +60,7 @@ async function scanWithTests({
   repoRoot,
   repositoryFiles,
   targetPath,
+  isInTarget,
   exclusion,
   options,
 }: RepositoryTestShareInput): Promise<MeasuredFiles> {
@@ -72,6 +73,7 @@ async function scanWithTests({
       ...options,
       includeTests: true,
       metricsOnly: true,
+      measuresChosenPath: (absolutePath) => isInTarget(formatPath(absolutePath, repoRoot)),
       // Only NCSS is kept, so no region is long enough to search for clones.
       duplication: { ...options.duplication, minTokens: noCloneSearchTokens },
       loadExclusion: () => Promise.resolve(exclusion),
