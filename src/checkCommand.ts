@@ -553,21 +553,7 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   } else {
     writeStdout(`Threshold violations: ${counts} (${checked}).\n`);
   }
-  // Directive problems are errors, so they join the error-level violations, ordered by path and line.
-  const errorLines = [
-    ...violations
-      .filter(({ level }) => level === 'error')
-      .map((violation) => ({
-        file: violation.file,
-        line: firstLineOf(violation),
-        text: formatViolation(violation, scope.mergeBase !== undefined),
-      })),
-    ...directiveProblems.map((problem) => ({ ...problem, text: formatDirectiveProblem(problem) })),
-  ].toSorted((left, right) => compareStrings(left.file, right.file) || left.line - right.line);
-  const warningLines = violations
-    .filter(({ level }) => level === 'warning')
-    .map((violation) => formatViolation(violation, scope.mergeBase !== undefined));
-  for (const text of [...errorLines.map(({ text }) => text), ...warningLines]) {
+  for (const text of formatViolationLines(violations, directiveProblems, scope.mergeBase !== undefined)) {
     writeStdout(`${text}\n`);
   }
 
@@ -640,6 +626,34 @@ function countViolations(violations: readonly Violation[]): {
     duplicationViolationCount: count('duplication'),
     projectViolationCount: count('project'),
   };
+}
+
+/**
+ * The text report's lines: the errors, directive problems among them, then the warnings, each level
+ * ordered by path and line.
+ */
+function formatViolationLines(
+  violations: readonly Violation[],
+  directiveProblems: readonly LocatedDirectiveProblem[],
+  checksChange: boolean
+): string[] {
+  const linesOf = (level: Violation['level']): { file: string; line: number; text: string }[] =>
+    violations
+      .filter((violation) => violation.level === level)
+      .map((violation) => ({
+        file: violation.file,
+        line: firstLineOf(violation),
+        text: formatViolation(violation, checksChange),
+      }));
+  const errorLines = [
+    ...linesOf('error'),
+    ...directiveProblems.map((problem) => ({ ...problem, text: formatDirectiveProblem(problem) })),
+  ];
+  return [...errorLines.toSorted(byLocation), ...linesOf('warning').toSorted(byLocation)].map(({ text }) => text);
+}
+
+function byLocation(left: { file: string; line: number }, right: { file: string; line: number }): number {
+  return compareStrings(left.file, right.file) || left.line - right.line;
 }
 
 /** One violation as a single line: its level, the location, then every limit it exceeds. */
