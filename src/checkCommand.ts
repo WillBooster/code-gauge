@@ -392,14 +392,13 @@ function decideTestShare(measuresTestShare: boolean, sparse: boolean, warnings: 
 
 /** Adds the test share, when every file under the target was measured, and the files there that could not be, to a scope. */
 async function addTestShare(scope: CheckScope, input: RepositoryTestShareInput | undefined): Promise<CheckScope> {
-  if (input === undefined) {
+  // The check already failed to measure a file under the target, so the share would be partial.
+  if (input === undefined || scope.errors.length > 0) {
     return scope;
   }
-  const { share, errors: shareErrors } = await measureRepositoryTestShare(input);
-  // The share reports failures under the target only, some of which the check already reported.
-  const errors = [...new Set([...scope.errors, ...shareErrors])];
+  const { share, errors } = await measureRepositoryTestShare(input);
   // A share of partial totals would name tests to delete that the whole project admits.
-  return { ...scope, testShare: errors.length === 0 ? share : undefined, errors };
+  return { ...scope, testShare: errors.length === 0 ? share : undefined, errors: [...errors] };
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
