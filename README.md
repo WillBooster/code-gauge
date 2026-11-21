@@ -110,9 +110,11 @@ like the ranking command. The thresholds:
 | `maxTestNcssPercent`              | the target's test NCSS, as a percentage of its other NCSS, is above | off     | 30    |
 
 `maxTestNcssPercent` holds the test code of the checked directory in proportion to its production
-code: the NCSS of its test files (the files the check otherwise skips as tests) against that of its
-other measured files. It is one violation of the whole directory, of kind `project`, and none when
-the target is a file or the directory holds no production code. With `--base`, it is reported only
+code: the NCSS of its test files (the files a check of the whole repository skips as tests, so a
+targeted test directory holds only tests) against that of the other files the check measures. A
+test file that cannot be read leaves the check incomplete, like a file the check covers. It is one
+violation of the whole directory, of kind `project`, and none when the target is a file or the
+directory holds no production code. With `--base`, it is reported only
 when the change adds test NCSS, counted from the changed test files at the merge-base and in the
 working tree, so a change that only removes production code or keeps the test code as it was is
 never blamed for a share it did not raise. No directive allows it, and it has no per-language

@@ -1,11 +1,11 @@
-import { lstat, readFile } from 'node:fs/promises';
+import { lstat, readFile, realpath } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { mapConcurrently } from '@willbooster/shared-lib';
+import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
 import type { Exclusion } from './exclusion.js';
-import { type ChangedFile, readFileAt } from './git.js';
+import { type ChangedFile, listRegularFilesAt, readFileAt } from './git.js';
 import { measureCode } from './metrics.js';
 import { type FileMetrics, getLanguage, isTestPath, type ScanOptions } from './scan.js';
 import type { TestShare } from './thresholds.js';
@@ -33,80 +33,117 @@ export interface RepositoryTestShareInput {
   };
 }
 
+/** The share, or the failures to measure test files that leave it unknown. */
+export interface TestShareMeasurement {
+  share: MeasuredTestShare;
+  /** Test files that could not be measured, each starting with its path like the scan's errors. */
+  errors: string[];
+}
+
 /**
  * Measures the test files of the checked directory, which the check itself does not measure unless
  * it includes tests, and, for a change, the same files at the merge-base where the change touched
- * them, read from git so nothing is checked out.
+ * them, read from git so nothing is checked out. A file is a test file by its repository-relative
+ * path, so targeting a test directory does not turn its files into production code.
  */
-export async function measureRepositoryTestShare(input: RepositoryTestShareInput): Promise<MeasuredTestShare> {
+export async function measureRepositoryTestShare(input: RepositoryTestShareInput): Promise<TestShareMeasurement> {
   const { repoRoot, targetPath, exclusion, options } = input;
-  const isTestIn = (pathExclusion: Exclusion, relativePath: string): boolean => {
-    const scopedPath = scopeToTarget(relativePath, targetPath);
-    return (
-      scopedPath !== undefined &&
-      isTestPath(scopedPath, options) &&
-      !pathExclusion.isExcludedPath(path.join(repoRoot, relativePath))
-    );
+  const isTestIn = (pathExclusion: Exclusion, relativePath: string): boolean =>
+    isInTarget(relativePath, targetPath) &&
+    isTestPath(relativePath, options) &&
+    !pathExclusion.isExcludedPath(path.join(repoRoot, relativePath));
+  const errors: string[] = [];
+  const measureHead = async (relativePath: string): Promise<number> => {
+    try {
+      return await measureTestFile(input, relativePath);
+    } catch (error) {
+      errors.push(`${relativePath}: ${getErrorMessage(error)}`);
+      return 0;
+    }
   };
-  const isTest = (relativePath: string): boolean => isTestIn(exclusion, relativePath);
   const testNcssByPath = new Map(
     await mapConcurrently(
-      [...input.repositoryFiles].filter((relativePath) => isTest(relativePath)),
+      [...input.repositoryFiles].filter((relativePath) => isTestIn(exclusion, relativePath)),
       os.availableParallelism() * 2,
-      async (relativePath) => [relativePath, await measureTestFile(input, exclusion, relativePath)] as const
+      async (relativePath) => [relativePath, await measureHead(relativePath)] as const
     )
   );
   const share = {
     testNcss: sum(testNcssByPath.values()),
     productionNcss: sum(
       input.measuredFiles
-        .filter(({ file }) => scopeToTarget(file, targetPath) !== undefined && !isTest(file))
+        .filter(({ file }) => isInTarget(file, targetPath) && !testNcssByPath.has(file))
         .map(({ metrics }) => metrics.ncssCount)
     ),
   };
   if (input.base === undefined) {
-    return share;
+    return { share, errors };
   }
   const { mergeBase, changedFiles } = input.base;
-  const baseExclusion = await input.base.loadExclusion(
-    changedFiles.flatMap(({ basePath }) => (basePath === undefined ? [] : [basePath]))
+  const basePaths = changedFiles.flatMap(({ basePath }) => (basePath === undefined ? [] : [basePath]));
+  const baseExclusion = await input.base.loadExclusion(basePaths);
+  const baseTestPaths = await listRegularFilesAt(
+    repoRoot,
+    mergeBase,
+    basePaths.filter((basePath) => isTestIn(baseExclusion, basePath))
   );
   const changes = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
     const headNcss = changed.status === 'deleted' ? 0 : (testNcssByPath.get(changed.headPath) ?? 0);
     const { basePath } = changed;
-    const baseNcss =
-      basePath !== undefined && isTestIn(baseExclusion, basePath)
-        ? measureTestCode(await readFileAt(repoRoot, mergeBase, basePath), basePath, input, baseExclusion)
-        : 0;
-    return headNcss - baseNcss;
+    if (basePath === undefined || !baseTestPaths.has(basePath)) {
+      return headNcss;
+    }
+    try {
+      return (
+        headNcss - measureTestCode(await readFileAt(repoRoot, mergeBase, basePath), basePath, input, baseExclusion)
+      );
+    } catch (error) {
+      errors.push(`${basePath} at ${mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`);
+      return headNcss;
+    }
   });
-  return { ...share, addedTestNcss: sum(changes) };
+  return { share: { ...share, addedTestNcss: sum(changes) }, errors };
 }
 
-/** Splits the files a directory walk measured with tests included into tests and the rest. */
-export function partitionWalkedTestShare(files: readonly FileMetrics[], root: string, options: ScanOptions): TestShare {
-  const testFiles = files.filter(({ file }) =>
-    isTestPath(path.relative(root, file).replaceAll(path.sep, '/'), options)
-  );
+/**
+ * The share of a directory walk: production is what the check measured, and tests are the other
+ * files the walk with tests included measured, so a file reached through a test-directory alias of
+ * a production directory stays production.
+ */
+export async function partitionWalkedTestShare(
+  productionFiles: readonly FileMetrics[],
+  allFiles: readonly FileMetrics[],
+  root: string,
+  options: ScanOptions
+): Promise<TestShare> {
+  const productionRealFiles = new Set(await Promise.all(productionFiles.map((file) => resolveRealFile(file))));
+  const testFiles = [];
+  for (const file of allFiles) {
+    if (
+      isTestPath(path.relative(root, file.file).replaceAll(path.sep, '/'), options) &&
+      !productionRealFiles.has(await resolveRealFile(file))
+    ) {
+      testFiles.push(file);
+    }
+  }
   return {
     testNcss: sum(testFiles.map(({ metrics }) => metrics.ncssCount)),
-    productionNcss: sum(files.filter((file) => !testFiles.includes(file)).map(({ metrics }) => metrics.ncssCount)),
+    productionNcss: sum(productionFiles.map(({ metrics }) => metrics.ncssCount)),
   };
 }
 
-/** A file that is not a regular file or cannot be read counts as no test code, as the check would not measure it. */
-async function measureTestFile(
-  input: RepositoryTestShareInput,
-  exclusion: Exclusion,
-  relativePath: string
-): Promise<number> {
+async function resolveRealFile({ file }: FileMetrics): Promise<string> {
+  return await realpath(file).catch(() => file);
+}
+
+/** A path that is not a regular file is no source, as in the scan; a file that cannot be read throws. */
+async function measureTestFile(input: RepositoryTestShareInput, relativePath: string): Promise<number> {
   const absolutePath = path.join(input.repoRoot, relativePath);
-  const stats = await lstat(absolutePath).catch(() => {});
-  if (!stats?.isFile()) {
+  const stats = await lstat(absolutePath);
+  if (!stats.isFile()) {
     return 0;
   }
-  const code = await readFile(absolutePath, 'utf8').catch(() => {});
-  return code === undefined ? 0 : measureTestCode(code, relativePath, input, exclusion);
+  return measureTestCode(await readFile(absolutePath, 'utf8'), relativePath, input, input.exclusion);
 }
 
 function measureTestCode(
@@ -119,20 +156,11 @@ function measureTestCode(
   if (language === undefined || exclusion.isGeneratedCode(path.join(input.repoRoot, relativePath), code)) {
     return 0;
   }
-  try {
-    return measureCode(code, { language, duplication: input.options.duplication }).ncssCount;
-  } catch {
-    // A test file the parser cannot read is not a measured file, as in the check itself.
-    return 0;
-  }
+  return measureCode(code, { language, duplication: input.options.duplication }).ncssCount;
 }
 
-/** The path below the target directory, or undefined outside it. */
-function scopeToTarget(relativePath: string, targetPath: string): string | undefined {
-  if (targetPath === '') {
-    return relativePath;
-  }
-  return relativePath.startsWith(`${targetPath}/`) ? relativePath.slice(targetPath.length + 1) : undefined;
+function isInTarget(relativePath: string, targetPath: string): boolean {
+  return targetPath === '' || relativePath.startsWith(`${targetPath}/`);
 }
 
 function sum(values: Iterable<number>): number {

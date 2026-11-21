@@ -24,6 +24,7 @@ import {
   configSearchDirectory,
   formatPath,
   getLanguage,
+  isTestPath,
   isWithinDirectory,
   resolveTarget,
   scanListedFiles,
@@ -182,14 +183,7 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
   let testShare;
   const targetStat = await stat(canonicalTarget);
   if (targetStat.isDirectory()) {
-    const withTests = options.includeTests
-      ? scan
-      : await scanTarget(canonicalTarget, {
-          ...options,
-          includeTests: true,
-          loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
-        });
-    testShare = partitionWalkedTestShare(withTests.files, canonicalTarget, options);
+    testShare = await measureWalkedTestShare(scan, canonicalTarget, searchDirectory, options);
   }
   return {
     files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
@@ -200,6 +194,31 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
     testShare,
     checkedDirectory: '.',
   };
+}
+
+/** The scan measured tests too when the options include them; they are split off by path. */
+async function measureWalkedTestShare(
+  scan: ScanResult,
+  canonicalTarget: string,
+  searchDirectory: string,
+  options: ResolvedOptions
+): Promise<MeasuredTestShare> {
+  if (options.includeTests) {
+    const isTest = ({ file }: { file: string }): boolean =>
+      isTestPath(formatPath(file, canonicalTarget), { ...options, includeTests: false });
+    return await partitionWalkedTestShare(
+      scan.files.filter((file) => !isTest(file)),
+      scan.files,
+      canonicalTarget,
+      options
+    );
+  }
+  const withTests = await scanTarget(canonicalTarget, {
+    ...options,
+    includeTests: true,
+    loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
+  });
+  return await partitionWalkedTestShare(scan.files, withTests.files, canonicalTarget, options);
 }
 
 interface RepositoryTarget {
@@ -273,27 +292,30 @@ async function scanRepository(
     files = await attachHunks(measuredFiles, changesInTarget, repoRoot, mergeBase);
     isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
   }
-  return {
+  const scope = {
     files,
     duplication,
     ...partitionErrors(scan, isCovered),
     root: repoRoot,
     mergeBase,
-    // A targeted file is no project to hold a share of.
-    testShare:
-      targetFile === undefined
-        ? await measureRepositoryTestShare({
-            repoRoot,
-            repositoryFiles,
-            targetPath: targetDirectory,
-            exclusion,
-            options,
-            measuredFiles,
-            base: change,
-          })
-        : undefined,
     checkedDirectory: targetDirectory || '.',
   };
+  // A targeted file is no project to hold a share of.
+  return await addTestShare(
+    scope,
+    targetFile === undefined
+      ? { repoRoot, repositoryFiles, targetPath: targetDirectory, exclusion, options, measuredFiles, base: change }
+      : undefined
+  );
+}
+
+/** Adds the test share, and the test files that could not be measured for it, to a scope. */
+async function addTestShare(scope: CheckScope, input: RepositoryTestShareInput | undefined): Promise<CheckScope> {
+  if (input === undefined) {
+    return scope;
+  }
+  const { share, errors } = await measureRepositoryTestShare(input);
+  return { ...scope, testShare: share, errors: [...scope.errors, ...errors] };
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */

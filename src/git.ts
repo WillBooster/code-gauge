@@ -187,6 +187,24 @@ export async function readFileAt(repoRoot: string, commit: string, file: string)
   return await runGit(repoRoot, ['show', `${commit}:${file}`]);
 }
 
+/** The paths among `paths` that `commit` holds as regular files, not symbolic links or submodules. */
+export async function listRegularFilesAt(
+  repoRoot: string,
+  commit: string,
+  paths: readonly string[]
+): Promise<Set<string>> {
+  if (paths.length === 0) {
+    return new Set();
+  }
+  const output = await runGit(repoRoot, ['ls-tree', '-z', commit, '--', ...paths]);
+  return new Set(
+    output.split('\0').flatMap((entry) => {
+      const [meta, file] = entry.split('\t');
+      return meta?.startsWith('100') && file !== undefined ? [file] : [];
+    })
+  );
+}
+
 /** A file's `linguist-generated` / `linguist-vendored` attributes; undefined when unspecified. */
 export interface LinguistAttributes {
   generated?: boolean;

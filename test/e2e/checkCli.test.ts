@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -1257,6 +1257,52 @@ describe('code-gauge check: test share', () => {
 
     writeSource('test/calc.test.ts', testCode(59));
     expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
+  });
+
+  it('counts the files of a targeted test directory as tests, leaving no production code to compare', () => {
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/helper.ts', calc);
+    expect(projectViolations(['test'])).toEqual([]);
+  });
+
+  it('counts a symbolic link the change replaces with a test as no test code at the merge-base', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    symlinkSync('../src/legacy.ts', path.join(repoDir, 'test', 'alias.test.ts'));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    rmSync(path.join(repoDir, 'test', 'alias.test.ts'));
+    writeSource('test/alias.test.ts', 'total([1]);\n');
+    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestNcss: 1 }]);
+  });
+
+  it.skipIf(runAsRoot)('leaves the check incomplete when a test file cannot be read', () => {
+    writeSource('test/calc.test.ts', testCode(60));
+    chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o000);
+    try {
+      const result = runCheck([]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('Error: test/calc.test.ts: ');
+    } finally {
+      chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o644);
+    }
+  });
+
+  it('keeps production files reached through a test-directory alias outside git production', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-alias-'));
+    try {
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
+      mkdirSync(path.join(dir, 'app'));
+      writeFileSync(path.join(dir, 'app', 'calc.ts'), calc);
+      mkdirSync(path.join(dir, 'zlib'));
+      writeFileSync(path.join(dir, 'zlib', 'legacy.ts'), legacy);
+      mkdirSync(path.join(dir, 'spec'));
+      symlinkSync('../zlib', path.join(dir, 'spec', 'helpers'));
+      const report = JSON.parse(runCheck(['--json', dir], dir).stdout) as ProjectReport;
+      expect(report.violations.filter(({ kind }) => kind === 'project')).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('counts no test code for an excluded test file the change deletes', () => {
