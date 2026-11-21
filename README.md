@@ -115,8 +115,9 @@ like the ranking command. The thresholds:
 code: the NCSS of its test files against that of the other files the check measures. A file counts
 when the check would take it with tests included, judged by its path below the target as the scan
 judges it (so `check vendor` counts the tests in `vendor`), and is a test by its whole repository
-path (a test directory name or a test file name anywhere in it, so a targeted test directory holds
-only tests). A
+path: a test directory name in any of its directories, or a test file name as its file name (so a
+targeted test directory holds only tests, while a directory named like a test file does not make
+its files tests). A
 test file that cannot be read leaves the check incomplete, like a file the check covers, and no share is reported while any file under the target is unmeasured. It is one
 violation of the whole directory, of kind `project`, and none when the target is a file, the
 directory holds no production code, or the check runs outside a git repository, where there is no
