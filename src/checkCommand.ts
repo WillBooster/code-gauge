@@ -265,7 +265,7 @@ async function scanRepository(
   // A change that touches no test under the target is not blamed for a share it did not raise.
   const sharesProject =
     decideTestShare(measuresTestShare, sparse, scan.warnings) &&
-    (change === undefined || touchesTests(change, targetDirectory, options));
+    (change === undefined || touchesTests(change, repositoryFiles, targetDirectory, options));
   const { files, isCovered } =
     change === undefined
       ? { files: measuredFiles.filter(({ file }) => isInTarget(file)), isCovered: isInTargetError }
@@ -332,13 +332,20 @@ async function resolveChange(repoRoot: string, base: string, unlistedTarget: str
 }
 
 /**
- * Whether the change leaves a test it touched under the target (added, modified, renamed to, or
- * untracked), so a change that only deletes or moves tests out is not asked to prune further.
+ * Whether the change leaves a test it touched under the target among the files the check lists
+ * (added, modified, renamed to, or untracked), so a change that only deletes or moves tests out is
+ * not asked to prune further. The listing, not git's status, tells a removal: git also reports a
+ * path it cannot reach as deleted, which the listing keeps for the check to measure.
  */
-function touchesTests(change: Change, targetDirectory: string, options: ResolvedOptions): boolean {
+function touchesTests(
+  change: Change,
+  repositoryFiles: ReadonlySet<string>,
+  targetDirectory: string,
+  options: ResolvedOptions
+): boolean {
   return change.changedFiles.some(
-    ({ status, headPath }) =>
-      status !== 'deleted' &&
+    ({ headPath }) =>
+      repositoryFiles.has(headPath) &&
       (targetDirectory === '' || headPath.startsWith(`${targetDirectory}/`)) &&
       isTestFileBelow(headPath, targetDirectory, options)
   );

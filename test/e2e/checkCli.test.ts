@@ -1432,6 +1432,21 @@ describe('code-gauge check: test share', () => {
     }
   });
 
+  it.skipIf(runAsRoot)('leaves a branch check incomplete when a changed test becomes unreachable', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('app/calc.ts', calc);
+    writeSource('app/test/calc.test.ts', testCode(60));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource('app/test/calc.test.ts', testCode(61));
+    chmodSync(path.join(repoDir, 'app', 'test'), 0o000);
+    try {
+      expect(runCheck(['app', '--base', 'HEAD']).status).toBe(2);
+    } finally {
+      chmodSync(path.join(repoDir, 'app', 'test'), 0o755);
+    }
+  });
+
   it.skipIf(runAsRoot)('leaves the check incomplete when a test file cannot be read', () => {
     writeSource('test/calc.test.ts', testCode(60));
     chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o000);
