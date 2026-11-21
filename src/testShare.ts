@@ -111,14 +111,9 @@ async function measureAddedTestNcss(
     basePaths.filter((basePath) => isTestIn(baseExclusion, basePath))
   );
   const changes = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
-    // Each side counts by itself. The head side is what the working tree holds at the head path;
-    // the base side counts once its path left (a deletion or a rename's source) or its head is
-    // held, so a path a sparse checkout leaves out is compared on neither side.
-    const headHeld = changed.status !== 'deleted' && input.repositoryFiles.has(changed.headPath);
-    const headNcss = headHeld ? (testNcssByPath.get(changed.headPath) ?? 0) : 0;
+    const headNcss = changed.status === 'deleted' ? 0 : (testNcssByPath.get(changed.headPath) ?? 0);
     const { basePath } = changed;
-    const baseLeft = changed.status === 'deleted' || changed.status === 'renamed';
-    if (basePath === undefined || !baseTestPaths.has(basePath) || (!baseLeft && !headHeld)) {
+    if (basePath === undefined || !baseTestPaths.has(basePath)) {
       return headNcss;
     }
     try {

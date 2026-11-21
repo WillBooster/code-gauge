@@ -1476,62 +1476,27 @@ describe('code-gauge check: test share', () => {
     expect(report.violations.find(({ level }) => level === 'warning')?.kind).toBe('project');
   });
 
-  it('counts a test file a sparse checkout leaves out as no test code', () => {
+  it('measures no share in a sparse checkout, saying so', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-sparse-'));
     try {
       const git = (...args: string[]): void => {
         expect(spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).status).toBe(0);
       };
-      const commit = (message: string): void => {
-        git('add', '-A');
-        git(
-          '-c',
-          'user.name=t',
-          '-c',
-          'user.email=t@example.com',
-          '-c',
-          'commit.gpgsign=false',
-          'commit',
-          '-qm',
-          message
-        );
-      };
-      const projectCount = (args: string[], target = dir): number => {
-        const result = runCheck([...args, '--base', 'base', '--json', target], dir);
-        expect(result.status, result.stderr).not.toBe(2);
-        return (JSON.parse(result.stdout) as ProjectReport).violations.filter(({ kind }) => kind === 'project').length;
-      };
       git('init', '-q', '-b', 'main');
       writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
       mkdirSync(path.join(dir, 'src'));
       writeFileSync(path.join(dir, 'src', 'calc.ts'), calc);
-      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), testCode(60));
       mkdirSync(path.join(dir, 'test'));
       writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(1));
-      commit('base');
-      git('tag', 'base');
-      // The branch edits the test outside the checkout without changing its NCSS.
-      writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(1).replace('total([0])', 'total([9])'));
-      commit('edit');
+      git('add', '-A');
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base');
       git('sparse-checkout', 'set', 'src');
-      writeFileSync(path.join(dir, 'src', 'calc.ts'), `${calc}export const offset = 1;\n`);
-      expect(projectCount([]), 'the left-out test is no test code').toBe(0);
-      // One statement added inside the checkout is still held to the share, with tests included or not.
-      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), testCode(61));
-      for (const args of [[], ['--include-tests']]) {
-        expect(projectCount(args), args.join(' ')).toBe(1);
-      }
-      // A test moved out of the checkout still leaves it, offsetting what is added inside.
-      git('checkout', '--', '.');
-      git('sparse-checkout', 'disable');
-      writeFileSync(path.join(dir, 'src', 'moved.test.ts'), testCode(5));
-      commit('moved');
-      git('tag', '-f', 'base');
-      git('mv', 'src/moved.test.ts', 'test/moved.test.ts');
-      commit('move');
-      git('sparse-checkout', 'set', 'src');
-      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), `${testCode(60)}total([1]);\n`);
-      expect(projectCount([], path.join(dir, 'src')), 'a test moved out offsets one added').toBe(0);
+      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), testCode(60));
+      const result = runCheck(['--base', 'HEAD', '--json', dir], dir);
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(result.stdout) as ProjectReport & { warnings: string[] };
+      expect(report.violations.filter(({ kind }) => kind === 'project')).toEqual([]);
+      expect(report.warnings).toContainEqual(expect.stringContaining('sparse checkout'));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

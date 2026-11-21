@@ -122,7 +122,9 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
  * exactly these, so local ignored artifacts (build output, generated copies) are neither measured
  * nor allowed to skew duplication detection.
  */
-export async function listRepositoryFiles(repoRoot: string): Promise<{ files: Set<string>; warnings: string[] }> {
+export async function listRepositoryFiles(
+  repoRoot: string
+): Promise<{ files: Set<string>; warnings: string[]; sparse: boolean }> {
   const [{ stdout: listed, stderr }, deleted] = await Promise.all([
     // -t tags each path; `S` marks a skip-worktree path, which a sparse checkout leaves off disk.
     runGitWithStderr(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
@@ -137,9 +139,11 @@ export async function listRepositoryFiles(repoRoot: string): Promise<{ files: Se
     ...deleted.split('\0').filter((entry) => entry !== ''),
     ...entries.filter((entry) => entry.startsWith('S ')).map((entry) => entry.slice(2)),
   ];
+  let sparse = false;
   for (const relativePath of candidates) {
     if (await isAbsent(path.join(repoRoot, relativePath))) {
       files.delete(relativePath);
+      sparse ||= entries.includes(`S ${relativePath}`);
     }
   }
   // Git tracks no path through a symbolic link, yet a tracked path below a directory replaced by
@@ -155,7 +159,7 @@ export async function listRepositoryFiles(repoRoot: string): Promise<{ files: Se
   // files are not git-visible, so the check passes the warning on instead of measuring them.
   // Verbatim as one block: a pathname git names in it may hold line breaks.
   const warnings = stderr === '' ? [] : [stderr.replace(/\n$/u, '')];
-  return { files, warnings };
+  return { files, warnings, sparse };
 }
 
 /**

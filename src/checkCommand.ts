@@ -226,7 +226,7 @@ async function scanRepository(
       `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
     );
   }
-  const { files: repositoryFiles, warnings: listingWarnings } = await listRepositoryFiles(repoRoot);
+  const { files: repositoryFiles, warnings: listingWarnings, sparse } = await listRepositoryFiles(repoRoot);
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
   const unlistedTarget =
     targetFile !== undefined && !repositoryFiles.has(formatPath(targetFile, repoRoot))
@@ -249,7 +249,7 @@ async function scanRepository(
   );
   const duplication = measureDuplication(scan, options);
   scan.warnings.push(...listingWarnings);
-
+  const sharesProject = decideTestShare(measuresTestShare, sparse, scan.warnings);
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
@@ -259,13 +259,7 @@ async function scanRepository(
   const { files, isCovered } =
     change === undefined
       ? { files: measuredFiles.filter(({ file }) => isInTarget(file)), isCovered: isInTargetError }
-      : await narrowToChange(
-          change,
-          measuredFiles,
-          repoRoot,
-          isInTarget,
-          measuresTestShare ? isInTargetError : undefined
-        );
+      : await narrowToChange(change, measuredFiles, repoRoot, isInTarget, sharesProject ? isInTargetError : undefined);
   const scope = {
     files,
     duplication,
@@ -276,7 +270,7 @@ async function scanRepository(
   };
   return await addTestShare(
     scope,
-    measuresTestShare
+    sharesProject
       ? { repoRoot, repositoryFiles, targetPath: targetDirectory, exclusion, options, measuredFiles, base: change }
       : undefined,
     scan.errors.some((error) => isInTargetError(error))
@@ -330,6 +324,17 @@ async function resolveChange(
  */
 function concernsTarget(error: string, targetPath: string, isFile: boolean): boolean {
   return error.startsWith(isFile ? `${targetPath}:` : `${targetPath}/`);
+}
+
+/**
+ * Whether the share is measured. A sparse checkout leaves part of the project out of the working
+ * tree, so neither its share of test code nor what a change adds to it can be: a warning says so.
+ */
+function decideTestShare(measuresTestShare: boolean, sparse: boolean, warnings: string[]): boolean {
+  if (measuresTestShare && sparse) {
+    warnings.push('the share of test code is not measured in a sparse checkout, which leaves part of the project out');
+  }
+  return measuresTestShare && !sparse;
 }
 
 /** Adds the test share, when every file under the target was measured, and the test files that could not be, to a scope. */
