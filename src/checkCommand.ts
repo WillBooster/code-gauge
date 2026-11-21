@@ -66,7 +66,7 @@ const maxListedPartners = 3;
 /**
  * Reports every exceeded threshold of the target or, with `base`, of what the working tree changed
  * under it since the merge-base with that ref. Exit codes: 0 no error-level violations, 1 error-level
- * violations, 2 files the check covers could not be measured.
+ * violations or directive problems, 2 files the check covers could not be measured.
  */
 export async function runCheckCommand(
   target: string,
@@ -89,7 +89,7 @@ export async function runCheckCommand(
     }
     if (scope.errors.length > 0) {
       process.exitCode = 2;
-    } else if (hasErrors(result.violations)) {
+    } else if (hasErrors(result)) {
       process.exitCode = 1;
     }
   } catch (error) {
@@ -105,8 +105,8 @@ async function attachAllowDirectives(files: readonly CheckedFile[], root: string
   }));
 }
 
-function hasErrors(violations: readonly Violation[]): boolean {
-  return violations.some(({ level }) => level === 'error');
+function hasErrors({ violations, directiveProblems }: CheckResult): boolean {
+  return directiveProblems.length > 0 || violations.some(({ level }) => level === 'error');
 }
 
 /**
@@ -334,24 +334,25 @@ function measureDuplication(scan: ScanResult, options: ResolvedOptions): Checked
 }
 
 function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result: CheckResult): void {
-  const { violations } = result;
+  const { violations, directiveProblems } = result;
+  const counts = `${describeCounts(violations)}${directiveProblems.length > 0 ? `, ${directiveProblems.length} directive errors` : ''}`;
   const allowed =
     result.allowedLimitCount > 0 ? `, ${result.allowedLimitCount} exceeded limits allowed by directives` : '';
   const checked = `${scope.files.length} ${cliOptions.base === undefined ? '' : 'changed '}files, ${result.checkedFunctionCount} functions checked${allowed}${describeBase(cliOptions, scope)}`;
   if (scope.errors.length > 0) {
     // Unmeasured files were not checked, so "no violations" would be vacuous; never claim a pass.
     writeStdout(
-      `Check could not complete: ${scope.errors.length} measurement failures (details on stderr); ${describeCounts(violations)} in the measured files (${checked}).\n`
+      `Check could not complete: ${scope.errors.length} measurement failures (details on stderr); ${counts} in the measured files (${checked}).\n`
     );
-  } else if (violations.length === 0) {
+  } else if (violations.length === 0 && directiveProblems.length === 0) {
     writeStdout(`No threshold violations: ${checked}.\n`);
   } else {
-    writeStdout(`Threshold violations: ${describeCounts(violations)} (${checked}).\n`);
+    writeStdout(`Threshold violations: ${counts} (${checked}).\n`);
   }
   for (const violation of violations) {
     writeStdout(`${formatViolation(violation)}\n`);
   }
-  for (const problem of result.directiveProblems) {
+  for (const problem of directiveProblems) {
     writeStdout(`${formatDirectiveProblem(problem)}\n`);
   }
 
@@ -373,7 +374,7 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
 }
 
 function formatDirectiveProblem({ file, line, message }: LocatedDirectiveProblem): string {
-  return `warning: ${file}:${line}: ${message}`;
+  return `error: ${file}:${line}: ${message}`;
 }
 
 function describeBase(cliOptions: CheckCliOptions, scope: CheckScope): string {
@@ -459,7 +460,7 @@ function printJsonReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   writeStdout(
     JSON.stringify(
       {
-        passed: !hasErrors(result.violations) && scope.errors.length === 0,
+        passed: !hasErrors(result) && scope.errors.length === 0,
         base: cliOptions.base,
         mergeBase: scope.mergeBase,
         summary: {

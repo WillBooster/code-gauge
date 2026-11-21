@@ -5,8 +5,6 @@ import type { CodeMetrics, FunctionMetrics } from './types.js';
 export interface AllowDirective {
   line: number;
   metric: string;
-  /** The largest value of the metric allowed at the warning level. */
-  max: number;
   /** The function a `code-gauge-allow` precedes; absent for `code-gauge-allow-file`, which covers the file. */
   target?: FunctionMetrics;
 }
@@ -37,12 +35,12 @@ export interface AllowDirectives {
 
 const allowKeyword = 'code-gauge-allow';
 const allowFileKeyword = 'code-gauge-allow-file';
-const syntax = `\`${allowKeyword} <metric> <max> -- <reason>\``;
+const syntax = `\`${allowKeyword} <metric> -- <reason>\``;
 
 // The comment delimiters of every supported language (`//`, `///`, `/*`, `*`, `#`) may precede the
 // keyword; any other text before it makes the comment prose mentioning a directive.
 const directivePattern = /^[\s!#*/]*(code-gauge-allow(?:-file)?)(?![\w-])(.*)$/u;
-const argumentsPattern = /^(\w+)\s+(\d+(?:\.\d+)?)\s+--\s+\S/u;
+const argumentsPattern = /^(\w+)\s+--\s+\S/u;
 
 const fileMetrics = new Set(fileThresholds.map((threshold) => metricNameOf(threshold)));
 const functionMetrics = new Set(
@@ -110,16 +108,16 @@ function readDirective(
   return { directive, span };
 }
 
-/** The metric and max of a directive, or what is wrong with it. */
-function parseDirective(keyword: string, rest: string): { metric: string; max: number } | string {
+/** The metric of a directive, or what is wrong with it. */
+function parseDirective(keyword: string, rest: string): { metric: string } | string {
   const match = argumentsPattern.exec(rest);
   if (!match) {
     return `malformed directive; expected ${syntax.replace(allowKeyword, keyword)} with a reason`;
   }
-  const [, metric = '', max = ''] = match;
+  const [, metric = ''] = match;
   const allowed = keyword === allowFileKeyword ? new Set([...functionMetrics, ...fileMetrics]) : functionMetrics;
   if (allowed.has(metric)) {
-    return { metric, max: Number(max) };
+    return { metric };
   }
   if (fileMetrics.has(metric)) {
     return `${metric} is measured per file; allow it with ${allowFileKeyword}`;
@@ -129,10 +127,10 @@ function parseDirective(keyword: string, rest: string): { metric: string; max: n
 
 /** The parsed directive with the outermost function starting on `next`, or what is wrong. */
 function attachToFunction(
-  parsed: { metric: string; max: number },
+  parsed: { metric: string },
   next: number | undefined,
   functions: readonly FunctionMetrics[]
-): { metric: string; max: number; target: FunctionMetrics } | string {
+): { metric: string; target: FunctionMetrics } | string {
   const [target] = functions
     .filter((fn) => fn.startLine === next)
     .toSorted((left, right) => left.startColumn - right.startColumn);

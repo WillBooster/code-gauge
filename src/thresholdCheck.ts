@@ -16,7 +16,6 @@ import {
   type LimitsByLevel,
   metricNameOf,
   type Threshold,
-  thresholds,
 } from './thresholds.js';
 import type { CodeMetrics, CognitiveBlock, FunctionMetrics } from './types.js';
 
@@ -91,14 +90,8 @@ export interface CheckResult {
   checkedFunctionCount: number;
   /** The exceeded limits a directive allowed, which `violations` leaves out. */
   allowedLimitCount: number;
-  /** Ordered by path, then line. */
+  /** Errors, ordered by path, then line. */
   directiveProblems: LocatedDirectiveProblem[];
-}
-
-/** The directives that allowed a warning, and those covering a value above their max. */
-interface DirectiveUsage {
-  used: Set<AllowDirective>;
-  outgrown: Set<AllowDirective>;
 }
 
 /** The limits `exceeded` keeps: those no directive `covers` allows. */
@@ -133,28 +126,28 @@ export function checkThresholds(
     const limits = limitsOf(checkedFile.metrics.language);
     const crossFileGroups = crossFileGroupsByFile.get(checkedFile.file) ?? [];
     const directives = checkedFile.allowDirectives?.directives ?? [];
-    const usage: DirectiveUsage = { used: new Set(), outgrown: new Set() };
+    const applied = new Set<AllowDirective>();
     const checked = checkFile(
       checkedFile,
       crossFileGroups,
       limits,
       duplication,
-      createAllow(directives, usage, () => allowedLimitCount++)
+      createAllow(directives, applied, () => allowedLimitCount++)
     );
     violations.push(...checked.violations);
     checkedFunctionCount += checked.checkedFunctionCount;
-    // What the change does not touch may use a directive too, so whether one is used is decided on
-    // the whole file.
+    // What the change does not touch may exceed a directive's limit too, so whether one applies is
+    // decided on the whole file.
     if (checkedFile.hunks && directives.length > 0) {
       checkFile(
         { ...checkedFile, hunks: undefined },
         crossFileGroups,
         limits,
         duplication,
-        createAllow(directives, usage, () => {})
+        createAllow(directives, applied, () => {})
       );
     }
-    directiveProblems.push(...collectDirectiveProblems(checkedFile, usage, limits));
+    directiveProblems.push(...collectDirectiveProblems(checkedFile, applied));
   }
   return {
     violations: violations.toSorted(compareViolations),
@@ -184,21 +177,23 @@ function expandHunks({ metrics, hunks, allowDirectives }: CheckedFile): readonly
   return touchesDirective ? [{ headStart: 1, headCount: metrics.lines.total }] : hunks;
 }
 
-/** Allows the warnings of the directives covering them, recording which directives applied. */
-function createAllow(directives: readonly AllowDirective[], usage: DirectiveUsage, onAllowed: () => void): Allow {
+/**
+ * Allows the warnings of the directives covering them, recording in `applied` each directive
+ * covering an exceeded limit; one covering only errors, which it cannot allow, is applied too, so
+ * the error is not reported twice.
+ */
+function createAllow(
+  directives: readonly AllowDirective[],
+  applied: Set<AllowDirective>,
+  onAllowed: () => void
+): Allow {
   return (exceeded, covers) =>
     exceeded.filter((limit) => {
       const applying = directives.filter((directive) => directive.metric === limit.metric && covers(directive));
-      const allowing = limit.level === 'warning' ? applying.filter((directive) => limit.value <= directive.max) : [];
-      for (const directive of applying) {
-        if (allowing.includes(directive)) {
-          usage.used.add(directive);
-        } else if (limit.value > directive.max) {
-          usage.outgrown.add(directive);
-        }
-      }
-      if (allowing.length > 0) onAllowed();
-      return allowing.length === 0;
+      for (const directive of applying) applied.add(directive);
+      const isAllowed = limit.level === 'warning' && applying.length > 0;
+      if (isAllowed) onAllowed();
+      return !isAllowed;
     });
 }
 
@@ -235,49 +230,25 @@ function checkFile(
 }
 
 /**
- * The parse problems of the file's directives and the problems of each directive; with `hunks`,
- * those whose line or covered code the change touches.
+ * The parse problems of the file's directives and each directive covering no exceeded limit; with
+ * `hunks`, those whose line or covered code the change touches.
  */
 function collectDirectiveProblems(
   { file, metrics, hunks, allowDirectives }: CheckedFile,
-  usage: DirectiveUsage,
-  limits: LimitsByLevel
+  applied: ReadonlySet<AllowDirective>
 ): LocatedDirectiveProblem[] {
   const isTouched = (startLine: number, endLine: number): boolean =>
     !hunks || hunks.some((hunk) => touchesSpan(hunk, startLine, endLine));
   const problems = (allowDirectives?.problems ?? []).filter(({ line }) => isTouched(line, line));
   for (const directive of allowDirectives?.directives ?? []) {
-    const { line, target } = directive;
-    if (target ? isTouched(line, target.endLine) : isTouched(1, metrics.lines.total)) {
-      problems.push(...describeDirectiveProblems(directive, usage, limits).map((message) => ({ line, message })));
+    const { line, metric, target } = directive;
+    if (applied.has(directive) || !(target ? isTouched(line, target.endLine) : isTouched(1, metrics.lines.total))) {
+      continue;
     }
+    const keyword = target ? 'code-gauge-allow' : 'code-gauge-allow-file';
+    problems.push({ line, message: `${keyword} ${metric}: no ${metric} limit is exceeded; remove the directive` });
   }
   return problems.map((problem) => ({ file, ...problem }));
-}
-
-/** Whether the directive's max reaches the error level, which it cannot allow, and whether a value outgrew it or it allows nothing. */
-function describeDirectiveProblems(
-  directive: AllowDirective,
-  { used, outgrown }: DirectiveUsage,
-  limits: LimitsByLevel
-): string[] {
-  const { metric, max, target } = directive;
-  const prefix = `${target ? 'code-gauge-allow' : 'code-gauge-allow-file'} ${metric} ${max}`;
-  const messages: string[] = [];
-  const threshold = thresholds.find((candidate) => metricNameOf(candidate) === metric);
-  const errorLimit = threshold ? (limits.error[threshold.key] as number) : Infinity;
-  // A duplicated block violates from its limit on, so the largest value it allows is below it.
-  const errorMax = threshold === duplicationThreshold ? Math.max(Math.ceil(errorLimit) - 1, 0) : errorLimit;
-  const allowsErrors = max > errorMax;
-  if (allowsErrors) {
-    messages.push(`${prefix}: values above ${errorMax} are errors, which a directive cannot allow`);
-  }
-  if (outgrown.has(directive)) {
-    messages.push(`${prefix}: the value grew above ${max}; reduce it or reconsider the directive`);
-  } else if (!used.has(directive) && !allowsErrors) {
-    messages.push(`${prefix}: allows no warning; remove the directive`);
-  }
-  return messages;
 }
 
 // The kind is compared before the end line because a file violation's end line is corrected after

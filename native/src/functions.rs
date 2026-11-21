@@ -4,7 +4,7 @@ use tree_sitter::Node;
 use crate::tree_index::NodeExt;
 use crate::util::{all_children, find_children_by_field_name, named_children, node_text, Source};
 
-// code-gauge-allow-file fileNcss 648 -- holds the function-recognition and naming rules of every language
+// code-gauge-allow-file fileNcss -- holds the function-recognition and naming rules of every language
 
 /// Declarations without a body have no control flow, so they are signatures, not functions: C++
 /// pure-virtual/`= default`/`= delete` members, abstract/interface/extern methods (Java, C#,
