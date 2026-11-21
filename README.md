@@ -268,8 +268,10 @@ export function createClient(host, port, user, password, database, timeout, retr
   not read.
 - `code-gauge-allow-file <metric> -- <reason>` covers the whole file, and is the only way to
   allow `fileNcss`.
-- `<metric>` is a metric name of the [JSON report](#json-report) (`functionCognitiveComplexity`,
-  `duplicateLines`, ...), and the reason is required.
+- `<metric>` is a metric name of a function, file, or duplication violation in the
+  [JSON report](#json-report) (`functionCognitiveComplexity`, `duplicateLines`, ...), and the reason
+  is required. `testNcssPercent` is not one: a directive naming it is an error, and the share of
+  test code is kept or turned off only in the [config](#configuration).
 
 A directive allows warnings only: a value above an error limit is reported as usual, and is fixed
 or its limit changed in the [config](#configuration). A copy of a duplicated block is reported in

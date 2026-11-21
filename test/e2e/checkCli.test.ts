@@ -1285,13 +1285,16 @@ describe('code-gauge check: test share', () => {
     writeSource(decomposed, testCode(5));
     runGit(['-c', 'core.precomposeUnicode=false', 'add', '-A']);
     runGit(['commit', '-q', '-m', 'tests']);
-    const listed = spawnSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', 'test'], {
-      cwd: repoDir,
-      encoding: 'utf8',
-    }).stdout;
-    expect(listed.split('\0').filter((file) => file.normalize('NFC') === 'test/caf\u00E9.test.ts')).toHaveLength(2);
-    for (const args of [[], ['--include-tests']]) {
-      expect(projectViolations(args)).toMatchObject([{ testNcss: single?.testNcss }]);
+    // Whatever the developer's setting, git and the check list the file precomposed too.
+    runGit(['config', 'core.precomposeUnicode', 'true']);
+    try {
+      const listed = gitOutput(['ls-files', '--cached', '--others', '--exclude-standard', '-z', 'test']);
+      expect(listed.split('\0').filter((file) => file.normalize('NFC') === 'test/caf\u00E9.test.ts')).toHaveLength(2);
+      for (const args of [[], ['--include-tests']]) {
+        expect(projectViolations(args)).toMatchObject([{ testNcss: single?.testNcss }]);
+      }
+    } finally {
+      runGit(['config', '--unset', 'core.precomposeUnicode']);
     }
   });
 
