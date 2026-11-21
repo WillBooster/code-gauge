@@ -248,7 +248,13 @@ async function scanRepository(
     targetDirectory
   );
   const duplication = measureDuplication(scan, options);
-  scan.errors.push(...unlistedDirectories);
+  scan.errors.push(
+    ...unlistedDirectories
+      // A directory counts as excluded when any file directly in it would be (`dir/**`); a narrower
+      // pattern leaves it reported, since its unlisted files may be measured ones.
+      .filter(({ directory }) => !exclusion.isExcludedPath(path.join(repoRoot, directory, 'code-gauge-probe')))
+      .map(({ directory, reason }) => `${directory}: could not be listed: ${reason}`)
+  );
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));

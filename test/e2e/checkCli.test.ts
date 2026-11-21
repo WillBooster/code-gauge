@@ -1354,8 +1354,29 @@ describe('code-gauge check: test share', () => {
         }
       }
       runGit(['config', '--unset', 'core.trustctime']);
-    }
+    },
+    // Four checks of the repository, each a CLI process.
+    60_000
   );
+
+  it.skipIf(runAsRoot)('reports the share past an excluded directory it cannot read', () => {
+    writeConfig({ ...baseConfig, exclude: ['private/**'] });
+    writeSource('private/ignored.ts', calc);
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'private']);
+    writeSource('test/calc.test.ts', testCode(60));
+    chmodSync(path.join(repoDir, 'private'), 0o000);
+    try {
+      const result = runCheck(['--json']);
+      expect(result.status, result.stderr).toBe(1);
+      expect((JSON.parse(result.stdout) as ProjectReport).violations).toContainEqual(
+        expect.objectContaining({ kind: 'project' })
+      );
+    } finally {
+      chmodSync(path.join(repoDir, 'private'), 0o755);
+      runGit(['reset', '-q', '--hard', 'HEAD~1']);
+    }
+  });
 
   it.skipIf(runAsRoot)('reports an unreadable file of a targeted test directory once', () => {
     writeSource('test/helper.ts', calc);

@@ -124,7 +124,7 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
  */
 export async function listRepositoryFiles(
   repoRoot: string
-): Promise<{ files: Set<string>; unlistedDirectories: string[] }> {
+): Promise<{ files: Set<string>; unlistedDirectories: { directory: string; reason: string }[] }> {
   const [{ stdout: listed, stderr }, deleted] = await Promise.all([
     // -t tags each path; `S` marks a skip-worktree path, which a sparse checkout leaves off disk.
     runGitWithStderr(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
@@ -146,7 +146,7 @@ export async function listRepositoryFiles(
   }
   // Git skips an untracked directory it cannot open with only a warning, and lists none of it.
   const unlistedDirectories = [...stderr.matchAll(/^warning: could not open directory '(.+)': (.+)$/gmu)].map(
-    ([, directory, reason]) => `${(directory ?? '').replace(/\/$/u, '')}: could not be listed: ${reason}`
+    ([, directory = '', reason = '']) => ({ directory: directory.replace(/\/$/u, ''), reason })
   );
   return { files, unlistedDirectories };
 }

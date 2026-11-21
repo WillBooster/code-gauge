@@ -83,10 +83,11 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     ),
   };
   if (input.base === undefined) {
-    return { share, errors };
+    return { share, errors: errors.toSorted() };
   }
   const addedTestNcss = await measureAddedTestNcss(input, input.base, isTestIn, testNcssByPath, errors);
-  return { share: { ...share, addedTestNcss }, errors };
+  // Measurements finish in any order; the report keeps one.
+  return { share: { ...share, addedTestNcss }, errors: errors.toSorted() };
 }
 
 /** The head test NCSS of the changed files minus what they held at the merge-base. */

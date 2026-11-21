@@ -230,6 +230,10 @@ async function measureCandidates(context: ScanContext): Promise<void> {
   // Every path reaching the same real file, in discovery order, so one alias cannot decide alone.
   const pathsByRealFile = new Map<string, ScanCandidate[]>();
   for (const candidate of context.candidates) {
+    // An excluded path is never measured through, so it is not resolved, which could fail.
+    if (exclusion?.isExcludedPath(candidate.file)) {
+      continue;
+    }
     let realFile;
     try {
       realFile = candidate.realFile ?? (await realpath(candidate.file));
