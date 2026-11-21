@@ -19,8 +19,9 @@ export interface ScanOptions {
   /** Set when only each file's metrics are used: no cross-file duplication data is collected. */
   metricsOnly?: boolean;
   /**
-   * Whether to measure the path chosen for a real file (absolute); unset measures all. Choosing
-   * among every listed path first keeps the choice what a full scan makes.
+   * Whether a path (absolute) is in the measured scope; unset measures all. Only a file whose chosen
+   * path is in scope is measured, and only paths in scope report failures. Choosing among every
+   * listed path first keeps the choice what a full scan makes.
    */
   measuresChosenPath?: (absolutePath: string) => boolean;
   /**
@@ -234,23 +235,7 @@ async function measureCandidates(context: ScanContext): Promise<void> {
     context.candidates.flatMap(({ file, realFile }) => (realFile === undefined ? [file] : [file, realFile]))
   );
   context.exclusion = exclusion;
-  // Every path reaching the same real file, in discovery order, so one alias cannot decide alone.
-  const pathsByRealFile = new Map<string, ScanCandidate[]>();
-  for (const candidate of context.candidates) {
-    // An excluded path is never measured through, so it is not resolved, which could fail.
-    if (exclusion?.isExcludedPath(candidate.file)) {
-      continue;
-    }
-    let realFile;
-    try {
-      realFile = candidate.realFile ?? (await realpath(candidate.file));
-    } catch (error) {
-      recordError(context, candidate.file, error);
-      continue;
-    }
-    pathsByRealFile.set(realFile, [...(pathsByRealFile.get(realFile) ?? []), candidate]);
-  }
-  for (const [realFile, candidates] of pathsByRealFile) {
+  for (const [realFile, candidates] of await groupByRealFile(context, exclusion)) {
     if (context.fatalSeen) {
       return;
     }
@@ -259,6 +244,29 @@ async function measureCandidates(context: ScanContext): Promise<void> {
       await measureFile(chosen.file, chosen.language, 'directory', context, realFile);
     }
   }
+}
+
+/** Every path reaching the same real file, in discovery order, so one alias cannot decide alone. */
+async function groupByRealFile(
+  context: ScanContext,
+  exclusion: Exclusion | undefined
+): Promise<Map<string, ScanCandidate[]>> {
+  const pathsByRealFile = new Map<string, ScanCandidate[]>();
+  for (const candidate of context.candidates) {
+    // An excluded path is never measured through, so it is not resolved, which could fail.
+    if (exclusion?.isExcludedPath(candidate.file)) {
+      continue;
+    }
+    try {
+      const realFile = candidate.realFile ?? (await realpath(candidate.file));
+      pathsByRealFile.set(realFile, [...(pathsByRealFile.get(realFile) ?? []), candidate]);
+    } catch (error) {
+      if (context.options.measuresChosenPath?.(candidate.file) ?? true) {
+        recordError(context, candidate.file, error);
+      }
+    }
+  }
+  return pathsByRealFile;
 }
 
 /**
