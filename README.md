@@ -112,8 +112,11 @@ like the ranking command. The thresholds:
 | `maxTestNcssPercent`              | the target's test NCSS, as a percentage of its other NCSS, is above | off     | 30    |
 
 `maxTestNcssPercent` holds the test code of the checked directory in proportion to its production
-code: the NCSS of its test files (the files a check of the whole repository skips as tests, so a
-targeted test directory holds only tests) against that of the other files the check measures. A
+code: the NCSS of its test files against that of the other files the check measures. A file counts
+when the check would take it with tests included, judged by its path below the target as the scan
+judges it (so `check vendor` counts the tests in `vendor`), and is a test by its whole repository
+path (a test directory name or a test file name anywhere in it, so a targeted test directory holds
+only tests). A
 test file that cannot be read leaves the check incomplete, like a file the check covers, and no share is reported while any file under the target is unmeasured. It is one
 violation of the whole directory, of kind `project`, and none when the target is a file, the
 directory holds no production code, or the check runs outside a git repository, where there is no
