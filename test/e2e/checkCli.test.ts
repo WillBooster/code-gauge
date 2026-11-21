@@ -7,6 +7,7 @@ import {
   readFileSync,
   rmSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import os from 'node:os';
@@ -1327,9 +1328,20 @@ describe('code-gauge check: test share', () => {
       runGit(['add', '-A']);
       runGit(['commit', '-q', '-m', 'tests']);
       writeSource('test/calc.test.ts', testCode(61));
-      for (const unreadable of [path.join(repoDir, 'src', 'legacy.ts'), path.join(repoDir, 'test')]) {
+      // Without ctime, git keeps a file whose permissions change out of its diff; an old mtime keeps
+      // it from rereading the content, as it does for a file as recent as its index.
+      runGit(['config', 'core.trustctime', 'false']);
+      const past = new Date(Date.now() - 60_000);
+      utimesSync(path.join(repoDir, 'src', 'legacy.ts'), past, past);
+      runGit(['update-index', '-q', '--refresh']);
+      for (const [unreadable, mode] of [
+        [path.join(repoDir, 'src', 'legacy.ts'), 0o644],
+        [path.join(repoDir, 'test'), 0o755],
+      ] as const) {
         chmodSync(unreadable, 0o000);
         try {
+          const diff = spawnSync('git', ['diff', '--name-only', 'HEAD'], { cwd: repoDir, encoding: 'utf8' });
+          expect(diff.stdout.split('\n'), 'git sees the production file unchanged').not.toContain('src/legacy.ts');
           for (const args of [[], ['--include-tests']]) {
             const result = runCheck([...args, '--base', 'HEAD', '--json']);
             expect(result.status, `${unreadable} ${args.join(' ')}`).toBe(2);
@@ -1338,10 +1350,10 @@ describe('code-gauge check: test share', () => {
             expect(report.warnings.filter((warning) => report.errors.includes(warning))).toEqual([]);
           }
         } finally {
-          chmodSync(unreadable, 0o755);
+          chmodSync(unreadable, mode);
         }
       }
-      chmodSync(path.join(repoDir, 'src', 'legacy.ts'), 0o644);
+      runGit(['config', '--unset', 'core.trustctime']);
     }
   );
 
