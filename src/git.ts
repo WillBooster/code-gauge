@@ -135,15 +135,13 @@ export async function listRepositoryFiles(
   // Git lists as deleted a path it cannot reach, and a skip-worktree path may still be on disk (a
   // file marked to ignore local edits): only a path that does not exist leaves the working tree,
   // so an inaccessible one stays to be reported as unmeasured.
-  const candidates = [
-    ...deleted.split('\0').filter((entry) => entry !== ''),
-    ...entries.filter((entry) => entry.startsWith('S ')).map((entry) => entry.slice(2)),
-  ];
+  const skipWorktree = new Set(entries.filter((entry) => entry.startsWith('S ')).map((entry) => entry.slice(2)));
+  const candidates = [...deleted.split('\0').filter((entry) => entry !== ''), ...skipWorktree];
   let sparse = false;
   for (const relativePath of candidates) {
     if (await isAbsent(path.join(repoRoot, relativePath))) {
       files.delete(relativePath);
-      sparse ||= entries.includes(`S ${relativePath}`);
+      sparse ||= skipWorktree.has(relativePath);
     }
   }
   // Git tracks no path through a symbolic link, yet a tracked path below a directory replaced by
