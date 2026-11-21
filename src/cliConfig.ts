@@ -11,6 +11,7 @@ import {
   levels,
   type LevelThresholdsConfig,
   type Limits,
+  testShareThreshold,
   thresholds,
   type ThresholdsConfig,
 } from './thresholds.js';
@@ -226,7 +227,7 @@ function validateLevelThresholds(value: unknown, settingName: string, configFile
           const languageName = `${languagesName}.${language}`;
           return [
             language,
-            validateLimits(requireRecord(overrides, languageName, configFile), languageName, [], configFile),
+            validateLimits(requireRecord(overrides, languageName, configFile), languageName, [], configFile, false),
           ];
         }
       )
@@ -239,9 +240,12 @@ function validateLimits(
   value: Record<string, unknown>,
   settingName: string,
   otherKeys: string[],
-  configFile: string
+  configFile: string,
+  includesProjectLimits = true
 ): Limits {
-  const knownKeys = thresholds.map(({ key }) => key);
+  const knownKeys = thresholds
+    .filter((threshold) => includesProjectLimits || threshold !== testShareThreshold)
+    .map(({ key }) => key);
   return Object.fromEntries(
     Object.entries(value).map(([key, limit]) => {
       if (!knownKeys.includes(key)) {

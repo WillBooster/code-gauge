@@ -91,7 +91,9 @@ target, as in the ranking command, so `code-gauge check vendor` checks what is i
 git-ignored file is checked only when it is the target itself, and a directory git ignores (itself or
 through a parent directory) is an error as the target (exit code 2). A directory git does not
 ignore passes as a check of zero files when it holds no git-visible source file, for example when
-its only sources are ignored build output. Outside a git repository it walks the target directory
+its only sources are ignored build output. What git cannot list, such as an untracked directory it
+cannot open, is not git-visible; git's warning about it is passed on as a warning of the check.
+Outside a git repository it walks the target directory
 like the ranking command. The thresholds:
 
 | Config key                        | Violation                                                           | Warning | Error |
@@ -107,12 +109,31 @@ like the ranking command. The thresholds:
 | `maxFunctionDepDegree`            | a function's DepDegree is above it                                  | off     | off   |
 | `maxFileNcss`                     | a file's NCSS is above it                                           | 400     | 1000  |
 | `minDuplicateLines`               | a duplicated block holds at least this many lines matched in a copy | 15      | off   |
+| `maxTestNcssPercent`              | the target's test NCSS, as a percentage of its other NCSS, is above | off     | 30    |
+
+`maxTestNcssPercent` holds the test code of the checked directory in proportion to its production
+code: the NCSS of its test files against that of the other files the check measures. A file counts
+when the check would take it with tests included, judged by its path below the target as the scan
+judges it (so `check vendor` counts the tests in `vendor`), and is a test by its whole repository
+path: a test directory name in any of its directories, or a test file name as its file name (so a
+targeted test directory holds only tests, while a directory named like a test file does not make
+its files tests). A
+test file that cannot be read leaves the check incomplete, like a file the check covers, and no share is reported while any file under the target is unmeasured. It is one
+violation of the whole directory, of kind `project`, and none when the target is a file, the
+directory holds no production code, or the check runs outside a git repository, where there is no
+root to tell test directories by, or in a sparse checkout, which leaves part of the project out (a
+warning says so). With `--base`, it is reported only when the share exceeds its limit and the
+change touches a test: git lists a path as changed since the merge-base or untracked, and the
+check's files still include it under the target as a test by its name. A change that
+touches no test, or only deletes or moves tests out, is never blamed for a share it did not raise;
+one that does is told to delete or merge tests so that it adds no test code. No directive allows it, and it has no per-language
+override: `null` in the config or `off` on the command line disables it.
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
 mark code to fix, and only errors fail the check (exit code 1).
 
-The defaults come from the 45,123 functions the WillBooster organization wrote in its repositories
+The defaults, except that of `maxTestNcssPercent`, come from the 45,123 functions the WillBooster organization wrote in its repositories
 (of 153,771 measured; copies of third-party projects and course material are left out), and from
 ratings of 225 of those functions, 47 of their files, and 60 of their duplicated blocks: a warning limit sits where most rated items were worth changing or borderline, an error
 limit where nearly all were worth changing. Cognitive complexity above 15 flags 3.1% of the
@@ -121,6 +142,8 @@ thresholds that are off, nesting depth flags no function that cognitive complexi
 cyclomatic complexity and Halstead difficulty flag functions rated like unflagged ones; Halstead
 volume, Halstead effort, and DepDegree are high mostly where a function is long or takes many
 parameters, which the limits above already flag.
+The `maxTestNcssPercent` default sits just below the median test share, in lines, of 50 of the
+organization's repositories; no ratings back it.
 [How the default thresholds were calibrated](docs/threshold-calibration.md) holds the corpus, the
 distributions per language, the ratings, and the reasoning per threshold.
 
@@ -160,10 +183,15 @@ With `--base <ref>`, the check covers only what the working tree changed since t
 - the whole file, when the change touches a [directive](#allowing-a-warning-in-the-code): it edits
   a directive's line or the lines between it and its function (through the next code line for a
   directive attached to no function), or deletes a line holding one. Editing the function itself
-  only touches the function.
+  only touches the function;
+- the share of test code (`maxTestNcssPercent`), when the change touches a test. The share counts
+  every file under the target, so a file there that cannot be measured, changed or not, leaves the
+  check incomplete.
 
-`--base` only filters the report: the files measured and the duplication found are those of the
-check without it, so code pasted from an unchanged file is reported where it was pasted. A
+`--base` filters the report: the working-tree files the scan measures and the duplication found
+are those of the check without it, so code pasted from an unchanged file is reported where it was
+pasted. The test files the scan skips are measured for the share only when the change touches a
+test, so only then can one of them that cannot be read leave the check incomplete. A
 violation the change did not introduce is reported too once the change touches its function, file,
 or duplicated block. `--base` requires a git repository.
 
@@ -211,8 +239,9 @@ Paths are relative to the repository root, or to the target directory outside a 
 | 2         | The check is incomplete: a file it covers could not be measured, or the arguments, config file, target, or base ref are invalid. |
 
 A file that cannot be measured causes exit code 2 only when the check covers it: a file under the
-target or, with `--base`, a changed file under the target. Other unmeasured files of the
-repository are warnings on stderr.
+target or, with `--base`, a changed file under the target. While `maxTestNcssPercent` applies, every
+file under the target counts, changed or not, since the share counts all of them, and a path git
+lists but cannot reach counts as unmeasured rather than deleted. Other unmeasured files of the repository are warnings on stderr.
 
 `check` accepts `--config`, `--include-tests`, `--json`, and the `--duplication-*` options of the
 ranking command.
@@ -239,8 +268,11 @@ export function createClient(host, port, user, password, database, timeout, retr
   not read.
 - `code-gauge-allow-file <metric> -- <reason>` covers the whole file, and is the only way to
   allow `fileNcss`.
-- `<metric>` is a metric name of the [JSON report](#json-report) (`functionCognitiveComplexity`,
-  `duplicateLines`, ...), and the reason is required.
+- `<metric>` is a metric name of a function, file, or duplication violation in the
+  [JSON report](#json-report) (`functionCognitiveComplexity`, `duplicateLines`, ...), and the reason
+  is required. `testNcssPercent` is not one: a directive naming it is an error, and the share of
+  test code is kept or turned off only by its limit: `null` in the [config](#configuration) or `off`
+  on the command line.
 
 A directive allows warnings only: a value above an error limit is reported as usual, and is fixed
 or its limit changed in the [config](#configuration). A copy of a duplicated block is reported in
@@ -265,6 +297,7 @@ touches.
     "functionViolationCount": 1,
     "fileViolationCount": 0,
     "duplicationViolationCount": 1,
+    "projectViolationCount": 0,
     "checkedFileCount": 2,
     "checkedFunctionCount": 2,
     "allowedLimitCount": 0
@@ -321,14 +354,21 @@ touches.
   file was measured (exit code 0).
 - `base`, `mergeBase`: the `--base` ref and the commit compared against; absent without `--base`.
 - `summary`: the violation counts in total, per level, and per kind, and the number of files and
-  functions checked: those under the target or, with `--base`, the changed files under it and the
-  functions the change touches, and `allowedLimitCount`, the exceeded limits that
+  functions checked for code violations: those under the target or, with `--base`, the changed
+  files under it and the functions the change touches (the text report's header counts the same;
+  neither counts the test files only the share of test code measures), and `allowedLimitCount`, the exceeded limits that
   [directives](#allowing-a-warning-in-the-code) allowed, which `violations` leaves out.
-- `violations`: the errors first, each level ordered by `file`, then `startLine`. Each has
-  - `kind`: `function`, `file`, or `duplication`;
+- `violations`: the errors first, each level ordered by `file`, then `startLine`; a violation of
+  kind `project` comes first within its level. Each has
+  - `kind`: `function`, `file`, `duplication`, or `project`;
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
-    kind `file`, the first and last line of the file;
+    kind `file`, the first and last line of the file; for kind `project`, only `file`, the checked
+    directory relative to the repository root (`.` for the root);
+  - `testNcss`, `productionNcss`, and `excessTestNcss`: only for kind `project`; the NCSS of the
+    test files and of the other files, and the test NCSS above the strictest active limit (what a
+    whole project deletes or merges to clear every level, which can exceed what clears the level
+    reported);
   - `name`: only for kind `function`; a member's name follows the type, module, or object it
     belongs to (`Rules.decide`), and a function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
@@ -348,8 +388,9 @@ touches.
   `line`, and `message`, ordered by `file`, then `line`.
 - `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
   `error` level of a violation.
-- `warnings`: files measured without cross-file duplication data, and unmeasured files of the
-  repository the check does not cover.
+- `warnings`: files measured without cross-file duplication data, unmeasured files of the
+  repository the check does not cover, what git warned while listing the files (passed on as it
+  printed it), and that the test share is not measured in a sparse checkout.
 
 ## Configuration
 
@@ -377,6 +418,7 @@ with `--config`). The following config reproduces every built-in default:
       "maxFunctionDepDegree": null,
       "maxFileNcss": 400,
       "minDuplicateLines": 15,
+      "maxTestNcssPercent": null,
       "languages": {}
     },
     "error": {
@@ -391,6 +433,7 @@ with `--config`). The following config reproduces every built-in default:
       "maxFunctionDepDegree": null,
       "maxFileNcss": 1000,
       "minDuplicateLines": null,
+      "maxTestNcssPercent": 30,
       "languages": {}
     }
   },
@@ -406,7 +449,8 @@ command only.
 
 `languages` in a level of `thresholds` maps a language name (`javascript`, `jsx`, `typescript`,
 `tsx`, `python`, `go`, `rust`, `java`, `ruby`, `c`, `cpp`, `csharp`, `kotlin`) to the limits that
-differ for its files; a limit it leaves out keeps the value set outside `languages`:
+differ for its files, except `maxTestNcssPercent`, which applies to the whole checked directory; a
+limit it leaves out keeps the value set outside `languages`:
 
 ```json
 {
