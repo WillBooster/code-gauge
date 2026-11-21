@@ -122,9 +122,7 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
  * exactly these, so local ignored artifacts (build output, generated copies) are neither measured
  * nor allowed to skew duplication detection.
  */
-export async function listRepositoryFiles(
-  repoRoot: string
-): Promise<{ files: Set<string>; unlistedDirectories: { directory: string; reason: string }[] }> {
+export async function listRepositoryFiles(repoRoot: string): Promise<{ files: Set<string>; warnings: string[] }> {
   const [{ stdout: listed, stderr }, deleted] = await Promise.all([
     // -t tags each path; `S` marks a skip-worktree path, which a sparse checkout leaves off disk.
     runGitWithStderr(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
@@ -153,11 +151,13 @@ export async function listRepositoryFiles(
       }
     }
   }
-  // Git skips an untracked directory it cannot open with only a warning, and lists none of it.
-  const unlistedDirectories = [...stderr.matchAll(/^warning: could not open directory '(.+)': (.+)$/gmu)].map(
-    ([, directory = '', reason = '']) => ({ directory: directory.replace(/\/$/u, ''), reason })
-  );
-  return { files, unlistedDirectories };
+  // Git skips what it cannot list (an untracked directory it cannot open) with a warning: those
+  // files are not git-visible, so the check passes the warning on instead of measuring them.
+  const warnings = stderr
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line !== '');
+  return { files, warnings };
 }
 
 /**
@@ -333,11 +333,9 @@ async function runGitWithInput(cwd: string, args: string[], input: string, env?:
   });
 }
 
-/** Runs git in the C locale, so the warnings its stderr holds keep the untranslated form callers match. */
 async function runGitWithStderr(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   try {
-    const env = { ...process.env, LC_ALL: 'C', LANGUAGE: '' };
-    return await execFileAsync('git', args, { cwd, env, maxBuffer: maxOutputBytes, encoding: 'utf8' });
+    return await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
     throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);

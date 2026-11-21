@@ -58,25 +58,6 @@ export function createExclusion(
   };
 }
 
-/**
- * Whether the patterns exclude everything below an absolute directory: only a `<glob>/**` pattern
- * whose glob matches the directory or one above it proves it, since a narrower one (`dir/*`) can
- * leave deeper files measured.
- */
-export function excludesSubtree(excludePatterns: ExcludePatterns, absoluteDirectory: string): boolean {
-  const relativeDirectory = path.relative(excludePatterns.root, absoluteDirectory).split(path.sep).join('/');
-  if (relativeDirectory === '' || relativeDirectory === '..' || relativeDirectory.startsWith('../')) {
-    return false;
-  }
-  const segments = relativeDirectory.split('/');
-  const directories = segments.map((_, index) => segments.slice(0, index + 1).join('/'));
-  return excludePatterns.patterns.some(
-    (pattern) =>
-      pattern.endsWith('/**') &&
-      directories.some((directory) => path.posix.matchesGlob(directory, pattern.slice(0, -3)))
-  );
-}
-
 /** The exclusion that never excludes the given absolute paths (explicitly targeted files). */
 export function keepPaths(exclusion: Exclusion, keptPaths: ReadonlySet<string>): Exclusion {
   return {

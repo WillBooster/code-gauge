@@ -91,7 +91,9 @@ target, as in the ranking command, so `code-gauge check vendor` checks what is i
 git-ignored file is checked only when it is the target itself, and a directory git ignores (itself or
 through a parent directory) is an error as the target (exit code 2). A directory git does not
 ignore passes as a check of zero files when it holds no git-visible source file, for example when
-its only sources are ignored build output. Outside a git repository it walks the target directory
+its only sources are ignored build output. What git cannot list, such as an untracked directory it
+cannot open, is not git-visible; git's warning about it is passed on as a warning of the check.
+Outside a git repository it walks the target directory
 like the ranking command. The thresholds:
 
 | Config key                        | Violation                                                           | Warning | Error |

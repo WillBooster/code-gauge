@@ -6,7 +6,7 @@ import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
 import { isDirectiveLine, parseAllowDirectives } from './allowDirectives.js';
 import { type CliOptions, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
-import { excludesSubtree, keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
+import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
   type ChangedFile,
   isIgnored,
@@ -24,7 +24,6 @@ import {
   configSearchDirectory,
   formatPath,
   getLanguage,
-  isScannedBelow,
   isWithinDirectory,
   resolveTarget,
   scanListedFiles,
@@ -227,7 +226,7 @@ async function scanRepository(
       `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
     );
   }
-  const { files: repositoryFiles, unlistedDirectories } = await listRepositoryFiles(repoRoot);
+  const { files: repositoryFiles, warnings: listingWarnings } = await listRepositoryFiles(repoRoot);
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
   const unlistedTarget =
     targetFile !== undefined && !repositoryFiles.has(formatPath(targetFile, repoRoot))
@@ -249,12 +248,8 @@ async function scanRepository(
     targetDirectory
   );
   const duplication = measureDuplication(scan, options);
-  scan.errors.push(
-    ...unlistedDirectories
-      .filter(({ directory }) => mayHoldScannedFiles(directory, targetDirectory, options, measuresTestShare))
-      .filter(({ directory }) => !excludesSubtree(options.exclude, path.join(repoRoot, directory)))
-      .map(({ directory, reason }) => describeUnlistedDirectory(directory, reason, targetDirectory))
-  );
+  scan.warnings.push(...listingWarnings);
+
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
@@ -335,37 +330,6 @@ async function resolveChange(
  */
 function concernsTarget(error: string, targetPath: string, isFile: boolean): boolean {
   return error.startsWith(isFile ? `${targetPath}:` : `${targetPath}/`);
-}
-
-/**
- * Whether a directory git could not list may hold files the check measures: below the target, a
- * directory the scan skips by name (`vendor`, a test directory it does not count) holds none.
- */
-function mayHoldScannedFiles(
-  directory: string,
-  targetDirectory: string,
-  options: ResolvedOptions,
-  measuresTestShare: boolean
-): boolean {
-  const probe = `${directory}/code-gauge-probe.ts`;
-  if (targetDirectory !== '' && !probe.startsWith(`${targetDirectory}/`)) {
-    return true;
-  }
-  return isScannedBelow(probe, targetDirectory, {
-    ...options,
-    includeTests: options.includeTests || measuresTestShare,
-  });
-}
-
-/**
- * The error of a directory git could not list. It names the directory with a trailing slash, so it
- * concerns a targeted directory as a path below it does; a directory above the target hides the
- * target's files, so its error names the target.
- */
-function describeUnlistedDirectory(directory: string, reason: string, targetDirectory: string): string {
-  return targetDirectory.startsWith(`${directory}/`)
-    ? `${targetDirectory}/: could not be listed, as ${directory}/ could not be opened: ${reason}`
-    : `${directory}/: could not be listed: ${reason}`;
 }
 
 /** Adds the test share, when every file under the target was measured, and the test files that could not be, to a scope. */
