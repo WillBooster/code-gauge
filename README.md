@@ -351,8 +351,9 @@ touches.
   file was measured (exit code 0).
 - `base`, `mergeBase`: the `--base` ref and the commit compared against; absent without `--base`.
 - `summary`: the violation counts in total, per level, and per kind, and the number of files and
-  functions checked: those under the target or, with `--base`, the changed files under it and the
-  functions the change touches, and `allowedLimitCount`, the exceeded limits that
+  functions checked for code violations: those under the target or, with `--base`, the changed
+  files under it and the functions the change touches (the text report's header counts the same;
+  neither counts the test files only the share of test code measures), and `allowedLimitCount`, the exceeded limits that
   [directives](#allowing-a-warning-in-the-code) allowed, which `violations` leaves out.
 - `violations`: the errors first, each level ordered by `file`, then `startLine`; a violation of
   kind `project` comes first within its level. Each has
