@@ -93,7 +93,10 @@ async function main(): Promise<void> {
         'Report every exceeded threshold as a warning or an error (exit 1 on errors, 2 when files cannot be measured); with --base, only in what the change touches'
       )
       .argument('[target]', 'file or directory to check', '.')
-  ).option('--base <ref>', 'check only what the working tree changed since the merge-base of this git ref and HEAD');
+  ).option(
+    '--base <ref>',
+    'report code violations only in what the working tree changed since the merge-base of this git ref and HEAD; the share of test code still covers every file'
+  );
   for (const level of levels) {
     for (const { key, defaultLimits } of thresholds) {
       const defaultLimit = defaultLimits[level];

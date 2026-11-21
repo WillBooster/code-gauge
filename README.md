@@ -178,7 +178,10 @@ With `--base <ref>`, the check covers only what the working tree changed since t
 - the whole file, when the change touches a [directive](#allowing-a-warning-in-the-code): it edits
   a directive's line or the lines between it and its function (through the next code line for a
   directive attached to no function), or deletes a line holding one. Editing the function itself
-  only touches the function.
+  only touches the function;
+- the share of test code (`maxTestNcssPercent`), when the change adds test NCSS. The share counts
+  every file under the target, so a file there that cannot be measured, changed or not, leaves the
+  check incomplete.
 
 `--base` only filters the report: the files measured and the duplication found are those of the
 check without it, so code pasted from an unchanged file is reported where it was pasted. A
