@@ -122,10 +122,10 @@ violation of the whole directory, of kind `project`, and none when the target is
 directory holds no production code, or the check runs outside a git repository, where there is no
 root to tell test directories by, or in a sparse checkout, which leaves part of the project out (a
 warning says so). With `--base`, it is reported only when the share exceeds its limit and the
-change touches a test: git lists, as changed since the merge-base or untracked, a path under the
-target that the check counts as a test by its name, whether or not it still exists. A change that
-touches no test is never blamed for a share it did not raise; one that does is told to delete or
-merge tests so that it adds no test code. No directive allows it, and it has no per-language
+change touches a test: git lists, as added, modified, renamed to, or untracked since the
+merge-base, a path under the target that the check counts as a test by its name. A change that
+touches no test, or only deletes or moves tests out, is never blamed for a share it did not raise;
+one that does is told to delete or merge tests so that it adds no test code. No directive allows it, and it has no per-language
 override: `null` in the config or `off` on the command line disables it.
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit

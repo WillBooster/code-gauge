@@ -1279,14 +1279,14 @@ describe('code-gauge check: test share', () => {
   it('reports the share with --base only for a change that touches a test under the target', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/old.test.ts', testCode(1));
     runGit(['add', '-A']);
     runGit(['commit', '-q', '-m', 'tests']);
     writeSource('src/calc.ts', `${calc}export const offset = 1;\n`);
     expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
 
-    rmSync(path.join(repoDir, 'test/calc.test.ts'));
-    const result = runCheck(['--base', 'HEAD']);
-    expect(result.status).toBe(0);
+    rmSync(path.join(repoDir, 'test/old.test.ts'));
+    expect(projectViolations(['--base', 'HEAD']), 'a change that only deletes tests').toEqual([]);
 
     writeSource('test/calc.test.ts', testCode(59));
     const changed = runCheck(['--base', 'HEAD']);

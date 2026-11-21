@@ -331,14 +331,16 @@ async function resolveChange(repoRoot: string, base: string, unlistedTarget: str
   return { mergeBase, changedFiles };
 }
 
-/** Whether the change adds, edits, renames, or deletes a path the check counts as a test under the target. */
+/**
+ * Whether the change leaves a test it touched under the target (added, modified, renamed to, or
+ * untracked): a change that only deletes or moves tests out cannot reduce the share by deleting more.
+ */
 function touchesTests(change: Change, targetDirectory: string, options: ResolvedOptions): boolean {
-  return change.changedFiles.some(({ basePath, headPath }) =>
-    [basePath ?? headPath, headPath].some(
-      (file) =>
-        (targetDirectory === '' || file.startsWith(`${targetDirectory}/`)) &&
-        isTestFileBelow(file, targetDirectory, options)
-    )
+  return change.changedFiles.some(
+    ({ status, headPath }) =>
+      status !== 'deleted' &&
+      (targetDirectory === '' || headPath.startsWith(`${targetDirectory}/`)) &&
+      isTestFileBelow(headPath, targetDirectory, options)
   );
 }
 
