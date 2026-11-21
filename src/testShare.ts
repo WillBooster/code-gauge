@@ -63,7 +63,9 @@ async function scanWithTests({
 }: RepositoryTestShareInput): Promise<MeasuredFiles> {
   const scan = await scanListedFiles(
     repoRoot,
-    [...repositoryFiles].filter((relativePath) => isInTarget(relativePath, targetPath)),
+    // The same files the check scans: a file's chosen path may lie outside the target, as it does
+    // with tests included.
+    repositoryFiles,
     {
       ...options,
       includeTests: true,

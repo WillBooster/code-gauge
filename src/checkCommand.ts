@@ -280,6 +280,7 @@ async function scanRepository(
           measuredFiles,
         }
       : undefined,
+    isInTargetError,
     scan.errors.some((error) => isInTargetError(error))
   );
 }
@@ -396,12 +397,16 @@ function decideTestShare(measuresTestShare: boolean, sparse: boolean, warnings: 
 async function addTestShare(
   scope: CheckScope,
   input: RepositoryTestShareInput | undefined,
+  isInTargetError: (error: string) => boolean,
   missesProductionCode: boolean
 ): Promise<CheckScope> {
   if (input === undefined) {
     return scope;
   }
-  const { share, errors } = await measureRepositoryTestShare(input);
+  const measured = await measureRepositoryTestShare(input);
+  // Like the check's, the share scans the whole repository; only the target's failures concern it.
+  const errors = measured.errors.filter((error) => isInTargetError(error));
+  const { share } = measured;
   // A share of partial totals would name tests to delete that the whole project admits.
   const complete = !missesProductionCode && errors.length === 0;
   // The share measures the production files the check already reported, once more.

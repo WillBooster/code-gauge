@@ -4,6 +4,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   symlinkSync,
   utimesSync,
@@ -1309,6 +1310,22 @@ describe('code-gauge check: test share', () => {
       expect(gitOutput(['ls-files', 'Test', 'test']).split('\n').filter(Boolean)).toHaveLength(2);
       // With tests included, the check measures the file once under the spelling it chooses.
       expect(projectViolations([])).toEqual(projectViolations(['--include-tests']));
+    }
+  );
+
+  it.skipIf(process.platform !== 'darwin')(
+    'chooses a targeted file among the spellings of the whole repository, as --include-tests does',
+    () => {
+      runGit(['checkout', '-q', '-b', 'feature']);
+      writeSource('app/setup.ts', calc);
+      writeSource('app/setup.test.ts', testCode(3));
+      runGit(['add', '-A']);
+      const blob = gitOutput(['hash-object', '-w', '--stdin'], calc.replaceAll('total', 'consume')).trim();
+      gitOutput(['update-index', '--index-info'], `100644 ${blob}\tAPP/Source.ts\n100644 ${blob}\tapp/source.ts\n`);
+      runGit(['commit', '-q', '-m', 'colliding packages']);
+      runGit(['checkout', '-q', '-f', 'HEAD', '--', '.']);
+      renameSync(path.join(repoDir, 'app/source.ts'), path.join(repoDir, 'app/SOURCE.ts'));
+      expect(projectViolations(['app'])).toEqual(projectViolations(['app', '--include-tests']));
     }
   );
 
