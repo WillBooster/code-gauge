@@ -1496,8 +1496,8 @@ describe('code-gauge check: test share', () => {
           message
         );
       };
-      const projectCount = (args: string[]): number => {
-        const result = runCheck([...args, '--base', 'base', '--json', dir], dir);
+      const projectCount = (args: string[], target = dir): number => {
+        const result = runCheck([...args, '--base', 'base', '--json', target], dir);
         expect(result.status, result.stderr).not.toBe(2);
         return (JSON.parse(result.stdout) as ProjectReport).violations.filter(({ kind }) => kind === 'project').length;
       };
@@ -1521,6 +1521,17 @@ describe('code-gauge check: test share', () => {
       for (const args of [[], ['--include-tests']]) {
         expect(projectCount(args), args.join(' ')).toBe(1);
       }
+      // A test moved out of the checkout still leaves it, offsetting what is added inside.
+      git('checkout', '--', '.');
+      git('sparse-checkout', 'disable');
+      writeFileSync(path.join(dir, 'src', 'moved.test.ts'), testCode(5));
+      commit('moved');
+      git('tag', '-f', 'base');
+      git('mv', 'src/moved.test.ts', 'test/moved.test.ts');
+      commit('move');
+      git('sparse-checkout', 'set', 'src');
+      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), `${testCode(60)}total([1]);\n`);
+      expect(projectCount([], path.join(dir, 'src')), 'a test moved out offsets one added').toBe(0);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
