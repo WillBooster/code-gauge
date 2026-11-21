@@ -94,8 +94,15 @@ export interface CheckResult {
   directiveProblems: LocatedDirectiveProblem[];
 }
 
-/** The limits `exceeded` keeps: those no directive `covers` allows. */
-type Allow = (exceeded: ExceededLimit[], covers: (directive: AllowDirective) => boolean) => ExceededLimit[];
+/**
+ * The limits `exceeded` keeps: those no directive `covers` allows. With `isReported` false, the
+ * limits are only recorded as covered by those directives, and none is allowed.
+ */
+type Allow = (
+  exceeded: ExceededLimit[],
+  covers: (directive: AllowDirective) => boolean,
+  isReported?: boolean
+) => ExceededLimit[];
 
 const violationKinds: readonly Violation['kind'][] = ['file', 'function', 'duplication'];
 
@@ -187,11 +194,11 @@ function createAllow(
   applied: Set<AllowDirective>,
   onAllowed: () => void
 ): Allow {
-  return (exceeded, covers) =>
+  return (exceeded, covers, isReported = true) =>
     exceeded.filter((limit) => {
       const applying = directives.filter((directive) => directive.metric === limit.metric && covers(directive));
       for (const directive of applying) applied.add(directive);
-      const isAllowed = limit.level === 'warning' && applying.length > 0;
+      const isAllowed = isReported && limit.level === 'warning' && applying.length > 0;
       if (isAllowed) onAllowed();
       return !isAllowed;
     });
@@ -217,9 +224,13 @@ function checkFile(
     .map((fn) => ({ fn, exceeded: collectExceeded(functionThresholds, fn, limits) }))
     .filter(({ exceeded }) => exceeded.length > 0);
   for (const { fn, exceeded } of exceedingFunctions) {
+    const covers = ({ target }: AllowDirective): boolean => !target || target === fn || encloses(target, fn);
+    const enclosingReported = exceeded.filter((limit) => isReportedByEnclosingFunction(limit, fn, exceedingFunctions));
+    // A directive on `fn` still covers the limits its enclosing function reports.
+    allow(enclosingReported, covers, false);
     const ownExceeded = allow(
-      exceeded.filter((limit) => !isReportedByEnclosingFunction(limit, fn, exceedingFunctions)),
-      ({ target }) => !target || target === fn || encloses(target, fn)
+      exceeded.filter((limit) => !enclosingReported.includes(limit)),
+      covers
     );
     if (ownExceeded.length > 0) {
       violations.push(toFunctionViolation(file, fn, ownExceeded));

@@ -794,6 +794,17 @@ How to fix:
     );
   });
 
+  it('keeps a directive on a nested function whose limit the enclosing function reports', () => {
+    writeSource(
+      'src/nested.ts',
+      `export function outer(x: number) {\n  // code-gauge-allow functionNcss -- the steps stay together\n  function inner() {\n    const a = 1;\n    const b = 2;\n    return a + b;\n  }\n  return inner() + x;\n}\n`
+    );
+    const result = runCheck(['src/nested.ts', '--warning-max-function-ncss', '2']);
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('warning: src/nested.ts:1-9 outer: NCSS 6 (max 2)\n');
+    expect(result.stdout).not.toContain('code-gauge-allow');
+  });
+
   it('attaches a directive only to a function starting on the next code line', () => {
     writeSource(
       'src/wide.py',
