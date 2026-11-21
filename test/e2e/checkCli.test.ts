@@ -1271,6 +1271,20 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(limits)).toEqual([]);
   });
 
+  it.skipIf(process.platform !== 'darwin')('counts a test git lists under two Unicode spellings once', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(1));
+    runGit(['-c', 'core.precomposeUnicode=false', 'add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    const decomposed = 'test/cafe\u0301.test.ts';
+    writeSource(decomposed, testCode(5));
+    runGit(['-c', 'core.precomposeUnicode=false', 'add', '--', decomposed]);
+    runGit(['commit', '-q', '-m', 'decomposed']);
+    // Git lists the tracked decomposed path and, precomposed, the same file as untracked.
+    const plain = projectViolations([]);
+    expect(projectViolations(['--include-tests'])).toEqual(plain);
+  });
+
   it('accepts test code within its share', () => {
     writeSource('test/calc.test.ts', testCode(1));
     expect(projectViolations([])).toEqual([]);
