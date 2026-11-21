@@ -190,7 +190,11 @@ export async function readFileAt(repoRoot: string, commit: string, file: string)
   return await runGit(repoRoot, ['show', `${commit}:${file}`]);
 }
 
-/** The paths among `paths` that `commit` holds as regular files, not symbolic links or submodules. */
+/**
+ * The paths among `paths` that `commit` holds as regular files, not symbolic links or submodules.
+ * The whole tree is listed and matched here, since passing the paths would hit the command-line
+ * length limit on a large change.
+ */
 export async function listRegularFilesAt(
   repoRoot: string,
   commit: string,
@@ -199,12 +203,13 @@ export async function listRegularFilesAt(
   if (paths.length === 0) {
     return new Set();
   }
-  const output = await runGit(repoRoot, ['--literal-pathspecs', 'ls-tree', '-z', commit, '--', ...paths]);
+  const requested = new Set(paths);
+  const output = await runGit(repoRoot, ['ls-tree', '-r', '-z', commit]);
   return new Set(
     output.split('\0').flatMap((entry) => {
       // The path follows the first tab, and may hold tabs itself.
-      const tab = entry.indexOf('\t');
-      return tab !== -1 && entry.startsWith('100') ? [entry.slice(tab + 1)] : [];
+      const file = entry.slice(entry.indexOf('\t') + 1);
+      return entry.startsWith('100') && requested.has(file) ? [file] : [];
     })
   );
 }
