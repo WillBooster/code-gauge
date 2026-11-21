@@ -364,6 +364,10 @@ function findExceeded<Subject>(
     : [];
 }
 
+function isEndedByIndentation(metrics: CodeMetrics): boolean {
+  return metrics.language === 'python';
+}
+
 /**
  * Whether the hunk changes the head lines [startLine, endLine]. A hunk without head lines (a pure
  * deletion) sits between its headStart line and the next one. Where indentation ends a span, its
@@ -371,10 +375,6 @@ function findExceeded<Subject>(
  * have removed the span's tail; `endsByIndentation` counts it as touching, since the head alone
  * cannot tell it from a deletion after the span.
  */
-function isEndedByIndentation(metrics: CodeMetrics): boolean {
-  return metrics.language === 'python';
-}
-
 function touchesSpan(hunk: LineHunk, startLine: number, endLine: number, endsByIndentation = false): boolean {
   return hunk.headCount === 0
     ? hunk.headStart >= startLine && (hunk.headStart < endLine || (endsByIndentation && hunk.headStart === endLine))
