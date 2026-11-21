@@ -1410,8 +1410,9 @@ describe('code-gauge check: test share', () => {
         const result = runCheck(['--json']);
         expect(result.status).toBe(2);
         expect((JSON.parse(result.stdout) as { errors: string[] }).errors).toContainEqual(
-          expect.stringMatching(/^test: could not be listed: /u)
+          expect.stringMatching(/^test\/: could not be listed: /u)
         );
+        expect(runCheck(['test']).status, 'the targeted directory itself').toBe(2);
       } finally {
         chmodSync(path.join(repoDir, 'test'), 0o755);
       }
