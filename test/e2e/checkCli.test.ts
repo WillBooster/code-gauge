@@ -1248,17 +1248,24 @@ describe('code-gauge check: test share', () => {
   });
 
   it.each([
-    ['the default limit', []],
-    ['a warning limit stricter than the error limit', ['--warning-max-test-ncss-percent', '10']],
-    ['a fractional limit', ['--error-max-test-ncss-percent', '18.4']],
-  ])('names the least test NCSS whose deletion clears the share under %s', (_, limits) => {
-    writeSource('test/calc.test.ts', testCode(60));
-    const excess = projectViolations(limits)[0]?.excessTestNcss ?? 0;
+    ['the default limit', [], 0],
+    ['a warning limit stricter than the error limit', ['--warning-max-test-ncss-percent', '10'], 0],
+    // 375 production NCSS at 18.4% admit 69 test NCSS, which multiplying and flooring puts at 68.
+    ['a fractional limit', ['--error-max-test-ncss-percent', '18.4'], 326],
+  ])('names the least test NCSS whose deletion clears the share under %s', (_, limits, extraProduction) => {
+    const constants = Array.from({ length: extraProduction }, (_, index) => `export const c${index} = ${index};\n`);
+    writeSource('src/constants.ts', constants.join(''));
+    writeSource('test/calc.test.ts', testCode(80));
+    const [violation] = projectViolations(limits);
+    if (extraProduction > 0) {
+      expect(violation?.productionNcss).toBe(375);
+    }
+    const excess = violation?.excessTestNcss ?? 0;
     expect(excess).toBeGreaterThan(0);
     // Each assertion of the test file is one statement.
-    writeSource('test/calc.test.ts', testCode(60 - excess + 1));
+    writeSource('test/calc.test.ts', testCode(80 - excess + 1));
     expect(projectViolations(limits)).toHaveLength(1);
-    writeSource('test/calc.test.ts', testCode(60 - excess));
+    writeSource('test/calc.test.ts', testCode(80 - excess));
     expect(projectViolations(limits)).toEqual([]);
   });
 
