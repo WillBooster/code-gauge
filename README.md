@@ -125,7 +125,7 @@ Every threshold has a limit per level, and a value is reported at the most sever
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
 mark code to fix, and only errors fail the check (exit code 1).
 
-The defaults come from the 45,123 functions the WillBooster organization wrote in its repositories
+The defaults, except that of `maxTestNcssPercent`, come from the 45,123 functions the WillBooster organization wrote in its repositories
 (of 153,771 measured; copies of third-party projects and course material are left out), and from
 ratings of 225 of those functions, 47 of their files, and 60 of their duplicated blocks: a warning limit sits where most rated items were worth changing or borderline, an error
 limit where nearly all were worth changing. Cognitive complexity above 15 flags 3.1% of the
@@ -134,6 +134,8 @@ thresholds that are off, nesting depth flags no function that cognitive complexi
 cyclomatic complexity and Halstead difficulty flag functions rated like unflagged ones; Halstead
 volume, Halstead effort, and DepDegree are high mostly where a function is long or takes many
 parameters, which the limits above already flag.
+The `maxTestNcssPercent` default sits just below the median test share, in lines, of 50 of the
+organization's repositories; no ratings back it.
 [How the default thresholds were calibrated](docs/threshold-calibration.md) holds the corpus, the
 distributions per language, the ratings, and the reasoning per threshold.
 
@@ -224,9 +226,9 @@ Paths are relative to the repository root, or to the target directory outside a 
 | 2         | The check is incomplete: a file it covers could not be measured, or the arguments, config file, target, or base ref are invalid. |
 
 A file that cannot be measured causes exit code 2 only when the check covers it: a file under the
-target or, with `--base`, a changed file under the target. While `maxTestNcssPercent` applies, a
-test file under the target that cannot be read counts too, changed or not, since the share counts
-every test file. Other unmeasured files of the repository are warnings on stderr.
+target or, with `--base`, a changed file under the target. While `maxTestNcssPercent` applies, every
+file under the target counts, changed or not, since the share counts all of them, and a path git
+lists but cannot reach counts as unmeasured rather than deleted. Other unmeasured files of the repository are warnings on stderr.
 
 `check` accepts `--config`, `--include-tests`, `--json`, and the `--duplication-*` options of the
 ranking command.

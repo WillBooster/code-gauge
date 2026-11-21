@@ -261,7 +261,10 @@ async function scanRepository(
       ({ status, headPath }) => status !== 'deleted' && isInTarget(headPath)
     );
     files = await attachHunks(measuredFiles, changesInTarget, repoRoot, change.mergeBase);
-    isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
+    // The share counts every file under the target, so all of them stay covered for it.
+    if (!measuresTestShare) {
+      isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
+    }
   }
   const scope = {
     files,

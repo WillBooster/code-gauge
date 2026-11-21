@@ -1319,6 +1319,32 @@ describe('code-gauge check: test share', () => {
     }
   });
 
+  it.skipIf(runAsRoot)(
+    'leaves a branch check incomplete when an unchanged file under the target cannot be read',
+    () => {
+      runGit(['checkout', '-q', '-b', 'feature']);
+      writeSource('test/calc.test.ts', testCode(60));
+      runGit(['add', '-A']);
+      runGit(['commit', '-q', '-m', 'tests']);
+      writeSource('test/calc.test.ts', testCode(61));
+      for (const unreadable of [path.join(repoDir, 'src', 'legacy.ts'), path.join(repoDir, 'test')]) {
+        chmodSync(unreadable, 0o000);
+        try {
+          for (const args of [[], ['--include-tests']]) {
+            const result = runCheck([...args, '--base', 'HEAD', '--json']);
+            expect(result.status, `${unreadable} ${args.join(' ')}`).toBe(2);
+            const report = JSON.parse(result.stdout) as { errors: string[]; warnings: string[] };
+            expect(new Set(report.errors).size).toBe(report.errors.length);
+            expect(report.warnings.filter((warning) => report.errors.includes(warning))).toEqual([]);
+          }
+        } finally {
+          chmodSync(unreadable, 0o755);
+        }
+      }
+      chmodSync(path.join(repoDir, 'src', 'legacy.ts'), 0o644);
+    }
+  );
+
   it.skipIf(runAsRoot)('leaves the check incomplete when a test file cannot be read', () => {
     writeSource('test/calc.test.ts', testCode(60));
     chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o000);

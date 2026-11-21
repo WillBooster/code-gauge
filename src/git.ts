@@ -130,13 +130,15 @@ export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>
   ]);
   const entries = listed.split('\0').filter((entry) => entry !== '');
   const files = new Set(entries.map((entry) => entry.slice(2)));
-  for (const path of deleted.split('\0')) {
-    files.delete(path);
-  }
-  // A skip-worktree path may still be on disk (a file marked to ignore local edits).
-  for (const entry of entries.filter((candidate) => candidate.startsWith('S '))) {
-    const relativePath = entry.slice(2);
-    if (!(await exists(path.join(repoRoot, relativePath)))) {
+  // Git lists as deleted a path it cannot reach, and a skip-worktree path may still be on disk (a
+  // file marked to ignore local edits): only a path that does not exist leaves the working tree,
+  // so an inaccessible one stays to be reported as unmeasured.
+  const candidates = [
+    ...deleted.split('\0').filter((entry) => entry !== ''),
+    ...entries.filter((entry) => entry.startsWith('S ')).map((entry) => entry.slice(2)),
+  ];
+  for (const relativePath of candidates) {
+    if (await isAbsent(path.join(repoRoot, relativePath))) {
       files.delete(relativePath);
     }
   }
@@ -335,9 +337,9 @@ function describeCommand(args: readonly string[]): string {
   return args.slice(start, start + 2).join(' ');
 }
 
-async function exists(file: string): Promise<boolean> {
+async function isAbsent(file: string): Promise<boolean> {
   return await lstat(file).then(
-    () => true,
-    () => false
+    () => false,
+    (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
   );
 }

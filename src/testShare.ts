@@ -54,11 +54,14 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     isTestFileBelow(relativePath, targetPath, options) &&
     !pathExclusion.isExcludedPath(path.join(repoRoot, relativePath));
   const errors: string[] = [];
-  // With tests included, the check already measured them.
   const measuredNcss = new Map(input.measuredFiles.map(({ file, metrics }) => [file, metrics.ncssCount]));
   const measureHead = async (relativePath: string): Promise<number> => {
+    // With tests included, the check measured every test file and reported those it could not.
+    if (options.includeTests) {
+      return measuredNcss.get(relativePath) ?? 0;
+    }
     try {
-      return measuredNcss.get(relativePath) ?? (await measureTestFile(input, relativePath));
+      return await measureTestFile(input, relativePath);
     } catch (error) {
       errors.push(`${relativePath}: ${getErrorMessage(error)}`);
       return 0;
