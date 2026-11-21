@@ -104,7 +104,10 @@ async function measureAddedTestNcss(
 ): Promise<number> {
   const { repoRoot, targetPath, options } = input;
   const comparesAll = changedFiles.some(({ basePath, headPath }) =>
-    [basePath, headPath].some((file) => file !== undefined && path.posix.basename(file) === '.gitattributes')
+    // A case-insensitive filesystem lets git read the attributes file under any casing.
+    [basePath, headPath].some(
+      (file) => file !== undefined && path.posix.basename(file).toLowerCase() === '.gitattributes'
+    )
   );
   const isCandidate = (file: string): boolean =>
     isInTarget(file, targetPath) && isTestFileBelow(file, targetPath, options);
