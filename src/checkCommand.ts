@@ -343,11 +343,14 @@ function touchesTests(
   targetDirectory: string,
   options: ResolvedOptions
 ): boolean {
-  return change.changedFiles.some(
-    ({ headPath }) =>
-      repositoryFiles.has(headPath) &&
-      (targetDirectory === '' || headPath.startsWith(`${targetDirectory}/`)) &&
-      isTestFileBelow(headPath, targetDirectory, options)
+  // Both sides of a rename: git pairs a path it cannot reach, which the listing keeps, with a copy.
+  return change.changedFiles.some(({ basePath, headPath }) =>
+    [basePath ?? headPath, headPath].some(
+      (file) =>
+        repositoryFiles.has(file) &&
+        (targetDirectory === '' || file.startsWith(`${targetDirectory}/`)) &&
+        isTestFileBelow(file, targetDirectory, options)
+    )
   );
 }
 

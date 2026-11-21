@@ -1442,6 +1442,10 @@ describe('code-gauge check: test share', () => {
     chmodSync(path.join(repoDir, 'app', 'test'), 0o000);
     try {
       expect(runCheck(['app', '--base', 'HEAD']).status).toBe(2);
+      // Git pairs the unreachable test with a staged copy as a rename.
+      writeSource('app/copied.ts', testCode(60));
+      runGit(['add', 'app/copied.ts']);
+      expect(runCheck(['app', '--base', 'HEAD']).status).toBe(2);
     } finally {
       chmodSync(path.join(repoDir, 'app', 'test'), 0o755);
     }
