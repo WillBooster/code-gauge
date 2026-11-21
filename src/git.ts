@@ -302,9 +302,11 @@ async function readAttributesAt(repoRoot: string, commit: string, args: string[]
   const directory = await mkdtemp(path.join(os.tmpdir(), 'code-gauge-index-'));
   try {
     const env = { ...process.env, GIT_INDEX_FILE: path.join(directory, 'index') };
-    // Hooks are off: the user's index did not change, so post-index-change must not run.
-    await runGit(repoRoot, ['-c', 'core.hooksPath=/dev/null', 'read-tree', commit], env);
-    return await runGitWithInput(repoRoot, args, input, env);
+    // The user's index automation (hooks, a file-system monitor) must not run for an index that
+    // does not describe the working tree.
+    const isolated = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+    await runGit(repoRoot, [...isolated, 'read-tree', commit], env);
+    return await runGitWithInput(repoRoot, [...isolated, ...args], input, env);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

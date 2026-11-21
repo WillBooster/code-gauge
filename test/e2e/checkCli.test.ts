@@ -1529,6 +1529,25 @@ describe('code-gauge check: test share', () => {
     }
   });
 
+  it('runs no file-system monitor of the repository on the merge-base index', () => {
+    const marker = path.join(repoDir, 'monitor-ran');
+    const monitor = path.join(repoDir, '.git', 'monitor.sh');
+    // The monitor marks only a run against an index other than the repository's own.
+    writeFileSync(monitor, `#!/bin/sh\n[ -n "$GIT_INDEX_FILE" ] && touch '${marker}'\nexit 1\n`, { mode: 0o755 });
+    try {
+      writeSource('test/calc.test.ts', testCode(1));
+      runGit(['add', '-A']);
+      runGit(['commit', '-q', '-m', 'tests']);
+      runGit(['config', 'core.fsmonitor', monitor]);
+      writeSource('test/calc.test.ts', testCode(2));
+      expect(runCheck(['--base', 'HEAD']).status).toBe(0);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      runGit(['config', '--unset', 'core.fsmonitor']);
+      runGit(['reset', '-q', '--hard', 'HEAD~1']);
+    }
+  });
+
   it('counts no test code for an excluded test file the change deletes', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource('test/calc.test.ts', testCode(60));
