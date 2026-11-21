@@ -1,4 +1,6 @@
 import { execFile, spawn } from 'node:child_process';
+import { lstat } from 'node:fs/promises';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -119,16 +121,40 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
  * exactly these, so local ignored artifacts (build output, generated copies) are neither measured
  * nor allowed to skew duplication detection.
  */
-export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>> {
-  const [listed, deleted] = await Promise.all([
-    runGit(repoRoot, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']),
+export async function listRepositoryFiles(
+  repoRoot: string
+): Promise<{ files: Set<string>; warnings: string[]; sparse: boolean }> {
+  const [{ stdout: listed, stderr }, deleted, sparseCheckout] = await Promise.all([
+    // -t tags each path; `S` marks a skip-worktree path, which a sparse checkout leaves off disk.
+    runGitWithStderr(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
     runGit(repoRoot, ['ls-files', '--deleted', '-z']),
+    // Whatever the working tree holds, a sparse checkout may leave part of the project out.
+    isSparseCheckout(repoRoot),
   ]);
-  const files = new Set(listed.split('\0').filter((path) => path !== ''));
-  for (const path of deleted.split('\0')) {
-    files.delete(path);
+  const entries = listed.split('\0').filter((entry) => entry !== '');
+  const files = new Set(entries.map((entry) => entry.slice(2)));
+  // Git lists as deleted a path it cannot reach, and a skip-worktree path may still be on disk (a
+  // file marked to ignore local edits): only a path that does not exist leaves the working tree,
+  // so an inaccessible one stays to be reported as unmeasured.
+  const skipWorktree = new Set(entries.filter((entry) => entry.startsWith('S ')).map((entry) => entry.slice(2)));
+  const candidates = [...deleted.split('\0').filter((entry) => entry !== ''), ...skipWorktree];
+  for (const relativePath of await listAbsentPaths(repoRoot, candidates)) {
+    files.delete(relativePath);
   }
-  return files;
+  // Git tracks no path through a symbolic link, yet a tracked path below a directory replaced by
+  // one still resolves through it, and `--deleted` does not list it.
+  for (const directory of await listSymbolicLinkDirectories(repoRoot, files)) {
+    for (const file of files) {
+      if (file.startsWith(`${directory}/`)) {
+        files.delete(file);
+      }
+    }
+  }
+  // Git skips what it cannot list (an untracked directory it cannot open) with a warning: those
+  // files are not git-visible, so the check passes the warning on instead of measuring them.
+  // Verbatim as one block: a pathname git names in it may hold line breaks.
+  const warnings = stderr === '' ? [] : [stderr.replace(/\n$/u, '')];
+  return { files, warnings, sparse: sparseCheckout };
 }
 
 /**
@@ -264,9 +290,13 @@ async function runGitWithInput(cwd: string, args: string[], input: string): Prom
 }
 
 async function runGit(cwd: string, args: string[]): Promise<string> {
+  const { stdout } = await runGitWithStderr(cwd, args);
+  return stdout;
+}
+
+async function runGitWithStderr(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   try {
-    const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
-    return stdout;
+    return await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
     throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);
@@ -280,4 +310,91 @@ function describeCommand(args: readonly string[]): string {
     start += 2;
   }
   return args.slice(start, start + 2).join(' ');
+}
+
+/** A path that cannot be inspected is not absent: it stays to be reported as unmeasured. */
+/** Whether sparse checkout is enabled; `--type` and `--default` would need Git 2.18. */
+async function isSparseCheckout(repoRoot: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync('git', ['config', '--bool', '--get', 'core.sparseCheckout'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    return stdout.trim() === 'true';
+  } catch (error) {
+    // Exit status 1: the key is not set.
+    if ((error as { code?: unknown }).code === 1) return false;
+    throw error;
+  }
+}
+
+/**
+ * The paths that do not exist, probing a path below a directory already found missing no further
+ * and each directory at most once, so the paths a sparse checkout or a deletion leaves out cost one
+ * probe per missing directory, not per file.
+ */
+async function listAbsentPaths(repoRoot: string, relativePaths: readonly string[]): Promise<string[]> {
+  const absentDirectories = new Set<string>();
+  const presentDirectories = new Set<string>();
+  const isBelowAbsent = (relativePath: string): boolean => {
+    for (
+      let directory = path.posix.dirname(relativePath);
+      directory !== '.';
+      directory = path.posix.dirname(directory)
+    ) {
+      if (absentDirectories.has(directory)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const absent: string[] = [];
+  for (const relativePath of relativePaths) {
+    if (!isBelowAbsent(relativePath) && !(await isAbsent(path.join(repoRoot, relativePath)))) {
+      continue;
+    }
+    absent.push(relativePath);
+    // Record the highest missing ancestor so the paths below it need no probe, and the present
+    // directories so the paths beside it probe their parent once.
+    let directory = path.posix.dirname(relativePath);
+    while (
+      directory !== '.' &&
+      !presentDirectories.has(directory) &&
+      !absentDirectories.has(directory) &&
+      !isBelowAbsent(directory)
+    ) {
+      if (!(await isAbsent(path.join(repoRoot, directory)))) {
+        presentDirectories.add(directory);
+        break;
+      }
+      absentDirectories.add(directory);
+      directory = path.posix.dirname(directory);
+    }
+  }
+  return absent;
+}
+
+async function isAbsent(file: string): Promise<boolean> {
+  return await lstat(file).then(
+    () => false,
+    (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
+  );
+}
+
+/** The directories holding listed files that are symbolic links in the working tree, each inspected once. */
+async function listSymbolicLinkDirectories(repoRoot: string, files: ReadonlySet<string>): Promise<string[]> {
+  const directories = new Set<string>();
+  for (const file of files) {
+    const segments = file.split('/');
+    for (let count = 1; count < segments.length; count++) {
+      directories.add(segments.slice(0, count).join('/'));
+    }
+  }
+  const links = await Promise.all(
+    [...directories].map(async (directory) => {
+      const stats = await lstat(path.join(repoRoot, directory)).catch(() => {});
+      return stats?.isSymbolicLink() ? [directory] : [];
+    })
+  );
+  return links.flat();
 }

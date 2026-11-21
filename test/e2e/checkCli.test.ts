@@ -1,5 +1,15 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -40,6 +50,10 @@ function runGit(args: string[]): void {
   if (result.status !== 0) {
     throw new Error(`git ${args.join(' ')} failed:\n${result.stdout}\n${result.stderr}`);
   }
+}
+
+function gitOutput(args: string[], input?: string): string {
+  return spawnSync('git', args, { cwd: repoDir, encoding: 'utf8', input }).stdout;
 }
 
 function readSource(relativePath: string): string {
@@ -607,6 +621,7 @@ ep\`](value: number): number {
         functionViolationCount: 1,
         fileViolationCount: 0,
         duplicationViolationCount: 2,
+        projectViolationCount: 0,
         checkedFileCount: 4,
         checkedFunctionCount: 5,
         allowedLimitCount: 0,
@@ -1192,6 +1207,377 @@ describe('code-gauge check --base', () => {
     writeSource('lib/pasted.ts', reportFunction('pasted'));
     expect(hasViolations(['--base', 'main', 'src'])).toBe(false);
     expect(runCheck(['--base', 'main', 'lib']).stdout).toContain('lib/pasted.ts:1-12: duplicated lines 12');
+  });
+});
+
+/** A test file of `statementCount` assertions on the production code. */
+function testCode(statementCount: number): string {
+  const assertions = Array.from(
+    { length: statementCount },
+    (_, index) => `  expect(total([${index}])).toBe(${index});\n`
+  );
+  return `import { total } from '../src/calc';\n\nit('totals', () => {\n${assertions.join('')}});\n`;
+}
+
+describe('code-gauge check: test share', () => {
+  interface ProjectReport {
+    violations: {
+      kind: string;
+      file: string;
+      level: string;
+      testNcss: number;
+      productionNcss: number;
+      excessTestNcss?: number;
+    }[];
+  }
+
+  /** The project violations of a check that completed: an incomplete one reports no share. */
+  function projectViolations(args: string[]): ProjectReport['violations'] {
+    const result = runCheck([...args, '--json']);
+    expect(result.status, result.stderr).not.toBe(2);
+    const report = JSON.parse(result.stdout) as ProjectReport;
+    return report.violations.filter(({ kind }) => kind === 'project');
+  }
+
+  it('reports a project whose test code exceeds 30% of its production code, unless the config disables it', () => {
+    writeSource('test/calc.test.ts', testCode(60));
+    const result = runCheck([]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(
+      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+; delete or merge \d+ test NCSS$/mu
+    );
+    const [violation] = projectViolations([]);
+    expect(violation).toMatchObject({ kind: 'project', file: '.', level: 'error' });
+    expect((violation?.testNcss ?? 0) * 100).toBeGreaterThan((violation?.productionNcss ?? 0) * 30);
+
+    writeConfig({ thresholds: { ...baseConfig.thresholds, error: { maxTestNcssPercent: disabled } } });
+    expect(projectViolations([])).toEqual([]);
+  });
+
+  it.each([
+    ['the default limit', [], 0],
+    ['a warning limit stricter than the error limit', ['--warning-max-test-ncss-percent', '10'], 0],
+    // 375 production NCSS at 18.4% admit 69 test NCSS, which multiplying and flooring puts at 68.
+    ['a fractional limit', ['--error-max-test-ncss-percent', '18.4'], 326],
+  ])('names the least test NCSS whose deletion clears the share under %s', (_, limits, extraProduction) => {
+    const constants = Array.from({ length: extraProduction }, (_, index) => `export const c${index} = ${index};\n`);
+    writeSource('src/constants.ts', constants.join(''));
+    writeSource('test/calc.test.ts', testCode(80));
+    const [violation] = projectViolations(limits);
+    if (extraProduction > 0) {
+      expect(violation?.productionNcss).toBe(375);
+    }
+    const excess = violation?.excessTestNcss ?? 0;
+    expect(excess).toBeGreaterThan(0);
+    // Each assertion of the test file is one statement.
+    writeSource('test/calc.test.ts', testCode(80 - excess + 1));
+    expect(projectViolations(limits)).toHaveLength(1);
+    writeSource('test/calc.test.ts', testCode(80 - excess));
+    expect(projectViolations(limits)).toEqual([]);
+  });
+
+  it.skipIf(process.platform !== 'darwin')('counts a test git lists under two Unicode spellings once', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/single.test.ts', testCode(5));
+    const [single] = projectViolations([]);
+    rmSync(path.join(repoDir, 'test/single.test.ts'));
+    const decomposed = 'test/cafe\u0301.test.ts';
+    writeSource(decomposed, testCode(5));
+    runGit(['-c', 'core.precomposeUnicode=false', 'add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    // Whatever the developer's setting, git and the check list the file precomposed too.
+    runGit(['config', 'core.precomposeUnicode', 'true']);
+    try {
+      const listed = gitOutput(['ls-files', '--cached', '--others', '--exclude-standard', '-z', 'test']);
+      expect(listed.split('\0').filter((file) => file.normalize('NFC') === 'test/caf\u00E9.test.ts')).toHaveLength(2);
+      for (const args of [[], ['--include-tests']]) {
+        expect(projectViolations(args)).toMatchObject([{ testNcss: single?.testNcss }]);
+      }
+    } finally {
+      runGit(['config', '--unset', 'core.precomposeUnicode']);
+    }
+  });
+
+  it.skipIf(process.platform !== 'darwin')(
+    'counts a file two tracked spellings name once, as --include-tests does',
+    () => {
+      runGit(['checkout', '-q', '-b', 'feature']);
+      const blob = gitOutput(['hash-object', '-w', '--stdin'], testCode(30)).trim();
+      gitOutput(['update-index', '--index-info'], `100644 ${blob}\tTest/helper.ts\n100644 ${blob}\ttest/helper.ts\n`);
+      runGit(['commit', '-q', '-m', 'colliding paths']);
+      runGit(['checkout', '-q', '-f', 'HEAD', '--', '.']);
+      expect(gitOutput(['ls-files', 'Test', 'test']).split('\n').filter(Boolean)).toHaveLength(2);
+      // With tests included, the check measures the file once under the spelling it chooses.
+      expect(projectViolations([])).toEqual(projectViolations(['--include-tests']));
+    }
+  );
+
+  it.skipIf(process.platform !== 'darwin')(
+    'chooses a targeted file among the spellings of the whole repository, as --include-tests does',
+    () => {
+      runGit(['checkout', '-q', '-b', 'feature']);
+      writeSource('app/setup.ts', calc);
+      writeSource('app/setup.test.ts', testCode(3));
+      runGit(['add', '-A']);
+      const blob = gitOutput(['hash-object', '-w', '--stdin'], calc.replaceAll('total', 'consume')).trim();
+      gitOutput(['update-index', '--index-info'], `100644 ${blob}\tAPP/Source.ts\n100644 ${blob}\tapp/source.ts\n`);
+      runGit(['commit', '-q', '-m', 'colliding packages']);
+      runGit(['checkout', '-q', '-f', 'HEAD', '--', '.']);
+      renameSync(path.join(repoDir, 'app/source.ts'), path.join(repoDir, 'app/SOURCE.ts'));
+      expect(projectViolations(['app'])).toEqual(projectViolations(['app', '--include-tests']));
+    }
+  );
+
+  it('counts a test file once a test-named link to it is listed first', () => {
+    writeSource('test/z.test.ts', testCode(60));
+    const [alone] = projectViolations([]);
+    symlinkSync('z.test.ts', path.join(repoDir, 'test/a.test.ts'));
+    expect(projectViolations([])).toMatchObject([{ kind: 'project', testNcss: alone?.testNcss }]);
+  });
+
+  it('counts test statements, not lines, so packing them onto one line keeps their share', () => {
+    rmSync(path.join(repoDir, 'src'), { recursive: true, force: true });
+    writeSource(
+      'src/values.ts',
+      Array.from({ length: 30 }, (_, index) => `export const n${index} = ${index};\n`).join('')
+    );
+    writeSource('test/values.test.ts', `${Array.from({ length: 10 }, (_, index) => `check(${index});`).join(' ')}\n`);
+    expect(projectViolations([])).toMatchObject([{ kind: 'project', testNcss: 10, productionNcss: 30 }]);
+  });
+
+  it('accepts test code within its share', () => {
+    writeSource('test/calc.test.ts', testCode(1));
+    expect(projectViolations([])).toEqual([]);
+  });
+
+  it('reports the share with --base only for a change that touches a test under the target', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/old.test.ts', testCode(1));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource('src/calc.ts', `${calc}export const offset = 1;\n`);
+    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
+
+    rmSync(path.join(repoDir, 'test/old.test.ts'));
+    expect(projectViolations(['--base', 'HEAD']), 'a change that only deletes tests').toEqual([]);
+
+    writeSource('test/calc.test.ts', testCode(59));
+    const changed = runCheck(['--base', 'HEAD']);
+    expect(changed.stdout).toMatch(
+      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+; this change edits tests while test code exceeds 30% of production code: delete or merge tests so the change adds no test code$/mu
+    );
+    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', level: 'error' }]);
+  });
+
+  it('reports the share of a targeted directory with --base only for a test edited inside it', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('app/calc.ts', calc);
+    writeSource('app/test/calc.test.ts', testCode(60));
+    writeSource('other/test/calc.test.ts', testCode(1));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'packages']);
+    writeSource('other/test/calc.test.ts', testCode(2));
+    expect(projectViolations(['app', '--base', 'HEAD'])).toEqual([]);
+
+    writeSource('app/test/calc.test.ts', testCode(59));
+    expect(projectViolations(['app', '--base', 'HEAD'])).toMatchObject([{ kind: 'project', file: 'app' }]);
+  });
+
+  it('counts the files of a targeted test directory as tests, leaving no production code to compare', () => {
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/helper.ts', calc);
+    expect(projectViolations(['test'])).toEqual([]);
+  });
+
+  it.skipIf(runAsRoot)('reports no share while a production file cannot be read', () => {
+    writeSource('test/calc.test.ts', testCode(10));
+    chmodSync(path.join(repoDir, 'src', 'legacy.ts'), 0o000);
+    try {
+      const result = runCheck(['--json']);
+      expect(result.status).toBe(2);
+      expect((JSON.parse(result.stdout) as ProjectReport).violations.filter(({ kind }) => kind === 'project')).toEqual(
+        []
+      );
+    } finally {
+      chmodSync(path.join(repoDir, 'src', 'legacy.ts'), 0o644);
+    }
+  });
+
+  it.skipIf(runAsRoot)(
+    'leaves a branch check incomplete when an unchanged file under the target cannot be read',
+    () => {
+      runGit(['checkout', '-q', '-b', 'feature']);
+      writeSource('test/calc.test.ts', testCode(60));
+      writeSource('test/other.test.ts', testCode(1));
+      runGit(['add', '-A']);
+      runGit(['commit', '-q', '-m', 'tests']);
+      writeSource('test/calc.test.ts', testCode(61));
+      // Without ctime, git keeps a file whose permissions change out of its diff; an old mtime keeps
+      // it from rereading the content, as it does for a file as recent as its index.
+      runGit(['config', 'core.trustctime', 'false']);
+      try {
+        const past = new Date(Date.now() - 60_000);
+        for (const file of ['src/legacy.ts', 'test/other.test.ts']) {
+          utimesSync(path.join(repoDir, file), past, past);
+        }
+        runGit(['update-index', '-q', '--refresh']);
+        // An unchanged production file and an unchanged test file the scan skips.
+        for (const unreadable of ['src/legacy.ts', 'test/other.test.ts']) {
+          chmodSync(path.join(repoDir, unreadable), 0o000);
+          try {
+            const diff = spawnSync('git', ['diff', '--name-only', 'HEAD'], { cwd: repoDir, encoding: 'utf8' });
+            expect(diff.stdout.split('\n'), `git sees ${unreadable} unchanged`).not.toContain(unreadable);
+            for (const args of [[], ['--include-tests']]) {
+              const result = runCheck([...args, '--base', 'HEAD', '--json']);
+              expect(result.status, `${unreadable} ${args.join(' ')}`).toBe(2);
+              const report = JSON.parse(result.stdout) as { errors: string[]; warnings: string[] };
+              expect(report.errors.filter((error) => error.startsWith(`${unreadable}:`))).toHaveLength(1);
+              expect(report.warnings.filter((warning) => warning.startsWith(`${unreadable}:`))).toEqual([]);
+            }
+          } finally {
+            chmodSync(path.join(repoDir, unreadable), 0o644);
+          }
+        }
+      } finally {
+        runGit(['config', '--unset', 'core.trustctime']);
+      }
+    },
+    // Four checks of the repository, each a CLI process.
+    60_000
+  );
+
+  it.skipIf(runAsRoot)('reports the share past an excluded directory it cannot read', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeConfig({ ...baseConfig, exclude: ['private/**'] });
+    writeSource('private/ignored.ts', calc);
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'private']);
+    writeSource('test/calc.test.ts', testCode(60));
+    chmodSync(path.join(repoDir, 'private'), 0o000);
+    try {
+      const result = runCheck(['--json']);
+      expect(result.status, result.stderr).toBe(1);
+      expect((JSON.parse(result.stdout) as ProjectReport).violations).toContainEqual(
+        expect.objectContaining({ kind: 'project' })
+      );
+    } finally {
+      chmodSync(path.join(repoDir, 'private'), 0o755);
+    }
+  });
+
+  it('counts no test git tracks behind a directory replaced by a symbolic link', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/old.test.ts', testCode(60));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource('.gitignore', 'local-tests/\n');
+    mkdirSync(path.join(repoDir, 'local-tests'));
+    writeFileSync(path.join(repoDir, 'local-tests', 'old.test.ts'), testCode(60));
+    rmSync(path.join(repoDir, 'test'), { recursive: true });
+    symlinkSync('local-tests', path.join(repoDir, 'test'));
+    try {
+      expect(projectViolations([])).toEqual([]);
+    } finally {
+      rmSync(path.join(repoDir, 'test'));
+    }
+  });
+
+  it.skipIf(runAsRoot)('reports an unreadable file of a targeted test directory once', () => {
+    writeSource('test/helper.ts', calc);
+    chmodSync(path.join(repoDir, 'test', 'helper.ts'), 0o000);
+    try {
+      const report = JSON.parse(runCheck(['test', '--json']).stdout) as { errors: string[] };
+      expect(report.errors.filter((error) => error.startsWith('test/helper.ts:'))).toHaveLength(1);
+    } finally {
+      chmodSync(path.join(repoDir, 'test', 'helper.ts'), 0o644);
+    }
+  });
+
+  it.skipIf(runAsRoot)('keeps an unreadable sibling whose name extends the target out of its share', () => {
+    writeSource('app/calc.ts', calc);
+    writeSource('app/test/calc.test.ts', testCode(60));
+    writeSource('app:legacy.ts', legacy);
+    chmodSync(path.join(repoDir, 'app:legacy.ts'), 0o000);
+    try {
+      expect(projectViolations(['app'])).toMatchObject([{ kind: 'project', file: 'app' }]);
+    } finally {
+      chmodSync(path.join(repoDir, 'app:legacy.ts'), 0o644);
+    }
+  });
+
+  it.skipIf(runAsRoot)('leaves a branch check incomplete when a changed test becomes unreachable', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('app/calc.ts', calc);
+    writeSource('app/test/calc.test.ts', testCode(60));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource('app/test/calc.test.ts', testCode(61));
+    chmodSync(path.join(repoDir, 'app', 'test'), 0o000);
+    try {
+      expect(runCheck(['app', '--base', 'HEAD']).status).toBe(2);
+      // Git pairs the unreachable test with a staged copy as a rename.
+      writeSource('app/copied.ts', testCode(60));
+      runGit(['add', 'app/copied.ts']);
+      expect(runCheck(['app', '--base', 'HEAD']).status).toBe(2);
+    } finally {
+      chmodSync(path.join(repoDir, 'app', 'test'), 0o755);
+    }
+  });
+
+  it.skipIf(runAsRoot)('leaves the check incomplete when a test file cannot be read', () => {
+    writeSource('test/calc.test.ts', testCode(60));
+    chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o000);
+    try {
+      const result = runCheck([]);
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain('Error: test/calc.test.ts: ');
+    } finally {
+      chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o644);
+    }
+  });
+
+  it('counts the tests below a targeted directory the check otherwise skips', () => {
+    writeSource('vendor/lib/app.ts', calc);
+    writeSource('vendor/lib/test/app.test.ts', testCode(60));
+    expect(projectViolations(['vendor'])).toMatchObject([{ kind: 'project', file: 'vendor' }]);
+  });
+
+  it('lists a project warning after the errors in the JSON report', () => {
+    writeSource('test/calc.test.ts', testCode(1));
+    const args = ['--error-max-test-ncss-percent', 'off', '--warning-max-test-ncss-percent', '0', '--json'];
+    const report = JSON.parse(runCheck([...args, '--error-max-file-ncss', '0']).stdout) as ProjectReport;
+    const levels = report.violations.map(({ level }) => level);
+    expect(levels).toContain('error');
+    expect(levels.lastIndexOf('error')).toBeLessThan(levels.indexOf('warning'));
+    expect(report.violations.find(({ level }) => level === 'warning')?.kind).toBe('project');
+  });
+
+  it('measures no share in a sparse checkout, saying so', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-sparse-'));
+    try {
+      const git = (...args: string[]): void => {
+        expect(spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).status).toBe(0);
+      };
+      git('init', '-q', '-b', 'main');
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
+      mkdirSync(path.join(dir, 'src'));
+      writeFileSync(path.join(dir, 'src', 'calc.ts'), calc);
+      mkdirSync(path.join(dir, 'test'));
+      writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(1));
+      git('add', '-A');
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base');
+      git('sparse-checkout', 'set', 'src');
+      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), testCode(60));
+      const result = runCheck(['--base', 'HEAD', '--json', dir], dir);
+      expect(result.status, result.stderr).toBe(0);
+      const report = JSON.parse(result.stdout) as ProjectReport & { warnings: string[] };
+      expect(report.violations.filter(({ kind }) => kind === 'project')).toEqual([]);
+      expect(report.warnings).toContainEqual(expect.stringContaining('sparse checkout'));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

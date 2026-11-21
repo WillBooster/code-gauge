@@ -8,7 +8,7 @@ import { type CrossFileDuplicationMetrics, measureCrossFileDuplication } from '.
 import type { CrossFileDuplicationFileData } from './duplication.js';
 import type { Exclusion } from './exclusion.js';
 import { detectLanguage } from './languages.js';
-import { measureCode, measureCodeWithCrossFileDataAsync } from './metrics.js';
+import { measureCode, measureCodeAsync, measureCodeWithCrossFileDataAsync } from './metrics.js';
 import { NativeAddonError } from './nativeMetrics.js';
 import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } from './types.js';
 
@@ -16,6 +16,14 @@ import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } fr
 export interface ScanOptions {
   duplication: Required<DuplicationOptions>;
   includeTests: boolean;
+  /** Set when only each file's metrics are used: no cross-file duplication data is collected. */
+  metricsOnly?: boolean;
+  /**
+   * Whether a path (absolute) is in the measured scope; unset measures all. Only a file whose chosen
+   * path is in scope is measured, and only paths in scope report failures. Choosing among every
+   * listed path first keeps the choice what a full scan makes.
+   */
+  measuresChosenPath?: (absolutePath: string) => boolean;
   /**
    * Loads the exclusion covering the files a directory scan found (absolute paths); an explicitly
    * targeted file is always measured.
@@ -227,27 +235,38 @@ async function measureCandidates(context: ScanContext): Promise<void> {
     context.candidates.flatMap(({ file, realFile }) => (realFile === undefined ? [file] : [file, realFile]))
   );
   context.exclusion = exclusion;
-  // Every path reaching the same real file, in discovery order, so one alias cannot decide alone.
-  const pathsByRealFile = new Map<string, ScanCandidate[]>();
-  for (const candidate of context.candidates) {
-    let realFile;
-    try {
-      realFile = candidate.realFile ?? (await realpath(candidate.file));
-    } catch (error) {
-      recordError(context, candidate.file, error);
-      continue;
-    }
-    pathsByRealFile.set(realFile, [...(pathsByRealFile.get(realFile) ?? []), candidate]);
-  }
-  for (const [realFile, candidates] of pathsByRealFile) {
+  for (const [realFile, candidates] of await groupByRealFile(context, exclusion)) {
     if (context.fatalSeen) {
       return;
     }
     const chosen = await chooseMeasuredPath(realFile, candidates, exclusion);
-    if (chosen !== undefined) {
+    if (chosen !== undefined && (context.options.measuresChosenPath?.(chosen.file) ?? true)) {
       await measureFile(chosen.file, chosen.language, 'directory', context, realFile);
     }
   }
+}
+
+/** Every path reaching the same real file, in discovery order, so one alias cannot decide alone. */
+async function groupByRealFile(
+  context: ScanContext,
+  exclusion: Exclusion | undefined
+): Promise<Map<string, ScanCandidate[]>> {
+  const pathsByRealFile = new Map<string, ScanCandidate[]>();
+  for (const candidate of context.candidates) {
+    // An excluded path is never measured through, so it is not resolved, which could fail.
+    if (exclusion?.isExcludedPath(candidate.file)) {
+      continue;
+    }
+    try {
+      const realFile = candidate.realFile ?? (await realpath(candidate.file));
+      pathsByRealFile.set(realFile, [...(pathsByRealFile.get(realFile) ?? []), candidate]);
+    } catch (error) {
+      if (context.options.measuresChosenPath?.(candidate.file) ?? true) {
+        recordError(context, candidate.file, error);
+      }
+    }
+  }
+  return pathsByRealFile;
 }
 
 /**
@@ -267,13 +286,13 @@ async function chooseMeasuredPath(
   if (exclusion.isExcludedPath(realFile)) {
     return undefined;
   }
-  const measurable = candidates.filter(({ file }) => !exclusion.isExcludedPath(file));
-  const direct = measurable.find(({ file }) => file === realFile);
-  if (direct !== undefined || measurable.length <= 1) {
-    return direct ?? measurable[0];
+  // measureCandidates already left out the candidates whose own path is excluded.
+  const direct = candidates.find(({ file }) => file === realFile);
+  if (direct !== undefined || candidates.length <= 1) {
+    return direct ?? candidates[0];
   }
   const code = await readFile(realFile, 'utf8').catch(() => {});
-  return measurable.find(({ file }) => code !== undefined && !exclusion.isGeneratedCode(file, code)) ?? measurable[0];
+  return candidates.find(({ file }) => code !== undefined && !exclusion.isGeneratedCode(file, code)) ?? candidates[0];
 }
 
 /** Applies the scan's outcomes in discovery order once every measurement has settled. */
@@ -470,6 +489,9 @@ async function readAndMeasureFile(
     if (exclusion && (exclusion.isGeneratedCode(file, code) || exclusion.isGeneratedCode(resolvedFile, code))) {
       return { generatedFile: file };
     }
+    if (context.options.metricsOnly) {
+      return { file: { file, metrics: await measureCodeAsync(code, measureOptions) } };
+    }
     const { metrics, crossFileData, crossFileError } = await measureWithCrossFileData(code, measureOptions);
     return {
       file: { file, metrics, duplicationCandidates: crossFileData },
@@ -561,6 +583,27 @@ function shouldSkipDirectory(name: string, options: ScanOptions): boolean {
 export function isWithinDirectory(candidate: string, directory: string): boolean {
   const relative = path.relative(directory, candidate);
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+/**
+ * Whether a repository-relative path is a test file the check of `targetDirectory` (repository-
+ * relative, empty for the root) would measure with tests included: eligible by its path below the
+ * target, as the scan judges it, and a test by its whole path, so a test directory above the target
+ * still marks it a test.
+ */
+export function isTestFileBelow(relativePath: string, targetDirectory: string, options: ScanOptions): boolean {
+  const scopedPath = targetDirectory === '' ? relativePath : relativePath.slice(targetDirectory.length + 1);
+  return isScannedPath(scopedPath, { ...options, includeTests: true }) && isTestName(relativePath);
+}
+
+function isTestName(relativePath: string): boolean {
+  const segments = relativePath.split('/');
+  const name = segments.at(-1) ?? '';
+  return (
+    segments.slice(0, -1).some((segment) => testDirectoryNames.has(segment)) ||
+    testFilePattern.test(name) ||
+    suffixTestFilePattern.test(name)
+  );
 }
 
 /**

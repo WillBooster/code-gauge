@@ -15,6 +15,8 @@ import {
   levels,
   type LimitsByLevel,
   metricNameOf,
+  type TestShare,
+  testShareThreshold,
   type Threshold,
 } from './thresholds.js';
 import type { CodeMetrics, CognitiveBlock, FunctionMetrics } from './types.js';
@@ -62,7 +64,20 @@ interface CloneOccurrence extends BlockLocation {
   tokenCount: number;
 }
 
-export interface Violation extends BlockLocation {
+/** A violation of a threshold of the whole checked project, which no line of code locates. */
+export interface ProjectViolation extends TestShare {
+  kind: 'project';
+  /** The checked directory, repository-relative, `.` for the root. */
+  file: string;
+  level: Level;
+  exceeded: ExceededLimit[];
+  /** The test NCSS above the strictest limit: what a whole project deletes or merges to clear it. */
+  excessTestNcss: number;
+}
+
+export type Violation = CodeViolation | ProjectViolation;
+
+export interface CodeViolation extends BlockLocation {
   kind: 'function' | 'file' | 'duplication';
   /** The most severe level among `exceeded`. */
   level: Level;
@@ -86,7 +101,7 @@ export interface LocatedDirectiveProblem {
 }
 
 export interface CheckResult {
-  violations: Violation[];
+  violations: CodeViolation[];
   checkedFunctionCount: number;
   /** The exceeded limits a directive allowed, which `violations` leaves out. */
   allowedLimitCount: number;
@@ -104,7 +119,7 @@ type Allow = (
   isReported?: boolean
 ) => ExceededLimit[];
 
-const violationKinds: readonly Violation['kind'][] = ['file', 'function', 'duplication'];
+const violationKinds: readonly CodeViolation['kind'][] = ['file', 'function', 'duplication'];
 
 const cognitiveComplexityMetric = 'functionCognitiveComplexity';
 
@@ -124,7 +139,7 @@ export function checkThresholds(
   limitsOf: (language: string) => LimitsByLevel
 ): CheckResult {
   const crossFileGroupsByFile = indexGroupsByFile(duplication.crossFile, new Set(files.map(({ file }) => file)));
-  const violations: Violation[] = [];
+  const violations: CodeViolation[] = [];
   const directiveProblems: LocatedDirectiveProblem[] = [];
   let checkedFunctionCount = 0;
   let allowedLimitCount = 0;
@@ -164,6 +179,47 @@ export function checkThresholds(
       (left, right) => compareStrings(left.file, right.file) || left.line - right.line
     ),
   };
+}
+
+/**
+ * The violation of the test share limit, if any. A project without production code has nothing to
+ * compare.
+ */
+export function checkTestShare(share: TestShare, file: string, limits: LimitsByLevel): ProjectViolation | undefined {
+  if (share.productionNcss === 0) {
+    return undefined;
+  }
+  const [exceededLimit] = findExceeded(testShareThreshold, share, limits, (value, limit) => value > limit);
+  if (exceededLimit === undefined) {
+    return undefined;
+  }
+  return {
+    kind: 'project',
+    file,
+    level: exceededLimit.level,
+    exceeded: [exceededLimit],
+    ...share,
+    excessTestNcss: share.testNcss - allowedTestNcss(share, limits),
+  };
+}
+
+/**
+ * The most test NCSS the production NCSS admits under every level's limit, found with the
+ * comparison that reports the violation, so deleting the excess clears it at any level.
+ */
+function allowedTestNcss({ productionNcss }: TestShare, limits: LimitsByLevel): number {
+  const violates = (testNcss: number): boolean =>
+    findExceeded(testShareThreshold, { testNcss, productionNcss }, limits, (value, limit) => value > limit).length > 0;
+  const strictest = Math.min(...levels.map((level) => limits[level][testShareThreshold.key] as number));
+  // The estimate is off by at most one either way from rounding.
+  let allowed = Math.floor((productionNcss * strictest) / 100);
+  while (allowed > 0 && violates(allowed)) {
+    allowed -= 1;
+  }
+  while (!violates(allowed + 1)) {
+    allowed += 1;
+  }
+  return allowed;
 }
 
 /**
@@ -210,9 +266,9 @@ function checkFile(
   limits: LimitsByLevel,
   duplication: CheckedDuplication,
   allow: Allow
-): { violations: Violation[]; checkedFunctionCount: number } {
+): { violations: CodeViolation[]; checkedFunctionCount: number } {
   const { file, metrics, hunks } = checkedFile;
-  const violations: Violation[] = [];
+  const violations: CodeViolation[] = [];
   // A rename or a mode change lists the file as changed without touching any of its lines.
   const fileExceeded =
     hunks?.length === 0 ? [] : allow(collectExceeded(fileThresholds, metrics, limits), ({ target }) => !target);
@@ -267,7 +323,7 @@ function collectDirectiveProblems(
 
 // The kind is compared before the end line because a file violation's end line is corrected after
 // this ordering (to the last line that exists), and the order must not depend on that correction.
-function compareViolations(left: Violation, right: Violation): number {
+function compareViolations(left: CodeViolation, right: CodeViolation): number {
   return (
     levels.indexOf(right.level) - levels.indexOf(left.level) ||
     compareStrings(left.file, right.file) ||
@@ -314,7 +370,7 @@ function encloses(outer: FunctionMetrics, inner: FunctionMetrics): boolean {
   return startsBefore && endsAfter;
 }
 
-function toFunctionViolation(file: string, fn: FunctionMetrics, exceeded: ExceededLimit[]): Violation {
+function toFunctionViolation(file: string, fn: FunctionMetrics, exceeded: ExceededLimit[]): CodeViolation {
   const { startLine, endLine } = fn;
   const exceedsCognitiveComplexity = exceeded.some(({ metric }) => metric === cognitiveComplexityMetric);
   return {
@@ -329,7 +385,7 @@ export function qualifyFunctionName({ name = '<anonymous>', containerName }: Fun
   return containerName ? `${containerName}.${name}` : name;
 }
 
-function toViolation(location: BlockLocation, kind: Violation['kind'], exceeded: ExceededLimit[]): Violation {
+function toViolation(location: BlockLocation, kind: CodeViolation['kind'], exceeded: ExceededLimit[]): CodeViolation {
   const level = exceeded.some((limit) => limit.level === 'error') ? 'error' : 'warning';
   return { kind, level, ...location, exceeded };
 }
@@ -411,7 +467,7 @@ function collectDuplicationViolations(
   limits: LimitsByLevel,
   { minSimilarityPercent }: CheckedDuplication,
   allow: Allow
-): Violation[] {
+): CodeViolation[] {
   const findExceededLines = (duplicatedLineCount: number): ExceededLimit[] =>
     findExceeded(duplicationThreshold, { duplicatedLineCount }, limits, (value, limit) => value >= limit);
   const groups: CloneOccurrence[][] = [

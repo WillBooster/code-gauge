@@ -24,6 +24,7 @@ import {
   configSearchDirectory,
   formatPath,
   getLanguage,
+  isTestFileBelow,
   isWithinDirectory,
   resolveTarget,
   scanListedFiles,
@@ -32,17 +33,29 @@ import {
   writeStderr,
   writeStdout,
 } from './scan.js';
+import { measureRepositoryTestShare, type RepositoryTestShareInput } from './testShare.js';
 import {
   type BlockLocation,
   type CheckedDuplication,
   type CheckedFile,
   type CheckResult,
+  checkTestShare,
   checkThresholds,
+  type CodeViolation,
   compareStrings,
   type LocatedDirectiveProblem,
+  type ProjectViolation,
   type Violation,
 } from './thresholdCheck.js';
-import { type LimitsByLevel, metricNameOf, resolveLimits, thresholds } from './thresholds.js';
+import {
+  levels,
+  type LimitsByLevel,
+  metricNameOf,
+  resolveLimits,
+  type TestShare,
+  testShareThreshold,
+  thresholds,
+} from './thresholds.js';
 
 /** Raw options of the `check` subcommand; every field is undefined unless the flag was passed. */
 export interface CheckCliOptions extends CliOptions {
@@ -59,7 +72,14 @@ export interface CheckScope {
   /** The directory the files' paths are relative to. */
   root: string;
   mergeBase?: string;
+  /** The test share of the checked directory of a repository; absent when no limit applies to it. */
+  testShare?: TestShare;
+  /** The checked directory, relative to `root`; `.` for the root itself. */
+  checkedDirectory: string;
 }
+
+/** The check's result with the violations of the whole project, which come first. */
+type ReportedResult = Omit<CheckResult, 'violations'> & { violations: Violation[] };
 
 /** Caps how many partner locations a duplicated block lists so the report stays scannable. */
 const maxListedPartners = 3;
@@ -78,10 +98,19 @@ export async function runCheckCommand(
     const resolvedTarget = resolveTarget(target);
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
-    const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options);
+    const limitsOf = resolveLimits(cliLimits, config.config.thresholds);
+    const projectLimits = limitsOf('');
+    const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options, {
+      measuresTestShare: levels.some((level) => Number.isFinite(projectLimits[level][testShareThreshold.key])),
+    });
     const files = await attachAllowDirectives(scope.files, scope.root);
-    const result = checkThresholds(files, scope.duplication, resolveLimits(cliLimits, config.config.thresholds));
-    await endFileViolationsAtLastLine(result.violations, scope.root);
+    const codeResult = checkThresholds(files, scope.duplication, limitsOf);
+    const projectViolation = scope.testShare && checkTestShare(scope.testShare, scope.checkedDirectory, projectLimits);
+    const result: ReportedResult = {
+      ...codeResult,
+      violations: withProjectViolation(codeResult.violations, projectViolation),
+    };
+    await endFileViolationsAtLastLine(codeResult.violations, scope.root);
 
     if (options.json) {
       printJsonReport(cliOptions, scope, result);
@@ -106,7 +135,7 @@ async function attachAllowDirectives(files: readonly CheckedFile[], root: string
   }));
 }
 
-function hasErrors({ violations, directiveProblems }: CheckResult): boolean {
+function hasErrors({ violations, directiveProblems }: ReportedResult): boolean {
   return directiveProblems.length > 0 || violations.some(({ level }) => level === 'error');
 }
 
@@ -114,7 +143,7 @@ function hasErrors({ violations, directiveProblems }: CheckResult): boolean {
  * A file's measured line count includes the empty line after a final line terminator, which is
  * not a line of the file, so file-level violations end at the last line that exists.
  */
-async function endFileViolationsAtLastLine(violations: readonly Violation[], root: string): Promise<void> {
+async function endFileViolationsAtLastLine(violations: readonly CodeViolation[], root: string): Promise<void> {
   for (const violation of violations.filter(({ kind }) => kind === 'file')) {
     const content = await readFile(path.join(root, violation.file), 'utf8');
     if (/[\n\r]$/u.test(content)) {
@@ -131,7 +160,8 @@ async function endFileViolationsAtLastLine(violations: readonly Violation[], roo
 export async function scanCheckScope(
   resolvedTarget: string,
   base: string | undefined,
-  options: ResolvedOptions
+  options: ResolvedOptions,
+  { measuresTestShare = false }: { measuresTestShare?: boolean } = {}
 ): Promise<CheckScope> {
   const canonicalTarget = await realpath(resolvedTarget);
   const targetStat = await stat(canonicalTarget);
@@ -148,7 +178,16 @@ export async function scanCheckScope(
     }
     return await scanDirectoryWalk(canonicalTarget, options);
   }
-  return await scanRepository({ repoRoot, canonicalTarget, targetFile }, base, options);
+  return await scanRepository(
+    {
+      repoRoot,
+      canonicalTarget,
+      targetFile,
+      measuresTestShare: measuresTestShare && !targetFile,
+    },
+    base,
+    options
+  );
 }
 
 async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptions): Promise<CheckScope> {
@@ -163,6 +202,7 @@ async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptio
     errors: scan.errors,
     warnings: scan.warnings,
     root: scan.displayRoot,
+    checkedDirectory: '.',
   };
 }
 
@@ -171,6 +211,8 @@ interface RepositoryTarget {
   canonicalTarget: string;
   /** Set when the target is a file, which is measured even when git ignores it or it is excluded. */
   targetFile?: string;
+  /** Whether the share of test code is measured: a limit applies to it and the target is a directory. */
+  measuresTestShare: boolean;
 }
 
 /**
@@ -179,10 +221,83 @@ interface RepositoryTarget {
  * target: all of them or, with `base`, the changed ones with their line hunks.
  */
 async function scanRepository(
-  { repoRoot, canonicalTarget, targetFile }: RepositoryTarget,
+  { repoRoot, canonicalTarget, targetFile, measuresTestShare }: RepositoryTarget,
   base: string | undefined,
   options: ResolvedOptions
 ): Promise<CheckScope> {
+  const {
+    files: repositoryFiles,
+    warnings: listingWarnings,
+    sparse,
+    unlistedTarget,
+  } = await listCheckedFiles({ repoRoot, canonicalTarget, targetFile });
+  const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
+  const exclusion = keepPaths(await loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude), explicitFiles);
+  // Scan errors start with the file or directory they concern.
+  const targetPath = formatPath(canonicalTarget, repoRoot);
+  // The directory whose files the scan judges by their path below it; empty for the root or a file.
+  const targetDirectory = targetFile === undefined && canonicalTarget !== repoRoot ? targetPath : '';
+  const scan = await scanListedFiles(
+    repoRoot,
+    repositoryFiles,
+    { ...options, loadExclusion: () => Promise.resolve(exclusion) },
+    explicitFiles,
+    targetDirectory
+  );
+  const duplication = measureDuplication(scan, options);
+  scan.warnings.push(...listingWarnings);
+  const isInTarget = (relativePath: string): boolean =>
+    isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
+  const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
+  const isInTargetError = (error: string): boolean =>
+    canonicalTarget === repoRoot ||
+    (targetFile === undefined
+      ? isInTarget(pathOfError(error, repositoryFiles) ?? '')
+      : error.startsWith(`${targetPath}:`));
+  const change = base === undefined ? undefined : await resolveChange(repoRoot, base, unlistedTarget);
+  // A change that touches no test under the target is not blamed for a share it did not raise.
+  const sharesProject =
+    decideTestShare(measuresTestShare, sparse, scan.warnings) &&
+    (change === undefined || touchesTests(change, repositoryFiles, isInTarget, targetDirectory, options));
+  const { files, isCovered } =
+    change === undefined
+      ? { files: measuredFiles.filter(({ file }) => isInTarget(file)), isCovered: isInTargetError }
+      : await narrowToChange(change, measuredFiles, repoRoot, isInTarget, sharesProject ? isInTargetError : undefined);
+  const scope = {
+    files,
+    duplication,
+    ...partitionErrors(scan, isCovered),
+    root: repoRoot,
+    mergeBase: change?.mergeBase,
+    checkedDirectory: targetDirectory || '.',
+  };
+  return await addTestShare(
+    scope,
+    sharesProject
+      ? {
+          repoRoot,
+          repositoryFiles,
+          targetPath: targetDirectory,
+          isInTarget,
+          exclusion,
+          options,
+          measuredFiles,
+        }
+      : undefined
+  );
+}
+
+/**
+ * The repository's git-visible files, with a targeted file git does not list added as
+ * `unlistedTarget`. A directory git ignores is refused.
+ */
+async function listCheckedFiles({
+  repoRoot,
+  canonicalTarget,
+  targetFile,
+}: Pick<RepositoryTarget, 'repoRoot' | 'canonicalTarget' | 'targetFile'>): Promise<
+  Awaited<ReturnType<typeof listRepositoryFiles>> & { unlistedTarget?: string }
+> {
   // Only git-visible files are measured, so a directory git ignores would pass as a check of no
   // files. A directory git lists but whose sources it ignores is not told apart from a repository
   // or package whose only sources are ignored build output, which must pass.
@@ -191,51 +306,135 @@ async function scanRepository(
       `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
     );
   }
-  const repositoryFiles = await listRepositoryFiles(repoRoot);
-  const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
-  const unlistedTarget =
-    targetFile !== undefined && !repositoryFiles.has(formatPath(targetFile, repoRoot))
-      ? formatPath(targetFile, repoRoot)
-      : undefined;
-  if (unlistedTarget !== undefined) {
-    repositoryFiles.add(unlistedTarget);
+  const listing = await listRepositoryFiles(repoRoot);
+  const targetRelativePath = targetFile === undefined ? undefined : formatPath(targetFile, repoRoot);
+  if (targetRelativePath === undefined || listing.files.has(targetRelativePath)) {
+    return listing;
   }
-  const exclusion = keepPaths(await loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude), explicitFiles);
-  // Scan errors start with the file or directory they concern.
-  const targetPath = formatPath(canonicalTarget, repoRoot);
-  const scan = await scanListedFiles(
-    repoRoot,
-    repositoryFiles,
-    { ...options, loadExclusion: () => Promise.resolve(exclusion) },
-    explicitFiles,
-    targetFile === undefined && canonicalTarget !== repoRoot ? targetPath : ''
+  listing.files.add(targetRelativePath);
+  return { ...listing, unlistedTarget: targetRelativePath };
+}
+
+/** What the working tree changed since a merge-base. */
+interface Change {
+  mergeBase: string;
+  changedFiles: ChangedFile[];
+}
+
+/**
+ * The changed files under the target with their hunks, and the failures that leave the check
+ * incomplete: those of changed files, or `coversAll` when the share counts every file.
+ */
+async function narrowToChange(
+  change: Change,
+  measuredFiles: readonly CheckedFile[],
+  repoRoot: string,
+  isInTarget: (relativePath: string) => boolean,
+  coversAll: ((error: string) => boolean) | undefined
+): Promise<{ files: CheckedFile[]; isCovered: (error: string) => boolean }> {
+  const changesInTarget = change.changedFiles.filter(
+    ({ status, headPath }) => status !== 'deleted' && isInTarget(headPath)
   );
-  const duplication = measureDuplication(scan, options);
-  const isInTarget = (relativePath: string): boolean =>
-    isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
-  const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
-  let files = measuredFiles.filter(({ file }) => isInTarget(file));
-  let isCovered = (error: string): boolean =>
-    canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
-  let mergeBase;
-  if (base !== undefined) {
-    mergeBase = await resolveMergeBase(repoRoot, base);
-    const changedFiles = await listChangedFiles(repoRoot, mergeBase);
-    // A targeted file git does not list has no diff; all of it counts as added.
-    if (unlistedTarget !== undefined) {
-      changedFiles.push({ status: 'added', headPath: unlistedTarget });
-    }
-    const changesInTarget = changedFiles.filter(({ status, headPath }) => status !== 'deleted' && isInTarget(headPath));
-    files = await attachHunks(measuredFiles, changesInTarget, repoRoot, mergeBase);
-    isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
-  }
   return {
-    files,
-    duplication,
-    ...partitionErrors(scan, isCovered),
-    root: repoRoot,
-    mergeBase,
+    files: await attachHunks(measuredFiles, changesInTarget, repoRoot, change.mergeBase),
+    isCovered: coversAll ?? ((error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`))),
   };
+}
+
+/** The change since the merge-base with `base`. */
+async function resolveChange(repoRoot: string, base: string, unlistedTarget: string | undefined): Promise<Change> {
+  const mergeBase = await resolveMergeBase(repoRoot, base);
+  const changedFiles = await listChangedFiles(repoRoot, mergeBase);
+  // A targeted file git does not list has no diff; all of it counts as added.
+  if (unlistedTarget !== undefined) {
+    changedFiles.push({ status: 'added', headPath: unlistedTarget });
+  }
+  return { mergeBase, changedFiles };
+}
+
+/**
+ * Whether the change leaves a test it touched under the target among the files the check lists
+ * (added, modified, renamed to, or untracked), so a change that only deletes or moves tests out is
+ * not asked to prune further. The listing, not git's status, tells a removal: git also reports a
+ * path it cannot reach as deleted, which the listing keeps for the check to measure.
+ */
+function touchesTests(
+  change: Change,
+  repositoryFiles: ReadonlySet<string>,
+  isInTarget: (relativePath: string) => boolean,
+  targetDirectory: string,
+  options: ResolvedOptions
+): boolean {
+  // Both sides of a rename: git pairs a path it cannot reach, which the listing keeps, with a copy.
+  return change.changedFiles.some(({ basePath, headPath }) =>
+    [basePath ?? headPath, headPath].some(
+      (file) => repositoryFiles.has(file) && isInTarget(file) && isTestFileBelow(file, targetDirectory, options)
+    )
+  );
+}
+
+/**
+ * The listed file an error concerns: scan errors start with the file's path and a colon, and a
+ * path may itself hold `: `, so the longest listed prefix is taken.
+ */
+function pathOfError(error: string, repositoryFiles: ReadonlySet<string>): string | undefined {
+  let found: string | undefined;
+  for (let index = error.indexOf(': '); index !== -1; index = error.indexOf(': ', index + 1)) {
+    const candidate = error.slice(0, index);
+    if (repositoryFiles.has(candidate)) {
+      found = candidate;
+    }
+  }
+  return found;
+}
+
+/**
+ * Whether the share is measured. A sparse checkout leaves part of the project out of the working
+ * tree, so neither its share of test code nor what a change adds to it can be: a warning says so.
+ */
+function decideTestShare(measuresTestShare: boolean, sparse: boolean, warnings: string[]): boolean {
+  if (measuresTestShare && sparse) {
+    warnings.push('the share of test code is not measured in a sparse checkout, which leaves part of the project out');
+  }
+  return measuresTestShare && !sparse;
+}
+
+/** Adds the test share, when every file under the target was measured, and the files there that could not be, to a scope. */
+async function addTestShare(scope: CheckScope, input: RepositoryTestShareInput | undefined): Promise<CheckScope> {
+  if (input === undefined) {
+    return scope;
+  }
+  const { share, errors: shareErrors } = await measureRepositoryTestShare(input);
+  // The share may reach a file the check failed on under another spelling, in the target (an
+  // error) or outside it (a warning): one failure per file, an error when either is.
+  const [errorFiles, shareFiles, warningFiles] = await Promise.all(
+    [scope.errors, shareErrors, scope.warnings].map((messages) =>
+      Promise.all(messages.map((message) => realFileOfError(message, input)))
+    )
+  );
+  const failedFiles = new Set(errorFiles);
+  const newErrors = shareErrors.filter((_, index) => !failedFiles.has(shareFiles?.[index] ?? ''));
+  const newErrorFiles = new Set(shareFiles?.filter((file) => !failedFiles.has(file)));
+  const warnings = scope.warnings.filter((_, index) => !newErrorFiles.has(warningFiles?.[index] ?? ''));
+  const errors = [...scope.errors, ...newErrors];
+  // A share of partial totals would name tests to delete that the whole project admits.
+  return { ...scope, testShare: errors.length === 0 ? share : undefined, errors, warnings };
+}
+
+/** The real file an error concerns, or the error itself when it names no listed file that resolves. */
+async function realFileOfError(
+  error: string,
+  { repoRoot, repositoryFiles }: RepositoryTestShareInput
+): Promise<string> {
+  const file = pathOfError(error, repositoryFiles);
+  if (file === undefined) {
+    return error;
+  }
+  try {
+    return await realpath(path.join(repoRoot, file));
+  } catch {
+    return file;
+  }
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
@@ -334,7 +533,7 @@ function measureDuplication(scan: ScanResult, options: ResolvedOptions): Checked
   };
 }
 
-function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result: CheckResult): void {
+function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result: ReportedResult): void {
   const { violations, directiveProblems } = result;
   const counts = `${describeCounts(violations)}${directiveProblems.length > 0 ? `, ${directiveProblems.length} directive errors` : ''}`;
   const allowed =
@@ -354,17 +553,7 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   } else {
     writeStdout(`Threshold violations: ${counts} (${checked}).\n`);
   }
-  // Directive problems are errors, so they join the error-level violations, ordered by path and line.
-  const errorLines = [
-    ...violations
-      .filter(({ level }) => level === 'error')
-      .map((violation) => ({ file: violation.file, line: violation.startLine, text: formatViolation(violation) })),
-    ...directiveProblems.map((problem) => ({ ...problem, text: formatDirectiveProblem(problem) })),
-  ].toSorted((left, right) => compareStrings(left.file, right.file) || left.line - right.line);
-  const warningLines = violations
-    .filter(({ level }) => level === 'warning')
-    .map((violation) => formatViolation(violation));
-  for (const text of [...errorLines.map(({ text }) => text), ...warningLines]) {
+  for (const text of formatViolationLines(violations, directiveProblems, scope.mergeBase !== undefined)) {
     writeStdout(`${text}\n`);
   }
 
@@ -385,6 +574,24 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   }
 }
 
+/** The project violation leads the violations of its level, which keep the errors first. */
+function withProjectViolation(
+  violations: readonly CodeViolation[],
+  projectViolation: ProjectViolation | undefined
+): Violation[] {
+  if (projectViolation === undefined) {
+    return [...violations];
+  }
+  const index = projectViolation.level === 'error' ? 0 : violations.findIndex(({ level }) => level !== 'error');
+  const at = index === -1 ? violations.length : index;
+  return [...violations.slice(0, at), projectViolation, ...violations.slice(at)];
+}
+
+/** A violation of the whole project precedes the lines of its directory. */
+function firstLineOf(violation: Violation): number {
+  return violation.kind === 'project' ? 0 : violation.startLine;
+}
+
 function formatDirectiveProblem({ file, line, message }: LocatedDirectiveProblem): string {
   return `error: ${file}:${line}: ${message}`;
 }
@@ -395,7 +602,8 @@ function describeBase(cliOptions: CheckCliOptions, scope: CheckScope): string {
 
 function describeCounts(violations: readonly Violation[]): string {
   const counts = countViolations(violations);
-  return `${counts.errorViolationCount} errors, ${counts.warningViolationCount} warnings (${counts.functionViolationCount} functions, ${counts.fileViolationCount} files, ${counts.duplicationViolationCount} duplicated blocks)`;
+  const project = counts.projectViolationCount > 0 ? `, ${counts.projectViolationCount} project` : '';
+  return `${counts.errorViolationCount} errors, ${counts.warningViolationCount} warnings (${counts.functionViolationCount} functions, ${counts.fileViolationCount} files, ${counts.duplicationViolationCount} duplicated blocks${project})`;
 }
 
 function countViolations(violations: readonly Violation[]): {
@@ -405,6 +613,7 @@ function countViolations(violations: readonly Violation[]): {
   functionViolationCount: number;
   fileViolationCount: number;
   duplicationViolationCount: number;
+  projectViolationCount: number;
 } {
   const count = (kind: Violation['kind']): number => violations.filter((violation) => violation.kind === kind).length;
   const errorViolationCount = violations.filter(({ level }) => level === 'error').length;
@@ -415,11 +624,40 @@ function countViolations(violations: readonly Violation[]): {
     functionViolationCount: count('function'),
     fileViolationCount: count('file'),
     duplicationViolationCount: count('duplication'),
+    projectViolationCount: count('project'),
   };
 }
 
+/**
+ * The text report's lines: the errors, directive problems among them, then the warnings, each level
+ * ordered by path and line.
+ */
+function formatViolationLines(
+  violations: readonly Violation[],
+  directiveProblems: readonly LocatedDirectiveProblem[],
+  checksChange: boolean
+): string[] {
+  const linesOf = (level: Violation['level']): { file: string; line: number; text: string }[] =>
+    violations
+      .filter((violation) => violation.level === level)
+      .map((violation) => ({
+        file: violation.file,
+        line: firstLineOf(violation),
+        text: formatViolation(violation, checksChange),
+      }));
+  const errorLines = [
+    ...linesOf('error'),
+    ...directiveProblems.map((problem) => ({ ...problem, text: formatDirectiveProblem(problem) })),
+  ];
+  return [...errorLines.toSorted(byLocation), ...linesOf('warning').toSorted(byLocation)].map(({ text }) => text);
+}
+
+function byLocation(left: { file: string; line: number }, right: { file: string; line: number }): number {
+  return compareStrings(left.file, right.file) || left.line - right.line;
+}
+
 /** One violation as a single line: its level, the location, then every limit it exceeds. */
-function formatViolation(violation: Violation): string {
+function formatViolation(violation: Violation, checksChange: boolean): string {
   const exceeded = violation.exceeded
     .map(({ metric, label, value, level, limit }) => {
       // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
@@ -428,14 +666,17 @@ function formatViolation(violation: Violation): string {
       // A duplicated block violates from its limit on, so the largest allowed code-line count is
       // the last whole number below it; a limit of 0 allows none.
       const maxAllowed = violation.kind === 'duplication' ? Math.max(Math.ceil(limit) - 1, 0) : limit;
-      const blocks = metric === 'functionCognitiveComplexity' ? describeLargestBlocks(violation) : '';
+      const blocks =
+        metric === 'functionCognitiveComplexity' && violation.kind === 'function'
+          ? describeLargestBlocks(violation)
+          : '';
       return `${label} ${roundedValue} (${levelPrefix}max ${maxAllowed}${blocks})`;
     })
     .join(', ');
-  return `${violation.level}: ${describeViolation(violation, exceeded)}`;
+  return `${violation.level}: ${describeViolation(violation, exceeded, checksChange)}`;
 }
 
-function describeLargestBlocks({ largestBlocks = [] }: Violation): string {
+function describeLargestBlocks({ largestBlocks = [] }: CodeViolation): string {
   const blocks = largestBlocks.map(
     ({ startLine, endLine, name, cognitiveComplexity }) =>
       `L${startLine}${endLine === startLine ? '' : `-${endLine}`}${name ? ` ${toOneLine(name)}` : ''} ${cognitiveComplexity}`
@@ -443,8 +684,14 @@ function describeLargestBlocks({ largestBlocks = [] }: Violation): string {
   return blocks.length > 0 ? `; largest parts ${blocks.join(', ')}` : '';
 }
 
-function describeViolation(violation: Violation, exceeded: string): string {
+function describeViolation(violation: Violation, exceeded: string, checksChange: boolean): string {
   switch (violation.kind) {
+    case 'project': {
+      const remedy = checksChange
+        ? `this change edits tests while test code exceeds ${violation.exceeded[0]?.limit}% of production code: delete or merge tests so the change adds no test code`
+        : `delete or merge ${violation.excessTestNcss} test NCSS`;
+      return `${violation.file}: ${exceeded}, test NCSS ${violation.testNcss} of production NCSS ${violation.productionNcss}; ${remedy}`;
+    }
     case 'file': {
       return `${violation.file}: ${exceeded}`;
     }
@@ -468,7 +715,7 @@ function formatLocation({ file, startLine, endLine }: BlockLocation): string {
   return `${file}:${startLine}-${endLine}`;
 }
 
-function printJsonReport(cliOptions: CheckCliOptions, scope: CheckScope, result: CheckResult): void {
+function printJsonReport(cliOptions: CheckCliOptions, scope: CheckScope, result: ReportedResult): void {
   writeStdout(
     JSON.stringify(
       {
