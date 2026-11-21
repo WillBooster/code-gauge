@@ -83,7 +83,11 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     return { share, errors };
   }
   const { mergeBase, changedFiles } = input.base;
-  const basePaths = changedFiles.flatMap(({ basePath }) => (basePath === undefined ? [] : [basePath]));
+  const basePaths = changedFiles.flatMap(({ basePath }) =>
+    basePath !== undefined && isInTarget(basePath, targetPath) && isTestFileBelow(basePath, targetPath, options)
+      ? [basePath]
+      : []
+  );
   const baseExclusion = await input.base.loadExclusion(basePaths);
   const baseTestPaths = await listRegularFilesAt(
     repoRoot,

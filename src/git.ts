@@ -1,4 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -225,18 +228,11 @@ export async function readLinguistAttributes(
   if (input === '') {
     return new Map();
   }
-  const output = await runGitWithInput(
-    repoRoot,
-    [
-      'check-attr',
-      ...(source === undefined ? [] : ['--source', source]),
-      '--stdin',
-      '-z',
-      'linguist-generated',
-      'linguist-vendored',
-    ],
-    input
-  );
+  const args = ['--stdin', '-z', 'linguist-generated', 'linguist-vendored'];
+  const output =
+    source === undefined
+      ? await runGitWithInput(repoRoot, ['check-attr', ...args], input)
+      : await readAttributesAt(repoRoot, source, ['check-attr', '--cached', ...args], input);
   const attributesByPath = new Map<string, LinguistAttributes>();
   const fields = output.split('\0');
   for (let index = 0; index + 2 < fields.length; index += 3) {
@@ -267,9 +263,24 @@ function toAttributeFlag(value: string): boolean | undefined {
   return undefined;
 }
 
-async function runGitWithInput(cwd: string, args: string[], input: string): Promise<string> {
+/**
+ * Runs `check-attr --cached` against an index read from `commit`, so the attributes are that
+ * commit's: `check-attr --source` needs Git 2.40.
+ */
+async function readAttributesAt(repoRoot: string, commit: string, args: string[], input: string): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'code-gauge-index-'));
+  try {
+    const env = { ...process.env, GIT_INDEX_FILE: path.join(directory, 'index') };
+    await runGit(repoRoot, ['read-tree', commit], env);
+    return await runGitWithInput(repoRoot, args, input, env);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function runGitWithInput(cwd: string, args: string[], input: string, env?: NodeJS.ProcessEnv): Promise<string> {
   return await new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd });
+    const child = spawn('git', args, { cwd, env });
     // git exiting before it reads all input (e.g. on a usage error) makes the write fail with
     // EPIPE; its exit code and stderr, reported on close, already describe the failure.
     child.stdin.on('error', () => {});
@@ -290,9 +301,9 @@ async function runGitWithInput(cwd: string, args: string[], input: string): Prom
   });
 }
 
-async function runGit(cwd: string, args: string[]): Promise<string> {
+async function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
   try {
-    const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
+    const { stdout } = await execFileAsync('git', args, { cwd, env, maxBuffer: maxOutputBytes, encoding: 'utf8' });
     return stdout;
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
