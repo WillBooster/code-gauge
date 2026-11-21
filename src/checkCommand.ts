@@ -255,7 +255,7 @@ async function scanRepository(
   // A change that touches no test under the target is not blamed for a share it did not raise.
   const sharesProject =
     decideTestShare(measuresTestShare, sparse, scan.warnings) &&
-    (change === undefined || touchesTests(change, repositoryFiles, targetDirectory, options));
+    (change === undefined || touchesTests(change, repositoryFiles, isInTarget, targetDirectory, options));
   const { files, isCovered } =
     change === undefined
       ? { files: measuredFiles.filter(({ file }) => isInTarget(file)), isCovered: isInTargetError }
@@ -275,6 +275,7 @@ async function scanRepository(
           repoRoot,
           repositoryFiles,
           targetPath: targetDirectory,
+          isInTarget,
           exclusion,
           options,
           measuredFiles,
@@ -358,16 +359,14 @@ async function resolveChange(repoRoot: string, base: string, unlistedTarget: str
 function touchesTests(
   change: Change,
   repositoryFiles: ReadonlySet<string>,
+  isInTarget: (relativePath: string) => boolean,
   targetDirectory: string,
   options: ResolvedOptions
 ): boolean {
   // Both sides of a rename: git pairs a path it cannot reach, which the listing keeps, with a copy.
   return change.changedFiles.some(({ basePath, headPath }) =>
     [basePath ?? headPath, headPath].some(
-      (file) =>
-        repositoryFiles.has(file) &&
-        (targetDirectory === '' || file.startsWith(`${targetDirectory}/`)) &&
-        isTestFileBelow(file, targetDirectory, options)
+      (file) => repositoryFiles.has(file) && isInTarget(file) && isTestFileBelow(file, targetDirectory, options)
     )
   );
 }

@@ -7,6 +7,8 @@ export interface RepositoryTestShareInput {
   repositoryFiles: ReadonlySet<string>;
   /** The checked directory, repository-relative; empty for the repository root. */
   targetPath: string;
+  /** Whether a repository-relative path lies in the checked directory, as the check judges it. */
+  isInTarget: (relativePath: string) => boolean;
   exclusion: Exclusion;
   options: ScanOptions;
   /** The files the check measured, repository-relative. */
@@ -42,7 +44,7 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
   let testNcss = 0;
   let productionNcss = 0;
   for (const { file, metrics } of files) {
-    if (!isInTarget(file, targetPath)) {
+    if (!input.isInTarget(file)) {
       continue;
     }
     if (isTestFileBelow(file, targetPath, options)) {
@@ -88,7 +90,3 @@ async function scanWithTests({
 }
 
 const noCloneSearchTokens = 1_000_000_000;
-
-function isInTarget(relativePath: string, targetPath: string): boolean {
-  return targetPath === '' || relativePath.startsWith(`${targetPath}/`);
-}
