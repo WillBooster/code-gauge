@@ -467,19 +467,18 @@ async function runGitWithInput(cwd: string, args: string[], input: string, env?:
   });
 }
 
-async function runGitWithStderr(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
-  try {
-    return await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
-  } catch (error) {
-    const stderr = (error as { stderr?: string }).stderr?.trim();
-    throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);
-  }
+async function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+  const { stdout } = await runGitWithStderr(cwd, args, env);
+  return stdout;
 }
 
-async function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+async function runGitWithStderr(
+  cwd: string,
+  args: string[],
+  env?: NodeJS.ProcessEnv
+): Promise<{ stdout: string; stderr: string }> {
   try {
-    const { stdout } = await execFileAsync('git', args, { cwd, env, maxBuffer: maxOutputBytes, encoding: 'utf8' });
-    return stdout;
+    return await execFileAsync('git', args, { cwd, env, maxBuffer: maxOutputBytes, encoding: 'utf8' });
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
     throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);
