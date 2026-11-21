@@ -540,6 +540,7 @@ const CPP_NCSS_NODES: &[&str] = &[
     "expression_statement",
     "if_statement",
     "else_clause",
+    "else_continuation",
     "switch_statement",
     "case_statement",
     "for_statement",

@@ -179,6 +179,14 @@ function cognitiveOf(code: string, language = 'javascript'): number | undefined 
   return measureCode(code, { language }).functions[0]?.cognitiveComplexity;
 }
 
+const cppBranch = (head: string): string => `  } ${head} {\n    return 0;\n`;
+const cppChain = (branches: string): string => `int f(int x) {\n  if (x < 0) {\n    return -1;\n${branches}  }\n}\n`;
+
+function cppBranchMetrics(code: string): number[] {
+  const [fn] = measureCode(code, { language: 'cpp' }).functions;
+  return [fn?.cyclomaticComplexity ?? -1, fn?.cognitiveComplexity ?? -1, fn?.ncss ?? -1];
+}
+
 describe('measureCode: cognitive complexity and nesting', () => {
   // classify(): for (+1) → if with `&&` (+2 nesting, +1 logical) → nested if (+3) with plain else
   // (+1) = 8 per the strict SonarSource model (issue #22).
@@ -211,6 +219,24 @@ describe('measureCode: cognitive complexity and nesting', () => {
     expect(cognitiveOf('function f(a,b){ if (a) { if (b) { return 1; } else { return 2; } } }')).toBe(4);
     expect(cognitiveOf('def f(a):\n    if a:\n        return 1\n    else:\n        return 2\n', 'python')).toBe(2);
     expect(cognitiveOf('def f(a)\n  if a\n    1\n  else\n    2\n  end\nend\n', 'ruby')).toBe(2);
+  });
+
+  it('measures C++ else branches spliced in by preprocessor conditionals like a plain chain', () => {
+    // libc++ guards optional branches this way: the conditional closes the if block and continues
+    // the else chain, so the parser cannot nest the branch inside an else clause.
+    const cases: [guardedHeads: string[], trailingHeads: string[]][] = [
+      [['else if (x == 0)'], ['else']],
+      [['else if (x == 0)', 'else if (x == 1)'], ['else']],
+      [['else if (x == 0)'], []],
+      [['else'], []],
+    ];
+    for (const [guardedHeads, trailingHeads] of cases) {
+      const guarded = guardedHeads.map((head, index) => `#ifdef CASE_${index}\n${cppBranch(head)}#endif\n`).join('');
+      const trailing = trailingHeads.map(cppBranch).join('');
+      expect(cppBranchMetrics(cppChain(guarded + trailing))).toEqual(
+        cppBranchMetrics(cppChain([...guardedHeads, ...trailingHeads].map(cppBranch).join('')))
+      );
+    }
   });
 
   // Sonar's written spec adds +1 per function in a recursion cycle, but code-gauge intentionally

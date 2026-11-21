@@ -25,7 +25,7 @@ rustc-hash = "2"
 tree-sitter = { package = "willbooster-tree-sitter", version = "23.0.3" }
 tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=40.0.3" }
 tree-sitter-c-sharp = { package = "willbooster-tree-sitter-c-sharp", version = "=22.0.3" }
-tree-sitter-cpp = { package = "willbooster-tree-sitter-cpp", version = "=35.0.0" }
+tree-sitter-cpp = { package = "willbooster-tree-sitter-cpp", version = "=36.0.0" }
 tree-sitter-go = { package = "willbooster-tree-sitter-go", version = "=13.0.3" }
 tree-sitter-java = { package = "willbooster-tree-sitter-java", version = "=35.0.3" }
 tree-sitter-javascript = { package = "willbooster-tree-sitter-javascript", version = "=27.0.2" }

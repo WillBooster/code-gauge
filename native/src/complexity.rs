@@ -526,8 +526,9 @@ impl FunctionBodyPass<'_, '_, '_> {
     }
 }
 
-/// Plain else branches attached to `current`: an `else_clause`/Ruby `else` whose branch is not an
-/// `else if` continuation, or a bare Java/Go/Kotlin `alternative:` branch without a clause wrapper.
+/// Plain else branches attached to `current`: an `else_clause`/`else_continuation`/Ruby `else`
+/// whose branch is not an `else if` continuation, or a bare Java/Go/Kotlin `alternative:` branch
+/// without a clause wrapper.
 fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64 {
     if !current.is_named() {
         return 0;
@@ -538,6 +539,9 @@ fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64
         // (sonar-ruby models it as a match case, not an else branch); `if`/`unless`/`begin` else
         // branches count one point each.
         return u64::from(!is_case_else_parent(parent));
+    }
+    if kind == "else_continuation" {
+        return u64::from(!crate::util::is_else_if_clause(current));
     }
     if kind == "else_clause" {
         if crate::util::is_else_if_clause(current) {
