@@ -24,10 +24,10 @@ rustc-hash = "2"
 # `links = "tree-sitter"` would conflict with the forked runtime's.
 tree-sitter = { package = "willbooster-tree-sitter", version = "23.0.2" }
 tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=40.0.3" }
-tree-sitter-c-sharp = { package = "willbooster-tree-sitter-c-sharp", version = "=22.0.2" }
+tree-sitter-c-sharp = { package = "willbooster-tree-sitter-c-sharp", version = "=22.0.3" }
 tree-sitter-cpp = { package = "willbooster-tree-sitter-cpp", version = "=34.0.1" }
 tree-sitter-go = { package = "willbooster-tree-sitter-go", version = "=13.0.3" }
-tree-sitter-java = { package = "willbooster-tree-sitter-java", version = "=35.0.2" }
+tree-sitter-java = { package = "willbooster-tree-sitter-java", version = "=35.0.3" }
 tree-sitter-javascript = { package = "willbooster-tree-sitter-javascript", version = "=27.0.2" }
 tree-sitter-kotlin = { package = "willbooster-tree-sitter-kotlin", version = "=22.0.5" }
 tree-sitter-python = { package = "willbooster-tree-sitter-python", version = "=21.0.3" }
