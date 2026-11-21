@@ -260,13 +260,11 @@ async function streamBlobs(
   objects: readonly string[],
   onBlob: (object: string, content: Buffer) => void
 ): Promise<void> {
-  let pending: Buffer = Buffer.alloc(0);
-  await runGitStreaming(repoRoot, ['cat-file', '--batch'], objects.map((object) => `${object}\n`).join(''), (chunk) => {
-    pending = consumeBlobRecords(pending.length === 0 ? chunk : Buffer.concat([pending, chunk]), onBlob);
-  });
-  if (pending.length > 0) {
-    throw new Error('git cat-file --batch ended inside a blob');
-  }
+  const reader = new BlobRecordReader(onBlob);
+  await runGitStreaming(repoRoot, ['cat-file', '--batch'], objects.map((object) => `${object}\n`).join(''), (chunk) =>
+    reader.push(chunk)
+  );
+  reader.finish();
 }
 
 /** Runs git with `input` on its stdin, handing its stdout on as it arrives; a throwing handler stops it. */
@@ -300,26 +298,70 @@ async function runGitStreaming(
   }
 }
 
-/** Hands on the whole records at the start of `buffer` and returns the rest, an incomplete record. */
-function consumeBlobRecords(buffer: Buffer, onBlob: (object: string, content: Buffer) => void): Buffer {
-  let offset = 0;
-  for (;;) {
-    const headerEnd = buffer.indexOf(0x0a, offset);
-    if (headerEnd === -1) {
-      return buffer.subarray(offset);
+/**
+ * Splits `cat-file --batch` output into blobs. Chunks are kept as they arrive and joined once a
+ * record is whole, so a large blob is copied a constant number of times.
+ */
+class BlobRecordReader {
+  private chunks: Buffer[] = [];
+  private length = 0;
+  private record: { object: string; start: number; end: number } | undefined;
+
+  private readonly onBlob: (object: string, content: Buffer) => void;
+
+  constructor(onBlob: (object: string, content: Buffer) => void) {
+    this.onBlob = onBlob;
+  }
+
+  push(chunk: Buffer): void {
+    this.chunks.push(chunk);
+    this.length += chunk.length;
+    while (this.takeRecord()) {
+      // Each pass hands on one whole record.
     }
-    const header = buffer.subarray(offset, headerEnd).toString('utf8');
+  }
+
+  finish(): void {
+    if (this.length > 0) {
+      throw new Error('git cat-file --batch ended inside a blob');
+    }
+  }
+
+  /** Hands on the record at the start of the kept output, when it is whole. */
+  private takeRecord(): boolean {
+    this.record ??= this.readHeader();
+    if (this.record === undefined || this.length <= this.record.end) {
+      return false;
+    }
+    const buffer = this.joined();
+    this.onBlob(this.record.object, buffer.subarray(this.record.start, this.record.end));
+    const rest = buffer.subarray(this.record.end + 1);
+    this.chunks = rest.length > 0 ? [rest] : [];
+    this.length = rest.length;
+    this.record = undefined;
+    return true;
+  }
+
+  private readHeader(): { object: string; start: number; end: number } | undefined {
+    const buffer = this.joined();
+    const headerEnd = buffer.indexOf(0x0a);
+    if (headerEnd === -1) {
+      return undefined;
+    }
+    const header = buffer.subarray(0, headerEnd).toString('utf8');
     // `<object> blob <size>`, or `<object> missing` for an object the repository lacks.
     const [object = '', type, size] = header.split(' ');
     if (type !== 'blob' || size === undefined || !/^\d+$/u.test(size)) {
       throw new Error(`git cat-file could not read ${object}: ${header}`);
     }
-    const end = headerEnd + 1 + Number(size);
-    if (buffer.length <= end) {
-      return buffer.subarray(offset);
+    return { object, start: headerEnd + 1, end: headerEnd + 1 + Number(size) };
+  }
+
+  private joined(): Buffer {
+    if (this.chunks.length !== 1) {
+      this.chunks = [Buffer.concat(this.chunks, this.length)];
     }
-    onBlob(object, buffer.subarray(headerEnd + 1, end));
-    offset = end + 1;
+    return this.chunks[0] ?? Buffer.alloc(0);
   }
 }
 
