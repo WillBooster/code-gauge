@@ -82,6 +82,8 @@ async function measureTestFile(input: RepositoryTestShareInput, relativePath: st
   return measureTestCode(await readFile(absolutePath, 'utf8'), relativePath, input, input.exclusion);
 }
 
+const noCloneSearchTokens = 1_000_000_000;
+
 function measureTestCode(
   code: string,
   relativePath: string,
@@ -92,7 +94,9 @@ function measureTestCode(
   if (language === undefined || exclusion.isGeneratedCode(path.join(input.repoRoot, relativePath), code)) {
     return undefined;
   }
-  return measureCode(code, { language, duplication: input.options.duplication }).ncssCount;
+  // Only NCSS is kept, so no region is long enough to search for clones.
+  return measureCode(code, { language, duplication: { ...input.options.duplication, minTokens: noCloneSearchTokens } })
+    .ncssCount;
 }
 
 function isInTarget(relativePath: string, targetPath: string): boolean {
