@@ -1357,6 +1357,46 @@ describe('code-gauge check: test share', () => {
     }
   );
 
+  it.skipIf(runAsRoot)('reports an unreadable file of a targeted test directory once', () => {
+    writeSource('test/helper.ts', calc);
+    chmodSync(path.join(repoDir, 'test', 'helper.ts'), 0o000);
+    try {
+      const report = JSON.parse(runCheck(['test', '--json']).stdout) as { errors: string[] };
+      expect(report.errors.filter((error) => error.startsWith('test/helper.ts:'))).toHaveLength(1);
+    } finally {
+      chmodSync(path.join(repoDir, 'test', 'helper.ts'), 0o644);
+    }
+  });
+
+  it.skipIf(runAsRoot)('keeps an unreadable sibling whose name extends the target out of its share', () => {
+    writeSource('app/calc.ts', calc);
+    writeSource('app/test/calc.test.ts', testCode(60));
+    writeSource('app:legacy.ts', legacy);
+    chmodSync(path.join(repoDir, 'app:legacy.ts'), 0o000);
+    try {
+      expect(projectViolations(['app'])).toMatchObject([{ kind: 'project', file: 'app' }]);
+    } finally {
+      chmodSync(path.join(repoDir, 'app:legacy.ts'), 0o644);
+    }
+  });
+
+  it.skipIf(runAsRoot)(
+    'leaves the check incomplete when an untracked directory under the target cannot be listed',
+    () => {
+      writeSource('test/new.test.ts', testCode(60));
+      chmodSync(path.join(repoDir, 'test'), 0o000);
+      try {
+        const result = runCheck(['--json']);
+        expect(result.status).toBe(2);
+        expect((JSON.parse(result.stdout) as { errors: string[] }).errors).toContainEqual(
+          expect.stringMatching(/^test: could not be listed: /u)
+        );
+      } finally {
+        chmodSync(path.join(repoDir, 'test'), 0o755);
+      }
+    }
+  );
+
   it.skipIf(runAsRoot)('leaves the check incomplete when a test file cannot be read', () => {
     writeSource('test/calc.test.ts', testCode(60));
     chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o000);

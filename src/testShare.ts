@@ -7,7 +7,7 @@ import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 import type { Exclusion } from './exclusion.js';
 import { type ChangedFile, listRegularFilesAt, readFileAt } from './git.js';
 import { measureCode } from './metrics.js';
-import { getLanguage, isTestFileBelow, type ScanOptions } from './scan.js';
+import { getLanguage, isScannedBelow, isTestFileBelow, type ScanOptions } from './scan.js';
 import type { TestShare } from './thresholds.js';
 
 /** The test share of the checked project and, for a check of a change, the test NCSS it adds. */
@@ -56,8 +56,8 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
   const errors: string[] = [];
   const measuredNcss = new Map(input.measuredFiles.map(({ file, metrics }) => [file, metrics.ncssCount]));
   const measureHead = async (relativePath: string): Promise<number> => {
-    // With tests included, the check measured every test file and reported those it could not.
-    if (options.includeTests) {
+    // The check measured this file itself and reported it if it could not.
+    if (isScannedBelow(relativePath, targetPath, options)) {
       return measuredNcss.get(relativePath) ?? 0;
     }
     try {

@@ -574,6 +574,11 @@ export function isTestFileBelow(relativePath: string, targetDirectory: string, o
   return isScannedPath(scopedPath, { ...options, includeTests: true }) && isTestName(relativePath);
 }
 
+/** Whether the check of `targetDirectory` measures a repository-relative path, as the scan judges it. */
+export function isScannedBelow(relativePath: string, targetDirectory: string, options: ScanOptions): boolean {
+  return isScannedPath(targetDirectory === '' ? relativePath : relativePath.slice(targetDirectory.length + 1), options);
+}
+
 function isTestName(relativePath: string): boolean {
   const segments = relativePath.split('/');
   const name = segments.at(-1) ?? '';

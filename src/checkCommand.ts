@@ -226,7 +226,7 @@ async function scanRepository(
       `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
     );
   }
-  const repositoryFiles = await listRepositoryFiles(repoRoot);
+  const { files: repositoryFiles, unlistedDirectories } = await listRepositoryFiles(repoRoot);
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
   const unlistedTarget =
     targetFile !== undefined && !repositoryFiles.has(formatPath(targetFile, repoRoot))
@@ -248,11 +248,12 @@ async function scanRepository(
     targetDirectory
   );
   const duplication = measureDuplication(scan, options);
+  scan.errors.push(...unlistedDirectories);
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   const isInTargetError = (error: string): boolean =>
-    canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
+    canonicalTarget === repoRoot || concernsTarget(error, targetPath, targetFile !== undefined);
   const change = base === undefined ? undefined : await resolveChange(repoRoot, base, options, unlistedTarget);
   const { files, isCovered } =
     change === undefined
@@ -319,6 +320,15 @@ async function resolveChange(
     changedFiles,
     loadExclusion: (relativePaths) => loadRepositoryExclusion(repoRoot, relativePaths, options.exclude, mergeBase),
   };
+}
+
+/**
+ * Whether an error, which starts with the path it concerns, concerns the target: a targeted file's
+ * path ends at a colon, and a file under a targeted directory continues past its slash (a sibling
+ * may hold a colon).
+ */
+function concernsTarget(error: string, targetPath: string, isFile: boolean): boolean {
+  return error.startsWith(isFile ? `${targetPath}:` : `${targetPath}/`);
 }
 
 /** Adds the test share, when every file under the target was measured, and the test files that could not be, to a scope. */

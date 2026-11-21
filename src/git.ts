@@ -122,10 +122,12 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
  * exactly these, so local ignored artifacts (build output, generated copies) are neither measured
  * nor allowed to skew duplication detection.
  */
-export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>> {
-  const [listed, deleted] = await Promise.all([
+export async function listRepositoryFiles(
+  repoRoot: string
+): Promise<{ files: Set<string>; unlistedDirectories: string[] }> {
+  const [{ stdout: listed, stderr }, deleted] = await Promise.all([
     // -t tags each path; `S` marks a skip-worktree path, which a sparse checkout leaves off disk.
-    runGit(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
+    runGitWithStderr(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
     runGit(repoRoot, ['ls-files', '--deleted', '-z']),
   ]);
   const entries = listed.split('\0').filter((entry) => entry !== '');
@@ -142,7 +144,11 @@ export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>
       files.delete(relativePath);
     }
   }
-  return files;
+  // Git skips an untracked directory it cannot open with only a warning, and lists none of it.
+  const unlistedDirectories = [...stderr.matchAll(/^warning: could not open directory '(.+)': (.+)$/gmu)].map(
+    ([, directory, reason]) => `${(directory ?? '').replace(/\/$/u, '')}: could not be listed: ${reason}`
+  );
+  return { files, unlistedDirectories };
 }
 
 /**
@@ -316,6 +322,15 @@ async function runGitWithInput(cwd: string, args: string[], input: string, env?:
     });
     child.stdin.end(input);
   });
+}
+
+async function runGitWithStderr(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
+  try {
+    return await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
+  } catch (error) {
+    const stderr = (error as { stderr?: string }).stderr?.trim();
+    throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);
+  }
 }
 
 async function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
