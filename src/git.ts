@@ -153,10 +153,8 @@ export async function listRepositoryFiles(repoRoot: string): Promise<{ files: Se
   }
   // Git skips what it cannot list (an untracked directory it cannot open) with a warning: those
   // files are not git-visible, so the check passes the warning on instead of measuring them.
-  const warnings = stderr
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line !== '');
+  // Verbatim as one block: a pathname git names in it may hold line breaks.
+  const warnings = stderr === '' ? [] : [stderr.replace(/\n$/u, '')];
   return { files, warnings };
 }
 
