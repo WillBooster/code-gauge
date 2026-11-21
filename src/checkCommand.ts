@@ -401,13 +401,37 @@ function decideTestShare(measuresTestShare: boolean, sparse: boolean, warnings: 
 
 /** Adds the test share, when every file under the target was measured, and the files there that could not be, to a scope. */
 async function addTestShare(scope: CheckScope, input: RepositoryTestShareInput | undefined): Promise<CheckScope> {
-  // The check already failed to measure a file under the target, so the share would be partial.
-  if (input === undefined || scope.errors.length > 0) {
+  if (input === undefined) {
     return scope;
   }
-  const { share, errors } = await measureRepositoryTestShare(input);
+  const { share, errors: shareErrors } = await measureRepositoryTestShare(input);
+  // The share may reach a file the check failed on under another spelling: one failure per file.
+  const failedFiles = new Set(await Promise.all(scope.errors.map((error) => realFileOfError(error, input))));
+  const newErrors: string[] = [];
+  for (const error of shareErrors) {
+    if (!failedFiles.has(await realFileOfError(error, input))) {
+      newErrors.push(error);
+    }
+  }
+  const errors = [...scope.errors, ...newErrors];
   // A share of partial totals would name tests to delete that the whole project admits.
-  return { ...scope, testShare: errors.length === 0 ? share : undefined, errors: [...errors] };
+  return { ...scope, testShare: errors.length === 0 ? share : undefined, errors };
+}
+
+/** The real file an error concerns, or the error itself when it names no listed file that resolves. */
+async function realFileOfError(
+  error: string,
+  { repoRoot, repositoryFiles }: RepositoryTestShareInput
+): Promise<string> {
+  const file = pathOfError(error, repositoryFiles);
+  if (file === undefined) {
+    return error;
+  }
+  try {
+    return await realpath(path.join(repoRoot, file));
+  } catch {
+    return file;
+  }
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
