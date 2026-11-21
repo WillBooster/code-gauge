@@ -104,9 +104,9 @@ async function measureAddedTestNcss(
       ? [basePath]
       : []
   );
-  const baseExclusion = await loadExclusion(basePaths);
   let baseNcssByPath: Map<string, number>;
   try {
+    const baseExclusion = await loadExclusion(basePaths);
     baseNcssByPath = await measureRegularFilesAt(
       repoRoot,
       mergeBase,
@@ -114,7 +114,8 @@ async function measureAddedTestNcss(
       (basePath, code) => measureTestCode(code, basePath, input, baseExclusion)
     );
   } catch (error) {
-    // Unread merge-base tests leave the change's addition unknown; the error suppresses the share.
+    // An unread merge-base snapshot (attributes or tests, as in a partial clone offline) leaves the
+    // change's addition unknown; the error suppresses the share while the report keeps the rest.
     errors.push(`test files at ${mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`);
     return 0;
   }
