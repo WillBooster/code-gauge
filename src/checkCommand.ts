@@ -405,17 +405,20 @@ async function addTestShare(scope: CheckScope, input: RepositoryTestShareInput |
     return scope;
   }
   const { share, errors: shareErrors } = await measureRepositoryTestShare(input);
-  // The share may reach a file the check failed on under another spelling: one failure per file.
-  const failedFiles = new Set(await Promise.all(scope.errors.map((error) => realFileOfError(error, input))));
-  const newErrors: string[] = [];
-  for (const error of shareErrors) {
-    if (!failedFiles.has(await realFileOfError(error, input))) {
-      newErrors.push(error);
-    }
-  }
+  // The share may reach a file the check failed on under another spelling, in the target (an
+  // error) or outside it (a warning): one failure per file, an error when either is.
+  const [errorFiles, shareFiles, warningFiles] = await Promise.all(
+    [scope.errors, shareErrors, scope.warnings].map((messages) =>
+      Promise.all(messages.map((message) => realFileOfError(message, input)))
+    )
+  );
+  const failedFiles = new Set(errorFiles);
+  const newErrors = shareErrors.filter((_, index) => !failedFiles.has(shareFiles?.[index] ?? ''));
+  const newErrorFiles = new Set(shareFiles?.filter((file) => !failedFiles.has(file)));
+  const warnings = scope.warnings.filter((_, index) => !newErrorFiles.has(warningFiles?.[index] ?? ''));
   const errors = [...scope.errors, ...newErrors];
   // A share of partial totals would name tests to delete that the whole project admits.
-  return { ...scope, testShare: errors.length === 0 ? share : undefined, errors };
+  return { ...scope, testShare: errors.length === 0 ? share : undefined, errors, warnings };
 }
 
 /** The real file an error concerns, or the error itself when it names no listed file that resolves. */
