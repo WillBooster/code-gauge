@@ -318,6 +318,14 @@ functions were A or B. An error marks code to fix, so its limit sits where nearl
 
 With these limits, `check` reports 464 errors and 2,430 warnings in the calibration corpus (2,799 warnings when it counted a duplicated block by its line span), and 45 of its 105 repositories have no error.
 
+## Test share
+
+`maxTestNcssPercent` defaults to an error above 30, and to no warning. It was set in November 2026
+from the 50 WillBooster repositories on a developer's machine whose production code exceeds 3,000
+lines: their test code, counted in lines rather than NCSS, was 33% of their production code at the
+median. A limit just below the median makes half of the organization's projects trade test code for
+test code before adding more, and the median project halving its tests passes it.
+
 ## Duplicated blocks measured in matched lines
 
 The tables of duplicated blocks above, and that of the [public part](#public-part-of-the-corpus)

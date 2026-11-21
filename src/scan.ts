@@ -564,6 +564,17 @@ export function isWithinDirectory(candidate: string, directory: string): boolean
 }
 
 /**
+ * Whether a path, relative to the scanned directory, is a test file: one the scan leaves out unless
+ * tests are included.
+ */
+export function isTestPath(relativePath: string, options: ScanOptions): boolean {
+  return (
+    isScannedPath(relativePath, { ...options, includeTests: true }) &&
+    !isScannedPath(relativePath, { ...options, includeTests: false })
+  );
+}
+
+/**
  * Whether a repository-relative path would be scanned: no ignored or excluded-test directory
  * segment and a supported, non-test file name. An explicitly targeted file only needs a supported
  * language, as in the ranking command.

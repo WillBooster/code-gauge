@@ -607,6 +607,7 @@ ep\`](value: number): number {
         functionViolationCount: 1,
         fileViolationCount: 0,
         duplicationViolationCount: 2,
+        projectViolationCount: 0,
         checkedFileCount: 4,
         checkedFunctionCount: 5,
         allowedLimitCount: 0,
@@ -1192,6 +1193,70 @@ describe('code-gauge check --base', () => {
     writeSource('lib/pasted.ts', reportFunction('pasted'));
     expect(hasViolations(['--base', 'main', 'src'])).toBe(false);
     expect(runCheck(['--base', 'main', 'lib']).stdout).toContain('lib/pasted.ts:1-12: duplicated lines 12');
+  });
+});
+
+/** A test file of `statementCount` assertions on the production code. */
+function testCode(statementCount: number): string {
+  const assertions = Array.from(
+    { length: statementCount },
+    (_, index) => `  expect(total([${index}])).toBe(${index});\n`
+  );
+  return `import { total } from '../src/calc';\n\nit('totals', () => {\n${assertions.join('')}});\n`;
+}
+
+describe('code-gauge check: test share', () => {
+  interface ProjectReport {
+    violations: {
+      kind: string;
+      file: string;
+      level: string;
+      testNcss: number;
+      productionNcss: number;
+      addedTestNcss?: number;
+    }[];
+  }
+
+  function projectViolations(args: string[]): ProjectReport['violations'] {
+    const report = JSON.parse(runCheck([...args, '--json']).stdout) as ProjectReport;
+    return report.violations.filter(({ kind }) => kind === 'project');
+  }
+
+  it('reports a project whose test code exceeds 30% of its production code, unless the config disables it', () => {
+    writeSource('test/calc.test.ts', testCode(60));
+    const result = runCheck([]);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(
+      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+$/mu
+    );
+    const [violation] = projectViolations([]);
+    expect(violation).toMatchObject({ kind: 'project', file: '.', level: 'error' });
+    expect((violation?.testNcss ?? 0) * 100).toBeGreaterThan((violation?.productionNcss ?? 0) * 30);
+
+    writeConfig({ thresholds: { ...baseConfig.thresholds, error: { maxTestNcssPercent: disabled } } });
+    expect(projectViolations([])).toEqual([]);
+  });
+
+  it('accepts test code within its share', () => {
+    writeSource('test/calc.test.ts', testCode(1));
+    expect(projectViolations([])).toEqual([]);
+  });
+
+  it('reports the share with --base only for a change that adds test code', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource('src/calc.ts', `${calc}export const offset = 1;\n`);
+    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
+
+    writeSource('test/calc.test.ts', testCode(61));
+    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([
+      { kind: 'project', level: 'error', addedTestNcss: 1 },
+    ]);
+
+    writeSource('test/calc.test.ts', testCode(59));
+    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
   });
 });
 

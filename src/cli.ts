@@ -27,6 +27,7 @@ import {
   type Level,
   levels,
   type Limits,
+  testShareThreshold,
   thresholds,
 } from './thresholds.js';
 import type { FunctionMetrics } from './types.js';
@@ -143,6 +144,9 @@ function addSharedOptions(command: Command): Command {
 }
 
 function describeLimit(key: string, level: Level): string {
+  if (key === testShareThreshold.key) {
+    return `maximum test NCSS, as a percentage of the other files' NCSS, without ${level === 'error' ? 'an error' : 'a warning'}`;
+  }
   if (key === duplicationThreshold.key) {
     return `code-line count from which a duplicated block is ${level === 'error' ? 'an error' : 'a warning'}`;
   }

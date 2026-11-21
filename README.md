@@ -107,6 +107,16 @@ like the ranking command. The thresholds:
 | `maxFunctionDepDegree`            | a function's DepDegree is above it                                  | off     | off   |
 | `maxFileNcss`                     | a file's NCSS is above it                                           | 400     | 1000  |
 | `minDuplicateLines`               | a duplicated block holds at least this many lines matched in a copy | 15      | off   |
+| `maxTestNcssPercent`              | the target's test NCSS, as a percentage of its other NCSS, is above | off     | 30    |
+
+`maxTestNcssPercent` holds the test code of the checked directory in proportion to its production
+code: the NCSS of its test files (the files the check otherwise skips as tests) against that of its
+other measured files. It is one violation of the whole directory, of kind `project`, and none when
+the target is a file or the directory holds no production code. With `--base`, it is reported only
+when the change adds test NCSS, counted from the changed test files at the merge-base and in the
+working tree, so a change that only removes production code or keeps the test code as it was is
+never blamed for a share it did not raise. No directive allows it, and it has no per-language
+override: `null` in the config or `off` on the command line disables it.
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
@@ -265,6 +275,7 @@ touches.
     "functionViolationCount": 1,
     "fileViolationCount": 0,
     "duplicationViolationCount": 1,
+    "projectViolationCount": 0,
     "checkedFileCount": 2,
     "checkedFunctionCount": 2,
     "allowedLimitCount": 0
@@ -324,11 +335,15 @@ touches.
   functions checked: those under the target or, with `--base`, the changed files under it and the
   functions the change touches, and `allowedLimitCount`, the exceeded limits that
   [directives](#allowing-a-warning-in-the-code) allowed, which `violations` leaves out.
-- `violations`: the errors first, each level ordered by `file`, then `startLine`. Each has
-  - `kind`: `function`, `file`, or `duplication`;
+- `violations`: the errors first, each level ordered by `file`, then `startLine`; a violation of
+  kind `project` comes first. Each has
+  - `kind`: `function`, `file`, `duplication`, or `project`;
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
-    kind `file`, the first and last line of the file;
+    kind `file`, the first and last line of the file; for kind `project`, only `file`, the checked
+    directory relative to the repository root (`.` for the root);
+  - `testNcss`, `productionNcss`, and, with `--base`, `addedTestNcss`: only for kind `project`; the
+    NCSS of the test files and of the other files, and the test NCSS the change adds;
   - `name`: only for kind `function`; a member's name follows the type, module, or object it
     belongs to (`Rules.decide`), and a function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or

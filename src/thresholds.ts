@@ -123,7 +123,30 @@ export const duplicationThreshold: Threshold<{ duplicatedLineCount: number }> = 
   measure: (block) => block.duplicatedLineCount,
 };
 
-export const thresholds: readonly Threshold[] = [...functionThresholds, ...fileThresholds, duplicationThreshold];
+/** The NCSS of the checked project's test files and of its other files. */
+export interface TestShare {
+  testNcss: number;
+  productionNcss: number;
+}
+
+/**
+ * Test code is kept in proportion to the production code it checks. The limit applies to the whole
+ * checked project, so it has no per-language override.
+ */
+export const testShareThreshold: Threshold<TestShare> = {
+  key: 'maxTestNcssPercent',
+  label: 'test NCSS percent',
+  defaultLimits: { warning: Infinity, error: 30 },
+  hint: 'delete or merge at least as much test code as the change adds, in the same change.',
+  measure: ({ testNcss, productionNcss }) => (testNcss * 100) / productionNcss,
+};
+
+export const thresholds: readonly Threshold[] = [
+  ...functionThresholds,
+  ...fileThresholds,
+  duplicationThreshold,
+  testShareThreshold,
+];
 
 /** The name a report gives a threshold's measured value: its key without the `max`/`min` prefix. */
 export function metricNameOf(threshold: Threshold): string {
