@@ -1,4 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
 import { lstat, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -217,55 +218,109 @@ export async function readFileAt(repoRoot: string, commit: string, file: string)
 }
 
 /**
- * The contents, by path, of the paths among `paths` that `commit` holds as regular files, not
- * symbolic links or submodules.
- * The whole tree is listed and matched here, since passing the paths would hit the command-line
- * length limit on a large change.
+ * Measures, by path, the paths among `paths` that `commit` holds as regular files, not symbolic
+ * links or submodules. The whole tree is listed and matched here, since passing the paths would hit
+ * the command-line length limit on a large change; their contents stream from one `cat-file
+ * --batch` process, each measured as it arrives so only the measurements are kept.
  */
-export async function readRegularFilesAt(
+export async function measureRegularFilesAt(
   repoRoot: string,
   commit: string,
-  paths: readonly string[]
-): Promise<Map<string, string>> {
+  paths: readonly string[],
+  measure: (file: string, code: string) => number
+): Promise<Map<string, number>> {
+  const measurements = new Map<string, number>();
   if (paths.length === 0) {
-    return new Map();
+    return measurements;
   }
   const requested = new Set(paths);
   const output = await runGit(repoRoot, ['ls-tree', '-r', '-z', commit]);
   // `<mode> blob <object>\t<path>`, whose path may hold tabs.
-  const objectsByPath = new Map(
-    output.split('\0').flatMap((entry) => {
-      const tab = entry.indexOf('\t');
-      const file = entry.slice(tab + 1);
-      return entry.startsWith('100') && requested.has(file) ? [[file, entry.slice(0, tab).split(' ')[2] ?? '']] : [];
-    })
-  );
-  const contents = await readBlobs(repoRoot, [...new Set(objectsByPath.values())]);
-  return new Map([...objectsByPath].map(([file, object]) => [file, contents.get(object) ?? '']));
+  const pathsByObject = new Map<string, string[]>();
+  for (const entry of output.split('\0')) {
+    const tab = entry.indexOf('\t');
+    const file = entry.slice(tab + 1);
+    const object = entry.slice(0, tab).split(' ')[2];
+    if (entry.startsWith('100') && requested.has(file) && object !== undefined) {
+      pathsByObject.set(object, [...(pathsByObject.get(object) ?? []), file]);
+    }
+  }
+  await streamBlobs(repoRoot, [...pathsByObject.keys()], (object, content) => {
+    const code = content.toString('utf8');
+    for (const file of pathsByObject.get(object) ?? []) {
+      measurements.set(file, measure(file, code));
+    }
+  });
+  return measurements;
 }
 
-/** The contents of blobs, read in one `cat-file --batch` process, whose output frames each by size. */
-async function readBlobs(repoRoot: string, objects: readonly string[]): Promise<Map<string, string>> {
-  const output = await runGitWithInputBuffer(
-    repoRoot,
-    ['cat-file', '--batch'],
-    objects.map((object) => `${object}\n`).join('')
-  );
-  const contents = new Map<string, string>();
+/** Hands each blob `cat-file --batch` prints, framed by its size, to `onBlob` as soon as it is whole. */
+async function streamBlobs(
+  repoRoot: string,
+  objects: readonly string[],
+  onBlob: (object: string, content: Buffer) => void
+): Promise<void> {
+  let pending: Buffer = Buffer.alloc(0);
+  await runGitStreaming(repoRoot, ['cat-file', '--batch'], objects.map((object) => `${object}\n`).join(''), (chunk) => {
+    pending = consumeBlobRecords(pending.length === 0 ? chunk : Buffer.concat([pending, chunk]), onBlob);
+  });
+  if (pending.length > 0) {
+    throw new Error('git cat-file --batch ended inside a blob');
+  }
+}
+
+/** Runs git with `input` on its stdin, handing its stdout on as it arrives; a throwing handler stops it. */
+async function runGitStreaming(
+  cwd: string,
+  args: string[],
+  input: string,
+  onStdout: (chunk: Buffer) => void
+): Promise<void> {
+  const child = spawn('git', args, { cwd });
+  const closed = once(child, 'close');
+  // Awaited below; a spawn failure must not surface as unhandled while stdout is read.
+  closed.catch(() => {});
+  // git exiting before it reads all input makes the write fail with EPIPE; its exit code reports it.
+  child.stdin.on('error', () => {});
+  child.stdin.end(input);
+  const stderr: Buffer[] = [];
+  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+  try {
+    for await (const chunk of child.stdout) {
+      onStdout(chunk as Buffer);
+    }
+  } catch (error) {
+    child.kill();
+    throw error;
+  }
+  const [code] = (await closed) as [number | null];
+  if (code !== 0) {
+    const message = Buffer.concat(stderr).toString('utf8').trim();
+    throw new Error(`git ${describeCommand(args)} failed${message ? `: ${message}` : ''}`);
+  }
+}
+
+/** Hands on the whole records at the start of `buffer` and returns the rest, an incomplete record. */
+function consumeBlobRecords(buffer: Buffer, onBlob: (object: string, content: Buffer) => void): Buffer {
   let offset = 0;
-  while (offset < output.length) {
-    const headerEnd = output.indexOf(0x0a, offset);
-    const header = output.subarray(offset, headerEnd === -1 ? undefined : headerEnd).toString('utf8');
+  for (;;) {
+    const headerEnd = buffer.indexOf(0x0a, offset);
+    if (headerEnd === -1) {
+      return buffer.subarray(offset);
+    }
+    const header = buffer.subarray(offset, headerEnd).toString('utf8');
     // `<object> blob <size>`, or `<object> missing` for an object the repository lacks.
     const [object = '', type, size] = header.split(' ');
-    if (headerEnd === -1 || type !== 'blob' || size === undefined || !/^\d+$/u.test(size)) {
+    if (type !== 'blob' || size === undefined || !/^\d+$/u.test(size)) {
       throw new Error(`git cat-file could not read ${object}: ${header}`);
     }
-    const start = headerEnd + 1;
-    contents.set(object, output.subarray(start, start + Number(size)).toString('utf8'));
-    offset = start + Number(size) + 1;
+    const end = headerEnd + 1 + Number(size);
+    if (buffer.length <= end) {
+      return buffer.subarray(offset);
+    }
+    onBlob(object, buffer.subarray(headerEnd + 1, end));
+    offset = end + 1;
   }
-  return contents;
 }
 
 /** A file's `linguist-generated` / `linguist-vendored` attributes; undefined when unspecified. */
@@ -341,16 +396,6 @@ async function readAttributesAt(repoRoot: string, commit: string, args: string[]
 }
 
 async function runGitWithInput(cwd: string, args: string[], input: string, env?: NodeJS.ProcessEnv): Promise<string> {
-  const output = await runGitWithInputBuffer(cwd, args, input, env);
-  return output.toString('utf8');
-}
-
-async function runGitWithInputBuffer(
-  cwd: string,
-  args: string[],
-  input: string,
-  env?: NodeJS.ProcessEnv
-): Promise<Buffer> {
   return await new Promise((resolve, reject) => {
     const child = spawn('git', args, { cwd, env });
     // git exiting before it reads all input (e.g. on a usage error) makes the write fail with
@@ -363,7 +408,7 @@ async function runGitWithInputBuffer(
     child.on('error', reject);
     child.on('close', (code) => {
       if (code === 0) {
-        resolve(Buffer.concat(stdout));
+        resolve(Buffer.concat(stdout).toString('utf8'));
         return;
       }
       const message = Buffer.concat(stderr).toString('utf8').trim();
