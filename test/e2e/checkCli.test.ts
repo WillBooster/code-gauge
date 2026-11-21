@@ -1338,29 +1338,32 @@ describe('code-gauge check: test share', () => {
       // Without ctime, git keeps a file whose permissions change out of its diff; an old mtime keeps
       // it from rereading the content, as it does for a file as recent as its index.
       runGit(['config', 'core.trustctime', 'false']);
-      const past = new Date(Date.now() - 60_000);
-      for (const file of ['src/legacy.ts', 'test/other.test.ts']) {
-        utimesSync(path.join(repoDir, file), past, past);
-      }
-      runGit(['update-index', '-q', '--refresh']);
-      // An unchanged production file and an unchanged test file the scan skips.
-      for (const unreadable of ['src/legacy.ts', 'test/other.test.ts']) {
-        chmodSync(path.join(repoDir, unreadable), 0o000);
-        try {
-          const diff = spawnSync('git', ['diff', '--name-only', 'HEAD'], { cwd: repoDir, encoding: 'utf8' });
-          expect(diff.stdout.split('\n'), `git sees ${unreadable} unchanged`).not.toContain(unreadable);
-          for (const args of [[], ['--include-tests']]) {
-            const result = runCheck([...args, '--base', 'HEAD', '--json']);
-            expect(result.status, `${unreadable} ${args.join(' ')}`).toBe(2);
-            const report = JSON.parse(result.stdout) as { errors: string[]; warnings: string[] };
-            expect(report.errors.filter((error) => error.startsWith(`${unreadable}:`))).toHaveLength(1);
-            expect(report.warnings.filter((warning) => warning.startsWith(`${unreadable}:`))).toEqual([]);
-          }
-        } finally {
-          chmodSync(path.join(repoDir, unreadable), 0o644);
+      try {
+        const past = new Date(Date.now() - 60_000);
+        for (const file of ['src/legacy.ts', 'test/other.test.ts']) {
+          utimesSync(path.join(repoDir, file), past, past);
         }
+        runGit(['update-index', '-q', '--refresh']);
+        // An unchanged production file and an unchanged test file the scan skips.
+        for (const unreadable of ['src/legacy.ts', 'test/other.test.ts']) {
+          chmodSync(path.join(repoDir, unreadable), 0o000);
+          try {
+            const diff = spawnSync('git', ['diff', '--name-only', 'HEAD'], { cwd: repoDir, encoding: 'utf8' });
+            expect(diff.stdout.split('\n'), `git sees ${unreadable} unchanged`).not.toContain(unreadable);
+            for (const args of [[], ['--include-tests']]) {
+              const result = runCheck([...args, '--base', 'HEAD', '--json']);
+              expect(result.status, `${unreadable} ${args.join(' ')}`).toBe(2);
+              const report = JSON.parse(result.stdout) as { errors: string[]; warnings: string[] };
+              expect(report.errors.filter((error) => error.startsWith(`${unreadable}:`))).toHaveLength(1);
+              expect(report.warnings.filter((warning) => warning.startsWith(`${unreadable}:`))).toEqual([]);
+            }
+          } finally {
+            chmodSync(path.join(repoDir, unreadable), 0o644);
+          }
+        }
+      } finally {
+        runGit(['config', '--unset', 'core.trustctime']);
       }
-      runGit(['config', '--unset', 'core.trustctime']);
     },
     // Four checks of the repository, each a CLI process.
     60_000
