@@ -1389,6 +1389,15 @@ describe('code-gauge check: test share', () => {
       writeFileSync(path.join(dir, 'src', 'calc.ts'), `${calc}export const offset = 1;\n`);
       const result = runCheck(['--base', 'HEAD', dir], dir);
       expect(result.status, result.stderr).toBe(0);
+      // A test added inside the checkout is still held to the share, with tests included or not.
+      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), testCode(60));
+      for (const args of [[], ['--include-tests']]) {
+        const report = JSON.parse(runCheck([...args, '--base', 'HEAD', '--json', dir], dir).stdout) as ProjectReport;
+        expect(
+          report.violations.filter(({ kind }) => kind === 'project'),
+          args.join(' ')
+        ).toHaveLength(1);
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

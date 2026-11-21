@@ -1,5 +1,5 @@
 import { execFile, spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { lstat, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -124,12 +124,21 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
  */
 export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>> {
   const [listed, deleted] = await Promise.all([
-    runGit(repoRoot, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']),
+    // -t tags each path; `S` marks a skip-worktree path, which a sparse checkout leaves off disk.
+    runGit(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
     runGit(repoRoot, ['ls-files', '--deleted', '-z']),
   ]);
-  const files = new Set(listed.split('\0').filter((path) => path !== ''));
+  const entries = listed.split('\0').filter((entry) => entry !== '');
+  const files = new Set(entries.map((entry) => entry.slice(2)));
   for (const path of deleted.split('\0')) {
     files.delete(path);
+  }
+  // A skip-worktree path may still be on disk (a file marked to ignore local edits).
+  for (const entry of entries.filter((candidate) => candidate.startsWith('S '))) {
+    const relativePath = entry.slice(2);
+    if (!(await exists(path.join(repoRoot, relativePath)))) {
+      files.delete(relativePath);
+    }
   }
   return files;
 }
@@ -324,4 +333,11 @@ function describeCommand(args: readonly string[]): string {
     start += 2;
   }
   return args.slice(start, start + 2).join(' ');
+}
+
+async function exists(file: string): Promise<boolean> {
+  return await lstat(file).then(
+    () => true,
+    () => false
+  );
 }
