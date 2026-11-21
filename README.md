@@ -120,8 +120,9 @@ directory holds no production code, or the check runs outside a git repository, 
 root to tell test directories by, or in a sparse checkout, which leaves part of the project out (a
 warning says so). With `--base`, it is reported only
 when the change adds test NCSS, counted from the changed test files at the merge-base and in the
-working tree, so a change that only removes production code or keeps the test code as it was is
-never blamed for a share it did not raise. No directive allows it, and it has no per-language
+working tree, or from all test files under the target when the change edits a `.gitattributes`,
+whose rules can move unchanged files in or out of the tests; so a change that only removes
+production code or keeps the test code as it was is never blamed for a share it did not raise. No directive allows it, and it has no per-language
 override: `null` in the config or `off` on the command line disables it.
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
@@ -185,8 +186,9 @@ With `--base <ref>`, the check covers only what the working tree changed since t
 
 `--base` filters the report: the working-tree files measured and the duplication found are those
 of the check without it, so code pasted from an unchanged file is reported where it was pasted.
-While the share of test code applies, it also reads the changed test files at the merge-base, so a
-merge-base test that cannot be read leaves only the branch check incomplete. A
+While the share of test code applies, it also reads the changed test files at the merge-base (all
+test files under the target when the change edits a `.gitattributes`), so a merge-base test that
+cannot be read leaves only the branch check incomplete. A
 violation the change did not introduce is reported too once the change touches its function, file,
 or duplicated block. `--base` requires a git repository.
 
