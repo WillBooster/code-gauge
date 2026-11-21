@@ -345,7 +345,7 @@ touches.
   functions the change touches, and `allowedLimitCount`, the exceeded limits that
   [directives](#allowing-a-warning-in-the-code) allowed, which `violations` leaves out.
 - `violations`: the errors first, each level ordered by `file`, then `startLine`; a violation of
-  kind `project` comes first. Each has
+  kind `project` comes first within its level. Each has
   - `kind`: `function`, `file`, `duplication`, or `project`;
   - `level`: `error` when any of its `exceeded` limits is an error, otherwise `warning`;
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
