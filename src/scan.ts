@@ -230,6 +230,10 @@ async function measureCandidates(context: ScanContext): Promise<void> {
   // Every path reaching the same real file, in discovery order, so one alias cannot decide alone.
   const pathsByRealFile = new Map<string, ScanCandidate[]>();
   for (const candidate of context.candidates) {
+    // An excluded path is never measured through, so it is not resolved, which could fail.
+    if (exclusion?.isExcludedPath(candidate.file)) {
+      continue;
+    }
     let realFile;
     try {
       realFile = candidate.realFile ?? (await realpath(candidate.file));
@@ -267,13 +271,13 @@ async function chooseMeasuredPath(
   if (exclusion.isExcludedPath(realFile)) {
     return undefined;
   }
-  const measurable = candidates.filter(({ file }) => !exclusion.isExcludedPath(file));
-  const direct = measurable.find(({ file }) => file === realFile);
-  if (direct !== undefined || measurable.length <= 1) {
-    return direct ?? measurable[0];
+  // measureCandidates already left out the candidates whose own path is excluded.
+  const direct = candidates.find(({ file }) => file === realFile);
+  if (direct !== undefined || candidates.length <= 1) {
+    return direct ?? candidates[0];
   }
   const code = await readFile(realFile, 'utf8').catch(() => {});
-  return measurable.find(({ file }) => code !== undefined && !exclusion.isGeneratedCode(file, code)) ?? measurable[0];
+  return candidates.find(({ file }) => code !== undefined && !exclusion.isGeneratedCode(file, code)) ?? candidates[0];
 }
 
 /** Applies the scan's outcomes in discovery order once every measurement has settled. */
@@ -561,6 +565,32 @@ function shouldSkipDirectory(name: string, options: ScanOptions): boolean {
 export function isWithinDirectory(candidate: string, directory: string): boolean {
   const relative = path.relative(directory, candidate);
   return relative === '' || (relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative));
+}
+
+/**
+ * Whether a repository-relative path is a test file the check of `targetDirectory` (repository-
+ * relative, empty for the root) would measure with tests included: eligible by its path below the
+ * target, as the scan judges it, and a test by its whole path, so a test directory above the target
+ * still marks it a test.
+ */
+export function isTestFileBelow(relativePath: string, targetDirectory: string, options: ScanOptions): boolean {
+  const scopedPath = targetDirectory === '' ? relativePath : relativePath.slice(targetDirectory.length + 1);
+  return isScannedPath(scopedPath, { ...options, includeTests: true }) && isTestName(relativePath);
+}
+
+/** Whether the check of `targetDirectory` measures a repository-relative path, as the scan judges it. */
+export function isScannedBelow(relativePath: string, targetDirectory: string, options: ScanOptions): boolean {
+  return isScannedPath(targetDirectory === '' ? relativePath : relativePath.slice(targetDirectory.length + 1), options);
+}
+
+function isTestName(relativePath: string): boolean {
+  const segments = relativePath.split('/');
+  const name = segments.at(-1) ?? '';
+  return (
+    segments.slice(0, -1).some((segment) => testDirectoryNames.has(segment)) ||
+    testFilePattern.test(name) ||
+    suffixTestFilePattern.test(name)
+  );
 }
 
 /**

@@ -1,4 +1,8 @@
 import { execFile, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { lstat, mkdtemp, rm } from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
@@ -119,16 +123,42 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
  * exactly these, so local ignored artifacts (build output, generated copies) are neither measured
  * nor allowed to skew duplication detection.
  */
-export async function listRepositoryFiles(repoRoot: string): Promise<Set<string>> {
-  const [listed, deleted] = await Promise.all([
-    runGit(repoRoot, ['ls-files', '--cached', '--others', '--exclude-standard', '-z']),
+export async function listRepositoryFiles(
+  repoRoot: string
+): Promise<{ files: Set<string>; warnings: string[]; sparse: boolean }> {
+  const [{ stdout: listed, stderr }, deleted] = await Promise.all([
+    // -t tags each path; `S` marks a skip-worktree path, which a sparse checkout leaves off disk.
+    runGitWithStderr(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
     runGit(repoRoot, ['ls-files', '--deleted', '-z']),
   ]);
-  const files = new Set(listed.split('\0').filter((path) => path !== ''));
-  for (const path of deleted.split('\0')) {
-    files.delete(path);
+  const entries = listed.split('\0').filter((entry) => entry !== '');
+  const files = new Set(entries.map((entry) => entry.slice(2)));
+  // Git lists as deleted a path it cannot reach, and a skip-worktree path may still be on disk (a
+  // file marked to ignore local edits): only a path that does not exist leaves the working tree,
+  // so an inaccessible one stays to be reported as unmeasured.
+  const skipWorktree = new Set(entries.filter((entry) => entry.startsWith('S ')).map((entry) => entry.slice(2)));
+  const candidates = [...deleted.split('\0').filter((entry) => entry !== ''), ...skipWorktree];
+  let sparse = false;
+  for (const relativePath of candidates) {
+    if (await isAbsent(path.join(repoRoot, relativePath))) {
+      files.delete(relativePath);
+      sparse ||= skipWorktree.has(relativePath);
+    }
   }
-  return files;
+  // Git tracks no path through a symbolic link, yet a tracked path below a directory replaced by
+  // one still resolves through it, and `--deleted` does not list it.
+  for (const directory of await listSymbolicLinkDirectories(repoRoot, files)) {
+    for (const file of files) {
+      if (file.startsWith(`${directory}/`)) {
+        files.delete(file);
+      }
+    }
+  }
+  // Git skips what it cannot list (an untracked directory it cannot open) with a warning: those
+  // files are not git-visible, so the check passes the warning on instead of measuring them.
+  // Verbatim as one block: a pathname git names in it may hold line breaks.
+  const warnings = stderr === '' ? [] : [stderr.replace(/\n$/u, '')];
+  return { files, warnings, sparse };
 }
 
 /**
@@ -187,6 +217,154 @@ export async function readFileAt(repoRoot: string, commit: string, file: string)
   return await runGit(repoRoot, ['show', `${commit}:${file}`]);
 }
 
+/**
+ * Measures, by path, the paths among `paths` that `commit` holds as regular files, not symbolic
+ * links or submodules. The whole tree is listed and matched here, since passing the paths would hit
+ * the command-line length limit on a large change; their contents stream from one `cat-file
+ * --batch` process, each measured as it arrives so only the measurements are kept.
+ */
+export async function measureRegularFilesAt(
+  repoRoot: string,
+  commit: string,
+  paths: readonly string[],
+  measure: (file: string, code: string) => number
+): Promise<Map<string, number>> {
+  const measurements = new Map<string, number>();
+  if (paths.length === 0) {
+    return measurements;
+  }
+  const requested = new Set(paths);
+  const output = await runGit(repoRoot, ['ls-tree', '-r', '-z', commit]);
+  // `<mode> blob <object>\t<path>`, whose path may hold tabs.
+  const pathsByObject = new Map<string, string[]>();
+  for (const entry of output.split('\0')) {
+    const tab = entry.indexOf('\t');
+    const file = entry.slice(tab + 1);
+    const object = entry.slice(0, tab).split(' ')[2];
+    if (entry.startsWith('100') && requested.has(file) && object !== undefined) {
+      pathsByObject.set(object, [...(pathsByObject.get(object) ?? []), file]);
+    }
+  }
+  await streamBlobs(repoRoot, [...pathsByObject.keys()], (object, content) => {
+    const code = content.toString('utf8');
+    for (const file of pathsByObject.get(object) ?? []) {
+      measurements.set(file, measure(file, code));
+    }
+  });
+  return measurements;
+}
+
+/** Hands each blob `cat-file --batch` prints, framed by its size, to `onBlob` as soon as it is whole. */
+async function streamBlobs(
+  repoRoot: string,
+  objects: readonly string[],
+  onBlob: (object: string, content: Buffer) => void
+): Promise<void> {
+  const reader = new BlobRecordReader(onBlob);
+  await runGitStreaming(repoRoot, ['cat-file', '--batch'], objects.map((object) => `${object}\n`).join(''), (chunk) =>
+    reader.push(chunk)
+  );
+  reader.finish();
+}
+
+/** Runs git with `input` on its stdin, handing its stdout on as it arrives; a throwing handler stops it. */
+async function runGitStreaming(
+  cwd: string,
+  args: string[],
+  input: string,
+  onStdout: (chunk: Buffer) => void
+): Promise<void> {
+  const child = spawn('git', args, { cwd });
+  const closed = once(child, 'close');
+  // Awaited below; a spawn failure must not surface as unhandled while stdout is read.
+  closed.catch(() => {});
+  // git exiting before it reads all input makes the write fail with EPIPE; its exit code reports it.
+  child.stdin.on('error', () => {});
+  child.stdin.end(input);
+  const stderr: Buffer[] = [];
+  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+  try {
+    for await (const chunk of child.stdout) {
+      onStdout(chunk as Buffer);
+    }
+  } catch (error) {
+    child.kill();
+    throw error;
+  }
+  const [code] = (await closed) as [number | null];
+  if (code !== 0) {
+    const message = Buffer.concat(stderr).toString('utf8').trim();
+    throw new Error(`git ${describeCommand(args)} failed${message ? `: ${message}` : ''}`);
+  }
+}
+
+/**
+ * Splits `cat-file --batch` output into blobs. Chunks are kept as they arrive and joined once a
+ * record is whole, so a large blob is copied a constant number of times.
+ */
+class BlobRecordReader {
+  private chunks: Buffer[] = [];
+  private length = 0;
+  private record: { object: string; start: number; end: number } | undefined;
+
+  private readonly onBlob: (object: string, content: Buffer) => void;
+
+  constructor(onBlob: (object: string, content: Buffer) => void) {
+    this.onBlob = onBlob;
+  }
+
+  push(chunk: Buffer): void {
+    this.chunks.push(chunk);
+    this.length += chunk.length;
+    while (this.takeRecord()) {
+      // Each pass hands on one whole record.
+    }
+  }
+
+  finish(): void {
+    if (this.length > 0) {
+      throw new Error('git cat-file --batch ended inside a blob');
+    }
+  }
+
+  /** Hands on the record at the start of the kept output, when it is whole. */
+  private takeRecord(): boolean {
+    this.record ??= this.readHeader();
+    if (this.record === undefined || this.length <= this.record.end) {
+      return false;
+    }
+    const buffer = this.joined();
+    this.onBlob(this.record.object, buffer.subarray(this.record.start, this.record.end));
+    const rest = buffer.subarray(this.record.end + 1);
+    this.chunks = rest.length > 0 ? [rest] : [];
+    this.length = rest.length;
+    this.record = undefined;
+    return true;
+  }
+
+  private readHeader(): { object: string; start: number; end: number } | undefined {
+    const buffer = this.joined();
+    const headerEnd = buffer.indexOf(0x0a);
+    if (headerEnd === -1) {
+      return undefined;
+    }
+    const header = buffer.subarray(0, headerEnd).toString('utf8');
+    // `<object> blob <size>`, or `<object> missing` for an object the repository lacks.
+    const [object = '', type, size] = header.split(' ');
+    if (type !== 'blob' || size === undefined || !/^\d+$/u.test(size)) {
+      throw new Error(`git cat-file could not read ${object}: ${header}`);
+    }
+    return { object, start: headerEnd + 1, end: headerEnd + 1 + Number(size) };
+  }
+
+  private joined(): Buffer {
+    if (this.chunks.length !== 1) {
+      this.chunks = [Buffer.concat(this.chunks, this.length)];
+    }
+    return this.chunks[0] ?? Buffer.alloc(0);
+  }
+}
+
 /** A file's `linguist-generated` / `linguist-vendored` attributes; undefined when unspecified. */
 export interface LinguistAttributes {
   generated?: boolean;
@@ -194,22 +372,23 @@ export interface LinguistAttributes {
 }
 
 /**
- * The linguist attributes of repository-relative paths, from the working tree's `.gitattributes`.
- * Paths with neither attribute specified are omitted.
+ * The linguist attributes of repository-relative paths, from the working tree's `.gitattributes` or,
+ * with `source`, from those of that commit. Paths with neither attribute specified are omitted.
  */
 export async function readLinguistAttributes(
   repoRoot: string,
-  paths: Iterable<string>
+  paths: Iterable<string>,
+  source?: string
 ): Promise<Map<string, LinguistAttributes>> {
   const input = [...paths].join('\0');
   if (input === '') {
     return new Map();
   }
-  const output = await runGitWithInput(
-    repoRoot,
-    ['check-attr', '--stdin', '-z', 'linguist-generated', 'linguist-vendored'],
-    input
-  );
+  const args = ['--stdin', '-z', 'linguist-generated', 'linguist-vendored'];
+  const output =
+    source === undefined
+      ? await runGitWithInput(repoRoot, ['check-attr', ...args], input)
+      : await readAttributesAt(repoRoot, source, ['check-attr', '--cached', ...args], input);
   const attributesByPath = new Map<string, LinguistAttributes>();
   const fields = output.split('\0');
   for (let index = 0; index + 2 < fields.length; index += 3) {
@@ -240,9 +419,27 @@ function toAttributeFlag(value: string): boolean | undefined {
   return undefined;
 }
 
-async function runGitWithInput(cwd: string, args: string[], input: string): Promise<string> {
+/**
+ * Runs `check-attr --cached` against an index read from `commit`, so the attributes are that
+ * commit's: `check-attr --source` needs Git 2.40.
+ */
+async function readAttributesAt(repoRoot: string, commit: string, args: string[], input: string): Promise<string> {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'code-gauge-index-'));
+  try {
+    const env = { ...process.env, GIT_INDEX_FILE: path.join(directory, 'index') };
+    // The user's index automation (hooks, a file-system monitor) must not run for an index that
+    // does not describe the working tree.
+    const isolated = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+    await runGit(repoRoot, [...isolated, 'read-tree', commit], env);
+    return await runGitWithInput(repoRoot, [...isolated, ...args], input, env);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+async function runGitWithInput(cwd: string, args: string[], input: string, env?: NodeJS.ProcessEnv): Promise<string> {
   return await new Promise((resolve, reject) => {
-    const child = spawn('git', args, { cwd });
+    const child = spawn('git', args, { cwd, env });
     // git exiting before it reads all input (e.g. on a usage error) makes the write fail with
     // EPIPE; its exit code and stderr, reported on close, already describe the failure.
     child.stdin.on('error', () => {});
@@ -263,9 +460,18 @@ async function runGitWithInput(cwd: string, args: string[], input: string): Prom
   });
 }
 
-async function runGit(cwd: string, args: string[]): Promise<string> {
+async function runGitWithStderr(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   try {
-    const { stdout } = await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
+    return await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
+  } catch (error) {
+    const stderr = (error as { stderr?: string }).stderr?.trim();
+    throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);
+  }
+}
+
+async function runGit(cwd: string, args: string[], env?: NodeJS.ProcessEnv): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('git', args, { cwd, env, maxBuffer: maxOutputBytes, encoding: 'utf8' });
     return stdout;
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
@@ -280,4 +486,30 @@ function describeCommand(args: readonly string[]): string {
     start += 2;
   }
   return args.slice(start, start + 2).join(' ');
+}
+
+/** A path that cannot be inspected is not absent: it stays to be reported as unmeasured. */
+async function isAbsent(file: string): Promise<boolean> {
+  return await lstat(file).then(
+    () => false,
+    (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
+  );
+}
+
+/** The directories holding listed files that are symbolic links in the working tree, each inspected once. */
+async function listSymbolicLinkDirectories(repoRoot: string, files: ReadonlySet<string>): Promise<string[]> {
+  const directories = new Set<string>();
+  for (const file of files) {
+    const segments = file.split('/');
+    for (let count = 1; count < segments.length; count++) {
+      directories.add(segments.slice(0, count).join('/'));
+    }
+  }
+  const links = await Promise.all(
+    [...directories].map(async (directory) => {
+      const stats = await lstat(path.join(repoRoot, directory)).catch(() => {});
+      return stats?.isSymbolicLink() ? [directory] : [];
+    })
+  );
+  return links.flat();
 }
