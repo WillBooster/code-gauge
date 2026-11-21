@@ -138,10 +138,8 @@ export async function listRepositoryFiles(
   // so an inaccessible one stays to be reported as unmeasured.
   const skipWorktree = new Set(entries.filter((entry) => entry.startsWith('S ')).map((entry) => entry.slice(2)));
   const candidates = [...deleted.split('\0').filter((entry) => entry !== ''), ...skipWorktree];
-  for (const relativePath of candidates) {
-    if (await isAbsent(path.join(repoRoot, relativePath))) {
-      files.delete(relativePath);
-    }
+  for (const relativePath of await listAbsentPaths(repoRoot, candidates)) {
+    files.delete(relativePath);
   }
   // Git tracks no path through a symbolic link, yet a tracked path below a directory replaced by
   // one still resolves through it, and `--deleted` does not list it.
@@ -315,6 +313,40 @@ function describeCommand(args: readonly string[]): string {
 }
 
 /** A path that cannot be inspected is not absent: it stays to be reported as unmeasured. */
+/**
+ * The paths that do not exist, probing a path below a directory already found missing no further,
+ * so the paths a sparse checkout leaves out cost one probe per missing directory, not per file.
+ */
+async function listAbsentPaths(repoRoot: string, relativePaths: readonly string[]): Promise<string[]> {
+  const absentDirectories = new Set<string>();
+  const isBelowAbsent = (relativePath: string): boolean => {
+    for (
+      let directory = path.posix.dirname(relativePath);
+      directory !== '.';
+      directory = path.posix.dirname(directory)
+    ) {
+      if (absentDirectories.has(directory)) {
+        return true;
+      }
+    }
+    return false;
+  };
+  const absent: string[] = [];
+  for (const relativePath of relativePaths) {
+    if (!isBelowAbsent(relativePath) && !(await isAbsent(path.join(repoRoot, relativePath)))) {
+      continue;
+    }
+    absent.push(relativePath);
+    // Record the highest missing ancestor so the paths below it need no probe.
+    let directory = path.posix.dirname(relativePath);
+    while (directory !== '.' && !isBelowAbsent(directory) && (await isAbsent(path.join(repoRoot, directory)))) {
+      absentDirectories.add(directory);
+      directory = path.posix.dirname(directory);
+    }
+  }
+  return absent;
+}
+
 async function isAbsent(file: string): Promise<boolean> {
   return await lstat(file).then(
     () => false,
