@@ -331,11 +331,7 @@ async function resolveChange(
   if (unlistedTarget !== undefined) {
     changedFiles.push({ status: 'added', headPath: unlistedTarget });
   }
-  return {
-    mergeBase,
-    changedFiles,
-    loadExclusion: (relativePaths) => loadRepositoryExclusion(repoRoot, relativePaths, options.exclude, mergeBase),
-  };
+  return { mergeBase, changedFiles };
 }
 
 /**
@@ -608,9 +604,12 @@ function describeLargestBlocks({ largestBlocks = [] }: CodeViolation): string {
 function describeViolation(violation: Violation, exceeded: string): string {
   switch (violation.kind) {
     case 'project': {
-      const added =
-        violation.addedTestNcss === undefined ? '' : `; the change adds ${violation.addedTestNcss} test NCSS`;
-      return `${violation.file}: ${exceeded}, test NCSS ${violation.testNcss} of production NCSS ${violation.productionNcss}${added}; delete or merge ${violation.excessTestNcss} test NCSS`;
+      // A change clears it by offsetting the lines it adds; a whole project, by returning within the limit.
+      const remedy =
+        violation.addedTestLines === undefined
+          ? `delete or merge ${violation.excessTestNcss} test NCSS`
+          : `the change adds ${violation.addedTestLines} test lines; delete or merge as many`;
+      return `${violation.file}: ${exceeded}, test NCSS ${violation.testNcss} of production NCSS ${violation.productionNcss}; ${remedy}`;
     }
     case 'file': {
       return `${violation.file}: ${exceeded}`;

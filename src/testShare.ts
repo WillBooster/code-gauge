@@ -5,15 +5,15 @@ import path from 'node:path';
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
 import type { Exclusion } from './exclusion.js';
-import { type ChangedFile, listRegularFilesAt, measureBlobs } from './git.js';
+import { type ChangedFile, diffLineCounts } from './git.js';
 import { measureCode } from './metrics.js';
 import { getLanguage, isScannedBelow, isTestFileBelow, type ScanOptions } from './scan.js';
 import type { TestShare } from './thresholds.js';
 
-/** The test share of the checked project and, for a check of a change, the test NCSS it adds. */
+/** The test share of the checked project and, for a check of a change, the test lines it adds. */
 export interface MeasuredTestShare extends TestShare {
-  /** The test NCSS the change adds (negative when it removes more); absent without a base. */
-  addedTestNcss?: number;
+  /** The test lines the change adds net of those it deletes, by git's diff; absent without a base. */
+  addedTestLines?: number;
 }
 
 export interface RepositoryTestShareInput {
@@ -27,12 +27,7 @@ export interface RepositoryTestShareInput {
   measuredFiles: readonly { file: string; metrics: { ncssCount: number } }[];
   /** Whether a share exceeds an active limit; only then can what a change adds decide a violation. */
   exceedsLimit: (share: TestShare) => boolean;
-  base?: {
-    mergeBase: string;
-    changedFiles: readonly ChangedFile[];
-    /** The exclusion of base paths by the merge-base's attributes, as their content is the merge-base's. */
-    loadExclusion: (relativePaths: readonly string[]) => Promise<Exclusion>;
-  };
+  base?: { mergeBase: string; changedFiles: readonly ChangedFile[] };
 }
 
 /** The share, or the failures to measure test files that leave it unknown. */
@@ -44,8 +39,8 @@ export interface TestShareMeasurement {
 
 /**
  * Measures the test files of the checked directory, reusing the check's measurement of any it took
- * (with tests included, or in a targeted test directory) and measuring those it skipped, and, for a change, the test files at the merge-base it compares them with (see
- * measureAddedTestNcss), read from git so nothing is checked out. A file is a test file by its repository-relative
+ * (with tests included, or in a targeted test directory) and measuring those it skipped, and, for a
+ * change, the test lines it adds by git's diff. A file is a test file by its repository-relative
  * path, so targeting a test directory does not turn its files into production code. Only a
  * repository has a share: outside one, there is neither a root to tell tests by nor a change.
  */
@@ -85,65 +80,53 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     ),
   };
   // Within every limit, or with the share unknown for unmeasured files, the change's addition
-  // decides nothing, so the merge-base is not read.
+  // decides nothing.
   if (input.base === undefined || errors.length > 0 || !input.exceedsLimit(share)) {
     return { share, errors: errors.toSorted() };
   }
-  const addedTestNcss = await measureAddedTestNcss(input, input.base, isTestIn, testNcssByPath, errors);
-  // Measurements finish in any order; the report keeps one.
-  return { share: { ...share, addedTestNcss }, errors: errors.toSorted() };
+  try {
+    const addedTestLines = await measureAddedTestLines(input, input.base, (file) => isTestIn(exclusion, file));
+    return { share: { ...share, addedTestLines }, errors: errors.toSorted() };
+  } catch (error) {
+    // An unknown addition suppresses the share while the report keeps the rest.
+    return {
+      share,
+      errors: [
+        ...errors,
+        `test changes since ${input.base.mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`,
+      ].toSorted(),
+    };
+  }
 }
 
 /**
- * The test NCSS the change adds: the head minus the merge-base NCSS of the test files it can affect,
- * each snapshot by its own attributes. Those are the changed files and, below each `.gitattributes`
- * the change edits, every test file, as git applies an attributes file to its own directory and
- * below, so a rule can move an unchanged file in or out of the tests.
+ * The test lines the change adds net of those it deletes: git's diff against the merge-base for the
+ * tracked files, which already accounts for renames, sparse and partial clones, attributes, and
+ * binary files, plus the lines of untracked test files, which the diff leaves out.
  */
-async function measureAddedTestNcss(
+async function measureAddedTestLines(
   input: RepositoryTestShareInput,
-  { mergeBase, changedFiles, loadExclusion }: NonNullable<RepositoryTestShareInput['base']>,
-  isTestIn: (pathExclusion: Exclusion, relativePath: string) => boolean,
-  testNcssByPath: ReadonlyMap<string, number>,
-  errors: string[]
+  { mergeBase, changedFiles }: NonNullable<RepositoryTestShareInput['base']>,
+  isTest: (relativePath: string) => boolean
 ): Promise<number> {
-  const { repoRoot, targetPath, options } = input;
-  const changedPaths = new Set(
-    changedFiles.flatMap(({ basePath, headPath }) => (basePath === undefined ? [headPath] : [basePath, headPath]))
-  );
-  // A case-insensitive filesystem lets git read the attributes file under any casing.
-  const attributeDirectories = [...changedPaths]
-    .filter((file) => path.posix.basename(file).toLowerCase() === '.gitattributes')
-    .map((file) => path.posix.dirname(file));
-  const isAffected = (file: string): boolean =>
-    changedPaths.has(file) ||
-    attributeDirectories.some((directory) => directory === '.' || file.startsWith(`${directory}/`));
-  const isCandidate = (file: string): boolean =>
-    isInTarget(file, targetPath) && isTestFileBelow(file, targetPath, options) && isAffected(file);
-  let baseNcssByPath: Map<string, number>;
-  try {
-    // A change of production code alone needs nothing from the merge-base.
-    const baseFiles =
-      attributeDirectories.length > 0 || [...changedPaths].some((file) => isCandidate(file))
-        ? await listRegularFilesAt(repoRoot, mergeBase)
-        : new Map<string, string>();
-    const candidates = [...baseFiles.keys()].filter((file) => isCandidate(file));
-    const baseExclusion = await loadExclusion(candidates);
-    baseNcssByPath = await measureBlobs(
-      repoRoot,
-      new Map(
-        candidates.filter((file) => isTestIn(baseExclusion, file)).map((file) => [file, baseFiles.get(file) ?? ''])
-      ),
-      (basePath, code) => measureTestCode(code, basePath, input, baseExclusion)
-    );
-  } catch (error) {
-    // An unread merge-base snapshot (attributes or tests, as in a partial clone offline) leaves the
-    // change's addition unknown; the error suppresses the share while the report keeps the rest.
-    errors.push(`test files at ${mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`);
-    return 0;
+  const counts = await diffLineCounts(input.repoRoot, mergeBase);
+  let added = 0;
+  for (const [file, { added: addedLines, deleted }] of counts) {
+    if (isTest(file)) {
+      added += addedLines - deleted;
+    }
   }
-  const headNcss = [...testNcssByPath].filter(([file]) => isAffected(file)).map(([, ncss]) => ncss);
-  return sum(headNcss) - sum(baseNcssByPath.values());
+  const untracked = changedFiles.filter(
+    ({ status, headPath }) => status === 'added' && !counts.has(headPath) && isTest(headPath)
+  );
+  for (const { headPath } of untracked) {
+    added += countLines(await readFile(path.join(input.repoRoot, headPath), 'utf8'));
+  }
+  return added;
+}
+
+function countLines(code: string): number {
+  return code === '' ? 0 : code.split('\n').length - (code.endsWith('\n') ? 1 : 0);
 }
 
 /** A path that is not a regular file is no source, as in the scan; a file that cannot be read throws. */

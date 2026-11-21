@@ -72,7 +72,7 @@ export interface ProjectViolation extends MeasuredTestShare {
   file: string;
   level: Level;
   exceeded: ExceededLimit[];
-  /** The test NCSS to delete or merge to clear the violation. */
+  /** The test NCSS above the strictest limit: what a whole project deletes or merges to clear it. */
   excessTestNcss: number;
 }
 
@@ -191,7 +191,7 @@ export function checkTestShare(
   file: string,
   limits: LimitsByLevel
 ): ProjectViolation | undefined {
-  if (share.productionNcss === 0 || (share.addedTestNcss !== undefined && share.addedTestNcss <= 0)) {
+  if (share.productionNcss === 0 || (share.addedTestLines !== undefined && share.addedTestLines <= 0)) {
     return undefined;
   }
   const [exceededLimit] = findExceeded(testShareThreshold, share, limits, (value, limit) => value > limit);
@@ -204,8 +204,7 @@ export function checkTestShare(
     level: exceededLimit.level,
     exceeded: [exceededLimit],
     ...share,
-    // A change clears it by offsetting what it adds; a whole project, by returning within the limit.
-    excessTestNcss: share.addedTestNcss ?? share.testNcss - allowedTestNcss(share, limits),
+    excessTestNcss: share.testNcss - allowedTestNcss(share, limits),
   };
 }
 

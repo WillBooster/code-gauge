@@ -1,7 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
-  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -1223,7 +1222,7 @@ describe('code-gauge check: test share', () => {
       level: string;
       testNcss: number;
       productionNcss: number;
-      addedTestNcss?: number;
+      addedTestLines?: number;
       excessTestNcss?: number;
     }[];
   }
@@ -1273,6 +1272,17 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(limits)).toEqual([]);
   });
 
+  it('counts the test lines a change adds by the git diff, with untracked tests and renames', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    runGit(['mv', 'test/calc.test.ts', 'test/renamed.test.ts']);
+    expect(projectViolations(['--base', 'HEAD']), 'a rename adds no lines').toEqual([]);
+    writeSource('test/new.test.ts', 'total([1]);\ntotal([2]);\n');
+    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestLines: 2 }]);
+  });
+
   it('accepts test code within its share', () => {
     writeSource('test/calc.test.ts', testCode(1));
     expect(projectViolations([])).toEqual([]);
@@ -1288,7 +1298,7 @@ describe('code-gauge check: test share', () => {
 
     writeSource('test/calc.test.ts', testCode(61));
     expect(projectViolations(['--base', 'HEAD'])).toMatchObject([
-      { kind: 'project', level: 'error', addedTestNcss: 1, excessTestNcss: 1 },
+      { kind: 'project', level: 'error', addedTestLines: 1 },
     ]);
 
     writeSource('test/calc.test.ts', testCode(59));
@@ -1299,17 +1309,6 @@ describe('code-gauge check: test share', () => {
     writeSource('test/calc.test.ts', testCode(60));
     writeSource('test/helper.ts', calc);
     expect(projectViolations(['test'])).toEqual([]);
-  });
-
-  it('counts a symbolic link the change replaces with a test as no test code at the merge-base', () => {
-    runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/calc.test.ts', testCode(60));
-    symlinkSync('../src/legacy.ts', path.join(repoDir, 'test', 'alias.test.ts'));
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
-    rmSync(path.join(repoDir, 'test', 'alias.test.ts'));
-    writeSource('test/alias.test.ts', 'total([1]);\n');
-    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestNcss: 1 }]);
   });
 
   it.skipIf(runAsRoot)('reports no share while a production file cannot be read', () => {
@@ -1446,42 +1445,6 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['vendor'])).toMatchObject([{ kind: 'project', file: 'vendor' }]);
   });
 
-  it.each([':!x.test.ts', 'test/tab\tname.test.ts'])('reads the merge-base test %j by its literal name', (name) => {
-    runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/calc.test.ts', testCode(60));
-    writeSource(name, 'total([1]);\n');
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
-    writeSource(name, 'total([2]);\n');
-    const result = runCheck(['--base', 'HEAD', '--json']);
-    expect(result.status, result.stderr).toBe(0);
-    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
-  });
-
-  it('counts a test file the change excludes by its attributes alone as removed', () => {
-    runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/retained.test.ts', testCode(60));
-    writeSource('test/fixture.test.ts', testCode(3));
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
-    writeSource('test/retained.test.ts', testCode(61));
-    writeSource('.gitattributes', 'test/fixture.test.ts linguist-generated\n');
-    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
-  });
-
-  it('excludes a test file at the merge-base by the attributes it had there', () => {
-    runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/calc.test.ts', testCode(60));
-    writeSource('test/generated.test.ts', testCode(40));
-    writeSource('.gitattributes', 'test/generated.test.ts linguist-generated\n');
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
-    rmSync(path.join(repoDir, 'test', 'generated.test.ts'));
-    writeSource('.gitattributes', '');
-    writeSource('test/calc.test.ts', testCode(61));
-    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestNcss: 1 }]);
-  });
-
   it('lists a project warning after the errors in the JSON report', () => {
     writeSource('test/calc.test.ts', testCode(1));
     const args = ['--error-max-test-ncss-percent', 'off', '--warning-max-test-ncss-percent', '0', '--json'];
@@ -1489,49 +1452,6 @@ describe('code-gauge check: test share', () => {
     const levels = report.violations.map(({ level }) => level);
     expect(levels.lastIndexOf('error')).toBeLessThan(levels.indexOf('warning'));
     expect(report.violations.find(({ level }) => level === 'warning')?.kind).toBe('project');
-  });
-
-  it('leaves a branch check incomplete when a merge-base test cannot be read', () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-missing-blob-'));
-    try {
-      const git = (...args: string[]): string => {
-        const result = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
-        expect(result.status, result.stderr).toBe(0);
-        return result.stdout.trim();
-      };
-      git('init', '-q', '-b', 'main');
-      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
-      writeFileSync(path.join(dir, 'calc.ts'), calc);
-      mkdirSync(path.join(dir, 'test'));
-      writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(60));
-      git('add', '-A');
-      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base');
-      const blob = git('rev-parse', 'HEAD:test/calc.test.ts');
-      writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(60).replace('total([0])', 'total([9])'));
-      git(
-        '-c',
-        'user.name=t',
-        '-c',
-        'user.email=t@example.com',
-        '-c',
-        'commit.gpgsign=false',
-        'commit',
-        '-qam',
-        'edit'
-      );
-      // The diff compares trees, so only the share's read of the merge-base content meets the loss.
-      rmSync(path.join(dir, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
-      // Within its limit the share needs no merge-base, so the loss does not matter.
-      const within = runCheck(['--base', 'HEAD~1', '--error-max-test-ncss-percent', '100000', dir], dir);
-      expect(within.status, within.stdout + within.stderr).toBe(0);
-      const result = runCheck(['--base', 'HEAD~1', '--json', dir], dir);
-      expect(result.status).toBe(2);
-      expect((JSON.parse(result.stdout) as ProjectReport).violations.filter(({ kind }) => kind === 'project')).toEqual(
-        []
-      );
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 
   it('measures no share in a sparse checkout, saying so', () => {
@@ -1557,48 +1477,6 @@ describe('code-gauge check: test share', () => {
       expect(report.warnings).toContainEqual(expect.stringContaining('sparse checkout'));
     } finally {
       rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it('runs no hook of the repository while reading the merge-base', () => {
-    const marker = path.join(repoDir, 'hook-ran');
-    const hook = path.join(repoDir, '.git', 'hooks', 'post-index-change');
-    writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
-    try {
-      runGit(['checkout', '-q', '-b', 'feature']);
-      runGit(['config', 'core.hooksPath', '.git/hooks']);
-      writeSource('test/calc.test.ts', testCode(60));
-      runGit(['add', '-A']);
-      expect(existsSync(marker), 'the hook runs on an index write').toBe(true);
-      runGit(['commit', '-q', '-m', 'tests']);
-      rmSync(marker, { force: true });
-      // Over the limit, the branch check reads the merge-base.
-      writeSource('test/calc.test.ts', testCode(61));
-      expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ addedTestNcss: 1 }]);
-      expect(existsSync(marker)).toBe(false);
-    } finally {
-      rmSync(hook, { force: true });
-      runGit(['config', '--unset', 'core.hooksPath']);
-    }
-  });
-
-  it('runs no file-system monitor of the repository on the merge-base index', () => {
-    const marker = path.join(repoDir, 'monitor-ran');
-    const monitor = path.join(repoDir, '.git', 'monitor.sh');
-    // The monitor marks only a run against an index other than the repository's own.
-    writeFileSync(monitor, `#!/bin/sh\n[ -n "$GIT_INDEX_FILE" ] && touch '${marker}'\nexit 1\n`, { mode: 0o755 });
-    try {
-      runGit(['checkout', '-q', '-b', 'feature']);
-      writeSource('test/calc.test.ts', testCode(60));
-      runGit(['add', '-A']);
-      runGit(['commit', '-q', '-m', 'tests']);
-      runGit(['config', 'core.fsmonitor', monitor]);
-      // Over the limit, the branch check reads the merge-base.
-      writeSource('test/calc.test.ts', testCode(61));
-      expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ addedTestNcss: 1 }]);
-      expect(existsSync(marker)).toBe(false);
-    } finally {
-      runGit(['config', '--unset', 'core.fsmonitor']);
     }
   });
 });

@@ -121,10 +121,11 @@ test file that cannot be read leaves the check incomplete, like a file the check
 violation of the whole directory, of kind `project`, and none when the target is a file, the
 directory holds no production code, or the check runs outside a git repository, where there is no
 root to tell test directories by, or in a sparse checkout, which leaves part of the project out (a
-warning says so). With `--base`, it is reported only
-when the change adds test NCSS, counted from the changed test files at the merge-base and in the
-working tree, or from all test files under the target when the change edits a `.gitattributes`,
-whose rules can move unchanged files in or out of the tests; so a change that only removes
+warning says so). With `--base`, it is reported only when the share exceeds its limit and the
+change adds test lines: `git diff --numstat` against the merge-base shows more added than deleted
+lines across the files the check counts as tests under the target, an untracked test file counting
+by its lines. The share itself stays in NCSS; the change is judged in git's lines, so git's own
+handling of renames, attributes, and binary files applies, and a change that only removes
 production code or keeps the test code as it was is never blamed for a share it did not raise. No directive allows it, and it has no per-language
 override: `null` in the config or `off` on the command line disables it.
 
@@ -183,16 +184,14 @@ With `--base <ref>`, the check covers only what the working tree changed since t
   a directive's line or the lines between it and its function (through the next code line for a
   directive attached to no function), or deletes a line holding one. Editing the function itself
   only touches the function;
-- the share of test code (`maxTestNcssPercent`), when the change adds test NCSS. The share counts
+- the share of test code (`maxTestNcssPercent`), when the change adds test lines. The share counts
   every file under the target, so a file there that cannot be measured, changed or not, leaves the
   check incomplete.
 
 `--base` filters the report: the working-tree files measured and the duplication found are those
 of the check without it, so code pasted from an unchanged file is reported where it was pasted.
-When the share of test code exceeds an active limit, it also reads the changed test files at the
-merge-base (all test files under the target when the change edits a `.gitattributes`), so a
-merge-base test that cannot be read leaves only that branch check incomplete; a share within every
-limit reads no history. A
+When the share of test code exceeds an active limit, it also runs `git diff --numstat` against the
+merge-base for the lines the change adds; a share within every limit runs no diff. A
 violation the change did not introduce is reported too once the change touches its function, file,
 or duplicated block. `--base` requires a git repository.
 
@@ -362,10 +361,10 @@ touches.
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
     kind `file`, the first and last line of the file; for kind `project`, only `file`, the checked
     directory relative to the repository root (`.` for the root);
-  - `testNcss`, `productionNcss`, `excessTestNcss`, and, with `--base`, `addedTestNcss`: only for
-    kind `project`; the NCSS of the test files and of the other files, the test NCSS to delete or
-    merge to clear the violation (what the change adds with `--base`, otherwise what exceeds the
-    limit), and the test NCSS the change adds;
+  - `testNcss`, `productionNcss`, `excessTestNcss`, and, with `--base`, `addedTestLines`: only for
+    kind `project`; the NCSS of the test files and of the other files, the test NCSS above the
+    limit (what a whole project deletes or merges to clear the violation), and the test lines the
+    change adds net of those it deletes (what a change deletes or merges to clear it);
   - `name`: only for kind `function`; a member's name follows the type, module, or object it
     belongs to (`Rules.decide`), and a function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
@@ -384,8 +383,8 @@ touches.
 - `directiveProblems`: the directives the text report lists as errors, each with its `file`,
   `line`, and `message`, ordered by `file`, then `line`.
 - `errors`: the files the check covers that could not be measured (exit code 2), and, with
-  `--base` while the test share exceeds a limit, a failure to read the merge-base test files, which names
-  the merge-base rather than one file; unrelated to the `error` level of a violation.
+  `--base` while the test share exceeds a limit, a failure of git's diff against the merge-base,
+  which names the merge-base rather than one file; unrelated to the `error` level of a violation.
 - `warnings`: files measured without cross-file duplication data, unmeasured files of the
   repository the check does not cover, what git warned while listing the files (passed on as it
   printed it), and that the test share is not measured in a sparse checkout.
