@@ -85,13 +85,25 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
   if (input.base === undefined) {
     return { share, errors };
   }
-  const { mergeBase, changedFiles } = input.base;
+  const addedTestNcss = await measureAddedTestNcss(input, input.base, isTestIn, testNcssByPath, errors);
+  return { share: { ...share, addedTestNcss }, errors };
+}
+
+/** The head test NCSS of the changed files minus what they held at the merge-base. */
+async function measureAddedTestNcss(
+  input: RepositoryTestShareInput,
+  { mergeBase, changedFiles, loadExclusion }: NonNullable<RepositoryTestShareInput['base']>,
+  isTestIn: (pathExclusion: Exclusion, relativePath: string) => boolean,
+  testNcssByPath: ReadonlyMap<string, number>,
+  errors: string[]
+): Promise<number> {
+  const { repoRoot, targetPath, options } = input;
   const basePaths = changedFiles.flatMap(({ basePath }) =>
     basePath !== undefined && isInTarget(basePath, targetPath) && isTestFileBelow(basePath, targetPath, options)
       ? [basePath]
       : []
   );
-  const baseExclusion = await input.base.loadExclusion(basePaths);
+  const baseExclusion = await loadExclusion(basePaths);
   const baseTestPaths = await listRegularFilesAt(
     repoRoot,
     mergeBase,
@@ -112,7 +124,7 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
       return headNcss;
     }
   });
-  return { share: { ...share, addedTestNcss: sum(changes) }, errors };
+  return sum(changes);
 }
 
 /** A path that is not a regular file is no source, as in the scan; a file that cannot be read throws. */

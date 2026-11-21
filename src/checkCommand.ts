@@ -251,21 +251,19 @@ async function scanRepository(
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
-  let files = measuredFiles.filter(({ file }) => isInTarget(file));
   const isInTargetError = (error: string): boolean =>
     canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
-  let isCovered = isInTargetError;
   const change = base === undefined ? undefined : await resolveChange(repoRoot, base, options, unlistedTarget);
-  if (change !== undefined) {
-    const changesInTarget = change.changedFiles.filter(
-      ({ status, headPath }) => status !== 'deleted' && isInTarget(headPath)
-    );
-    files = await attachHunks(measuredFiles, changesInTarget, repoRoot, change.mergeBase);
-    // The share counts every file under the target, so all of them stay covered for it.
-    if (!measuresTestShare) {
-      isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
-    }
-  }
+  const { files, isCovered } =
+    change === undefined
+      ? { files: measuredFiles.filter(({ file }) => isInTarget(file)), isCovered: isInTargetError }
+      : await narrowToChange(
+          change,
+          measuredFiles,
+          repoRoot,
+          isInTarget,
+          measuresTestShare ? isInTargetError : undefined
+        );
   const scope = {
     files,
     duplication,
@@ -281,6 +279,26 @@ async function scanRepository(
       : undefined,
     scan.errors.some((error) => isInTargetError(error))
   );
+}
+
+/**
+ * The changed files under the target with their hunks, and the failures that leave the check
+ * incomplete: those of changed files, or `coversAll` when the share counts every file.
+ */
+async function narrowToChange(
+  change: NonNullable<RepositoryTestShareInput['base']>,
+  measuredFiles: readonly CheckedFile[],
+  repoRoot: string,
+  isInTarget: (relativePath: string) => boolean,
+  coversAll: ((error: string) => boolean) | undefined
+): Promise<{ files: CheckedFile[]; isCovered: (error: string) => boolean }> {
+  const changesInTarget = change.changedFiles.filter(
+    ({ status, headPath }) => status !== 'deleted' && isInTarget(headPath)
+  );
+  return {
+    files: await attachHunks(measuredFiles, changesInTarget, repoRoot, change.mergeBase),
+    isCovered: coversAll ?? ((error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`))),
+  };
 }
 
 /** What the working tree changed since the merge-base with `base`. */
