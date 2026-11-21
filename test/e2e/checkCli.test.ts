@@ -998,6 +998,32 @@ export const scale = 2;
     );
   });
 
+  it.each([
+    [
+      'its last statement',
+      'def job():\n    send()\n    record()\n    archive()\n',
+      'def job():\n    send()\n    record()\n',
+    ],
+    [
+      'statements below a surviving comment',
+      'def job():\n    send()\n    record()\n    # archive\n    archive()\n    clean()\n',
+      'def job():\n    send()\n    record()\n    # archive\n',
+    ],
+  ])('with --base, reports a directive unneeded after deleting %s of its Python function', (_, before, after) => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    const directive = '# code-gauge-allow functionNcss -- keep the job steps together\n';
+    writeSource('src/job.py', `${directive}${before}`);
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'job']);
+
+    writeSource('src/job.py', `${directive}${after}`);
+    const result = runCheck(['--base', 'HEAD', '--warning-max-function-ncss', '3']);
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain(
+      'error: src/job.py:1: code-gauge-allow functionNcss: no functionNcss limit is exceeded; remove the directive\n'
+    );
+  });
+
   it('with --base, reports the function after removing its directive from a CRLF file', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     runGit(['config', 'core.autocrlf', 'false']);

@@ -248,12 +248,15 @@ function collectDirectiveProblems(
   { file, metrics, hunks, allowDirectives }: CheckedFile,
   applied: ReadonlySet<AllowDirective>
 ): LocatedDirectiveProblem[] {
-  const isTouched = (startLine: number, endLine: number): boolean =>
-    !hunks || hunks.some((hunk) => touchesSpan(hunk, startLine, endLine));
+  const isTouched = (startLine: number, endLine: number, endsByIndentation = false): boolean =>
+    !hunks || hunks.some((hunk) => touchesSpan(hunk, startLine, endLine, endsByIndentation));
   const problems = (allowDirectives?.problems ?? []).filter(({ line }) => isTouched(line, line));
   for (const directive of allowDirectives?.directives ?? []) {
     const { line, metric, target } = directive;
-    if (applied.has(directive) || !(target ? isTouched(line, target.endLine) : isTouched(1, metrics.lines.total))) {
+    const isCoveredCodeTouched = target
+      ? isTouched(line, target.endLine, isEndedByIndentation(metrics))
+      : isTouched(1, metrics.lines.total);
+    if (applied.has(directive) || !isCoveredCodeTouched) {
       continue;
     }
     const keyword = target ? 'code-gauge-allow' : 'code-gauge-allow-file';
@@ -276,7 +279,7 @@ function compareViolations(left: Violation, right: Violation): number {
 
 /** The file's functions or, for a changed file, those the change touches. */
 function listCheckedFunctions({ metrics, hunks }: CheckedFile): FunctionMetrics[] {
-  const endsByIndentation = metrics.language === 'python';
+  const endsByIndentation = isEndedByIndentation(metrics);
   return hunks
     ? metrics.functions.filter((fn) =>
         hunks.some((hunk) => touchesSpan(hunk, fn.startLine, fn.endLine, endsByIndentation))
@@ -368,6 +371,10 @@ function findExceeded<Subject>(
  * have removed the span's tail; `endsByIndentation` counts it as touching, since the head alone
  * cannot tell it from a deletion after the span.
  */
+function isEndedByIndentation(metrics: CodeMetrics): boolean {
+  return metrics.language === 'python';
+}
+
 function touchesSpan(hunk: LineHunk, startLine: number, endLine: number, endsByIndentation = false): boolean {
   return hunk.headCount === 0
     ? hunk.headStart >= startLine && (hunk.headStart < endLine || (endsByIndentation && hunk.headStart === endLine))
