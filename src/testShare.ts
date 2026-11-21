@@ -113,7 +113,7 @@ async function measureAddedTestLines(
   mergeBase: string,
   countsAsTest: (relativePath: string) => boolean
 ): Promise<number> {
-  const { tracked, untracked } = await diffLineCounts(input.repoRoot, mergeBase);
+  const { tracked, untracked } = await diffLineCounts(input.repoRoot, mergeBase, input.targetPath);
   let added = 0;
   for (const { file, added: addedLines, deleted } of tracked) {
     if (countsAsTest(file)) {

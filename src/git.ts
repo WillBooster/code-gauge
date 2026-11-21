@@ -216,17 +216,36 @@ export async function readFileAt(repoRoot: string, commit: string, file: string)
 }
 
 /**
- * The lines the working tree's tracked files add and delete against `commit`, by path (renames
- * count as a deletion and an addition, and binary files, which have no lines, are left out), and
- * the untracked files, which the diff does not cover.
+ * The lines the working tree's tracked files below `directory` (repository-relative, empty for the
+ * root) add and delete against `commit`, by path (renames count as a deletion and an addition, and
+ * binary files, which have no lines, are left out), and the untracked files there, which the diff
+ * does not cover.
  */
 export async function diffLineCounts(
   repoRoot: string,
-  commit: string
+  commit: string,
+  directory: string
 ): Promise<{ tracked: { file: string; added: number; deleted: number }[]; untracked: string[] }> {
   const [diffOutput, untrackedOutput] = await Promise.all([
-    runGit(repoRoot, ['diff', '--numstat', '--no-renames', '-z', commit]),
-    runGit(repoRoot, ['ls-files', '--others', '--exclude-standard', '-z']),
+    runGit(repoRoot, [
+      '--literal-pathspecs',
+      'diff',
+      '--numstat',
+      '--no-renames',
+      '-z',
+      commit,
+      '--',
+      directory || '.',
+    ]),
+    runGit(repoRoot, [
+      '--literal-pathspecs',
+      'ls-files',
+      '--others',
+      '--exclude-standard',
+      '-z',
+      '--',
+      directory || '.',
+    ]),
   ]);
   const tracked = diffOutput.split('\0').flatMap((entry) => {
     // `<added>\t<deleted>\t<path>`, with `-` for both counts of a binary file; the path may hold tabs.

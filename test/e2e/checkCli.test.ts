@@ -1442,6 +1442,22 @@ describe('code-gauge check: test share', () => {
     }
   });
 
+  it.skipIf(runAsRoot)('diffs only the target for the test lines a change adds', () => {
+    writeSource('app/calc.ts', calc);
+    writeSource('app/test/calc.test.ts', testCode(60));
+    writeSource('other/legacy.ts', legacy);
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'packages']);
+    writeSource('app/test/calc.test.ts', `${testCode(60)}total([1]);\n`);
+    writeSource('other/legacy.ts', `${legacy}\n`);
+    chmodSync(path.join(repoDir, 'other', 'legacy.ts'), 0o000);
+    try {
+      expect(projectViolations(['app', '--base', 'HEAD'])).toMatchObject([{ file: 'app', addedTestLines: 1 }]);
+    } finally {
+      chmodSync(path.join(repoDir, 'other', 'legacy.ts'), 0o644);
+    }
+  });
+
   it.skipIf(runAsRoot)('leaves the check incomplete when a test file cannot be read', () => {
     writeSource('test/calc.test.ts', testCode(60));
     chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o000);
