@@ -1336,6 +1336,16 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations([])).toMatchObject([{ kind: 'project', testNcss: alone?.testNcss }]);
   });
 
+  it('counts test statements, not lines, so packing them onto one line keeps their share', () => {
+    rmSync(path.join(repoDir, 'src'), { recursive: true, force: true });
+    writeSource(
+      'src/values.ts',
+      Array.from({ length: 30 }, (_, index) => `export const n${index} = ${index};\n`).join('')
+    );
+    writeSource('test/values.test.ts', `${Array.from({ length: 10 }, (_, index) => `check(${index});`).join(' ')}\n`);
+    expect(projectViolations([])).toMatchObject([{ kind: 'project', testNcss: 10, productionNcss: 30 }]);
+  });
+
   it('accepts test code within its share', () => {
     writeSource('test/calc.test.ts', testCode(1));
     expect(projectViolations([])).toEqual([]);
