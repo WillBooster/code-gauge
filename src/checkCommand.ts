@@ -66,8 +66,8 @@ const maxListedPartners = 3;
 
 /**
  * Reports every exceeded threshold of the target or, with `base`, of what the working tree changed
- * under it since the merge-base with that ref. Exit codes: 0 no error-level violations, 1 error-level
- * violations or directive problems, 2 files the check covers could not be measured.
+ * under it since the merge-base with that ref. Exit codes: 0 neither error-level violations nor
+ * directive problems, 1 either of them, 2 files the check covers could not be measured.
  */
 export async function runCheckCommand(
   target: string,
