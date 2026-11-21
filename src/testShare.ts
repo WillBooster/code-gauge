@@ -5,7 +5,7 @@ import path from 'node:path';
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
 import type { Exclusion } from './exclusion.js';
-import { type ChangedFile, measureRegularFilesAt } from './git.js';
+import { type ChangedFile, listRegularFilesAt, measureBlobs } from './git.js';
 import { measureCode } from './metrics.js';
 import { getLanguage, isScannedBelow, isTestFileBelow, type ScanOptions } from './scan.js';
 import type { TestShare } from './thresholds.js';
@@ -90,7 +90,11 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
   return { share: { ...share, addedTestNcss }, errors: errors.toSorted() };
 }
 
-/** The head test NCSS of the changed files minus what they held at the merge-base. */
+/**
+ * The test NCSS the change adds: the head minus the merge-base NCSS of the changed files or, when the
+ * change edits a `.gitattributes`, which can turn unchanged files into tests or out of them, of all
+ * test files, each snapshot by its own attributes.
+ */
 async function measureAddedTestNcss(
   input: RepositoryTestShareInput,
   { mergeBase, changedFiles, loadExclusion }: NonNullable<RepositoryTestShareInput['base']>,
@@ -99,18 +103,30 @@ async function measureAddedTestNcss(
   errors: string[]
 ): Promise<number> {
   const { repoRoot, targetPath, options } = input;
-  const basePaths = changedFiles.flatMap(({ basePath }) =>
-    basePath !== undefined && isInTarget(basePath, targetPath) && isTestFileBelow(basePath, targetPath, options)
-      ? [basePath]
-      : []
+  const comparesAll = changedFiles.some(({ basePath, headPath }) =>
+    [basePath, headPath].some((file) => file !== undefined && path.posix.basename(file) === '.gitattributes')
+  );
+  const isCandidate = (file: string): boolean =>
+    isInTarget(file, targetPath) && isTestFileBelow(file, targetPath, options);
+  const changedBasePaths = new Set(
+    changedFiles.flatMap(({ basePath }) => (basePath !== undefined && isCandidate(basePath) ? [basePath] : []))
   );
   let baseNcssByPath: Map<string, number>;
   try {
-    const baseExclusion = await loadExclusion(basePaths);
-    baseNcssByPath = await measureRegularFilesAt(
+    // A change of production code alone needs nothing from the merge-base.
+    const baseFiles =
+      comparesAll || changedBasePaths.size > 0
+        ? await listRegularFilesAt(repoRoot, mergeBase)
+        : new Map<string, string>();
+    const candidates = [...baseFiles.keys()].filter((file) =>
+      comparesAll ? isCandidate(file) : changedBasePaths.has(file)
+    );
+    const baseExclusion = await loadExclusion(candidates);
+    baseNcssByPath = await measureBlobs(
       repoRoot,
-      mergeBase,
-      basePaths.filter((basePath) => isTestIn(baseExclusion, basePath)),
+      new Map(
+        candidates.filter((file) => isTestIn(baseExclusion, file)).map((file) => [file, baseFiles.get(file) ?? ''])
+      ),
       (basePath, code) => measureTestCode(code, basePath, input, baseExclusion)
     );
   } catch (error) {
@@ -118,6 +134,9 @@ async function measureAddedTestNcss(
     // change's addition unknown; the error suppresses the share while the report keeps the rest.
     errors.push(`test files at ${mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`);
     return 0;
+  }
+  if (comparesAll) {
+    return sum(testNcssByPath.values()) - sum(baseNcssByPath.values());
   }
   const changes = changedFiles.map((changed) => {
     const headNcss = changed.status === 'deleted' ? 0 : (testNcssByPath.get(changed.headPath) ?? 0);

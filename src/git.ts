@@ -218,32 +218,39 @@ export async function readFileAt(repoRoot: string, commit: string, file: string)
 }
 
 /**
- * Measures, by path, the paths among `paths` that `commit` holds as regular files, not symbolic
- * links or submodules. The whole tree is listed and matched here, since passing the paths would hit
- * the command-line length limit on a large change; their contents stream from one `cat-file
- * --batch` process, each measured as it arrives so only the measurements are kept.
+ * The regular files `commit` holds, not symbolic links or submodules, with their blob objects. The
+ * whole tree is listed, since passing paths would hit the command-line length limit.
  */
-export async function measureRegularFilesAt(
+export async function listRegularFilesAt(repoRoot: string, commit: string): Promise<Map<string, string>> {
+  const output = await runGit(repoRoot, ['ls-tree', '-r', '-z', commit]);
+  const objectsByPath = new Map<string, string>();
+  // `<mode> blob <object>\t<path>`, whose path may hold tabs.
+  for (const entry of output.split('\0')) {
+    const tab = entry.indexOf('\t');
+    const object = entry.slice(0, tab).split(' ')[2];
+    if (entry.startsWith('100') && object !== undefined) {
+      objectsByPath.set(entry.slice(tab + 1), object);
+    }
+  }
+  return objectsByPath;
+}
+
+/**
+ * Measures, by path, the given blobs, streamed from one `cat-file --batch` process and each
+ * measured as it arrives so only the measurements are kept.
+ */
+export async function measureBlobs(
   repoRoot: string,
-  commit: string,
-  paths: readonly string[],
+  objectsByPath: ReadonlyMap<string, string>,
   measure: (file: string, code: string) => number
 ): Promise<Map<string, number>> {
   const measurements = new Map<string, number>();
-  if (paths.length === 0) {
-    return measurements;
-  }
-  const requested = new Set(paths);
-  const output = await runGit(repoRoot, ['ls-tree', '-r', '-z', commit]);
-  // `<mode> blob <object>\t<path>`, whose path may hold tabs.
   const pathsByObject = new Map<string, string[]>();
-  for (const entry of output.split('\0')) {
-    const tab = entry.indexOf('\t');
-    const file = entry.slice(tab + 1);
-    const object = entry.slice(0, tab).split(' ')[2];
-    if (entry.startsWith('100') && requested.has(file) && object !== undefined) {
-      pathsByObject.set(object, [...(pathsByObject.get(object) ?? []), file]);
-    }
+  for (const [file, object] of objectsByPath) {
+    pathsByObject.set(object, [...(pathsByObject.get(object) ?? []), file]);
+  }
+  if (pathsByObject.size === 0) {
+    return measurements;
   }
   await streamBlobs(repoRoot, [...pathsByObject.keys()], (object, content) => {
     const code = content.toString('utf8');

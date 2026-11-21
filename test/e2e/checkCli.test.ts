@@ -1454,6 +1454,17 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
   });
 
+  it('counts a test file the change excludes by its attributes alone as removed', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/retained.test.ts', testCode(60));
+    writeSource('test/fixture.test.ts', testCode(3));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource('test/retained.test.ts', testCode(61));
+    writeSource('.gitattributes', 'test/fixture.test.ts linguist-generated\n');
+    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
+  });
+
   it('excludes a test file at the merge-base by the attributes it had there', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource('test/calc.test.ts', testCode(60));
