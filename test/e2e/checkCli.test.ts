@@ -1242,13 +1242,24 @@ describe('code-gauge check: test share', () => {
     const [violation] = projectViolations([]);
     expect(violation).toMatchObject({ kind: 'project', file: '.', level: 'error' });
     expect((violation?.testNcss ?? 0) * 100).toBeGreaterThan((violation?.productionNcss ?? 0) * 30);
-    // Deleting the named excess brings the share back to the limit.
-    const remaining = (violation?.testNcss ?? 0) - (violation?.excessTestNcss ?? 0);
-    expect(remaining * 100).toBeLessThanOrEqual((violation?.productionNcss ?? 0) * 30);
-    expect((remaining + 1) * 100).toBeGreaterThan((violation?.productionNcss ?? 0) * 30);
 
     writeConfig({ thresholds: { ...baseConfig.thresholds, error: { maxTestNcssPercent: disabled } } });
     expect(projectViolations([])).toEqual([]);
+  });
+
+  it.each([
+    ['the default limit', []],
+    ['a warning limit stricter than the error limit', ['--warning-max-test-ncss-percent', '10']],
+    ['a fractional limit', ['--error-max-test-ncss-percent', '18.4']],
+  ])('names the least test NCSS whose deletion clears the share under %s', (_, limits) => {
+    writeSource('test/calc.test.ts', testCode(60));
+    const excess = projectViolations(limits)[0]?.excessTestNcss ?? 0;
+    expect(excess).toBeGreaterThan(0);
+    // Each assertion of the test file is one statement.
+    writeSource('test/calc.test.ts', testCode(60 - excess + 1));
+    expect(projectViolations(limits)).toHaveLength(1);
+    writeSource('test/calc.test.ts', testCode(60 - excess));
+    expect(projectViolations(limits)).toEqual([]);
   });
 
   it('accepts test code within its share', () => {

@@ -16,6 +16,7 @@ import {
   levels,
   type LimitsByLevel,
   metricNameOf,
+  type TestShare,
   testShareThreshold,
   type Threshold,
 } from './thresholds.js';
@@ -197,7 +198,6 @@ export function checkTestShare(
   if (exceededLimit === undefined) {
     return undefined;
   }
-  const allowedTestNcss = Math.floor((share.productionNcss * exceededLimit.limit) / 100);
   return {
     kind: 'project',
     file,
@@ -205,8 +205,27 @@ export function checkTestShare(
     exceeded: [exceededLimit],
     ...share,
     // A change clears it by offsetting what it adds; a whole project, by returning within the limit.
-    excessTestNcss: share.addedTestNcss ?? share.testNcss - allowedTestNcss,
+    excessTestNcss: share.addedTestNcss ?? share.testNcss - allowedTestNcss(share, limits),
   };
+}
+
+/**
+ * The most test NCSS the production NCSS admits under every level's limit, found with the
+ * comparison that reports the violation, so deleting the excess clears it at any level.
+ */
+function allowedTestNcss({ productionNcss }: TestShare, limits: LimitsByLevel): number {
+  const violates = (testNcss: number): boolean =>
+    findExceeded(testShareThreshold, { testNcss, productionNcss }, limits, (value, limit) => value > limit).length > 0;
+  const strictest = Math.min(...levels.map((level) => limits[level][testShareThreshold.key] as number));
+  // The estimate is off by at most one either way from rounding.
+  let allowed = Math.floor((productionNcss * strictest) / 100);
+  while (allowed > 0 && violates(allowed)) {
+    allowed -= 1;
+  }
+  while (!violates(allowed + 1)) {
+    allowed += 1;
+  }
+  return allowed;
 }
 
 /**
