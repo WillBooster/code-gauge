@@ -1296,6 +1296,20 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', level: 'error' }]);
   });
 
+  it('reports the share of a targeted directory with --base only for a test edited inside it', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('app/calc.ts', calc);
+    writeSource('app/test/calc.test.ts', testCode(60));
+    writeSource('other/test/calc.test.ts', testCode(1));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'packages']);
+    writeSource('other/test/calc.test.ts', testCode(2));
+    expect(projectViolations(['app', '--base', 'HEAD'])).toEqual([]);
+
+    writeSource('app/test/calc.test.ts', testCode(59));
+    expect(projectViolations(['app', '--base', 'HEAD'])).toMatchObject([{ kind: 'project', file: 'app' }]);
+  });
+
   it('counts the files of a targeted test directory as tests, leaving no production code to compare', () => {
     writeSource('test/calc.test.ts', testCode(60));
     writeSource('test/helper.ts', calc);

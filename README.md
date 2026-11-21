@@ -187,8 +187,10 @@ With `--base <ref>`, the check covers only what the working tree changed since t
   every file under the target, so a file there that cannot be measured, changed or not, leaves the
   check incomplete.
 
-`--base` filters the report: the working-tree files measured and the duplication found are those
-of the check without it, so code pasted from an unchanged file is reported where it was pasted. A
+`--base` filters the report: the working-tree files the scan measures and the duplication found
+are those of the check without it, so code pasted from an unchanged file is reported where it was
+pasted. The test files the scan skips are measured for the share only when the change touches a
+test, so only then can one of them that cannot be read leave the check incomplete. A
 violation the change did not introduce is reported too once the change touches its function, file,
 or duplicated block. `--base` requires a git repository.
 
