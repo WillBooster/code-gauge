@@ -43,8 +43,8 @@ export interface TestShareMeasurement {
 }
 
 /**
- * Measures the test files of the checked directory, which the check itself does not measure unless
- * it includes tests, and, for a change, the test files at the merge-base it compares them with (see
+ * Measures the test files of the checked directory, reusing the check's measurement of any it took
+ * (with tests included, or in a targeted test directory) and measuring those it skipped, and, for a change, the test files at the merge-base it compares them with (see
  * measureAddedTestNcss), read from git so nothing is checked out. A file is a test file by its repository-relative
  * path, so targeting a test directory does not turn its files into production code. Only a
  * repository has a share: outside one, there is neither a root to tell tests by nor a change.
