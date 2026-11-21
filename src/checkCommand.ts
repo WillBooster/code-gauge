@@ -541,7 +541,7 @@ function describeViolation(violation: Violation, exceeded: string): string {
     case 'project': {
       const added =
         violation.addedTestNcss === undefined ? '' : `; the change adds ${violation.addedTestNcss} test NCSS`;
-      return `${violation.file}: ${exceeded}, test NCSS ${violation.testNcss} of production NCSS ${violation.productionNcss}${added}`;
+      return `${violation.file}: ${exceeded}, test NCSS ${violation.testNcss} of production NCSS ${violation.productionNcss}${added}; delete or merge ${violation.excessTestNcss} test NCSS`;
     }
     case 'file': {
       return `${violation.file}: ${exceeded}`;

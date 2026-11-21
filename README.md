@@ -345,8 +345,10 @@ touches.
   - `file`, `startLine`, `endLine`: the 1-based line span of the function or duplicated block; for
     kind `file`, the first and last line of the file; for kind `project`, only `file`, the checked
     directory relative to the repository root (`.` for the root);
-  - `testNcss`, `productionNcss`, and, with `--base`, `addedTestNcss`: only for kind `project`; the
-    NCSS of the test files and of the other files, and the test NCSS the change adds;
+  - `testNcss`, `productionNcss`, `excessTestNcss`, and, with `--base`, `addedTestNcss`: only for
+    kind `project`; the NCSS of the test files and of the other files, the test NCSS to delete or
+    merge to clear the violation (what the change adds with `--base`, otherwise what exceeds the
+    limit), and the test NCSS the change adds;
   - `name`: only for kind `function`; a member's name follows the type, module, or object it
     belongs to (`Rules.decide`), and a function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or

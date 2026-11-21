@@ -1223,6 +1223,7 @@ describe('code-gauge check: test share', () => {
       testNcss: number;
       productionNcss: number;
       addedTestNcss?: number;
+      excessTestNcss?: number;
     }[];
   }
 
@@ -1236,11 +1237,15 @@ describe('code-gauge check: test share', () => {
     const result = runCheck([]);
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(
-      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+$/mu
+      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+; delete or merge \d+ test NCSS$/mu
     );
     const [violation] = projectViolations([]);
     expect(violation).toMatchObject({ kind: 'project', file: '.', level: 'error' });
     expect((violation?.testNcss ?? 0) * 100).toBeGreaterThan((violation?.productionNcss ?? 0) * 30);
+    // Deleting the named excess brings the share back to the limit.
+    const remaining = (violation?.testNcss ?? 0) - (violation?.excessTestNcss ?? 0);
+    expect(remaining * 100).toBeLessThanOrEqual((violation?.productionNcss ?? 0) * 30);
+    expect((remaining + 1) * 100).toBeGreaterThan((violation?.productionNcss ?? 0) * 30);
 
     writeConfig({ thresholds: { ...baseConfig.thresholds, error: { maxTestNcssPercent: disabled } } });
     expect(projectViolations([])).toEqual([]);
@@ -1261,7 +1266,7 @@ describe('code-gauge check: test share', () => {
 
     writeSource('test/calc.test.ts', testCode(61));
     expect(projectViolations(['--base', 'HEAD'])).toMatchObject([
-      { kind: 'project', level: 'error', addedTestNcss: 1 },
+      { kind: 'project', level: 'error', addedTestNcss: 1, excessTestNcss: 1 },
     ]);
 
     writeSource('test/calc.test.ts', testCode(59));
