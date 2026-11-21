@@ -1305,6 +1305,27 @@ describe('code-gauge check: test share', () => {
     }
   });
 
+  it('excludes a test file at the merge-base by the attributes it had there', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/generated.test.ts', testCode(40));
+    writeSource('.gitattributes', 'test/generated.test.ts linguist-generated\n');
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    rmSync(path.join(repoDir, 'test', 'generated.test.ts'));
+    writeSource('.gitattributes', '');
+    writeSource('test/calc.test.ts', testCode(61));
+    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestNcss: 1 }]);
+  });
+
+  it('lists a project warning after the errors in the JSON report', () => {
+    writeSource('test/calc.test.ts', testCode(1));
+    const args = ['--error-max-test-ncss-percent', 'off', '--warning-max-test-ncss-percent', '0', '--json'];
+    const report = JSON.parse(runCheck([...args, '--error-max-file-ncss', '0']).stdout) as ProjectReport;
+    expect(report.violations.map(({ level }) => level).indexOf('warning')).toBeGreaterThan(0);
+    expect(report.violations.find(({ level }) => level === 'warning')?.kind).toBe('project');
+  });
+
   it('counts no test code for an excluded test file the change deletes', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource('test/calc.test.ts', testCode(60));

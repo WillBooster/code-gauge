@@ -212,12 +212,13 @@ export interface LinguistAttributes {
 }
 
 /**
- * The linguist attributes of repository-relative paths, from the working tree's `.gitattributes`.
- * Paths with neither attribute specified are omitted.
+ * The linguist attributes of repository-relative paths, from the working tree's `.gitattributes` or,
+ * with `source`, from those of that commit. Paths with neither attribute specified are omitted.
  */
 export async function readLinguistAttributes(
   repoRoot: string,
-  paths: Iterable<string>
+  paths: Iterable<string>,
+  source?: string
 ): Promise<Map<string, LinguistAttributes>> {
   const input = [...paths].join('\0');
   if (input === '') {
@@ -225,7 +226,14 @@ export async function readLinguistAttributes(
   }
   const output = await runGitWithInput(
     repoRoot,
-    ['check-attr', '--stdin', '-z', 'linguist-generated', 'linguist-vendored'],
+    [
+      'check-attr',
+      ...(source === undefined ? [] : ['--source', source]),
+      '--stdin',
+      '-z',
+      'linguist-generated',
+      'linguist-vendored',
+    ],
     input
   );
   const attributesByPath = new Map<string, LinguistAttributes>();

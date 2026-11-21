@@ -28,7 +28,7 @@ export interface RepositoryTestShareInput {
   base?: {
     mergeBase: string;
     changedFiles: readonly ChangedFile[];
-    /** The exclusion of base paths, which may no longer exist and so lack from `exclusion`. */
+    /** The exclusion of base paths by the merge-base's attributes, as their content is the merge-base's. */
     loadExclusion: (relativePaths: readonly string[]) => Promise<Exclusion>;
   };
 }
@@ -53,9 +53,11 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     isTestPath(relativePath, options) &&
     !pathExclusion.isExcludedPath(path.join(repoRoot, relativePath));
   const errors: string[] = [];
+  // With tests included, the check already measured them.
+  const measuredNcss = new Map(input.measuredFiles.map(({ file, metrics }) => [file, metrics.ncssCount]));
   const measureHead = async (relativePath: string): Promise<number> => {
     try {
-      return await measureTestFile(input, relativePath);
+      return measuredNcss.get(relativePath) ?? (await measureTestFile(input, relativePath));
     } catch (error) {
       errors.push(`${relativePath}: ${getErrorMessage(error)}`);
       return 0;

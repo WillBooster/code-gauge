@@ -323,8 +323,10 @@ With these limits, `check` reports 464 errors and 2,430 warnings in the calibrat
 `maxTestNcssPercent` defaults to an error above 30, and to no warning. It was set in November 2026
 from the 50 WillBooster repositories on a developer's machine whose production code exceeds 3,000
 lines: their test code, counted in lines rather than NCSS, was 33% of their production code at the
-median. A limit just below the median makes half of the organization's projects trade test code for
-test code before adding more, and the median project halving its tests passes it.
+median. The limit sits just below that median. Its effect in NCSS was not measured on the corpus,
+which would tell how many projects it holds and whether halving the tests of the median project
+brings it under the limit: a line of test code can hold more or fewer statements than a line of
+production code.
 
 ## Duplicated blocks measured in matched lines
 

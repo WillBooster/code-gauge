@@ -394,6 +394,7 @@ with `--config`). The following config reproduces every built-in default:
       "maxFunctionDepDegree": null,
       "maxFileNcss": 400,
       "minDuplicateLines": 15,
+      "maxTestNcssPercent": null,
       "languages": {}
     },
     "error": {
@@ -408,6 +409,7 @@ with `--config`). The following config reproduces every built-in default:
       "maxFunctionDepDegree": null,
       "maxFileNcss": 1000,
       "minDuplicateLines": null,
+      "maxTestNcssPercent": 30,
       "languages": {}
     }
   },
@@ -423,7 +425,8 @@ command only.
 
 `languages` in a level of `thresholds` maps a language name (`javascript`, `jsx`, `typescript`,
 `tsx`, `python`, `go`, `rust`, `java`, `ruby`, `c`, `cpp`, `csharp`, `kotlin`) to the limits that
-differ for its files; a limit it leaves out keeps the value set outside `languages`:
+differ for its files, except `maxTestNcssPercent`, which applies to the whole checked directory; a
+limit it leaves out keeps the value set outside `languages`:
 
 ```json
 {
