@@ -1518,6 +1518,9 @@ describe('code-gauge check: test share', () => {
       );
       // The diff compares trees, so only the share's read of the merge-base content meets the loss.
       rmSync(path.join(dir, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+      // Within its limit the share needs no merge-base, so the loss does not matter.
+      const within = runCheck(['--base', 'HEAD~1', '--error-max-test-ncss-percent', '100000', dir], dir);
+      expect(within.status, within.stdout + within.stderr).toBe(0);
       const result = runCheck(['--base', 'HEAD~1', '--json', dir], dir);
       expect(result.status).toBe(2);
       expect((JSON.parse(result.stdout) as ProjectReport).violations.filter(({ kind }) => kind === 'project')).toEqual(

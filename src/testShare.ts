@@ -25,6 +25,8 @@ export interface RepositoryTestShareInput {
   options: ScanOptions;
   /** The files the check measured, repository-relative; test files among them count as tests. */
   measuredFiles: readonly { file: string; metrics: { ncssCount: number } }[];
+  /** Whether a share exceeds an active limit; only then can what a change adds decide a violation. */
+  exceedsLimit: (share: TestShare) => boolean;
   base?: {
     mergeBase: string;
     changedFiles: readonly ChangedFile[];
@@ -82,7 +84,8 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
         .map(({ metrics }) => metrics.ncssCount)
     ),
   };
-  if (input.base === undefined) {
+  // Within every limit the change's addition decides nothing, so the merge-base is not read.
+  if (input.base === undefined || !input.exceedsLimit(share)) {
     return { share, errors: errors.toSorted() };
   }
   const addedTestNcss = await measureAddedTestNcss(input, input.base, isTestIn, testNcssByPath, errors);

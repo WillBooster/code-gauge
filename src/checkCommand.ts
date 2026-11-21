@@ -51,6 +51,7 @@ import {
   type LimitsByLevel,
   metricNameOf,
   resolveLimits,
+  type TestShare,
   testShareThreshold,
   thresholds,
 } from './thresholds.js';
@@ -100,6 +101,7 @@ export async function runCheckCommand(
     const projectLimits = limitsOf('');
     const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options, {
       measuresTestShare: levels.some((level) => Number.isFinite(projectLimits[level][testShareThreshold.key])),
+      exceedsTestShareLimit: (share) => checkTestShare(share, '', projectLimits) !== undefined,
     });
     const files = await attachAllowDirectives(scope.files, scope.root);
     const codeResult = checkThresholds(files, scope.duplication, limitsOf);
@@ -159,7 +161,10 @@ export async function scanCheckScope(
   resolvedTarget: string,
   base: string | undefined,
   options: ResolvedOptions,
-  { measuresTestShare = false }: { measuresTestShare?: boolean } = {}
+  {
+    measuresTestShare = false,
+    exceedsTestShareLimit = () => true,
+  }: { measuresTestShare?: boolean; exceedsTestShareLimit?: (share: TestShare) => boolean } = {}
 ): Promise<CheckScope> {
   const canonicalTarget = await realpath(resolvedTarget);
   const targetStat = await stat(canonicalTarget);
@@ -177,7 +182,13 @@ export async function scanCheckScope(
     return await scanDirectoryWalk(canonicalTarget, options);
   }
   return await scanRepository(
-    { repoRoot, canonicalTarget, targetFile, measuresTestShare: measuresTestShare && !targetFile },
+    {
+      repoRoot,
+      canonicalTarget,
+      targetFile,
+      measuresTestShare: measuresTestShare && !targetFile,
+      exceedsTestShareLimit,
+    },
     base,
     options
   );
@@ -206,6 +217,7 @@ interface RepositoryTarget {
   targetFile?: string;
   /** Whether the share of test code is measured: a limit applies to it and the target is a directory. */
   measuresTestShare: boolean;
+  exceedsTestShareLimit: (share: TestShare) => boolean;
 }
 
 /**
@@ -214,7 +226,7 @@ interface RepositoryTarget {
  * target: all of them or, with `base`, the changed ones with their line hunks.
  */
 async function scanRepository(
-  { repoRoot, canonicalTarget, targetFile, measuresTestShare }: RepositoryTarget,
+  { repoRoot, canonicalTarget, targetFile, measuresTestShare, exceedsTestShareLimit }: RepositoryTarget,
   base: string | undefined,
   options: ResolvedOptions
 ): Promise<CheckScope> {
@@ -271,7 +283,16 @@ async function scanRepository(
   return await addTestShare(
     scope,
     sharesProject
-      ? { repoRoot, repositoryFiles, targetPath: targetDirectory, exclusion, options, measuredFiles, base: change }
+      ? {
+          repoRoot,
+          repositoryFiles,
+          targetPath: targetDirectory,
+          exclusion,
+          options,
+          measuredFiles,
+          exceedsLimit: exceedsTestShareLimit,
+          base: change,
+        }
       : undefined,
     scan.errors.some((error) => isInTargetError(error))
   );
