@@ -24,6 +24,7 @@ import {
   configSearchDirectory,
   formatPath,
   getLanguage,
+  isTestFileBelow,
   isWithinDirectory,
   resolveTarget,
   scanListedFiles,
@@ -32,7 +33,7 @@ import {
   writeStderr,
   writeStdout,
 } from './scan.js';
-import { type MeasuredTestShare, measureRepositoryTestShare, type RepositoryTestShareInput } from './testShare.js';
+import { measureRepositoryTestShare, type RepositoryTestShareInput } from './testShare.js';
 import {
   type BlockLocation,
   type CheckedDuplication,
@@ -72,7 +73,7 @@ export interface CheckScope {
   root: string;
   mergeBase?: string;
   /** The test share of the checked directory of a repository; absent when no limit applies to it. */
-  testShare?: MeasuredTestShare;
+  testShare?: TestShare;
   /** The checked directory, relative to `root`; `.` for the root itself. */
   checkedDirectory: string;
 }
@@ -101,7 +102,6 @@ export async function runCheckCommand(
     const projectLimits = limitsOf('');
     const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options, {
       measuresTestShare: levels.some((level) => Number.isFinite(projectLimits[level][testShareThreshold.key])),
-      exceedsTestShareLimit: (share) => checkTestShare(share, '', projectLimits) !== undefined,
     });
     const files = await attachAllowDirectives(scope.files, scope.root);
     const codeResult = checkThresholds(files, scope.duplication, limitsOf);
@@ -161,10 +161,7 @@ export async function scanCheckScope(
   resolvedTarget: string,
   base: string | undefined,
   options: ResolvedOptions,
-  {
-    measuresTestShare = false,
-    exceedsTestShareLimit = () => true,
-  }: { measuresTestShare?: boolean; exceedsTestShareLimit?: (share: TestShare) => boolean } = {}
+  { measuresTestShare = false }: { measuresTestShare?: boolean } = {}
 ): Promise<CheckScope> {
   const canonicalTarget = await realpath(resolvedTarget);
   const targetStat = await stat(canonicalTarget);
@@ -187,7 +184,6 @@ export async function scanCheckScope(
       canonicalTarget,
       targetFile,
       measuresTestShare: measuresTestShare && !targetFile,
-      exceedsTestShareLimit,
     },
     base,
     options
@@ -217,7 +213,6 @@ interface RepositoryTarget {
   targetFile?: string;
   /** Whether the share of test code is measured: a limit applies to it and the target is a directory. */
   measuresTestShare: boolean;
-  exceedsTestShareLimit: (share: TestShare) => boolean;
 }
 
 /**
@@ -226,7 +221,7 @@ interface RepositoryTarget {
  * target: all of them or, with `base`, the changed ones with their line hunks.
  */
 async function scanRepository(
-  { repoRoot, canonicalTarget, targetFile, measuresTestShare, exceedsTestShareLimit }: RepositoryTarget,
+  { repoRoot, canonicalTarget, targetFile, measuresTestShare }: RepositoryTarget,
   base: string | undefined,
   options: ResolvedOptions
 ): Promise<CheckScope> {
@@ -261,13 +256,16 @@ async function scanRepository(
   );
   const duplication = measureDuplication(scan, options);
   scan.warnings.push(...listingWarnings);
-  const sharesProject = decideTestShare(measuresTestShare, sparse, scan.warnings);
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   const isInTargetError = (error: string): boolean =>
     canonicalTarget === repoRoot || concernsTarget(error, targetPath, targetFile !== undefined);
-  const change = base === undefined ? undefined : await resolveChange(repoRoot, base, options, unlistedTarget);
+  const change = base === undefined ? undefined : await resolveChange(repoRoot, base, unlistedTarget);
+  // A change that touches no test under the target is not blamed for a share it did not raise.
+  const sharesProject =
+    decideTestShare(measuresTestShare, sparse, scan.warnings) &&
+    (change === undefined || touchesTests(change, targetDirectory, options));
   const { files, isCovered } =
     change === undefined
       ? { files: measuredFiles.filter(({ file }) => isInTarget(file)), isCovered: isInTargetError }
@@ -290,8 +288,6 @@ async function scanRepository(
           exclusion,
           options,
           measuredFiles,
-          exceedsLimit: exceedsTestShareLimit,
-          base: change,
         }
       : undefined,
     scan.errors.some((error) => isInTargetError(error))
@@ -325,12 +321,7 @@ async function narrowToChange(
 }
 
 /** The change since the merge-base with `base`. */
-async function resolveChange(
-  repoRoot: string,
-  base: string,
-  options: ResolvedOptions,
-  unlistedTarget: string | undefined
-): Promise<Change> {
+async function resolveChange(repoRoot: string, base: string, unlistedTarget: string | undefined): Promise<Change> {
   const mergeBase = await resolveMergeBase(repoRoot, base);
   const changedFiles = await listChangedFiles(repoRoot, mergeBase);
   // A targeted file git does not list has no diff; all of it counts as added.
@@ -338,6 +329,17 @@ async function resolveChange(
     changedFiles.push({ status: 'added', headPath: unlistedTarget });
   }
   return { mergeBase, changedFiles };
+}
+
+/** Whether the change adds, edits, renames, or deletes a path the check counts as a test under the target. */
+function touchesTests(change: Change, targetDirectory: string, options: ResolvedOptions): boolean {
+  return change.changedFiles.some(({ basePath, headPath }) =>
+    [basePath ?? headPath, headPath].some(
+      (file) =>
+        (targetDirectory === '' || file.startsWith(`${targetDirectory}/`)) &&
+        isTestFileBelow(file, targetDirectory, options)
+    )
+  );
 }
 
 /**
@@ -369,10 +371,7 @@ async function addTestShare(
   if (input === undefined) {
     return scope;
   }
-  // A production file the scan could not measure leaves the share unknown: no history is read for it.
-  const { share, errors } = await measureRepositoryTestShare(
-    missesProductionCode ? { ...input, exceedsLimit: () => false } : input
-  );
+  const { share, errors } = await measureRepositoryTestShare(input);
   // A share of partial totals would name tests to delete that the whole project admits.
   const complete = !missesProductionCode && errors.length === 0;
   return { ...scope, testShare: complete ? share : undefined, errors: [...scope.errors, ...errors] };
@@ -498,12 +497,16 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   const errorLines = [
     ...violations
       .filter(({ level }) => level === 'error')
-      .map((violation) => ({ file: violation.file, line: firstLineOf(violation), text: formatViolation(violation) })),
+      .map((violation) => ({
+        file: violation.file,
+        line: firstLineOf(violation),
+        text: formatViolation(violation, scope.mergeBase !== undefined),
+      })),
     ...directiveProblems.map((problem) => ({ ...problem, text: formatDirectiveProblem(problem) })),
   ].toSorted((left, right) => compareStrings(left.file, right.file) || left.line - right.line);
   const warningLines = violations
     .filter(({ level }) => level === 'warning')
-    .map((violation) => formatViolation(violation));
+    .map((violation) => formatViolation(violation, scope.mergeBase !== undefined));
   for (const text of [...errorLines.map(({ text }) => text), ...warningLines]) {
     writeStdout(`${text}\n`);
   }
@@ -580,7 +583,7 @@ function countViolations(violations: readonly Violation[]): {
 }
 
 /** One violation as a single line: its level, the location, then every limit it exceeds. */
-function formatViolation(violation: Violation): string {
+function formatViolation(violation: Violation, checksChange: boolean): string {
   const exceeded = violation.exceeded
     .map(({ metric, label, value, level, limit }) => {
       // Halstead values are fractional; rounding up keeps a violating value above the printed maximum.
@@ -596,7 +599,7 @@ function formatViolation(violation: Violation): string {
       return `${label} ${roundedValue} (${levelPrefix}max ${maxAllowed}${blocks})`;
     })
     .join(', ');
-  return `${violation.level}: ${describeViolation(violation, exceeded)}`;
+  return `${violation.level}: ${describeViolation(violation, exceeded, checksChange)}`;
 }
 
 function describeLargestBlocks({ largestBlocks = [] }: CodeViolation): string {
@@ -607,14 +610,12 @@ function describeLargestBlocks({ largestBlocks = [] }: CodeViolation): string {
   return blocks.length > 0 ? `; largest parts ${blocks.join(', ')}` : '';
 }
 
-function describeViolation(violation: Violation, exceeded: string): string {
+function describeViolation(violation: Violation, exceeded: string, checksChange: boolean): string {
   switch (violation.kind) {
     case 'project': {
-      // A change clears it by offsetting the lines it adds; a whole project, by returning within the limit.
-      const remedy =
-        violation.addedTestLines === undefined
-          ? `delete or merge ${violation.excessTestNcss} test NCSS`
-          : `the change adds ${violation.addedTestLines} test lines; delete or merge as many`;
+      const remedy = checksChange
+        ? `this change edits tests while test code exceeds ${violation.exceeded[0]?.limit}% of production code: delete or merge tests so the change adds no test code`
+        : `delete or merge ${violation.excessTestNcss} test NCSS`;
       return `${violation.file}: ${exceeded}, test NCSS ${violation.testNcss} of production NCSS ${violation.productionNcss}; ${remedy}`;
     }
     case 'file': {

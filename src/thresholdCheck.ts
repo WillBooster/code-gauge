@@ -7,7 +7,6 @@ import type {
   CrossFileDuplicationMetrics,
 } from './crossFileDuplication.js';
 import type { LineHunk } from './git.js';
-import type { MeasuredTestShare } from './testShare.js';
 import {
   duplicationThreshold,
   fileThresholds,
@@ -66,7 +65,7 @@ interface CloneOccurrence extends BlockLocation {
 }
 
 /** A violation of a threshold of the whole checked project, which no line of code locates. */
-export interface ProjectViolation extends MeasuredTestShare {
+export interface ProjectViolation extends TestShare {
   kind: 'project';
   /** The checked directory, repository-relative, `.` for the root. */
   file: string;
@@ -183,15 +182,11 @@ export function checkThresholds(
 }
 
 /**
- * The violation of the test share limit, if any: of the whole project or, for a check of a change,
- * only when the change adds test code. A project without production code has nothing to compare.
+ * The violation of the test share limit, if any. A project without production code has nothing to
+ * compare.
  */
-export function checkTestShare(
-  share: MeasuredTestShare,
-  file: string,
-  limits: LimitsByLevel
-): ProjectViolation | undefined {
-  if (share.productionNcss === 0 || (share.addedTestLines !== undefined && share.addedTestLines <= 0)) {
+export function checkTestShare(share: TestShare, file: string, limits: LimitsByLevel): ProjectViolation | undefined {
+  if (share.productionNcss === 0) {
     return undefined;
   }
   const [exceededLimit] = findExceeded(testShareThreshold, share, limits, (value, limit) => value > limit);

@@ -137,7 +137,7 @@ export const testShareThreshold: Threshold<TestShare> = {
   key: 'maxTestNcssPercent',
   label: 'test NCSS percent',
   defaultLimits: { warning: Infinity, error: 30 },
-  hint: 'delete or merge as much test code as the violation names, in the same change.',
+  hint: 'delete or merge tests as the violation says, in the same change.',
   measure: ({ testNcss, productionNcss }) => (testNcss * 100) / productionNcss,
 };
 

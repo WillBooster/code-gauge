@@ -5,16 +5,9 @@ import path from 'node:path';
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
 import type { Exclusion } from './exclusion.js';
-import { type ChangedFile, diffLineCounts } from './git.js';
 import { measureCode } from './metrics.js';
 import { getLanguage, isScannedBelow, isTestFileBelow, type ScanOptions } from './scan.js';
 import type { TestShare } from './thresholds.js';
-
-/** The test share of the checked project and, for a check of a change, the test lines it adds. */
-export interface MeasuredTestShare extends TestShare {
-  /** The test lines the change adds net of those it deletes, by git's diff; absent without a base. */
-  addedTestLines?: number;
-}
 
 export interface RepositoryTestShareInput {
   repoRoot: string;
@@ -25,22 +18,18 @@ export interface RepositoryTestShareInput {
   options: ScanOptions;
   /** The files the check measured, repository-relative; test files among them count as tests. */
   measuredFiles: readonly { file: string; metrics: { ncssCount: number } }[];
-  /** Whether a share exceeds an active limit; only then can what a change adds decide a violation. */
-  exceedsLimit: (share: TestShare) => boolean;
-  base?: { mergeBase: string; changedFiles: readonly ChangedFile[] };
 }
 
 /** The share, or the failures to measure test files that leave it unknown. */
 export interface TestShareMeasurement {
-  share: MeasuredTestShare;
+  share: TestShare;
   /** Test files that could not be measured, each starting with its path like the scan's errors. */
   errors: string[];
 }
 
 /**
  * Measures the test files of the checked directory, reusing the check's measurement of any it took
- * (with tests included, or in a targeted test directory) and measuring those it skipped, and, for a
- * change, the test lines it adds by git's diff. A file is a test file by its repository-relative
+ * (with tests included, or in a targeted test directory) and measuring those it skipped. A file is a test file by its repository-relative
  * path, so targeting a test directory does not turn its files into production code. Only a
  * repository has a share: outside one, there is neither a root to tell tests by nor a change.
  */
@@ -80,62 +69,7 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
         .map(({ metrics }) => metrics.ncssCount)
     ),
   };
-  // Within every limit, or with the share unknown for unmeasured files, the change's addition
-  // decides nothing.
-  if (input.base === undefined || errors.length > 0 || !input.exceedsLimit(share)) {
-    return { share, errors: errors.toSorted() };
-  }
-  try {
-    const addedTestLines = await measureAddedTestLines(
-      input,
-      input.base,
-      (file) => isTestIn(exclusion, file),
-      (file) => testNcssByPath.get(file) !== undefined
-    );
-    return { share: { ...share, addedTestLines }, errors: errors.toSorted() };
-  } catch (error) {
-    // An unknown addition suppresses the share while the report keeps the rest.
-    return {
-      share,
-      errors: [
-        ...errors,
-        `test changes since ${input.base.mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`,
-      ].toSorted(),
-    };
-  }
-}
-
-/**
- * The test lines the change adds net of those it deletes: git's diff against the merge-base for the
- * tracked files, which already accounts for renames, sparse and partial clones, attributes, and
- * binary files, plus the lines of the untracked files git lists, which the diff leaves out. Git
- * reads only the changed test paths. Deleted lines count by the path; added lines only when the
- * working tree holds a test source the share counts there.
- */
-async function measureAddedTestLines(
-  input: RepositoryTestShareInput,
-  { mergeBase, changedFiles }: NonNullable<RepositoryTestShareInput['base']>,
-  isTestPath: (relativePath: string) => boolean,
-  isTestSource: (relativePath: string) => boolean
-): Promise<number> {
-  const changedTestPaths = new Set(
-    changedFiles
-      .flatMap(({ basePath, headPath }) => [basePath ?? headPath, headPath])
-      .filter((file) => isTestPath(file))
-  );
-  const { tracked, untracked } = await diffLineCounts(input.repoRoot, mergeBase, [...changedTestPaths]);
-  let added = 0;
-  for (const { file, added: addedLines, deleted } of tracked) {
-    added += (isTestSource(file) ? addedLines : 0) - deleted;
-  }
-  for (const file of untracked.filter((file) => isTestSource(file))) {
-    added += countLines(await readFile(path.join(input.repoRoot, file), 'utf8'));
-  }
-  return added;
-}
-
-function countLines(code: string): number {
-  return code === '' ? 0 : code.split('\n').length - (code.endsWith('\n') ? 1 : 0);
+  return { share, errors: errors.toSorted() };
 }
 
 /** A path that is not a regular file is no source, as in the scan; a file that cannot be read throws. */

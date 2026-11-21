@@ -1222,7 +1222,6 @@ describe('code-gauge check: test share', () => {
       level: string;
       testNcss: number;
       productionNcss: number;
-      addedTestLines?: number;
       excessTestNcss?: number;
     }[];
   }
@@ -1272,50 +1271,12 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(limits)).toEqual([]);
   });
 
-  it('counts the test lines a change adds by the git diff, with untracked tests and renames', () => {
-    runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/calc.test.ts', testCode(60));
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
-    runGit(['mv', 'test/calc.test.ts', 'test/renamed.test.ts']);
-    expect(projectViolations(['--base', 'HEAD']), 'a rename adds no lines').toEqual([]);
-    writeSource('test/new.test.ts', 'total([1]);\ntotal([2]);\n');
-    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestLines: 2 }]);
-  });
-
-  it('counts only test sources in the line delta, whether git tracks them or not', () => {
-    runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/calc.test.ts', testCode(60));
-    writeSource('test/tab\tname.test.ts', 'total([1]);\n');
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
-    symlinkSync('../future.ts', path.join(repoDir, 'test/alias.test.ts'));
-    writeSource('test/example.test.ts', '// @generated\ntotal([1]);\n');
-    expect(projectViolations(['--base', 'HEAD']), 'neither a dangling link nor generated code').toEqual([]);
-    runGit(['rm', '-q', '--', 'test/calc.test.ts']);
-    writeSource('test/calc.test.ts', `${testCode(60)}total([2]);\n`);
-    writeSource('test/tab\tname.test.ts', 'total([1]);\ntotal([2]);\n');
-    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestLines: 2 }]);
-  });
-
-  it('credits the lines of a test replaced by a link', () => {
-    runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/calc.test.ts', testCode(60));
-    writeSource('test/old.test.ts', 'total([1]);\ntotal([2]);\n');
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
-    rmSync(path.join(repoDir, 'test/old.test.ts'));
-    symlinkSync('calc.test.ts', path.join(repoDir, 'test/old.test.ts'));
-    writeSource('test/new.test.ts', 'total([3]);\n');
-    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
-  });
-
   it('accepts test code within its share', () => {
     writeSource('test/calc.test.ts', testCode(1));
     expect(projectViolations([])).toEqual([]);
   });
 
-  it('reports the share with --base only for a change that adds test code', () => {
+  it('reports the share with --base only for a change that touches a test under the target', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
     writeSource('test/calc.test.ts', testCode(60));
     runGit(['add', '-A']);
@@ -1323,13 +1284,16 @@ describe('code-gauge check: test share', () => {
     writeSource('src/calc.ts', `${calc}export const offset = 1;\n`);
     expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
 
-    writeSource('test/calc.test.ts', testCode(61));
-    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([
-      { kind: 'project', level: 'error', addedTestLines: 1 },
-    ]);
+    rmSync(path.join(repoDir, 'test/calc.test.ts'));
+    const result = runCheck(['--base', 'HEAD']);
+    expect(result.status).toBe(0);
 
     writeSource('test/calc.test.ts', testCode(59));
-    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
+    const changed = runCheck(['--base', 'HEAD']);
+    expect(changed.stdout).toMatch(
+      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+; this change edits tests while test code exceeds 30% of production code: delete or merge tests so the change adds no test code$/mu
+    );
+    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', level: 'error' }]);
   });
 
   it('counts the files of a targeted test directory as tests, leaving no production code to compare', () => {
@@ -1451,30 +1415,6 @@ describe('code-gauge check: test share', () => {
       expect(projectViolations(['app'])).toMatchObject([{ kind: 'project', file: 'app' }]);
     } finally {
       chmodSync(path.join(repoDir, 'app:legacy.ts'), 0o644);
-    }
-  });
-
-  it.skipIf(runAsRoot)('diffs only the changed test files for the test lines a change adds', () => {
-    writeConfig({ ...baseConfig, exclude: ['app/excluded/**'] });
-    writeSource('app/calc.ts', calc);
-    writeSource('app/test/calc.test.ts', testCode(60));
-    const unreadable = ['other/legacy.ts', 'app/excluded/legacy.ts'];
-    for (const file of unreadable) {
-      writeSource(file, legacy);
-    }
-    runGit(['add', '-A']);
-    runGit(['commit', '-q', '-m', 'packages']);
-    writeSource('app/test/calc.test.ts', `${testCode(60)}total([1]);\n`);
-    for (const file of unreadable) {
-      writeSource(file, `${legacy}\n`);
-      chmodSync(path.join(repoDir, file), 0o000);
-    }
-    try {
-      expect(projectViolations(['app', '--base', 'HEAD'])).toMatchObject([{ file: 'app', addedTestLines: 1 }]);
-    } finally {
-      for (const file of unreadable) {
-        chmodSync(path.join(repoDir, file), 0o644);
-      }
     }
   });
 
