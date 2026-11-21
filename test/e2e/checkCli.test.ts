@@ -1331,6 +1331,7 @@ describe('code-gauge check: test share', () => {
     () => {
       runGit(['checkout', '-q', '-b', 'feature']);
       writeSource('test/calc.test.ts', testCode(60));
+      writeSource('test/other.test.ts', testCode(1));
       runGit(['add', '-A']);
       runGit(['commit', '-q', '-m', 'tests']);
       writeSource('test/calc.test.ts', testCode(61));
@@ -1338,25 +1339,25 @@ describe('code-gauge check: test share', () => {
       // it from rereading the content, as it does for a file as recent as its index.
       runGit(['config', 'core.trustctime', 'false']);
       const past = new Date(Date.now() - 60_000);
-      utimesSync(path.join(repoDir, 'src', 'legacy.ts'), past, past);
+      for (const file of ['src/legacy.ts', 'test/other.test.ts']) {
+        utimesSync(path.join(repoDir, file), past, past);
+      }
       runGit(['update-index', '-q', '--refresh']);
-      for (const [unreadable, mode] of [
-        [path.join(repoDir, 'src', 'legacy.ts'), 0o644],
-        [path.join(repoDir, 'test'), 0o755],
-      ] as const) {
-        chmodSync(unreadable, 0o000);
+      // An unchanged production file and an unchanged test file the scan skips.
+      for (const unreadable of ['src/legacy.ts', 'test/other.test.ts']) {
+        chmodSync(path.join(repoDir, unreadable), 0o000);
         try {
           const diff = spawnSync('git', ['diff', '--name-only', 'HEAD'], { cwd: repoDir, encoding: 'utf8' });
-          expect(diff.stdout.split('\n'), 'git sees the production file unchanged').not.toContain('src/legacy.ts');
+          expect(diff.stdout.split('\n'), `git sees ${unreadable} unchanged`).not.toContain(unreadable);
           for (const args of [[], ['--include-tests']]) {
             const result = runCheck([...args, '--base', 'HEAD', '--json']);
             expect(result.status, `${unreadable} ${args.join(' ')}`).toBe(2);
             const report = JSON.parse(result.stdout) as { errors: string[]; warnings: string[] };
-            expect(new Set(report.errors).size).toBe(report.errors.length);
-            expect(report.warnings.filter((warning) => report.errors.includes(warning))).toEqual([]);
+            expect(report.errors.filter((error) => error.startsWith(`${unreadable}:`))).toHaveLength(1);
+            expect(report.warnings.filter((warning) => warning.startsWith(`${unreadable}:`))).toEqual([]);
           }
         } finally {
-          chmodSync(unreadable, mode);
+          chmodSync(path.join(repoDir, unreadable), 0o644);
         }
       }
       runGit(['config', '--unset', 'core.trustctime']);
