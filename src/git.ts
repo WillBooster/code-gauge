@@ -314,11 +314,13 @@ function describeCommand(args: readonly string[]): string {
 
 /** A path that cannot be inspected is not absent: it stays to be reported as unmeasured. */
 /**
- * The paths that do not exist, probing a path below a directory already found missing no further,
- * so the paths a sparse checkout leaves out cost one probe per missing directory, not per file.
+ * The paths that do not exist, probing a path below a directory already found missing no further
+ * and each directory at most once, so the paths a sparse checkout or a deletion leaves out cost one
+ * probe per missing directory, not per file.
  */
 async function listAbsentPaths(repoRoot: string, relativePaths: readonly string[]): Promise<string[]> {
   const absentDirectories = new Set<string>();
+  const presentDirectories = new Set<string>();
   const isBelowAbsent = (relativePath: string): boolean => {
     for (
       let directory = path.posix.dirname(relativePath);
@@ -337,9 +339,19 @@ async function listAbsentPaths(repoRoot: string, relativePaths: readonly string[
       continue;
     }
     absent.push(relativePath);
-    // Record the highest missing ancestor so the paths below it need no probe.
+    // Record the highest missing ancestor so the paths below it need no probe, and the present
+    // directories so the paths beside it probe their parent once.
     let directory = path.posix.dirname(relativePath);
-    while (directory !== '.' && !isBelowAbsent(directory) && (await isAbsent(path.join(repoRoot, directory)))) {
+    while (
+      directory !== '.' &&
+      !presentDirectories.has(directory) &&
+      !absentDirectories.has(directory) &&
+      !isBelowAbsent(directory)
+    ) {
+      if (!(await isAbsent(path.join(repoRoot, directory)))) {
+        presentDirectories.add(directory);
+        break;
+      }
       absentDirectories.add(directory);
       directory = path.posix.dirname(directory);
     }
