@@ -144,6 +144,15 @@ export async function listRepositoryFiles(
       files.delete(relativePath);
     }
   }
+  // Git tracks no path through a symbolic link, yet a tracked path below a directory replaced by
+  // one still resolves through it, and `--deleted` does not list it.
+  for (const directory of await listSymbolicLinkDirectories(repoRoot, files)) {
+    for (const file of files) {
+      if (file.startsWith(`${directory}/`)) {
+        files.delete(file);
+      }
+    }
+  }
   // Git skips an untracked directory it cannot open with only a warning, and lists none of it.
   const unlistedDirectories = [...stderr.matchAll(/^warning: could not open directory '(.+)': (.+)$/gmu)].map(
     ([, directory = '', reason = '']) => ({ directory: directory.replace(/\/$/u, ''), reason })
@@ -354,9 +363,28 @@ function describeCommand(args: readonly string[]): string {
   return args.slice(start, start + 2).join(' ');
 }
 
+/** A path that cannot be inspected is not absent: it stays to be reported as unmeasured. */
 async function isAbsent(file: string): Promise<boolean> {
   return await lstat(file).then(
     () => false,
     (error: unknown) => ['ENOENT', 'ENOTDIR'].includes((error as NodeJS.ErrnoException).code ?? '')
   );
+}
+
+/** The directories holding listed files that are symbolic links in the working tree, each inspected once. */
+async function listSymbolicLinkDirectories(repoRoot: string, files: ReadonlySet<string>): Promise<string[]> {
+  const directories = new Set<string>();
+  for (const file of files) {
+    const segments = file.split('/');
+    for (let count = 1; count < segments.length; count++) {
+      directories.add(segments.slice(0, count).join('/'));
+    }
+  }
+  const links = await Promise.all(
+    [...directories].map(async (directory) => {
+      const stats = await lstat(path.join(repoRoot, directory)).catch(() => {});
+      return stats?.isSymbolicLink() ? [directory] : [];
+    })
+  );
+  return links.flat();
 }

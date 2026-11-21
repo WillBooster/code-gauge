@@ -1408,6 +1408,23 @@ describe('code-gauge check: test share', () => {
     }
   });
 
+  it('counts no test git tracks behind a directory replaced by a symbolic link', () => {
+    writeSource('test/old.test.ts', testCode(60));
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource('.gitignore', 'local-tests/\n');
+    mkdirSync(path.join(repoDir, 'local-tests'));
+    writeFileSync(path.join(repoDir, 'local-tests', 'old.test.ts'), testCode(60));
+    rmSync(path.join(repoDir, 'test'), { recursive: true });
+    symlinkSync('local-tests', path.join(repoDir, 'test'));
+    try {
+      expect(projectViolations([])).toEqual([]);
+    } finally {
+      rmSync(path.join(repoDir, 'test'));
+      runGit(['reset', '-q', '--hard', 'HEAD~1']);
+    }
+  });
+
   it.skipIf(runAsRoot)('reads git warnings in any locale', () => {
     writeSource('locked/new.ts', calc);
     chmodSync(path.join(repoDir, 'locked'), 0o000);
