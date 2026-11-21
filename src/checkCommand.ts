@@ -294,23 +294,12 @@ async function scanRepository(
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
   let isCovered = (error: string): boolean =>
     canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
-  let mergeBase;
-  let change: RepositoryTestShareInput['base'];
-  if (base !== undefined) {
-    const commit = await resolveMergeBase(repoRoot, base);
-    mergeBase = commit;
-    const changedFiles = await listChangedFiles(repoRoot, commit);
-    change = {
-      mergeBase: commit,
-      changedFiles,
-      loadExclusion: (relativePaths) => loadRepositoryExclusion(repoRoot, relativePaths, options.exclude, commit),
-    };
-    // A targeted file git does not list has no diff; all of it counts as added.
-    if (unlistedTarget !== undefined) {
-      changedFiles.push({ status: 'added', headPath: unlistedTarget });
-    }
-    const changesInTarget = changedFiles.filter(({ status, headPath }) => status !== 'deleted' && isInTarget(headPath));
-    files = await attachHunks(measuredFiles, changesInTarget, repoRoot, mergeBase);
+  const change = base === undefined ? undefined : await resolveChange(repoRoot, base, options, unlistedTarget);
+  if (change !== undefined) {
+    const changesInTarget = change.changedFiles.filter(
+      ({ status, headPath }) => status !== 'deleted' && isInTarget(headPath)
+    );
+    files = await attachHunks(measuredFiles, changesInTarget, repoRoot, change.mergeBase);
     isCovered = (error) => changesInTarget.some(({ headPath }) => error.startsWith(`${headPath}:`));
   }
   const scope = {
@@ -318,7 +307,7 @@ async function scanRepository(
     duplication,
     ...partitionErrors(scan, isCovered),
     root: repoRoot,
-    mergeBase,
+    mergeBase: change?.mergeBase,
     checkedDirectory: targetDirectory || '.',
   };
   return await addTestShare(
@@ -327,6 +316,26 @@ async function scanRepository(
       ? { repoRoot, repositoryFiles, targetPath: targetDirectory, exclusion, options, measuredFiles, base: change }
       : undefined
   );
+}
+
+/** What the working tree changed since the merge-base with `base`. */
+async function resolveChange(
+  repoRoot: string,
+  base: string,
+  options: ResolvedOptions,
+  unlistedTarget: string | undefined
+): Promise<NonNullable<RepositoryTestShareInput['base']>> {
+  const mergeBase = await resolveMergeBase(repoRoot, base);
+  const changedFiles = await listChangedFiles(repoRoot, mergeBase);
+  // A targeted file git does not list has no diff; all of it counts as added.
+  if (unlistedTarget !== undefined) {
+    changedFiles.push({ status: 'added', headPath: unlistedTarget });
+  }
+  return {
+    mergeBase,
+    changedFiles,
+    loadExclusion: (relativePaths) => loadRepositoryExclusion(repoRoot, relativePaths, options.exclude, mergeBase),
+  };
 }
 
 /** Adds the test share, and the test files that could not be measured for it, to a scope. */
