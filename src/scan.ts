@@ -8,7 +8,7 @@ import { type CrossFileDuplicationMetrics, measureCrossFileDuplication } from '.
 import type { CrossFileDuplicationFileData } from './duplication.js';
 import type { Exclusion } from './exclusion.js';
 import { detectLanguage } from './languages.js';
-import { measureCode, measureCodeWithCrossFileDataAsync } from './metrics.js';
+import { measureCode, measureCodeAsync, measureCodeWithCrossFileDataAsync } from './metrics.js';
 import { NativeAddonError } from './nativeMetrics.js';
 import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } from './types.js';
 
@@ -16,6 +16,8 @@ import type { CodeMetrics, DuplicationOptions, LanguageName, MeasureOptions } fr
 export interface ScanOptions {
   duplication: Required<DuplicationOptions>;
   includeTests: boolean;
+  /** Set when only each file's metrics are used: no cross-file duplication data is collected. */
+  metricsOnly?: boolean;
   /**
    * Loads the exclusion covering the files a directory scan found (absolute paths); an explicitly
    * targeted file is always measured.
@@ -473,6 +475,9 @@ async function readAndMeasureFile(
     const exclusion = context.exclusion;
     if (exclusion && (exclusion.isGeneratedCode(file, code) || exclusion.isGeneratedCode(resolvedFile, code))) {
       return { generatedFile: file };
+    }
+    if (context.options.metricsOnly) {
+      return { file: { file, metrics: await measureCodeAsync(code, measureOptions) } };
     }
     const { metrics, crossFileData, crossFileError } = await measureWithCrossFileData(code, measureOptions);
     return {

@@ -30,6 +30,14 @@ export class TreeMeasurer {
     return assembleNativeMetrics(payload, includeSyntaxTree);
   }
 
+  /** measure on the native addon's worker threads, for measuring files in parallel. */
+  async measureAsync(code: string, options: MeasureOptions): Promise<CodeMetrics> {
+    const language = this.resolveLanguage(options.language);
+    const includeSyntaxTree = options.includeSyntaxTree ?? false;
+    const payload = await measureCodeNativeAsync(code, language.name, includeSyntaxTree, options.duplication);
+    return assembleNativeMetrics(payload, includeSyntaxTree);
+  }
+
   /** Measures a file and collects its cross-file clone-detection contribution from one parse. */
   measureWithCrossFileData(
     code: string,
@@ -175,6 +183,11 @@ export const defaultMeasurer = new TreeMeasurer();
 
 export function measureCode(code: string, options: MeasureOptions): CodeMetrics {
   return defaultMeasurer.measure(code, options);
+}
+
+/** Standalone helper mirroring TreeMeasurer.measureAsync for the default measurer. */
+export function measureCodeAsync(code: string, options: MeasureOptions): Promise<CodeMetrics> {
+  return defaultMeasurer.measureAsync(code, options);
 }
 
 /** Standalone helper mirroring TreeMeasurer.measureWithCrossFileDataAsync for the default measurer. */

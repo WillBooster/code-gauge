@@ -45,6 +45,7 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     {
       ...options,
       includeTests: true,
+      metricsOnly: true,
       // Only NCSS is kept, so no region is long enough to search for clones.
       duplication: { ...options.duplication, minTokens: noCloneSearchTokens },
       loadExclusion: () => Promise.resolve(exclusion),
