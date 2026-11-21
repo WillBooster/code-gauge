@@ -1273,22 +1273,29 @@ describe('code-gauge check: test share', () => {
 
   it.skipIf(process.platform !== 'darwin')('counts a test git lists under two Unicode spellings once', () => {
     runGit(['checkout', '-q', '-b', 'feature']);
-    writeSource('test/calc.test.ts', testCode(1));
-    runGit(['-c', 'core.precomposeUnicode=false', 'add', '-A']);
-    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/single.test.ts', testCode(5));
+    const [single] = projectViolations([]);
+    rmSync(path.join(repoDir, 'test/single.test.ts'));
     const decomposed = 'test/cafe\u0301.test.ts';
     writeSource(decomposed, testCode(5));
-    runGit(['-c', 'core.precomposeUnicode=false', 'add', '--', decomposed]);
-    runGit(['commit', '-q', '-m', 'decomposed']);
-    // Git lists the tracked decomposed path and, precomposed, the same file as untracked.
-    const plain = projectViolations([]);
-    expect(projectViolations(['--include-tests'])).toEqual(plain);
+    runGit(['-c', 'core.precomposeUnicode=false', 'add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    const listed = spawnSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z', 'test'], {
+      cwd: repoDir,
+      encoding: 'utf8',
+    }).stdout;
+    expect(listed.split('\0').filter((file) => file.normalize('NFC') === 'test/caf\u00E9.test.ts')).toHaveLength(2);
+    for (const args of [[], ['--include-tests']]) {
+      expect(projectViolations(args)).toMatchObject([{ testNcss: single?.testNcss }]);
+    }
   });
 
   it('counts a test file once a test-named link to it is listed first', () => {
     writeSource('test/z.test.ts', testCode(60));
+    const [alone] = projectViolations([]);
     symlinkSync('z.test.ts', path.join(repoDir, 'test/a.test.ts'));
-    expect(projectViolations([])).toMatchObject([{ kind: 'project' }]);
+    expect(projectViolations([])).toMatchObject([{ kind: 'project', testNcss: alone?.testNcss }]);
   });
 
   it('accepts test code within its share', () => {
