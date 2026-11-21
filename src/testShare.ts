@@ -76,9 +76,11 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
 }
 
 /**
- * One path for each file the paths name, as the scan measures one path per real file: git can list
- * one file under several spellings (Unicode normalization or case on an insensitive file system).
- * A path the scan measured is kept over its aliases; a path that cannot be resolved stands alone.
+ * One path for each regular file the paths name, as the scan measures one path per real file: git
+ * can list one file under several spellings (Unicode normalization or case on an insensitive file
+ * system). A path the scan measured is kept over its aliases; a path that is not a regular file
+ * (a link to a test counts as none) is never chosen, and one that cannot be inspected stands alone
+ * so its failure is reported.
  */
 async function chooseOnePathPerFile(
   repoRoot: string,
@@ -87,10 +89,15 @@ async function chooseOnePathPerFile(
 ): Promise<Set<string>> {
   const identities = await mapConcurrently(paths, os.availableParallelism() * 2, async (relativePath) => {
     const absolutePath = path.join(repoRoot, relativePath);
-    return [relativePath, await realpath(absolutePath).catch(() => absolutePath)] as const;
+    try {
+      const stats = await lstat(absolutePath);
+      return stats.isFile() ? [[relativePath, await realpath(absolutePath)] as const] : [];
+    } catch {
+      return [[relativePath, absolutePath] as const];
+    }
   });
   const chosen = new Map<string, string>();
-  for (const [relativePath, identity] of identities) {
+  for (const [relativePath, identity] of identities.flat()) {
     const current = chosen.get(identity);
     if (current === undefined || (!measuredNcss.has(current) && measuredNcss.has(relativePath))) {
       chosen.set(identity, relativePath);

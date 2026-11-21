@@ -1285,6 +1285,12 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['--include-tests'])).toEqual(plain);
   });
 
+  it('counts a test file once a test-named link to it is listed first', () => {
+    writeSource('test/z.test.ts', testCode(60));
+    symlinkSync('z.test.ts', path.join(repoDir, 'test/a.test.ts'));
+    expect(projectViolations([])).toMatchObject([{ kind: 'project' }]);
+  });
+
   it('accepts test code within its share', () => {
     writeSource('test/calc.test.ts', testCode(1));
     expect(projectViolations([])).toEqual([]);
