@@ -196,11 +196,12 @@ export async function listRegularFilesAt(
   if (paths.length === 0) {
     return new Set();
   }
-  const output = await runGit(repoRoot, ['ls-tree', '-z', commit, '--', ...paths]);
+  const output = await runGit(repoRoot, ['--literal-pathspecs', 'ls-tree', '-z', commit, '--', ...paths]);
   return new Set(
     output.split('\0').flatMap((entry) => {
-      const [meta, file] = entry.split('\t');
-      return meta?.startsWith('100') && file !== undefined ? [file] : [];
+      // The path follows the first tab, and may hold tabs itself.
+      const tab = entry.indexOf('\t');
+      return tab !== -1 && entry.startsWith('100') ? [entry.slice(tab + 1)] : [];
     })
   );
 }

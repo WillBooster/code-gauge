@@ -1288,21 +1288,22 @@ describe('code-gauge check: test share', () => {
     }
   });
 
-  it('keeps production files reached through a test-directory alias outside git production', () => {
-    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-alias-'));
-    try {
-      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
-      mkdirSync(path.join(dir, 'app'));
-      writeFileSync(path.join(dir, 'app', 'calc.ts'), calc);
-      mkdirSync(path.join(dir, 'zlib'));
-      writeFileSync(path.join(dir, 'zlib', 'legacy.ts'), legacy);
-      mkdirSync(path.join(dir, 'spec'));
-      symlinkSync('../zlib', path.join(dir, 'spec', 'helpers'));
-      const report = JSON.parse(runCheck(['--json', dir], dir).stdout) as ProjectReport;
-      expect(report.violations.filter(({ kind }) => kind === 'project')).toEqual([]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
+  it('counts the tests below a targeted directory the check otherwise skips', () => {
+    writeSource('vendor/lib/app.ts', calc);
+    writeSource('vendor/lib/test/app.test.ts', testCode(60));
+    expect(projectViolations(['vendor'])).toMatchObject([{ kind: 'project', file: 'vendor' }]);
+  });
+
+  it.each([':!x.test.ts', 'test/tab\tname.test.ts'])('reads the merge-base test %j by its literal name', (name) => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource(name, 'total([1]);\n');
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    writeSource(name, 'total([2]);\n');
+    const result = runCheck(['--base', 'HEAD', '--json']);
+    expect(result.status, result.stderr).toBe(0);
+    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
   });
 
   it('excludes a test file at the merge-base by the attributes it had there', () => {

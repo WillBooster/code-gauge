@@ -24,7 +24,6 @@ import {
   configSearchDirectory,
   formatPath,
   getLanguage,
-  isTestPath,
   isWithinDirectory,
   resolveTarget,
   scanListedFiles,
@@ -33,12 +32,7 @@ import {
   writeStderr,
   writeStdout,
 } from './scan.js';
-import {
-  type MeasuredTestShare,
-  measureRepositoryTestShare,
-  partitionWalkedTestShare,
-  type RepositoryTestShareInput,
-} from './testShare.js';
+import { type MeasuredTestShare, measureRepositoryTestShare, type RepositoryTestShareInput } from './testShare.js';
 import {
   type BlockLocation,
   type CheckedDuplication,
@@ -76,7 +70,7 @@ export interface CheckScope {
   /** The directory the files' paths are relative to. */
   root: string;
   mergeBase?: string;
-  /** The test share of the checked directory; absent when the target is a file. */
+  /** The test share of the checked directory of a repository; absent when no limit applies to it. */
   testShare?: MeasuredTestShare;
   /** The checked directory, relative to `root`; `.` for the root itself. */
   checkedDirectory: string;
@@ -180,7 +174,7 @@ export async function scanCheckScope(
     if (base !== undefined) {
       throw error;
     }
-    return await scanDirectoryWalk(canonicalTarget, options, measuresTestShare && !targetFile);
+    return await scanDirectoryWalk(canonicalTarget, options);
   }
   return await scanRepository(
     { repoRoot, canonicalTarget, targetFile, measuresTestShare: measuresTestShare && !targetFile },
@@ -189,54 +183,20 @@ export async function scanCheckScope(
   );
 }
 
-async function scanDirectoryWalk(
-  canonicalTarget: string,
-  options: ResolvedOptions,
-  measuresTestShare: boolean
-): Promise<CheckScope> {
+async function scanDirectoryWalk(canonicalTarget: string, options: ResolvedOptions): Promise<CheckScope> {
   const searchDirectory = await configSearchDirectory(canonicalTarget);
   const scan = await scanTarget(canonicalTarget, {
     ...options,
     loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
   });
-  const duplication = measureDuplication(scan, options);
-  const testShare = measuresTestShare
-    ? await measureWalkedTestShare(scan, canonicalTarget, searchDirectory, options)
-    : undefined;
   return {
     files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, scan.displayRoot), metrics })),
-    duplication,
+    duplication: measureDuplication(scan, options),
     errors: scan.errors,
     warnings: scan.warnings,
     root: scan.displayRoot,
-    testShare,
     checkedDirectory: '.',
   };
-}
-
-/** The scan measured tests too when the options include them; they are split off by path. */
-async function measureWalkedTestShare(
-  scan: ScanResult,
-  canonicalTarget: string,
-  searchDirectory: string,
-  options: ResolvedOptions
-): Promise<MeasuredTestShare> {
-  if (options.includeTests) {
-    const isTest = ({ file }: { file: string }): boolean =>
-      isTestPath(formatPath(file, canonicalTarget), { ...options, includeTests: false });
-    return await partitionWalkedTestShare(
-      scan.files.filter((file) => !isTest(file)),
-      scan.files,
-      canonicalTarget,
-      options
-    );
-  }
-  const withTests = await scanTarget(canonicalTarget, {
-    ...options,
-    includeTests: true,
-    loadExclusion: (absolutePaths) => loadExclusion(searchDirectory, options.exclude, absolutePaths),
-  });
-  return await partitionWalkedTestShare(scan.files, withTests.files, canonicalTarget, options);
 }
 
 interface RepositoryTarget {

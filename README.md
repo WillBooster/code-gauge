@@ -113,8 +113,9 @@ like the ranking command. The thresholds:
 code: the NCSS of its test files (the files a check of the whole repository skips as tests, so a
 targeted test directory holds only tests) against that of the other files the check measures. A
 test file that cannot be read leaves the check incomplete, like a file the check covers. It is one
-violation of the whole directory, of kind `project`, and none when the target is a file or the
-directory holds no production code. With `--base`, it is reported only
+violation of the whole directory, of kind `project`, and none when the target is a file, the
+directory holds no production code, or the check runs outside a git repository, where there is no
+root to tell test directories by. With `--base`, it is reported only
 when the change adds test NCSS, counted from the changed test files at the merge-base and in the
 working tree, so a change that only removes production code or keeps the test code as it was is
 never blamed for a share it did not raise. No directive allows it, and it has no per-language

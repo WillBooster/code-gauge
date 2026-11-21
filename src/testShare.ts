@@ -1,4 +1,4 @@
-import { lstat, readFile, realpath } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -7,7 +7,7 @@ import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 import type { Exclusion } from './exclusion.js';
 import { type ChangedFile, listRegularFilesAt, readFileAt } from './git.js';
 import { measureCode } from './metrics.js';
-import { type FileMetrics, getLanguage, isTestPath, type ScanOptions } from './scan.js';
+import { getLanguage, isTestFileBelow, type ScanOptions } from './scan.js';
 import type { TestShare } from './thresholds.js';
 
 /** The test share of the checked project and, for a check of a change, the test NCSS it adds. */
@@ -44,13 +44,14 @@ export interface TestShareMeasurement {
  * Measures the test files of the checked directory, which the check itself does not measure unless
  * it includes tests, and, for a change, the same files at the merge-base where the change touched
  * them, read from git so nothing is checked out. A file is a test file by its repository-relative
- * path, so targeting a test directory does not turn its files into production code.
+ * path, so targeting a test directory does not turn its files into production code. Only a
+ * repository has a share: outside one, there is neither a root to tell tests by nor a change.
  */
 export async function measureRepositoryTestShare(input: RepositoryTestShareInput): Promise<TestShareMeasurement> {
   const { repoRoot, targetPath, exclusion, options } = input;
   const isTestIn = (pathExclusion: Exclusion, relativePath: string): boolean =>
     isInTarget(relativePath, targetPath) &&
-    isTestPath(relativePath, options) &&
+    isTestFileBelow(relativePath, targetPath, options) &&
     !pathExclusion.isExcludedPath(path.join(repoRoot, relativePath));
   const errors: string[] = [];
   // With tests included, the check already measured them.
@@ -105,37 +106,6 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     }
   });
   return { share: { ...share, addedTestNcss: sum(changes) }, errors };
-}
-
-/**
- * The share of a directory walk: production is what the check measured, and tests are the other
- * files the walk with tests included measured, so a file reached through a test-directory alias of
- * a production directory stays production.
- */
-export async function partitionWalkedTestShare(
-  productionFiles: readonly FileMetrics[],
-  allFiles: readonly FileMetrics[],
-  root: string,
-  options: ScanOptions
-): Promise<TestShare> {
-  const productionRealFiles = new Set(await Promise.all(productionFiles.map((file) => resolveRealFile(file))));
-  const testFiles = [];
-  for (const file of allFiles) {
-    if (
-      isTestPath(path.relative(root, file.file).replaceAll(path.sep, '/'), options) &&
-      !productionRealFiles.has(await resolveRealFile(file))
-    ) {
-      testFiles.push(file);
-    }
-  }
-  return {
-    testNcss: sum(testFiles.map(({ metrics }) => metrics.ncssCount)),
-    productionNcss: sum(productionFiles.map(({ metrics }) => metrics.ncssCount)),
-  };
-}
-
-async function resolveRealFile({ file }: FileMetrics): Promise<string> {
-  return await realpath(file).catch(() => file);
 }
 
 /** A path that is not a regular file is no source, as in the scan; a file that cannot be read throws. */

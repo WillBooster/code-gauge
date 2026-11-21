@@ -564,13 +564,23 @@ export function isWithinDirectory(candidate: string, directory: string): boolean
 }
 
 /**
- * Whether a path, relative to the scanned directory, is a test file: one the scan leaves out unless
- * tests are included.
+ * Whether a repository-relative path is a test file the check of `targetDirectory` (repository-
+ * relative, empty for the root) would measure with tests included: eligible by its path below the
+ * target, as the scan judges it, and a test by its whole path, so a test directory above the target
+ * still marks it a test.
  */
-export function isTestPath(relativePath: string, options: ScanOptions): boolean {
+export function isTestFileBelow(relativePath: string, targetDirectory: string, options: ScanOptions): boolean {
+  const scopedPath = targetDirectory === '' ? relativePath : relativePath.slice(targetDirectory.length + 1);
+  return isScannedPath(scopedPath, { ...options, includeTests: true }) && isTestName(relativePath);
+}
+
+function isTestName(relativePath: string): boolean {
+  const segments = relativePath.split('/');
+  const name = segments.at(-1) ?? '';
   return (
-    isScannedPath(relativePath, { ...options, includeTests: true }) &&
-    !isScannedPath(relativePath, { ...options, includeTests: false })
+    segments.slice(0, -1).some((segment) => testDirectoryNames.has(segment)) ||
+    testFilePattern.test(name) ||
+    suffixTestFilePattern.test(name)
   );
 }
 
