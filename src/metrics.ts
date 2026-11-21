@@ -30,7 +30,10 @@ export class TreeMeasurer {
     return assembleNativeMetrics(payload, includeSyntaxTree);
   }
 
-  /** measure on the native addon's worker threads, for measuring files in parallel. */
+  /**
+   * measure on the native addon's worker threads, for measuring files in parallel; the WebAssembly
+   * binding (workerd) measures on the calling thread.
+   */
   async measureAsync(code: string, options: MeasureOptions): Promise<CodeMetrics> {
     const language = this.resolveLanguage(options.language);
     const includeSyntaxTree = options.includeSyntaxTree ?? false;

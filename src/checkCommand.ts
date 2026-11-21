@@ -225,23 +225,13 @@ async function scanRepository(
   base: string | undefined,
   options: ResolvedOptions
 ): Promise<CheckScope> {
-  // Only git-visible files are measured, so a directory git ignores would pass as a check of no
-  // files. A directory git lists but whose sources it ignores is not told apart from a repository
-  // or package whose only sources are ignored build output, which must pass.
-  if (targetFile === undefined && canonicalTarget !== repoRoot && (await isIgnored(repoRoot, canonicalTarget))) {
-    throw new Error(
-      `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
-    );
-  }
-  const { files: repositoryFiles, warnings: listingWarnings, sparse } = await listRepositoryFiles(repoRoot);
+  const {
+    files: repositoryFiles,
+    warnings: listingWarnings,
+    sparse,
+    unlistedTarget,
+  } = await listCheckedFiles({ repoRoot, canonicalTarget, targetFile });
   const explicitFiles = new Set(targetFile === undefined ? [] : [targetFile]);
-  const unlistedTarget =
-    targetFile !== undefined && !repositoryFiles.has(formatPath(targetFile, repoRoot))
-      ? formatPath(targetFile, repoRoot)
-      : undefined;
-  if (unlistedTarget !== undefined) {
-    repositoryFiles.add(unlistedTarget);
-  }
   const exclusion = keepPaths(await loadRepositoryExclusion(repoRoot, repositoryFiles, options.exclude), explicitFiles);
   // Scan errors start with the file or directory they concern.
   const targetPath = formatPath(canonicalTarget, repoRoot);
@@ -292,6 +282,34 @@ async function scanRepository(
       : undefined,
     scan.errors.some((error) => isInTargetError(error))
   );
+}
+
+/**
+ * The repository's git-visible files, with a targeted file git does not list added as
+ * `unlistedTarget`. A directory git ignores is refused.
+ */
+async function listCheckedFiles({
+  repoRoot,
+  canonicalTarget,
+  targetFile,
+}: Pick<RepositoryTarget, 'repoRoot' | 'canonicalTarget' | 'targetFile'>): Promise<
+  Awaited<ReturnType<typeof listRepositoryFiles>> & { unlistedTarget?: string }
+> {
+  // Only git-visible files are measured, so a directory git ignores would pass as a check of no
+  // files. A directory git lists but whose sources it ignores is not told apart from a repository
+  // or package whose only sources are ignored build output, which must pass.
+  if (targetFile === undefined && canonicalTarget !== repoRoot && (await isIgnored(repoRoot, canonicalTarget))) {
+    throw new Error(
+      `${formatPath(canonicalTarget, repoRoot)}: git ignores this directory, so no file in it is checked; target a file to check it regardless`
+    );
+  }
+  const listing = await listRepositoryFiles(repoRoot);
+  const targetRelativePath = targetFile === undefined ? undefined : formatPath(targetFile, repoRoot);
+  if (targetRelativePath === undefined || listing.files.has(targetRelativePath)) {
+    return listing;
+  }
+  listing.files.add(targetRelativePath);
+  return { ...listing, unlistedTarget: targetRelativePath };
 }
 
 /** What the working tree changed since a merge-base. */
