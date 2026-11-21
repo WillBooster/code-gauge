@@ -216,36 +216,36 @@ export async function readFileAt(repoRoot: string, commit: string, file: string)
 }
 
 /**
- * The lines the working tree's tracked files below `directory` (repository-relative, empty for the
- * root) add and delete against `commit`, by path (renames count as a deletion and an addition, and
- * binary files, which have no lines, are left out), and the untracked files there, which the diff
- * does not cover.
+ * The lines the working tree's tracked `paths` add and delete against `commit` (renames count as a
+ * deletion and an addition, and binary files, which have no lines, are left out), and those of
+ * `paths` that are untracked, which the diff does not cover. Git reads no other file.
  */
 export async function diffLineCounts(
   repoRoot: string,
   commit: string,
-  directory: string
+  paths: readonly string[]
+): Promise<{ tracked: { file: string; added: number; deleted: number }[]; untracked: string[] }> {
+  const tracked: { file: string; added: number; deleted: number }[] = [];
+  const untracked: string[] = [];
+  // Batches keep each command line within the system's argument limit.
+  for (let index = 0; index < paths.length; index += pathBatchSize) {
+    const counts = await diffBatchLineCounts(repoRoot, commit, paths.slice(index, index + pathBatchSize));
+    tracked.push(...counts.tracked);
+    untracked.push(...counts.untracked);
+  }
+  return { tracked, untracked };
+}
+
+const pathBatchSize = 500;
+
+async function diffBatchLineCounts(
+  repoRoot: string,
+  commit: string,
+  paths: readonly string[]
 ): Promise<{ tracked: { file: string; added: number; deleted: number }[]; untracked: string[] }> {
   const [diffOutput, untrackedOutput] = await Promise.all([
-    runGit(repoRoot, [
-      '--literal-pathspecs',
-      'diff',
-      '--numstat',
-      '--no-renames',
-      '-z',
-      commit,
-      '--',
-      directory || '.',
-    ]),
-    runGit(repoRoot, [
-      '--literal-pathspecs',
-      'ls-files',
-      '--others',
-      '--exclude-standard',
-      '-z',
-      '--',
-      directory || '.',
-    ]),
+    runGit(repoRoot, ['--literal-pathspecs', 'diff', '--numstat', '--no-renames', '-z', commit, '--', ...paths]),
+    runGit(repoRoot, ['--literal-pathspecs', 'ls-files', '--others', '--exclude-standard', '-z', '--', ...paths]),
   ]);
   const tracked = diffOutput.split('\0').flatMap((entry) => {
     // `<added>\t<deleted>\t<path>`, with `-` for both counts of a binary file; the path may hold tabs.

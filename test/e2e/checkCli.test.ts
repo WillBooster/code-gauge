@@ -1298,6 +1298,18 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestLines: 2 }]);
   });
 
+  it('credits the lines of a test replaced by a link', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/old.test.ts', 'total([1]);\ntotal([2]);\n');
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    rmSync(path.join(repoDir, 'test/old.test.ts'));
+    symlinkSync('calc.test.ts', path.join(repoDir, 'test/old.test.ts'));
+    writeSource('test/new.test.ts', 'total([3]);\n');
+    expect(projectViolations(['--base', 'HEAD'])).toEqual([]);
+  });
+
   it('accepts test code within its share', () => {
     writeSource('test/calc.test.ts', testCode(1));
     expect(projectViolations([])).toEqual([]);
@@ -1442,19 +1454,27 @@ describe('code-gauge check: test share', () => {
     }
   });
 
-  it.skipIf(runAsRoot)('diffs only the target for the test lines a change adds', () => {
+  it.skipIf(runAsRoot)('diffs only the changed test files for the test lines a change adds', () => {
+    writeConfig({ ...baseConfig, exclude: ['app/excluded/**'] });
     writeSource('app/calc.ts', calc);
     writeSource('app/test/calc.test.ts', testCode(60));
-    writeSource('other/legacy.ts', legacy);
+    const unreadable = ['other/legacy.ts', 'app/excluded/legacy.ts'];
+    for (const file of unreadable) {
+      writeSource(file, legacy);
+    }
     runGit(['add', '-A']);
     runGit(['commit', '-q', '-m', 'packages']);
     writeSource('app/test/calc.test.ts', `${testCode(60)}total([1]);\n`);
-    writeSource('other/legacy.ts', `${legacy}\n`);
-    chmodSync(path.join(repoDir, 'other', 'legacy.ts'), 0o000);
+    for (const file of unreadable) {
+      writeSource(file, `${legacy}\n`);
+      chmodSync(path.join(repoDir, file), 0o000);
+    }
     try {
       expect(projectViolations(['app', '--base', 'HEAD'])).toMatchObject([{ file: 'app', addedTestLines: 1 }]);
     } finally {
-      chmodSync(path.join(repoDir, 'other', 'legacy.ts'), 0o644);
+      for (const file of unreadable) {
+        chmodSync(path.join(repoDir, file), 0o644);
+      }
     }
   });
 
