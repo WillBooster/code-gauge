@@ -367,7 +367,10 @@ async function addTestShare(
   if (input === undefined) {
     return scope;
   }
-  const { share, errors } = await measureRepositoryTestShare(input);
+  // A production file the scan could not measure leaves the share unknown: no history is read for it.
+  const { share, errors } = await measureRepositoryTestShare(
+    missesProductionCode ? { ...input, exceedsLimit: () => false } : input
+  );
   // A share of partial totals would name tests to delete that the whole project admits.
   const complete = !missesProductionCode && errors.length === 0;
   return { ...scope, testShare: complete ? share : undefined, errors: [...scope.errors, ...errors] };

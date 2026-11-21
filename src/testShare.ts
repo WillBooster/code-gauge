@@ -84,8 +84,9 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
         .map(({ metrics }) => metrics.ncssCount)
     ),
   };
-  // Within every limit the change's addition decides nothing, so the merge-base is not read.
-  if (input.base === undefined || !input.exceedsLimit(share)) {
+  // Within every limit, or with the share unknown for unmeasured files, the change's addition
+  // decides nothing, so the merge-base is not read.
+  if (input.base === undefined || errors.length > 0 || !input.exceedsLimit(share)) {
     return { share, errors: errors.toSorted() };
   }
   const addedTestNcss = await measureAddedTestNcss(input, input.base, isTestIn, testNcssByPath, errors);
