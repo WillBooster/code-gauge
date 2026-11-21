@@ -167,9 +167,16 @@ check without it, so code pasted from an unchanged file is reported where it was
 violation the change did not introduce is reported too once the change touches its function, file,
 or duplicated block. `--base` requires a git repository.
 
-When nothing violates a threshold, `check` prints a single line. Otherwise it prints a header with
-the counts, one line per violation with the errors first, each level ordered by path and line, and
-one remediation hint per violated metric:
+`check` prints a header, the first of these that applies:
+
+1. `Check could not complete`: a file the check covers could not be measured.
+2. `No threshold violations`: nothing violates a threshold and no
+   [directive](#allowing-a-warning-in-the-code) has an error.
+3. `Directive errors`: nothing violates a threshold, but directives have errors.
+4. `Threshold violations`: otherwise.
+
+The header is followed by one line per violation and directive error, the errors first, each level
+ordered by path and line, and then one remediation hint per violated metric:
 
 ```
 Threshold violations: 1 errors, 2 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
@@ -200,7 +207,7 @@ Paths are relative to the repository root, or to the target directory outside a 
 | Exit code | Meaning                                                                                                                          |
 | --------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | 0         | No errors; warnings do not fail the check.                                                                                       |
-| 1         | Errors.                                                                                                                          |
+| 1         | Errors: an error-level violation or a directive problem.                                                                         |
 | 2         | The check is incomplete: a file it covers could not be measured, or the arguments, config file, target, or base ref are invalid. |
 
 A file that cannot be measured causes exit code 2 only when the check covers it: a file under the
@@ -213,35 +220,34 @@ ranking command.
 ### Allowing a warning in the code
 
 When code exceeding a warning limit is deliberately kept, a comment on a line of its own allows the
-value it has, with the reason:
+warnings of a metric, with the reason:
 
 ```ts
-// code-gauge-allow functionParameterCount 8 -- mirrors the positional API of the vendor SDK
+// code-gauge-allow functionParameterCount -- mirrors the positional API of the vendor SDK
 export function createClient(host, port, user, password, database, timeout, retries, logger) {
 ```
 
 ```py
-# code-gauge-allow-file functionParameterCount 9 -- each benchmark passes its whole setup
+# code-gauge-allow-file functionParameterCount -- each benchmark passes its whole setup
 ```
 
-- `code-gauge-allow <metric> <max> -- <reason>` covers the function starting on the next code
+- `code-gauge-allow <metric> -- <reason>` covers the function starting on the next code
   line, the functions nested in it, and the duplicated blocks starting in it. Only comment lines
   may stand between the directive and that line. Where a function's span starts below its
   decorators or attributes (Python and Rust), the directive goes below them; where the span
   includes them (Java, Kotlin, C#, and TypeScript), above them. A directive after code on the same line is
   not read.
-- `code-gauge-allow-file <metric> <max> -- <reason>` covers the whole file, and is the only way to
+- `code-gauge-allow-file <metric> -- <reason>` covers the whole file, and is the only way to
   allow `fileNcss`.
 - `<metric>` is a metric name of the [JSON report](#json-report) (`functionCognitiveComplexity`,
-  `duplicateLines`, ...), `<max>` the largest value allowed, and the reason is required.
+  `duplicateLines`, ...), and the reason is required.
 
-A directive allows warnings only: a value above `<max>` or above an error limit is reported as
-usual, so code that grows worse is reported again, and an error is fixed or its limit changed in the
-[config](#configuration). A copy of a duplicated block is reported in its own place, so each copy
-needs a directive of its own. The report counts the limits directives allowed, and lists as
-warnings, which never fail the check, each directive that is malformed, misplaced, allows an
-error-level value, is outgrown by the value, or allows nothing; with `--base`, only those whose
-line or covered code the change touches.
+A directive allows warnings only: a value above an error limit is reported as usual, and is fixed
+or its limit changed in the [config](#configuration). A copy of a duplicated block is reported in
+its own place, so each copy needs a directive of its own. The report counts the limits directives
+allowed, and lists as errors each directive that is malformed or misplaced, or whose metric exceeds
+no limit in the code it covers; with `--base`, only those whose line or covered code the change
+touches.
 
 ### JSON report
 
@@ -311,7 +317,8 @@ line or covered code the change touches.
 }
 ```
 
-- `passed`: `true` when no violation is an error and every covered file was measured (exit code 0).
+- `passed`: `true` when no violation is an error, no directive has a problem, and every covered
+  file was measured (exit code 0).
 - `base`, `mergeBase`: the `--base` ref and the commit compared against; absent without `--base`.
 - `summary`: the violation counts in total, per level, and per kind, and the number of files and
   functions checked: those under the target or, with `--base`, the changed files under it and the
@@ -337,7 +344,7 @@ line or covered code the change touches.
     place repeating only a part of the block (less than `minSimilarityPercent` of its tokens) is
     not a copy of it, and is listed only for a block that no place copies as a whole, its parts
     being repeated in different places.
-- `directiveProblems`: the directives the text report lists as warnings, each with its `file`,
+- `directiveProblems`: the directives the text report lists as errors, each with its `file`,
   `line`, and `message`, ordered by `file`, then `line`.
 - `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
   `error` level of a violation.

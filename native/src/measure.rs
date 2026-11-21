@@ -20,7 +20,7 @@ use crate::util::{
     all_children, is_js_whitespace, is_token, named_children, node_text, split_lines, Source,
 };
 
-// code-gauge-allow functionNcss 32 -- assembles the file's metrics from every pass in one place
+// code-gauge-allow functionNcss -- assembles the file's metrics from every pass in one place
 pub fn measure(
     code: &str,
     language: &LanguageDefinition,
