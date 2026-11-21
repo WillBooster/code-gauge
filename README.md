@@ -224,8 +224,9 @@ Paths are relative to the repository root, or to the target directory outside a 
 | 2         | The check is incomplete: a file it covers could not be measured, or the arguments, config file, target, or base ref are invalid. |
 
 A file that cannot be measured causes exit code 2 only when the check covers it: a file under the
-target or, with `--base`, a changed file under the target. Other unmeasured files of the
-repository are warnings on stderr.
+target or, with `--base`, a changed file under the target. While `maxTestNcssPercent` applies, a
+test file under the target that cannot be read counts too, changed or not, since the share counts
+every test file. Other unmeasured files of the repository are warnings on stderr.
 
 `check` accepts `--config`, `--include-tests`, `--json`, and the `--duplication-*` options of the
 ranking command.
