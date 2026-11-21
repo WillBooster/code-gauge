@@ -6,7 +6,7 @@ import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
 import { isDirectiveLine, parseAllowDirectives } from './allowDirectives.js';
 import { type CliOptions, loadConfig, type ResolvedOptions, resolveOptions } from './cliConfig.js';
-import { keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
+import { excludesSubtree, keepPaths, loadExclusion, loadRepositoryExclusion } from './exclusion.js';
 import {
   type ChangedFile,
   isIgnored,
@@ -24,6 +24,7 @@ import {
   configSearchDirectory,
   formatPath,
   getLanguage,
+  isScannedBelow,
   isWithinDirectory,
   resolveTarget,
   scanListedFiles,
@@ -250,9 +251,8 @@ async function scanRepository(
   const duplication = measureDuplication(scan, options);
   scan.errors.push(
     ...unlistedDirectories
-      // A directory counts as excluded when any file directly in it would be (`dir/**`); a narrower
-      // pattern leaves it reported, since its unlisted files may be measured ones.
-      .filter(({ directory }) => !exclusion.isExcludedPath(path.join(repoRoot, directory, 'code-gauge-probe')))
+      .filter(({ directory }) => mayHoldScannedFiles(directory, targetDirectory, options, measuresTestShare))
+      .filter(({ directory }) => !excludesSubtree(options.exclude, path.join(repoRoot, directory)))
       // The trailing slash makes it concern a targeted directory itself, as a path below it does.
       .map(({ directory, reason }) => `${directory}/: could not be listed: ${reason}`)
   );
@@ -336,6 +336,26 @@ async function resolveChange(
  */
 function concernsTarget(error: string, targetPath: string, isFile: boolean): boolean {
   return error.startsWith(isFile ? `${targetPath}:` : `${targetPath}/`);
+}
+
+/**
+ * Whether a directory git could not list may hold files the check measures: below the target, a
+ * directory the scan skips by name (`vendor`, a test directory it does not count) holds none.
+ */
+function mayHoldScannedFiles(
+  directory: string,
+  targetDirectory: string,
+  options: ResolvedOptions,
+  measuresTestShare: boolean
+): boolean {
+  const probe = `${directory}/code-gauge-probe.ts`;
+  if (targetDirectory !== '' && !probe.startsWith(`${targetDirectory}/`)) {
+    return true;
+  }
+  return isScannedBelow(probe, targetDirectory, {
+    ...options,
+    includeTests: options.includeTests || measuresTestShare,
+  });
 }
 
 /** Adds the test share, when every file under the target was measured, and the test files that could not be, to a scope. */

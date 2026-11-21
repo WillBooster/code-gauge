@@ -324,9 +324,11 @@ async function runGitWithInput(cwd: string, args: string[], input: string, env?:
   });
 }
 
+/** Runs git in the C locale, so the warnings its stderr holds keep the untranslated form callers match. */
 async function runGitWithStderr(cwd: string, args: string[]): Promise<{ stdout: string; stderr: string }> {
   try {
-    return await execFileAsync('git', args, { cwd, maxBuffer: maxOutputBytes, encoding: 'utf8' });
+    const env = { ...process.env, LC_ALL: 'C', LANGUAGE: '' };
+    return await execFileAsync('git', args, { cwd, env, maxBuffer: maxOutputBytes, encoding: 'utf8' });
   } catch (error) {
     const stderr = (error as { stderr?: string }).stderr?.trim();
     throw new Error(`git ${describeCommand(args)} failed${stderr ? `: ${stderr}` : ''}`);

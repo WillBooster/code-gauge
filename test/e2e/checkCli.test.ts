@@ -1215,6 +1215,20 @@ function testCode(statementCount: number): string {
   return `import { total } from '../src/calc';\n\nit('totals', () => {\n${assertions.join('')}});\n`;
 }
 
+/** The check's exit status while a new directory git cannot list holds a measurable file. */
+function unlistable(directory: string, config: unknown): number {
+  writeConfig(config);
+  writeSource(`${directory}/nested/new.ts`, calc);
+  const top = path.join(repoDir, directory.split('/')[0] ?? directory);
+  chmodSync(top, 0o111);
+  try {
+    return runCheck([]).status;
+  } finally {
+    chmodSync(top, 0o755);
+    rmSync(top, { recursive: true, force: true });
+  }
+}
+
 describe('code-gauge check: test share', () => {
   interface ProjectReport {
     violations: {
@@ -1375,6 +1389,27 @@ describe('code-gauge check: test share', () => {
     } finally {
       chmodSync(path.join(repoDir, 'private'), 0o755);
       runGit(['reset', '-q', '--hard', 'HEAD~1']);
+    }
+  });
+
+  it.skipIf(runAsRoot)('ignores a directory git cannot list only when the check would measure nothing there', () => {
+    expect(unlistable('vendor', baseConfig), 'a skipped directory').not.toBe(2);
+    expect(unlistable('private', { ...baseConfig, exclude: ['private/**'] }), 'an excluded subtree').not.toBe(2);
+    expect(unlistable('app', { ...baseConfig, exclude: ['app/*'] }), 'a shallow exclusion').toBe(2);
+  });
+
+  it.skipIf(runAsRoot)('reads git warnings in any locale', () => {
+    writeSource('locked/new.ts', calc);
+    chmodSync(path.join(repoDir, 'locked'), 0o000);
+    try {
+      const result = spawnSync(process.execPath, [cliPath, 'check'], {
+        cwd: repoDir,
+        encoding: 'utf8',
+        env: { ...process.env, LC_ALL: 'de_DE.UTF-8', LANG: 'de_DE.UTF-8', LANGUAGE: 'de' },
+      });
+      expect(result.status).toBe(2);
+    } finally {
+      chmodSync(path.join(repoDir, 'locked'), 0o755);
     }
   });
 
