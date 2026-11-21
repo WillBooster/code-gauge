@@ -253,8 +253,7 @@ async function scanRepository(
     ...unlistedDirectories
       .filter(({ directory }) => mayHoldScannedFiles(directory, targetDirectory, options, measuresTestShare))
       .filter(({ directory }) => !excludesSubtree(options.exclude, path.join(repoRoot, directory)))
-      // The trailing slash makes it concern a targeted directory itself, as a path below it does.
-      .map(({ directory, reason }) => `${directory}/: could not be listed: ${reason}`)
+      .map(({ directory, reason }) => describeUnlistedDirectory(directory, reason, targetDirectory))
   );
   const isInTarget = (relativePath: string): boolean =>
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
@@ -356,6 +355,17 @@ function mayHoldScannedFiles(
     ...options,
     includeTests: options.includeTests || measuresTestShare,
   });
+}
+
+/**
+ * The error of a directory git could not list. It names the directory with a trailing slash, so it
+ * concerns a targeted directory as a path below it does; a directory above the target hides the
+ * target's files, so its error names the target.
+ */
+function describeUnlistedDirectory(directory: string, reason: string, targetDirectory: string): string {
+  return targetDirectory.startsWith(`${directory}/`)
+    ? `${targetDirectory}/: could not be listed, as ${directory}/ could not be opened: ${reason}`
+    : `${directory}/: could not be listed: ${reason}`;
 }
 
 /** Adds the test share, when every file under the target was measured, and the test files that could not be, to a scope. */

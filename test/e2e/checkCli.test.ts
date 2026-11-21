@@ -1398,6 +1398,16 @@ describe('code-gauge check: test share', () => {
     expect(unlistable('app', { ...baseConfig, exclude: ['app/*'] }), 'a shallow exclusion').toBe(2);
   });
 
+  it.skipIf(runAsRoot)('leaves a check incomplete when git cannot list a directory above its target', () => {
+    writeSource('app/sub/main.ts', calc);
+    chmodSync(path.join(repoDir, 'app'), 0o111);
+    try {
+      expect(runCheck(['app/sub']).status).toBe(2);
+    } finally {
+      chmodSync(path.join(repoDir, 'app'), 0o755);
+    }
+  });
+
   it.skipIf(runAsRoot)('reads git warnings in any locale', () => {
     writeSource('locked/new.ts', calc);
     chmodSync(path.join(repoDir, 'locked'), 0o000);

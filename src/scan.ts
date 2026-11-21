@@ -271,13 +271,13 @@ async function chooseMeasuredPath(
   if (exclusion.isExcludedPath(realFile)) {
     return undefined;
   }
-  const measurable = candidates.filter(({ file }) => !exclusion.isExcludedPath(file));
-  const direct = measurable.find(({ file }) => file === realFile);
-  if (direct !== undefined || measurable.length <= 1) {
-    return direct ?? measurable[0];
+  // measureCandidates already left out the candidates whose own path is excluded.
+  const direct = candidates.find(({ file }) => file === realFile);
+  if (direct !== undefined || candidates.length <= 1) {
+    return direct ?? candidates[0];
   }
   const code = await readFile(realFile, 'utf8').catch(() => {});
-  return measurable.find(({ file }) => code !== undefined && !exclusion.isGeneratedCode(file, code)) ?? measurable[0];
+  return candidates.find(({ file }) => code !== undefined && !exclusion.isGeneratedCode(file, code)) ?? candidates[0];
 }
 
 /** Applies the scan's outcomes in discovery order once every measurement has settled. */
