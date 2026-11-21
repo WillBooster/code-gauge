@@ -186,9 +186,10 @@ With `--base <ref>`, the check covers only what the working tree changed since t
 
 `--base` filters the report: the working-tree files measured and the duplication found are those
 of the check without it, so code pasted from an unchanged file is reported where it was pasted.
-While the share of test code applies, it also reads the changed test files at the merge-base (all
-test files under the target when the change edits a `.gitattributes`), so a merge-base test that
-cannot be read leaves only the branch check incomplete. A
+When the share of test code exceeds an active limit, it also reads the changed test files at the
+merge-base (all test files under the target when the change edits a `.gitattributes`), so a
+merge-base test that cannot be read leaves only that branch check incomplete; a share within every
+limit reads no history. A
 violation the change did not introduce is reported too once the change touches its function, file,
 or duplicated block. `--base` requires a git repository.
 
@@ -380,7 +381,7 @@ touches.
 - `directiveProblems`: the directives the text report lists as errors, each with its `file`,
   `line`, and `message`, ordered by `file`, then `line`.
 - `errors`: the files the check covers that could not be measured (exit code 2), and, with
-  `--base` while the test share applies, a failure to read the merge-base test files, which names
+  `--base` while the test share exceeds a limit, a failure to read the merge-base test files, which names
   the merge-base rather than one file; unrelated to the `error` level of a violation.
 - `warnings`: files measured without cross-file duplication data, unmeasured files of the
   repository the check does not cover, what git warned while listing the files (passed on as it

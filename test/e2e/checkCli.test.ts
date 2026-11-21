@@ -1367,6 +1367,7 @@ describe('code-gauge check: test share', () => {
   );
 
   it.skipIf(runAsRoot)('reports the share past an excluded directory it cannot read', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
     writeConfig({ ...baseConfig, exclude: ['private/**'] });
     writeSource('private/ignored.ts', calc);
     runGit(['add', '-A']);
@@ -1381,11 +1382,11 @@ describe('code-gauge check: test share', () => {
       );
     } finally {
       chmodSync(path.join(repoDir, 'private'), 0o755);
-      runGit(['reset', '-q', '--hard', 'HEAD~1']);
     }
   });
 
   it('counts no test git tracks behind a directory replaced by a symbolic link', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
     writeSource('test/old.test.ts', testCode(60));
     runGit(['add', '-A']);
     runGit(['commit', '-q', '-m', 'tests']);
@@ -1398,7 +1399,6 @@ describe('code-gauge check: test share', () => {
       expect(projectViolations([])).toEqual([]);
     } finally {
       rmSync(path.join(repoDir, 'test'));
-      runGit(['reset', '-q', '--hard', 'HEAD~1']);
     }
   });
 
@@ -1562,19 +1562,20 @@ describe('code-gauge check: test share', () => {
     const hook = path.join(repoDir, '.git', 'hooks', 'post-index-change');
     writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
     try {
+      runGit(['checkout', '-q', '-b', 'feature']);
       runGit(['config', 'core.hooksPath', '.git/hooks']);
-      writeSource('test/calc.test.ts', testCode(1));
+      writeSource('test/calc.test.ts', testCode(60));
       runGit(['add', '-A']);
       expect(existsSync(marker), 'the hook runs on an index write').toBe(true);
       runGit(['commit', '-q', '-m', 'tests']);
       rmSync(marker, { force: true });
-      writeSource('test/calc.test.ts', testCode(2));
-      expect(runCheck(['--base', 'HEAD']).status).toBe(0);
+      // Over the limit, the branch check reads the merge-base.
+      writeSource('test/calc.test.ts', testCode(61));
+      expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ addedTestNcss: 1 }]);
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(hook, { force: true });
       runGit(['config', '--unset', 'core.hooksPath']);
-      runGit(['reset', '-q', '--hard', 'HEAD~1']);
     }
   });
 
@@ -1584,16 +1585,17 @@ describe('code-gauge check: test share', () => {
     // The monitor marks only a run against an index other than the repository's own.
     writeFileSync(monitor, `#!/bin/sh\n[ -n "$GIT_INDEX_FILE" ] && touch '${marker}'\nexit 1\n`, { mode: 0o755 });
     try {
-      writeSource('test/calc.test.ts', testCode(1));
+      runGit(['checkout', '-q', '-b', 'feature']);
+      writeSource('test/calc.test.ts', testCode(60));
       runGit(['add', '-A']);
       runGit(['commit', '-q', '-m', 'tests']);
       runGit(['config', 'core.fsmonitor', monitor]);
-      writeSource('test/calc.test.ts', testCode(2));
-      expect(runCheck(['--base', 'HEAD']).status).toBe(0);
+      // Over the limit, the branch check reads the merge-base.
+      writeSource('test/calc.test.ts', testCode(61));
+      expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ addedTestNcss: 1 }]);
       expect(existsSync(marker)).toBe(false);
     } finally {
       runGit(['config', '--unset', 'core.fsmonitor']);
-      runGit(['reset', '-q', '--hard', 'HEAD~1']);
     }
   });
 });
