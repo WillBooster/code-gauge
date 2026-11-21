@@ -1370,15 +1370,18 @@ describe('code-gauge check: test share', () => {
     const hook = path.join(repoDir, '.git', 'hooks', 'post-index-change');
     writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
     try {
+      runGit(['config', 'core.hooksPath', '.git/hooks']);
       writeSource('test/calc.test.ts', testCode(1));
       runGit(['add', '-A']);
+      expect(existsSync(marker), 'the hook runs on an index write').toBe(true);
       runGit(['commit', '-q', '-m', 'tests']);
       rmSync(marker, { force: true });
       writeSource('test/calc.test.ts', testCode(2));
-      runCheck(['--base', 'HEAD']);
+      expect(runCheck(['--base', 'HEAD']).status).toBe(0);
       expect(existsSync(marker)).toBe(false);
     } finally {
       rmSync(hook, { force: true });
+      runGit(['config', '--unset', 'core.hooksPath']);
       runGit(['reset', '-q', '--hard', 'HEAD~1']);
     }
   });
