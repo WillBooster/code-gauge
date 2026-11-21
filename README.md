@@ -379,10 +379,12 @@ touches.
     being repeated in different places.
 - `directiveProblems`: the directives the text report lists as errors, each with its `file`,
   `line`, and `message`, ordered by `file`, then `line`.
-- `errors`: the files the check covers that could not be measured (exit code 2); unrelated to the
-  `error` level of a violation.
-- `warnings`: files measured without cross-file duplication data, and unmeasured files of the
-  repository the check does not cover.
+- `errors`: the files the check covers that could not be measured (exit code 2), and, with
+  `--base` while the test share applies, a failure to read the merge-base test files, which names
+  the merge-base rather than one file; unrelated to the `error` level of a violation.
+- `warnings`: files measured without cross-file duplication data, unmeasured files of the
+  repository the check does not cover, what git warned while listing the files (passed on as it
+  printed it), and that the test share is not measured in a sparse checkout.
 
 ## Configuration
 
