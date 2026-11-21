@@ -1228,8 +1228,11 @@ describe('code-gauge check: test share', () => {
     }[];
   }
 
+  /** The project violations of a check that completed: an incomplete one reports no share. */
   function projectViolations(args: string[]): ProjectReport['violations'] {
-    const report = JSON.parse(runCheck([...args, '--json']).stdout) as ProjectReport;
+    const result = runCheck([...args, '--json']);
+    expect(result.status, result.stderr).not.toBe(2);
+    const report = JSON.parse(result.stdout) as ProjectReport;
     return report.violations.filter(({ kind }) => kind === 'project');
   }
 
@@ -1313,8 +1316,11 @@ describe('code-gauge check: test share', () => {
     writeSource('test/calc.test.ts', testCode(10));
     chmodSync(path.join(repoDir, 'src', 'legacy.ts'), 0o000);
     try {
-      expect(runCheck([]).status).toBe(2);
-      expect(projectViolations([])).toEqual([]);
+      const result = runCheck(['--json']);
+      expect(result.status).toBe(2);
+      expect((JSON.parse(result.stdout) as ProjectReport).violations.filter(({ kind }) => kind === 'project')).toEqual(
+        []
+      );
     } finally {
       chmodSync(path.join(repoDir, 'src', 'legacy.ts'), 0o644);
     }
