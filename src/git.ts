@@ -129,7 +129,7 @@ export async function listRepositoryFiles(
     runGitWithStderr(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
     runGit(repoRoot, ['ls-files', '--deleted', '-z']),
     // Whatever the working tree holds, a sparse checkout may leave part of the project out.
-    runGit(repoRoot, ['config', '--type=bool', '--default=false', 'core.sparseCheckout']),
+    isSparseCheckout(repoRoot),
   ]);
   const entries = listed.split('\0').filter((entry) => entry !== '');
   const files = new Set(entries.map((entry) => entry.slice(2)));
@@ -154,7 +154,7 @@ export async function listRepositoryFiles(
   // files are not git-visible, so the check passes the warning on instead of measuring them.
   // Verbatim as one block: a pathname git names in it may hold line breaks.
   const warnings = stderr === '' ? [] : [stderr.replace(/\n$/u, '')];
-  return { files, warnings, sparse: sparseCheckout.trim() === 'true' };
+  return { files, warnings, sparse: sparseCheckout };
 }
 
 /**
@@ -313,6 +313,21 @@ function describeCommand(args: readonly string[]): string {
 }
 
 /** A path that cannot be inspected is not absent: it stays to be reported as unmeasured. */
+/** Whether sparse checkout is enabled; `--type` and `--default` would need Git 2.18. */
+async function isSparseCheckout(repoRoot: string): Promise<boolean> {
+  try {
+    const { stdout } = await execFileAsync('git', ['config', '--bool', '--get', 'core.sparseCheckout'], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+    });
+    return stdout.trim() === 'true';
+  } catch (error) {
+    // Exit status 1: the key is not set.
+    if ((error as { code?: unknown }).code === 1) return false;
+    throw error;
+  }
+}
+
 /**
  * The paths that do not exist, probing a path below a directory already found missing no further
  * and each directory at most once, so the paths a sparse checkout or a deletion leaves out cost one
