@@ -124,10 +124,12 @@ function toChangedFile(kind: string, paths: (string | undefined)[]): ChangedFile
 export async function listRepositoryFiles(
   repoRoot: string
 ): Promise<{ files: Set<string>; warnings: string[]; sparse: boolean }> {
-  const [{ stdout: listed, stderr }, deleted] = await Promise.all([
+  const [{ stdout: listed, stderr }, deleted, sparseCheckout] = await Promise.all([
     // -t tags each path; `S` marks a skip-worktree path, which a sparse checkout leaves off disk.
     runGitWithStderr(repoRoot, ['ls-files', '-t', '--cached', '--others', '--exclude-standard', '-z']),
     runGit(repoRoot, ['ls-files', '--deleted', '-z']),
+    // Whatever the working tree holds, a sparse checkout may leave part of the project out.
+    runGit(repoRoot, ['config', '--type=bool', '--default=false', 'core.sparseCheckout']),
   ]);
   const entries = listed.split('\0').filter((entry) => entry !== '');
   const files = new Set(entries.map((entry) => entry.slice(2)));
@@ -136,11 +138,9 @@ export async function listRepositoryFiles(
   // so an inaccessible one stays to be reported as unmeasured.
   const skipWorktree = new Set(entries.filter((entry) => entry.startsWith('S ')).map((entry) => entry.slice(2)));
   const candidates = [...deleted.split('\0').filter((entry) => entry !== ''), ...skipWorktree];
-  let sparse = false;
   for (const relativePath of candidates) {
     if (await isAbsent(path.join(repoRoot, relativePath))) {
       files.delete(relativePath);
-      sparse ||= skipWorktree.has(relativePath);
     }
   }
   // Git tracks no path through a symbolic link, yet a tracked path below a directory replaced by
@@ -156,7 +156,7 @@ export async function listRepositoryFiles(
   // files are not git-visible, so the check passes the warning on instead of measuring them.
   // Verbatim as one block: a pathname git names in it may hold line breaks.
   const warnings = stderr === '' ? [] : [stderr.replace(/\n$/u, '')];
-  return { files, warnings, sparse };
+  return { files, warnings, sparse: sparseCheckout.trim() === 'true' };
 }
 
 /**
