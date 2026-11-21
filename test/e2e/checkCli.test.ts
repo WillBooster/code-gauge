@@ -811,9 +811,8 @@ How to fix:
       `# code-gauge-allow functionParameterCount -- registered handlers\n@registered(\n    name="empty",\n)\nclass Empty:\n    pass\n\n\ndef later(a, b, c, d, e, f, g, h):\n    return a\n`
     );
     const { stdout } = runCheck(['src/wide.py']);
-    expect(stdout).toContain('warning: src/wide.py:9-10 later: parameters 8 (max 6)\n');
     expect(stdout).toContain(
-      "error: src/wide.py:1: no function starts on line 2, the code after code-gauge-allow; put it right above the line a function starts on (below decorators the function's span leaves out), or use code-gauge-allow-file\n"
+      "error: src/wide.py:1: no function starts on line 2, the code after code-gauge-allow; put it right above the line a function starts on (below decorators the function's span leaves out), or use code-gauge-allow-file\nwarning: src/wide.py:9-10 later: parameters 8 (max 6)\n"
     );
 
     writeSource(

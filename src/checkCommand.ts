@@ -38,6 +38,7 @@ import {
   type CheckedFile,
   type CheckResult,
   checkThresholds,
+  compareStrings,
   type LocatedDirectiveProblem,
   type Violation,
 } from './thresholdCheck.js';
@@ -349,11 +350,18 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   } else {
     writeStdout(`Threshold violations: ${counts} (${checked}).\n`);
   }
-  for (const violation of violations) {
-    writeStdout(`${formatViolation(violation)}\n`);
-  }
-  for (const problem of directiveProblems) {
-    writeStdout(`${formatDirectiveProblem(problem)}\n`);
+  // Directive problems are errors, so they join the error-level violations, ordered by path and line.
+  const errorLines = [
+    ...violations
+      .filter(({ level }) => level === 'error')
+      .map((violation) => ({ file: violation.file, line: violation.startLine, text: formatViolation(violation) })),
+    ...directiveProblems.map((problem) => ({ ...problem, text: formatDirectiveProblem(problem) })),
+  ].toSorted((left, right) => compareStrings(left.file, right.file) || left.line - right.line);
+  const warningLines = violations
+    .filter(({ level }) => level === 'warning')
+    .map((violation) => formatViolation(violation));
+  for (const text of [...errorLines.map(({ text }) => text), ...warningLines]) {
+    writeStdout(`${text}\n`);
   }
 
   const violatedMetrics = new Set(violations.flatMap(({ exceeded }) => exceeded.map(({ metric }) => metric)));

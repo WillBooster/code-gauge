@@ -526,6 +526,6 @@ function overlaps(left: BlockLocation, right: BlockLocation): boolean {
 }
 
 /** Code-unit order, so reports do not depend on the locale. */
-function compareStrings(left: string, right: string): number {
+export function compareStrings(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
