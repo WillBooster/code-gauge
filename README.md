@@ -271,7 +271,8 @@ export function createClient(host, port, user, password, database, timeout, retr
 - `<metric>` is a metric name of a function, file, or duplication violation in the
   [JSON report](#json-report) (`functionCognitiveComplexity`, `duplicateLines`, ...), and the reason
   is required. `testNcssPercent` is not one: a directive naming it is an error, and the share of
-  test code is kept or turned off only in the [config](#configuration).
+  test code is kept or turned off only by its limit: `null` in the [config](#configuration) or `off`
+  on the command line.
 
 A directive allows warnings only: a value above an error limit is reported as usual, and is fixed
 or its limit changed in the [config](#configuration). A copy of a duplicated block is reported in
