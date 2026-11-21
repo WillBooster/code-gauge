@@ -105,11 +105,19 @@ async function measureAddedTestNcss(
       : []
   );
   const baseExclusion = await loadExclusion(basePaths);
-  const baseContents = await readRegularFilesAt(
-    repoRoot,
-    mergeBase,
-    basePaths.filter((basePath) => isTestIn(baseExclusion, basePath))
-  );
+  let baseContents: Map<string, string>;
+  try {
+    baseContents = await readRegularFilesAt(
+      repoRoot,
+      mergeBase,
+      basePaths.filter((basePath) => isTestIn(baseExclusion, basePath))
+    );
+  } catch (error) {
+    // Unread merge-base tests leave the change's addition unknown; the error suppresses the share.
+    errors.push(`test files at ${mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`);
+    return 0;
+  }
+
   const changes = changedFiles.map((changed) => {
     const headNcss = changed.status === 'deleted' ? 0 : (testNcssByPath.get(changed.headPath) ?? 0);
     const baseCode = changed.basePath === undefined ? undefined : baseContents.get(changed.basePath);

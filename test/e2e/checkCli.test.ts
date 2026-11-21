@@ -1476,6 +1476,46 @@ describe('code-gauge check: test share', () => {
     expect(report.violations.find(({ level }) => level === 'warning')?.kind).toBe('project');
   });
 
+  it('leaves a branch check incomplete when a merge-base test cannot be read', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-missing-blob-'));
+    try {
+      const git = (...args: string[]): string => {
+        const result = spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' });
+        expect(result.status, result.stderr).toBe(0);
+        return result.stdout.trim();
+      };
+      git('init', '-q', '-b', 'main');
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
+      writeFileSync(path.join(dir, 'calc.ts'), calc);
+      mkdirSync(path.join(dir, 'test'));
+      writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(60));
+      git('add', '-A');
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base');
+      const blob = git('rev-parse', 'HEAD:test/calc.test.ts');
+      writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(60).replace('total([0])', 'total([9])'));
+      git(
+        '-c',
+        'user.name=t',
+        '-c',
+        'user.email=t@example.com',
+        '-c',
+        'commit.gpgsign=false',
+        'commit',
+        '-qam',
+        'edit'
+      );
+      // The diff compares trees, so only the share's read of the merge-base content meets the loss.
+      rmSync(path.join(dir, '.git', 'objects', blob.slice(0, 2), blob.slice(2)));
+      const result = runCheck(['--base', 'HEAD~1', '--json', dir], dir);
+      expect(result.status).toBe(2);
+      expect((JSON.parse(result.stdout) as ProjectReport).violations.filter(({ kind }) => kind === 'project')).toEqual(
+        []
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('measures no share in a sparse checkout, saying so', () => {
     const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-sparse-'));
     try {

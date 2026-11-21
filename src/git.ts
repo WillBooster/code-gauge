@@ -255,7 +255,12 @@ async function readBlobs(repoRoot: string, objects: readonly string[]): Promise<
   let offset = 0;
   while (offset < output.length) {
     const headerEnd = output.indexOf(0x0a, offset);
-    const [object = '', , size = '0'] = output.subarray(offset, headerEnd).toString('utf8').split(' ');
+    const header = output.subarray(offset, headerEnd === -1 ? undefined : headerEnd).toString('utf8');
+    // `<object> blob <size>`, or `<object> missing` for an object the repository lacks.
+    const [object = '', type, size] = header.split(' ');
+    if (headerEnd === -1 || type !== 'blob' || size === undefined || !/^\d+$/u.test(size)) {
+      throw new Error(`git cat-file could not read ${object}: ${header}`);
+    }
     const start = headerEnd + 1;
     contents.set(object, output.subarray(start, start + Number(size)).toString('utf8'));
     offset = start + Number(size) + 1;
