@@ -386,7 +386,8 @@ async function addTestShare(
   const { share, errors } = await measureRepositoryTestShare(input);
   // A share of partial totals would name tests to delete that the whole project admits.
   const complete = !missesProductionCode && errors.length === 0;
-  return { ...scope, testShare: complete ? share : undefined, errors: [...scope.errors, ...errors] };
+  // The share measures the production files the check already reported, once more.
+  return { ...scope, testShare: complete ? share : undefined, errors: [...new Set([...scope.errors, ...errors])] };
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */

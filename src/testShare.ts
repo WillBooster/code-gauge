@@ -1,7 +1,5 @@
-import path from 'node:path';
-
 import type { Exclusion } from './exclusion.js';
-import { isScannedBelow, isTestFileBelow, scanListedFiles, type ScanOptions } from './scan.js';
+import { formatPath, isTestFileBelow, scanListedFiles, type ScanOptions } from './scan.js';
 import type { TestShare } from './thresholds.js';
 
 export interface RepositoryTestShareInput {
@@ -11,37 +9,61 @@ export interface RepositoryTestShareInput {
   targetPath: string;
   exclusion: Exclusion;
   options: ScanOptions;
-  /** The files the check measured, repository-relative; test files among them count as tests. */
+  /** The files the check measured, repository-relative. */
   measuredFiles: readonly { file: string; metrics: { ncssCount: number } }[];
 }
 
-/** The share, or the failures to measure test files that leave it unknown. */
+interface MeasuredFiles {
+  files: readonly { file: string; metrics: { ncssCount: number } }[];
+  errors: readonly string[];
+}
+
+/** The share, or the failures to measure files that leave it unknown. */
 export interface TestShareMeasurement {
   share: TestShare;
-  /** Test files that could not be measured, each starting with its path like the scan's errors. */
+  /** Files that could not be measured, each starting with its path like the scan's errors. */
   errors: string[];
 }
 
 /**
- * Measures the test files of the checked directory: those the check took (with tests included, or
- * in a targeted test directory) by its measurement, and those it skipped by the same scan with
- * tests included, so the share counts what `--include-tests` measures, one path per real file,
- * regular non-generated sources only. A file is a test file by its repository-relative path, so
- * targeting a test directory does not turn its files into production code. Only a repository has a
- * share: outside one, there is neither a root to tell tests by nor a change.
+ * Measures the files of the checked directory as the check does with tests included: its own
+ * measurement when it included tests, otherwise the same scan with tests included and metrics
+ * only. One scan over all the files chooses one path per real file across tests and production
+ * code alike, so the share counts exactly what `--include-tests` measures. A file is a test file
+ * by its repository-relative path, so targeting a test directory does not turn its files into
+ * production code. Only a repository has a share: outside one, there is neither a root to tell
+ * tests by nor a change.
  */
 export async function measureRepositoryTestShare(input: RepositoryTestShareInput): Promise<TestShareMeasurement> {
-  const { repoRoot, targetPath, exclusion, options } = input;
-  const testPaths = [...input.repositoryFiles].filter(
-    (relativePath) =>
-      isInTarget(relativePath, targetPath) &&
-      isTestFileBelow(relativePath, targetPath, options) &&
-      !exclusion.isExcludedPath(path.join(repoRoot, relativePath))
-  );
-  const testPathSet = new Set(testPaths);
-  const skippedTests = await scanListedFiles(
+  const { targetPath, options } = input;
+  const { files, errors }: MeasuredFiles = options.includeTests
+    ? { files: input.measuredFiles, errors: [] }
+    : await scanWithTests(input);
+  let testNcss = 0;
+  let productionNcss = 0;
+  for (const { file, metrics } of files) {
+    if (!isInTarget(file, targetPath)) {
+      continue;
+    }
+    if (isTestFileBelow(file, targetPath, options)) {
+      testNcss += metrics.ncssCount;
+    } else {
+      productionNcss += metrics.ncssCount;
+    }
+  }
+  return { share: { testNcss, productionNcss }, errors: errors.toSorted() };
+}
+
+async function scanWithTests({
+  repoRoot,
+  repositoryFiles,
+  targetPath,
+  exclusion,
+  options,
+}: RepositoryTestShareInput): Promise<MeasuredFiles> {
+  const scan = await scanListedFiles(
     repoRoot,
-    testPaths.filter((relativePath) => !isScannedBelow(relativePath, targetPath, options)),
+    [...repositoryFiles].filter((relativePath) => isInTarget(relativePath, targetPath)),
     {
       ...options,
       includeTests: true,
@@ -53,28 +75,14 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     new Set(),
     targetPath
   );
-  const measuredTests = input.measuredFiles.filter(({ file }) => testPathSet.has(file));
-  const share = {
-    testNcss: sum([...measuredTests, ...skippedTests.files].map(({ metrics }) => metrics.ncssCount)),
-    productionNcss: sum(
-      input.measuredFiles
-        .filter(({ file }) => isInTarget(file, targetPath) && !testPathSet.has(file))
-        .map(({ metrics }) => metrics.ncssCount)
-    ),
+  return {
+    files: scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics })),
+    errors: scan.errors,
   };
-  return { share, errors: skippedTests.errors.toSorted() };
 }
 
 const noCloneSearchTokens = 1_000_000_000;
 
 function isInTarget(relativePath: string, targetPath: string): boolean {
   return targetPath === '' || relativePath.startsWith(`${targetPath}/`);
-}
-
-function sum(values: Iterable<number>): number {
-  let total = 0;
-  for (const value of values) {
-    total += value;
-  }
-  return total;
 }

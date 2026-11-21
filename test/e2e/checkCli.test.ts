@@ -51,6 +51,10 @@ function runGit(args: string[]): void {
   }
 }
 
+function gitOutput(args: string[], input?: string): string {
+  return spawnSync('git', args, { cwd: repoDir, encoding: 'utf8', input }).stdout;
+}
+
 function readSource(relativePath: string): string {
   return readFileSync(path.join(repoDir, relativePath), 'utf8');
 }
@@ -1290,6 +1294,20 @@ describe('code-gauge check: test share', () => {
       expect(projectViolations(args)).toMatchObject([{ testNcss: single?.testNcss }]);
     }
   });
+
+  it.skipIf(process.platform !== 'darwin')(
+    'counts a file two tracked spellings name once, as --include-tests does',
+    () => {
+      runGit(['checkout', '-q', '-b', 'feature']);
+      const blob = gitOutput(['hash-object', '-w', '--stdin'], testCode(30)).trim();
+      gitOutput(['update-index', '--index-info'], `100644 ${blob}\tTest/helper.ts\n100644 ${blob}\ttest/helper.ts\n`);
+      runGit(['commit', '-q', '-m', 'colliding paths']);
+      runGit(['checkout', '-q', '-f', 'HEAD', '--', '.']);
+      expect(gitOutput(['ls-files', 'Test', 'test']).split('\n').filter(Boolean)).toHaveLength(2);
+      // With tests included, the check measures the file once under the spelling it chooses.
+      expect(projectViolations([])).toEqual(projectViolations(['--include-tests']));
+    }
+  );
 
   it('counts a test file once a test-named link to it is listed first', () => {
     writeSource('test/z.test.ts', testCode(60));
