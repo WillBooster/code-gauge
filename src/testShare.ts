@@ -25,7 +25,12 @@ export interface RepositoryTestShareInput {
   options: ScanOptions;
   /** The files the check measured, repository-relative; test files among them count as tests. */
   measuredFiles: readonly { file: string; metrics: { ncssCount: number } }[];
-  base?: { mergeBase: string; changedFiles: readonly ChangedFile[] };
+  base?: {
+    mergeBase: string;
+    changedFiles: readonly ChangedFile[];
+    /** The exclusion of base paths, which may no longer exist and so lack from `exclusion`. */
+    loadExclusion: (relativePaths: readonly string[]) => Promise<Exclusion>;
+  };
 }
 
 /**
@@ -35,19 +40,20 @@ export interface RepositoryTestShareInput {
  */
 export async function measureRepositoryTestShare(input: RepositoryTestShareInput): Promise<MeasuredTestShare> {
   const { repoRoot, targetPath, exclusion, options } = input;
-  const isTest = (relativePath: string): boolean => {
+  const isTestIn = (pathExclusion: Exclusion, relativePath: string): boolean => {
     const scopedPath = scopeToTarget(relativePath, targetPath);
     return (
       scopedPath !== undefined &&
       isTestPath(scopedPath, options) &&
-      !exclusion.isExcludedPath(path.join(repoRoot, relativePath))
+      !pathExclusion.isExcludedPath(path.join(repoRoot, relativePath))
     );
   };
+  const isTest = (relativePath: string): boolean => isTestIn(exclusion, relativePath);
   const testNcssByPath = new Map(
     await mapConcurrently(
       [...input.repositoryFiles].filter((relativePath) => isTest(relativePath)),
       os.availableParallelism() * 2,
-      async (relativePath) => [relativePath, await measureTestFile(input, relativePath)] as const
+      async (relativePath) => [relativePath, await measureTestFile(input, exclusion, relativePath)] as const
     )
   );
   const share = {
@@ -62,11 +68,15 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
     return share;
   }
   const { mergeBase, changedFiles } = input.base;
+  const baseExclusion = await input.base.loadExclusion(
+    changedFiles.flatMap(({ basePath }) => (basePath === undefined ? [] : [basePath]))
+  );
   const changes = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
     const headNcss = changed.status === 'deleted' ? 0 : (testNcssByPath.get(changed.headPath) ?? 0);
+    const { basePath } = changed;
     const baseNcss =
-      changed.basePath !== undefined && isTest(changed.basePath)
-        ? measureTestCode(await readFileAt(repoRoot, mergeBase, changed.basePath), changed.basePath, input)
+      basePath !== undefined && isTestIn(baseExclusion, basePath)
+        ? measureTestCode(await readFileAt(repoRoot, mergeBase, basePath), basePath, input, baseExclusion)
         : 0;
     return headNcss - baseNcss;
   });
@@ -85,19 +95,28 @@ export function partitionWalkedTestShare(files: readonly FileMetrics[], root: st
 }
 
 /** A file that is not a regular file or cannot be read counts as no test code, as the check would not measure it. */
-async function measureTestFile(input: RepositoryTestShareInput, relativePath: string): Promise<number> {
+async function measureTestFile(
+  input: RepositoryTestShareInput,
+  exclusion: Exclusion,
+  relativePath: string
+): Promise<number> {
   const absolutePath = path.join(input.repoRoot, relativePath);
   const stats = await lstat(absolutePath).catch(() => {});
   if (!stats?.isFile()) {
     return 0;
   }
   const code = await readFile(absolutePath, 'utf8').catch(() => {});
-  return code === undefined ? 0 : measureTestCode(code, relativePath, input);
+  return code === undefined ? 0 : measureTestCode(code, relativePath, input, exclusion);
 }
 
-function measureTestCode(code: string, relativePath: string, input: RepositoryTestShareInput): number {
+function measureTestCode(
+  code: string,
+  relativePath: string,
+  input: RepositoryTestShareInput,
+  exclusion: Exclusion
+): number {
   const language = getLanguage(relativePath, { ...input.options, includeTests: true });
-  if (language === undefined || input.exclusion.isGeneratedCode(path.join(input.repoRoot, relativePath), code)) {
+  if (language === undefined || exclusion.isGeneratedCode(path.join(input.repoRoot, relativePath), code)) {
     return 0;
   }
   try {

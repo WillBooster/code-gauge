@@ -260,7 +260,11 @@ async function scanRepository(
   if (base !== undefined) {
     mergeBase = await resolveMergeBase(repoRoot, base);
     const changedFiles = await listChangedFiles(repoRoot, mergeBase);
-    change = { mergeBase, changedFiles };
+    change = {
+      mergeBase,
+      changedFiles,
+      loadExclusion: (relativePaths) => loadRepositoryExclusion(repoRoot, relativePaths, options.exclude),
+    };
     // A targeted file git does not list has no diff; all of it counts as added.
     if (unlistedTarget !== undefined) {
       changedFiles.push({ status: 'added', headPath: unlistedTarget });
