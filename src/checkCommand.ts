@@ -250,7 +250,10 @@ async function scanRepository(
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   const isInTargetError = (error: string): boolean =>
-    canonicalTarget === repoRoot || concernsTarget(error, targetPath, targetFile !== undefined);
+    canonicalTarget === repoRoot ||
+    (targetFile === undefined
+      ? isInTarget(pathOfError(error, repositoryFiles) ?? '')
+      : error.startsWith(`${targetPath}:`));
   const change = base === undefined ? undefined : await resolveChange(repoRoot, base, unlistedTarget);
   // A change that touches no test under the target is not blamed for a share it did not raise.
   const sharesProject =
@@ -371,12 +374,18 @@ function touchesTests(
 }
 
 /**
- * Whether an error, which starts with the path it concerns, concerns the target: a targeted file's
- * path ends at a colon, and a file under a targeted directory continues past its slash (a sibling
- * may hold a colon).
+ * The listed file an error concerns: scan errors start with the file's path and a colon, and a
+ * path may itself hold `: `, so the longest listed prefix is taken.
  */
-function concernsTarget(error: string, targetPath: string, isFile: boolean): boolean {
-  return error.startsWith(isFile ? `${targetPath}:` : `${targetPath}/`);
+function pathOfError(error: string, repositoryFiles: ReadonlySet<string>): string | undefined {
+  let found: string | undefined;
+  for (let index = error.indexOf(': '); index !== -1; index = error.indexOf(': ', index + 1)) {
+    const candidate = error.slice(0, index);
+    if (repositoryFiles.has(candidate)) {
+      found = candidate;
+    }
+  }
+  return found;
 }
 
 /**
