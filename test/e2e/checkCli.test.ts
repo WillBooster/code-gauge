@@ -1482,26 +1482,44 @@ describe('code-gauge check: test share', () => {
       const git = (...args: string[]): void => {
         expect(spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).status).toBe(0);
       };
+      const commit = (message: string): void => {
+        git('add', '-A');
+        git(
+          '-c',
+          'user.name=t',
+          '-c',
+          'user.email=t@example.com',
+          '-c',
+          'commit.gpgsign=false',
+          'commit',
+          '-qm',
+          message
+        );
+      };
+      const projectCount = (args: string[]): number => {
+        const result = runCheck([...args, '--base', 'base', '--json', dir], dir);
+        expect(result.status, result.stderr).not.toBe(2);
+        return (JSON.parse(result.stdout) as ProjectReport).violations.filter(({ kind }) => kind === 'project').length;
+      };
       git('init', '-q', '-b', 'main');
       writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
       mkdirSync(path.join(dir, 'src'));
       writeFileSync(path.join(dir, 'src', 'calc.ts'), calc);
+      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), testCode(60));
       mkdirSync(path.join(dir, 'test'));
       writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(1));
-      git('add', '-A');
-      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base');
+      commit('base');
+      git('tag', 'base');
+      // The branch edits the test outside the checkout without changing its NCSS.
+      writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(1).replace('total([0])', 'total([9])'));
+      commit('edit');
       git('sparse-checkout', 'set', 'src');
       writeFileSync(path.join(dir, 'src', 'calc.ts'), `${calc}export const offset = 1;\n`);
-      const result = runCheck(['--base', 'HEAD', dir], dir);
-      expect(result.status, result.stderr).toBe(0);
-      // A test added inside the checkout is still held to the share, with tests included or not.
-      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), testCode(60));
+      expect(projectCount([]), 'the left-out test is no test code').toBe(0);
+      // One statement added inside the checkout is still held to the share, with tests included or not.
+      writeFileSync(path.join(dir, 'src', 'calc.test.ts'), testCode(61));
       for (const args of [[], ['--include-tests']]) {
-        const report = JSON.parse(runCheck([...args, '--base', 'HEAD', '--json', dir], dir).stdout) as ProjectReport;
-        expect(
-          report.violations.filter(({ kind }) => kind === 'project'),
-          args.join(' ')
-        ).toHaveLength(1);
+        expect(projectCount(args), args.join(' ')).toBe(1);
       }
     } finally {
       rmSync(dir, { recursive: true, force: true });

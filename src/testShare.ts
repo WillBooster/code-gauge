@@ -111,6 +111,11 @@ async function measureAddedTestNcss(
     basePaths.filter((basePath) => isTestIn(baseExclusion, basePath))
   );
   const changes = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
+    // A changed path the working tree does not hold (a sparse checkout leaves it out) has no
+    // measured head to compare with, so it counts on neither side; a deletion still subtracts.
+    if (changed.status !== 'deleted' && !input.repositoryFiles.has(changed.headPath)) {
+      return 0;
+    }
     const headNcss = changed.status === 'deleted' ? 0 : (testNcssByPath.get(changed.headPath) ?? 0);
     const { basePath } = changed;
     if (basePath === undefined || !baseTestPaths.has(basePath)) {
