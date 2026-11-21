@@ -345,8 +345,12 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
     writeStdout(
       `Check could not complete: ${scope.errors.length} measurement failures (details on stderr); ${counts} in the measured files (${checked}).\n`
     );
-  } else if (violations.length === 0 && directiveProblems.length === 0) {
-    writeStdout(`No threshold violations: ${checked}.\n`);
+  } else if (violations.length === 0) {
+    writeStdout(
+      directiveProblems.length === 0
+        ? `No threshold violations: ${checked}.\n`
+        : `Directive errors: ${directiveProblems.length} (${checked}).\n`
+    );
   } else {
     writeStdout(`Threshold violations: ${counts} (${checked}).\n`);
   }

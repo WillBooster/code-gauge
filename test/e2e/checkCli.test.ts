@@ -1018,6 +1018,7 @@ export const scale = 2;
     writeSource('src/job.py', `${directive}${after}`);
     const result = runCheck(['--base', 'HEAD', '--warning-max-function-ncss', '3']);
     expect(result.status).toBe(1);
+    expect(result.stdout).toMatch(/^Directive errors: 1 \(1 changed files, /u);
     expect(result.stdout).toContain(
       'error: src/job.py:1: code-gauge-allow functionNcss: no functionNcss limit is exceeded; remove the directive\n'
     );

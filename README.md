@@ -167,9 +167,10 @@ check without it, so code pasted from an unchanged file is reported where it was
 violation the change did not introduce is reported too once the change touches its function, file,
 or duplicated block. `--base` requires a git repository.
 
-When nothing violates a threshold, `check` prints a single line. Otherwise it prints a header with
-the counts, one line per violation with the errors first, each level ordered by path and line, and
-one remediation hint per violated metric:
+When nothing violates a threshold, `check` prints a single line, which starts with `Directive
+errors` and lists the [directive](#allowing-a-warning-in-the-code) errors after it when there are
+any. Otherwise it prints a header with the counts, one line per violation and directive error with
+the errors first, each level ordered by path and line, and one remediation hint per violated metric:
 
 ```
 Threshold violations: 1 errors, 2 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
