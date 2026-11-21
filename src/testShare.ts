@@ -112,11 +112,19 @@ export async function measureRepositoryTestShare(input: RepositoryTestShareInput
   return { share: { ...share, addedTestNcss: sum(changes) }, errors };
 }
 
-/** A path that is not a regular file is no source, as in the scan; a file that cannot be read throws. */
+/**
+ * A path that is not a regular file is no source, as in the scan, and one absent from the working
+ * tree (e.g. left out by a sparse checkout) holds no test code there; a file that cannot be read throws.
+ */
 async function measureTestFile(input: RepositoryTestShareInput, relativePath: string): Promise<number> {
   const absolutePath = path.join(input.repoRoot, relativePath);
-  const stats = await lstat(absolutePath);
-  if (!stats.isFile()) {
+  const stats = await lstat(absolutePath).catch((error: unknown) => {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return;
+    }
+    throw error;
+  });
+  if (!stats?.isFile()) {
     return 0;
   }
   return measureTestCode(await readFile(absolutePath, 'utf8'), relativePath, input, input.exclusion);

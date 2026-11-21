@@ -1,5 +1,14 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -1326,6 +1335,47 @@ describe('code-gauge check: test share', () => {
     const levels = report.violations.map(({ level }) => level);
     expect(levels.lastIndexOf('error')).toBeLessThan(levels.indexOf('warning'));
     expect(report.violations.find(({ level }) => level === 'warning')?.kind).toBe('project');
+  });
+
+  it('counts a test file a sparse checkout leaves out as no test code', () => {
+    const dir = mkdtempSync(path.join(os.tmpdir(), 'code-gauge-check-sparse-'));
+    try {
+      const git = (...args: string[]): void => {
+        expect(spawnSync('git', ['-C', dir, ...args], { encoding: 'utf8' }).status).toBe(0);
+      };
+      git('init', '-q', '-b', 'main');
+      writeFileSync(path.join(dir, 'code-gauge.config.json'), '{}');
+      mkdirSync(path.join(dir, 'src'));
+      writeFileSync(path.join(dir, 'src', 'calc.ts'), calc);
+      mkdirSync(path.join(dir, 'test'));
+      writeFileSync(path.join(dir, 'test', 'calc.test.ts'), testCode(1));
+      git('add', '-A');
+      git('-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', 'commit', '-qm', 'base');
+      git('sparse-checkout', 'set', 'src');
+      writeFileSync(path.join(dir, 'src', 'calc.ts'), `${calc}export const offset = 1;\n`);
+      const result = runCheck(['--base', 'HEAD', dir], dir);
+      expect(result.status, result.stderr).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('runs no hook of the repository while reading the merge-base', () => {
+    const marker = path.join(repoDir, 'hook-ran');
+    const hook = path.join(repoDir, '.git', 'hooks', 'post-index-change');
+    writeFileSync(hook, `#!/bin/sh\ntouch '${marker}'\n`, { mode: 0o755 });
+    try {
+      writeSource('test/calc.test.ts', testCode(1));
+      runGit(['add', '-A']);
+      runGit(['commit', '-q', '-m', 'tests']);
+      rmSync(marker, { force: true });
+      writeSource('test/calc.test.ts', testCode(2));
+      runCheck(['--base', 'HEAD']);
+      expect(existsSync(marker)).toBe(false);
+    } finally {
+      rmSync(hook, { force: true });
+      runGit(['reset', '-q', '--hard', 'HEAD~1']);
+    }
   });
 
   it('counts no test code for an excluded test file the change deletes', () => {
