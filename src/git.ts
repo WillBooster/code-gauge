@@ -216,23 +216,24 @@ export async function readFileAt(repoRoot: string, commit: string, file: string)
 }
 
 /**
- * The lines the working tree adds and deletes, by path, against `commit`; renames count as a
- * deletion and an addition, and binary files, which have no lines, are left out.
+ * The lines the working tree's tracked files add and delete against `commit`, by path (renames
+ * count as a deletion and an addition, and binary files, which have no lines, are left out), and
+ * the untracked files, which the diff does not cover.
  */
 export async function diffLineCounts(
   repoRoot: string,
   commit: string
-): Promise<Map<string, { added: number; deleted: number }>> {
-  const output = await runGit(repoRoot, ['diff', '--numstat', '--no-renames', '-z', commit]);
-  const counts = new Map<string, { added: number; deleted: number }>();
-  // `<added>\t<deleted>\t<path>`, with `-` for both counts of a binary file.
-  for (const entry of output.split('\0')) {
-    const [added, deleted, file] = entry.split('\t');
-    if (file !== undefined && /^\d+$/u.test(added ?? '') && /^\d+$/u.test(deleted ?? '')) {
-      counts.set(file, { added: Number(added), deleted: Number(deleted) });
-    }
-  }
-  return counts;
+): Promise<{ tracked: { file: string; added: number; deleted: number }[]; untracked: string[] }> {
+  const [diffOutput, untrackedOutput] = await Promise.all([
+    runGit(repoRoot, ['diff', '--numstat', '--no-renames', '-z', commit]),
+    runGit(repoRoot, ['ls-files', '--others', '--exclude-standard', '-z']),
+  ]);
+  const tracked = diffOutput.split('\0').flatMap((entry) => {
+    // `<added>\t<deleted>\t<path>`, with `-` for both counts of a binary file; the path may hold tabs.
+    const match = /^(\d+)\t(\d+)\t(.+)$/su.exec(entry);
+    return match ? [{ file: match[3] as string, added: Number(match[1]), deleted: Number(match[2]) }] : [];
+  });
+  return { tracked, untracked: untrackedOutput.split('\0').filter((file) => file !== '') };
 }
 
 /** A file's `linguist-generated` / `linguist-vendored` attributes; undefined when unspecified. */

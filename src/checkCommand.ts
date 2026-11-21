@@ -298,12 +298,18 @@ async function scanRepository(
   );
 }
 
+/** What the working tree changed since a merge-base. */
+interface Change {
+  mergeBase: string;
+  changedFiles: ChangedFile[];
+}
+
 /**
  * The changed files under the target with their hunks, and the failures that leave the check
  * incomplete: those of changed files, or `coversAll` when the share counts every file.
  */
 async function narrowToChange(
-  change: NonNullable<RepositoryTestShareInput['base']>,
+  change: Change,
   measuredFiles: readonly CheckedFile[],
   repoRoot: string,
   isInTarget: (relativePath: string) => boolean,
@@ -318,13 +324,13 @@ async function narrowToChange(
   };
 }
 
-/** What the working tree changed since the merge-base with `base`. */
+/** The change since the merge-base with `base`. */
 async function resolveChange(
   repoRoot: string,
   base: string,
   options: ResolvedOptions,
   unlistedTarget: string | undefined
-): Promise<NonNullable<RepositoryTestShareInput['base']>> {
+): Promise<Change> {
   const mergeBase = await resolveMergeBase(repoRoot, base);
   const changedFiles = await listChangedFiles(repoRoot, mergeBase);
   // A targeted file git does not list has no diff; all of it counts as added.

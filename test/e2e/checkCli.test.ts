@@ -1283,6 +1283,21 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestLines: 2 }]);
   });
 
+  it('counts only test sources in the line delta, whether git tracks them or not', () => {
+    runGit(['checkout', '-q', '-b', 'feature']);
+    writeSource('test/calc.test.ts', testCode(60));
+    writeSource('test/tab\tname.test.ts', 'total([1]);\n');
+    runGit(['add', '-A']);
+    runGit(['commit', '-q', '-m', 'tests']);
+    symlinkSync('../future.ts', path.join(repoDir, 'test/alias.test.ts'));
+    writeSource('test/example.test.ts', '// @generated\ntotal([1]);\n');
+    expect(projectViolations(['--base', 'HEAD']), 'neither a dangling link nor generated code').toEqual([]);
+    runGit(['rm', '-q', '--', 'test/calc.test.ts']);
+    writeSource('test/calc.test.ts', `${testCode(60)}total([2]);\n`);
+    writeSource('test/tab\tname.test.ts', 'total([1]);\ntotal([2]);\n');
+    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestLines: 2 }]);
+  });
+
   it('accepts test code within its share', () => {
     writeSource('test/calc.test.ts', testCode(1));
     expect(projectViolations([])).toEqual([]);
