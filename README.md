@@ -168,8 +168,8 @@ violation the change did not introduce is reported too once the change touches i
 or duplicated block. `--base` requires a git repository.
 
 When nothing violates a threshold and no [directive](#allowing-a-warning-in-the-code) has an
-error, `check` prints a single line. When only directives have errors, it prints a `Directive
-errors` header with their count and one line per directive error. Otherwise it prints a header with
+error, `check` prints a single line. When nothing violates a threshold but directives have errors,
+it prints a `Directive errors` header with their count and one line per directive error. Otherwise it prints a header with
 the counts, one line per violation and directive error with the errors first, each level ordered by
 path and line, and one remediation hint per violated metric:
 
