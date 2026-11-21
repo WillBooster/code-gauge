@@ -1539,6 +1539,7 @@ describe('code-gauge check: test share', () => {
     const args = ['--error-max-test-ncss-percent', 'off', '--warning-max-test-ncss-percent', '0', '--json'];
     const report = JSON.parse(runCheck([...args, '--error-max-file-ncss', '0']).stdout) as ProjectReport;
     const levels = report.violations.map(({ level }) => level);
+    expect(levels).toContain('error');
     expect(levels.lastIndexOf('error')).toBeLessThan(levels.indexOf('warning'));
     expect(report.violations.find(({ level }) => level === 'warning')?.kind).toBe('project');
   });

@@ -280,8 +280,7 @@ async function scanRepository(
           measuredFiles,
         }
       : undefined,
-    isInTargetError,
-    scan.errors.some((error) => isInTargetError(error))
+    isInTargetError
   );
 }
 
@@ -393,24 +392,21 @@ function decideTestShare(measuresTestShare: boolean, sparse: boolean, warnings: 
   return measuresTestShare && !sparse;
 }
 
-/** Adds the test share, when every file under the target was measured, and the test files that could not be, to a scope. */
+/** Adds the test share, when every file under the target was measured, and the files there that could not be, to a scope. */
 async function addTestShare(
   scope: CheckScope,
   input: RepositoryTestShareInput | undefined,
-  isInTargetError: (error: string) => boolean,
-  missesProductionCode: boolean
+  isInTargetError: (error: string) => boolean
 ): Promise<CheckScope> {
   if (input === undefined) {
     return scope;
   }
-  const measured = await measureRepositoryTestShare(input);
-  // Like the check's, the share scans the whole repository; only the target's failures concern it.
-  const errors = measured.errors.filter((error) => isInTargetError(error));
-  const { share } = measured;
+  const { share, errors: shareErrors } = await measureRepositoryTestShare(input);
+  // Like the check's, the share scans the whole repository, so it meets the failures the check
+  // already reported; only the target's concern it.
+  const errors = [...new Set([...scope.errors, ...shareErrors.filter((error) => isInTargetError(error))])];
   // A share of partial totals would name tests to delete that the whole project admits.
-  const complete = !missesProductionCode && errors.length === 0;
-  // The share measures the production files the check already reported, once more.
-  return { ...scope, testShare: complete ? share : undefined, errors: [...new Set([...scope.errors, ...errors])] };
+  return { ...scope, testShare: errors.length === 0 ? share : undefined, errors };
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
