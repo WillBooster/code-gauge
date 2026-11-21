@@ -112,7 +112,7 @@ like the ranking command. The thresholds:
 `maxTestNcssPercent` holds the test code of the checked directory in proportion to its production
 code: the NCSS of its test files (the files a check of the whole repository skips as tests, so a
 targeted test directory holds only tests) against that of the other files the check measures. A
-test file that cannot be read leaves the check incomplete, like a file the check covers. It is one
+test file that cannot be read leaves the check incomplete, like a file the check covers, and no share is reported while any file under the target is unmeasured. It is one
 violation of the whole directory, of kind `project`, and none when the target is a file, the
 directory holds no production code, or the check runs outside a git repository, where there is no
 root to tell test directories by. With `--base`, it is reported only

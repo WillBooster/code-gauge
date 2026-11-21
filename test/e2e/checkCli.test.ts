@@ -1308,6 +1308,17 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', addedTestNcss: 1 }]);
   });
 
+  it.skipIf(runAsRoot)('reports no share while a production file cannot be read', () => {
+    writeSource('test/calc.test.ts', testCode(10));
+    chmodSync(path.join(repoDir, 'src', 'legacy.ts'), 0o000);
+    try {
+      expect(runCheck([]).status).toBe(2);
+      expect(projectViolations([])).toEqual([]);
+    } finally {
+      chmodSync(path.join(repoDir, 'src', 'legacy.ts'), 0o644);
+    }
+  });
+
   it.skipIf(runAsRoot)('leaves the check incomplete when a test file cannot be read', () => {
     writeSource('test/calc.test.ts', testCode(60));
     chmodSync(path.join(repoDir, 'test', 'calc.test.ts'), 0o000);

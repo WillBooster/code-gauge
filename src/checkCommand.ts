@@ -252,8 +252,9 @@ async function scanRepository(
     isWithinDirectory(path.join(repoRoot, relativePath), canonicalTarget);
   const measuredFiles = scan.files.map(({ file, metrics }) => ({ file: formatPath(file, repoRoot), metrics }));
   let files = measuredFiles.filter(({ file }) => isInTarget(file));
-  let isCovered = (error: string): boolean =>
+  const isInTargetError = (error: string): boolean =>
     canonicalTarget === repoRoot || error.startsWith(`${targetPath}/`) || error.startsWith(`${targetPath}:`);
+  let isCovered = isInTargetError;
   const change = base === undefined ? undefined : await resolveChange(repoRoot, base, options, unlistedTarget);
   if (change !== undefined) {
     const changesInTarget = change.changedFiles.filter(
@@ -274,7 +275,8 @@ async function scanRepository(
     scope,
     measuresTestShare
       ? { repoRoot, repositoryFiles, targetPath: targetDirectory, exclusion, options, measuredFiles, base: change }
-      : undefined
+      : undefined,
+    scan.errors.some((error) => isInTargetError(error))
   );
 }
 
@@ -298,13 +300,19 @@ async function resolveChange(
   };
 }
 
-/** Adds the test share, and the test files that could not be measured for it, to a scope. */
-async function addTestShare(scope: CheckScope, input: RepositoryTestShareInput | undefined): Promise<CheckScope> {
+/** Adds the test share, when every file under the target was measured, and the test files that could not be, to a scope. */
+async function addTestShare(
+  scope: CheckScope,
+  input: RepositoryTestShareInput | undefined,
+  missesProductionCode: boolean
+): Promise<CheckScope> {
   if (input === undefined) {
     return scope;
   }
   const { share, errors } = await measureRepositoryTestShare(input);
-  return { ...scope, testShare: share, errors: [...scope.errors, ...errors] };
+  // A share of partial totals would name tests to delete that the whole project admits.
+  const complete = !missesProductionCode && errors.length === 0;
+  return { ...scope, testShare: complete ? share : undefined, errors: [...scope.errors, ...errors] };
 }
 
 /** Only a failure on a file the check covers leaves it incomplete; the others are warnings. */
