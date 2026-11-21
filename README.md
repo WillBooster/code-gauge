@@ -362,8 +362,9 @@ touches.
     kind `file`, the first and last line of the file; for kind `project`, only `file`, the checked
     directory relative to the repository root (`.` for the root);
   - `testNcss`, `productionNcss`, and `excessTestNcss`: only for kind `project`; the NCSS of the
-    test files and of the other files, and the test NCSS above the limit (what a whole project
-    deletes or merges to clear the violation);
+    test files and of the other files, and the test NCSS above the strictest active limit (what a
+    whole project deletes or merges to clear every level, which can exceed what clears the level
+    reported);
   - `name`: only for kind `function`; a member's name follows the type, module, or object it
     belongs to (`Rules.decide`), and a function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
