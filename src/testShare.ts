@@ -5,7 +5,7 @@ import path from 'node:path';
 import { getErrorMessage, mapConcurrently } from '@willbooster/shared-lib';
 
 import type { Exclusion } from './exclusion.js';
-import { type ChangedFile, listRegularFilesAt, readFileAt } from './git.js';
+import { type ChangedFile, readRegularFilesAt } from './git.js';
 import { measureCode } from './metrics.js';
 import { getLanguage, isScannedBelow, isTestFileBelow, type ScanOptions } from './scan.js';
 import type { TestShare } from './thresholds.js';
@@ -105,23 +105,21 @@ async function measureAddedTestNcss(
       : []
   );
   const baseExclusion = await loadExclusion(basePaths);
-  const baseTestPaths = await listRegularFilesAt(
+  const baseContents = await readRegularFilesAt(
     repoRoot,
     mergeBase,
     basePaths.filter((basePath) => isTestIn(baseExclusion, basePath))
   );
-  const changes = await mapConcurrently(changedFiles, os.availableParallelism() * 2, async (changed) => {
+  const changes = changedFiles.map((changed) => {
     const headNcss = changed.status === 'deleted' ? 0 : (testNcssByPath.get(changed.headPath) ?? 0);
-    const { basePath } = changed;
-    if (basePath === undefined || !baseTestPaths.has(basePath)) {
+    const baseCode = changed.basePath === undefined ? undefined : baseContents.get(changed.basePath);
+    if (changed.basePath === undefined || baseCode === undefined) {
       return headNcss;
     }
     try {
-      return (
-        headNcss - measureTestCode(await readFileAt(repoRoot, mergeBase, basePath), basePath, input, baseExclusion)
-      );
+      return headNcss - measureTestCode(baseCode, changed.basePath, input, baseExclusion);
     } catch (error) {
-      errors.push(`${basePath} at ${mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`);
+      errors.push(`${changed.basePath} at ${mergeBase.slice(0, 12)}: ${getErrorMessage(error)}`);
       return headNcss;
     }
   });
