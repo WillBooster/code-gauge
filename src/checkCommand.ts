@@ -333,7 +333,7 @@ async function resolveChange(repoRoot: string, base: string, unlistedTarget: str
 
 /**
  * Whether the change leaves a test it touched under the target (added, modified, renamed to, or
- * untracked): a change that only deletes or moves tests out cannot reduce the share by deleting more.
+ * untracked), so a change that only deletes or moves tests out is not asked to prune further.
  */
 function touchesTests(change: Change, targetDirectory: string, options: ResolvedOptions): boolean {
   return change.changedFiles.some(
