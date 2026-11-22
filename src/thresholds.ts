@@ -1,3 +1,4 @@
+import { matchesGlobs } from './exclusion.js';
 import type { CodeMetrics, FunctionMetrics } from './types.js';
 
 /** The severities of a violation, mildest first. */
@@ -5,12 +6,11 @@ export const levels = ['warning', 'error'] as const;
 export type Level = (typeof levels)[number];
 
 /**
- * One threshold of `code-gauge check`. Its `key` is the config setting, the per-language override
- * setting, and (kebab-cased after a level prefix) the command-line options, so a new entry here is
- * all a new thresholded metric needs.
+ * One threshold of `code-gauge check`. Its `metric` names the rule in the config, the command line,
+ * the report, and allow directives, so a new entry here is all a new thresholded metric needs.
  */
 export interface Threshold<Subject = never> {
-  key: string;
+  metric: string;
   /** How the report names the measured value. */
   label: string;
   /** `Infinity` leaves the level unchecked unless the config or the command line sets a limit. */
@@ -25,13 +25,13 @@ export interface Threshold<Subject = never> {
   includesNestedFunctions?: true;
 }
 
-/** Limits by threshold key; `Infinity` disables a limit. */
+/** Limits by metric; `Infinity` disables a limit. */
 export type Limits = Readonly<Record<string, number>>;
 export type LimitsByLevel = Readonly<Record<Level, Limits>>;
 
 export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
   {
-    key: 'maxFunctionCognitiveComplexity',
+    metric: 'functionCognitiveComplexity',
     label: 'cognitive complexity',
     defaultLimits: { warning: 15, error: 30 },
     hint: 'flatten nested branching with early returns and extract nested blocks into named functions.',
@@ -39,14 +39,14 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     includesNestedFunctions: true,
   },
   {
-    key: 'maxFunctionCyclomaticComplexity',
+    metric: 'functionCyclomaticComplexity',
     label: 'cyclomatic complexity',
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'the function has too many independent paths; split it by decision or replace condition chains with a lookup table.',
     measure: (fn) => fn.cyclomaticComplexity,
   },
   {
-    key: 'maxFunctionNcss',
+    metric: 'functionNcss',
     label: 'NCSS',
     defaultLimits: { warning: 30, error: 60 },
     hint: 'move each group of statements that forms one step into a named function.',
@@ -54,21 +54,21 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     includesNestedFunctions: true,
   },
   {
-    key: 'maxFunctionNestingDepth',
+    metric: 'functionNestingDepth',
     label: 'nesting depth',
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'replace nested conditions with guard clauses or move inner blocks into functions.',
     measure: (fn) => fn.nestingDepth,
   },
   {
-    key: 'maxFunctionParameterCount',
+    metric: 'functionParameterCount',
     label: 'parameters',
     defaultLimits: { warning: 6, error: Infinity },
     hint: 'group related parameters into one object or split the function.',
     measure: (fn) => fn.parameterCount,
   },
   {
-    key: 'maxFunctionHalsteadVolume',
+    metric: 'functionHalsteadVolume',
     label: 'Halstead volume',
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'the function holds too many operators and operands; move cohesive parts into helper functions.',
@@ -76,21 +76,21 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
     includesNestedFunctions: true,
   },
   {
-    key: 'maxFunctionHalsteadDifficulty',
+    metric: 'functionHalsteadDifficulty',
     label: 'Halstead difficulty',
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'the function reuses the same operands many times; split it so each part handles fewer values.',
     measure: (fn) => fn.halstead.difficulty,
   },
   {
-    key: 'maxFunctionHalsteadEffort',
+    metric: 'functionHalsteadEffort',
     label: 'Halstead effort',
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'the function is both large and dense; split it into smaller functions with fewer values each.',
     measure: (fn) => fn.halstead.effort,
   },
   {
-    key: 'maxFunctionDepDegree',
+    metric: 'functionDepDegree',
     label: 'DepDegree',
     defaultLimits: { warning: Infinity, error: Infinity },
     hint: 'too many values flow between the variables of the function; split it so each part works on fewer variables.',
@@ -101,7 +101,7 @@ export const functionThresholds: readonly Threshold<FunctionMetrics>[] = [
 
 export const fileThresholds: readonly Threshold<CodeMetrics>[] = [
   {
-    key: 'maxFileNcss',
+    metric: 'fileNcss',
     label: 'file NCSS',
     defaultLimits: { warning: 400, error: 1000 },
     hint: 'split the file into modules with one responsibility each, for example by moving a class or the helpers that serve only one function into a file of their own.',
@@ -116,7 +116,7 @@ export const fileThresholds: readonly Threshold<CodeMetrics>[] = [
  * between the matched parts of an edited copy and those a near-miss copy adds or rewrites.
  */
 export const duplicationThreshold: Threshold<{ duplicatedLineCount: number }> = {
-  key: 'minDuplicateLines',
+  metric: 'duplicateLines',
   label: 'duplicated lines',
   defaultLimits: { warning: 15, error: Infinity },
   hint: 'extract the repeated code into one shared function or module and call it from every location.',
@@ -134,7 +134,7 @@ export interface TestShare {
  * checked project, so it has no per-language override.
  */
 export const testShareThreshold: Threshold<TestShare> = {
-  key: 'maxTestNcssPercent',
+  metric: 'testNcssPercent',
   label: 'test NCSS percent',
   defaultLimits: { warning: Infinity, error: 30 },
   hint: 'delete or merge tests as the violation says, in the same change.',
@@ -148,38 +148,44 @@ export const thresholds: readonly Threshold[] = [
   testShareThreshold,
 ];
 
-/** The name a report gives a threshold's measured value: its key without the `max`/`min` prefix. */
-export function metricNameOf(threshold: Threshold): string {
-  const name = threshold.key.slice(3);
-  return name.charAt(0).toLowerCase() + name.slice(1);
+/** A rule as written in the config or on the command line: a limit per level, `Infinity` for `"off"`. */
+export type RuleLimits = Readonly<Partial<Record<Level, number>>>;
+export type Rules = Readonly<Record<string, RuleLimits>>;
+
+/** Rules that apply to the files matching any of the glob patterns, relative to `root`. */
+export interface RuleOverride {
+  files: readonly string[];
+  rules: Rules;
 }
 
-/** One level of the `thresholds` config section; a missing key falls back to the less specific layer. */
-export interface LevelThresholdsConfig {
-  limits: Limits;
-  /** Overrides for the files of one language, keyed by language name. */
-  languages: Readonly<Record<string, Limits>>;
+export interface RulesConfig {
+  rules: Rules;
+  overrides: readonly RuleOverride[];
+  /** The directory the override patterns are relative to. */
+  root: string;
 }
-
-export type ThresholdsConfig = Readonly<Partial<Record<Level, LevelThresholdsConfig>>>;
 
 /**
- * The limits of each level applying to files of each language, with precedence command-line
- * options > the config's per-language overrides > the config's limits > built-in defaults.
+ * The limits of each level applying to a file, with precedence command-line rules > the config's
+ * overrides matching the file, later ones first > the config's rules > built-in defaults. Without a
+ * file, the limits of the whole project, which overrides never touch.
  */
-export function resolveLimits(
-  cliLimits: LimitsByLevel,
-  config: ThresholdsConfig | undefined
-): (language: string) => LimitsByLevel {
-  const resolveLevel = (level: Level, language: string): Limits => {
-    const levelConfig = config?.[level];
-    return {
-      ...Object.fromEntries(thresholds.map(({ key, defaultLimits }) => [key, defaultLimits[level]])),
-      ...levelConfig?.limits,
-      // Object.hasOwn: a language named like an Object.prototype member must not read an inherited value.
-      ...(levelConfig && Object.hasOwn(levelConfig.languages, language) ? levelConfig.languages[language] : undefined),
-      ...cliLimits[level],
-    };
+export function resolveLimits(cliRules: Rules, config: RulesConfig): (file?: string) => LimitsByLevel {
+  return (file) => {
+    const matchingOverrides =
+      file === undefined ? [] : config.overrides.filter(({ files }) => matchesGlobs(config.root, file, files));
+    const layers = [config.rules, ...matchingOverrides.map(({ rules }) => rules), cliRules];
+    const resolveLevel = (level: Level): Limits =>
+      Object.fromEntries(
+        thresholds.map(({ metric, defaultLimits }) => {
+          let limit = defaultLimits[level];
+          for (const rules of layers) {
+            // Object.hasOwn: a metric named like an Object.prototype member must not read an inherited value.
+            limit = (Object.hasOwn(rules, metric) ? rules[metric]?.[level] : undefined) ?? limit;
+          }
+          return [metric, limit];
+        })
+      );
+    return { warning: resolveLevel('warning'), error: resolveLevel('error') };
   };
-  return (language) => ({ warning: resolveLevel('warning', language), error: resolveLevel('error', language) });
 }

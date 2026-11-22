@@ -47,15 +47,7 @@ import {
   type ProjectViolation,
   type Violation,
 } from './thresholdCheck.js';
-import {
-  levels,
-  type LimitsByLevel,
-  metricNameOf,
-  resolveLimits,
-  type TestShare,
-  testShareThreshold,
-  thresholds,
-} from './thresholds.js';
+import { levels, resolveLimits, type Rules, type TestShare, testShareThreshold, thresholds } from './thresholds.js';
 
 /** Raw options of the `check` subcommand; every field is undefined unless the flag was passed. */
 export interface CheckCliOptions extends CliOptions {
@@ -89,22 +81,23 @@ const maxListedPartners = 3;
  * under it since the merge-base with that ref. Exit codes: 0 neither error-level violations nor
  * directive problems, 1 either of them, 2 files the check covers could not be measured.
  */
-export async function runCheckCommand(
-  target: string,
-  cliOptions: CheckCliOptions,
-  cliLimits: LimitsByLevel
-): Promise<void> {
+export async function runCheckCommand(target: string, cliOptions: CheckCliOptions, cliRules: Rules): Promise<void> {
   try {
     const resolvedTarget = resolveTarget(target);
     const config = await loadConfig(cliOptions.config, await configSearchDirectory(resolvedTarget));
     const options = resolveOptions(cliOptions, config);
-    const limitsOf = resolveLimits(cliLimits, config.config.thresholds);
-    const projectLimits = limitsOf('');
+    const limitsOf = resolveLimits(cliRules, {
+      rules: config.config.rules ?? {},
+      overrides: config.config.overrides ?? [],
+      // Scanned paths are canonical, so override patterns must resolve against a canonical root.
+      root: await realpath(config.directory).catch(() => config.directory),
+    });
+    const projectLimits = limitsOf();
     const scope = await scanCheckScope(resolvedTarget, cliOptions.base, options, {
-      measuresTestShare: levels.some((level) => Number.isFinite(projectLimits[level][testShareThreshold.key])),
+      measuresTestShare: levels.some((level) => Number.isFinite(projectLimits[level][testShareThreshold.metric])),
     });
     const files = await attachAllowDirectives(scope.files, scope.root);
-    const codeResult = checkThresholds(files, scope.duplication, limitsOf);
+    const codeResult = checkThresholds(files, scope.duplication, (file) => limitsOf(path.join(scope.root, file)));
     const projectViolation = scope.testShare && checkTestShare(scope.testShare, scope.checkedDirectory, projectLimits);
     const result: ReportedResult = {
       ...codeResult,
@@ -558,7 +551,7 @@ function printTextReport(cliOptions: CheckCliOptions, scope: CheckScope, result:
   }
 
   const violatedMetrics = new Set(violations.flatMap(({ exceeded }) => exceeded.map(({ metric }) => metric)));
-  const violatedThresholds = thresholds.filter((threshold) => violatedMetrics.has(metricNameOf(threshold)));
+  const violatedThresholds = thresholds.filter((threshold) => violatedMetrics.has(threshold.metric));
   if (violatedThresholds.length > 0) {
     writeStdout('\nHow to fix:\n');
     for (const { label, hint } of violatedThresholds) {

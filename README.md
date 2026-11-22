@@ -96,22 +96,22 @@ cannot open, is not git-visible; git's warning about it is passed on as a warnin
 Outside a git repository it walks the target directory
 like the ranking command. The thresholds:
 
-| Config key                        | Violation                                                           | Warning | Error |
-| --------------------------------- | ------------------------------------------------------------------- | ------- | ----- |
-| `maxFunctionCognitiveComplexity`  | a function's cognitive complexity is above it                       | 15      | 30    |
-| `maxFunctionCyclomaticComplexity` | a function's cyclomatic complexity is above it                      | off     | off   |
-| `maxFunctionNcss`                 | a function's NCSS is above it                                       | 30      | 60    |
-| `maxFunctionNestingDepth`         | a function's nesting depth is above it                              | off     | off   |
-| `maxFunctionParameterCount`       | a function's parameter count is above it                            | 6       | off   |
-| `maxFunctionHalsteadVolume`       | a function's Halstead volume is above it                            | off     | off   |
-| `maxFunctionHalsteadDifficulty`   | a function's Halstead difficulty is above it                        | off     | off   |
-| `maxFunctionHalsteadEffort`       | a function's Halstead effort is above it                            | off     | off   |
-| `maxFunctionDepDegree`            | a function's DepDegree is above it                                  | off     | off   |
-| `maxFileNcss`                     | a file's NCSS is above it                                           | 400     | 1000  |
-| `minDuplicateLines`               | a duplicated block holds at least this many lines matched in a copy | 15      | off   |
-| `maxTestNcssPercent`              | the target's test NCSS, as a percentage of its other NCSS, is above | off     | 30    |
+| Rule (metric)                  | Violation                                                           | `warn` | `error` |
+| ------------------------------ | ------------------------------------------------------------------- | ------ | ------- |
+| `functionCognitiveComplexity`  | a function's cognitive complexity is above it                       | 15     | 30      |
+| `functionCyclomaticComplexity` | a function's cyclomatic complexity is above it                      | off    | off     |
+| `functionNcss`                 | a function's NCSS is above it                                       | 30     | 60      |
+| `functionNestingDepth`         | a function's nesting depth is above it                              | off    | off     |
+| `functionParameterCount`       | a function's parameter count is above it                            | 6      | off     |
+| `functionHalsteadVolume`       | a function's Halstead volume is above it                            | off    | off     |
+| `functionHalsteadDifficulty`   | a function's Halstead difficulty is above it                        | off    | off     |
+| `functionHalsteadEffort`       | a function's Halstead effort is above it                            | off    | off     |
+| `functionDepDegree`            | a function's DepDegree is above it                                  | off    | off     |
+| `fileNcss`                     | a file's NCSS is above it                                           | 400    | 1000    |
+| `duplicateLines`               | a duplicated block holds at least this many lines matched in a copy | 15     | off     |
+| `testNcssPercent`              | the target's test NCSS, as a percentage of its other NCSS, is above | off    | 30      |
 
-`maxTestNcssPercent` holds the test code of the checked directory in proportion to its production
+`testNcssPercent` holds the test code of the checked directory in proportion to its production
 code: the NCSS of its test files against that of the other files the check measures. A file counts
 when the check would take it with tests included, judged by its path below the target as the scan
 judges it (so `check vendor` counts the tests in `vendor`), and is a test by its whole repository
@@ -126,14 +126,15 @@ warning says so). With `--base`, it is reported only when the share exceeds its 
 change touches a test: git lists a path as changed since the merge-base or untracked, and the
 check's files still include it under the target as a test by its name. A change that
 touches no test, or only deletes or moves tests out, is never blamed for a share it did not raise;
-one that does is told to delete or merge tests so that it adds no test code. No directive allows it, and it has no per-language
-override: `null` in the config or `off` on the command line disables it.
+one that does is told to delete or merge tests so that it adds no test code. No directive allows it, and no override can change
+its limit: `"testNcssPercent": "off"` in the config's `rules` or `--error testNcssPercent=off`
+disables it.
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
 mark code to fix, and only errors fail the check (exit code 1).
 
-The defaults, except that of `maxTestNcssPercent`, come from the 45,123 functions the WillBooster organization wrote in its repositories
+The defaults, except that of `testNcssPercent`, come from the 45,123 functions the WillBooster organization wrote in its repositories
 (of 153,771 measured; copies of third-party projects and course material are left out), and from
 ratings of 225 of those functions, 47 of their files, and 60 of their duplicated blocks: a warning limit sits where most rated items were worth changing or borderline, an error
 limit where nearly all were worth changing. Cognitive complexity above 15 flags 3.1% of the
@@ -142,7 +143,7 @@ thresholds that are off, nesting depth flags no function that cognitive complexi
 cyclomatic complexity and Halstead difficulty flag functions rated like unflagged ones; Halstead
 volume, Halstead effort, and DepDegree are high mostly where a function is long or takes many
 parameters, which the limits above already flag.
-The `maxTestNcssPercent` default sits just below the median test share, in lines, of 50 of the
+The `testNcssPercent` default sits just below the median test share, in lines, of 50 of the
 organization's repositories; no ratings back it.
 [How the default thresholds were calibrated](docs/threshold-calibration.md) holds the corpus, the
 distributions per language, the ratings, and the reasoning per threshold.
@@ -161,15 +162,14 @@ is commented, and neither do the lines the copies do not share: those between th
 an edited copy, and those a block that resembles another as a whole (a near-miss clone, at least
 `minSimilarityPercent` similar) adds or rewrites. A line of such a block counts when its copies
 match more than half of the line's tokens between them, or when a part of the block matched exactly reaches it. Occurrences of at least the warning or the error
-`minDuplicateLines` that overlap in a file are reported as one block covering all of them, at the
+`duplicateLines` limit that overlap in a file are reported as one block covering all of them, at the
 level its duplicated lines reach, each line counted once; copies of each other that merely share a
 line (the branches of an `else if` chain) are reported as blocks of their own.
 
-Each limit is set in the `warning` or `error` part of the
-[`thresholds` config section](#configuration), where `null` disables it and `languages` overrides
-limits for the files of one language, or with the command-line option named after the level and
-the config key (`--warning-max-function-ncss 80`, `--error-min-duplicate-lines off`), where `off`
-disables it. The command line wins over the whole config file, per-language overrides included.
+Each limit is set by its metric in the config's [`rules`](#configuration), for the files matching
+glob patterns in its `overrides`, or with `--warn <metric>=<limit>` and `--error <metric>=<limit>`
+on the command line (repeatable, e.g. `--warn functionNcss=80 --error duplicateLines=off`), where
+`off` disables the limit. The command line wins over the whole config file, overrides included.
 
 With `--base <ref>`, the check covers only what the working tree changed since the merge-base of
 `<ref>` and `HEAD` (committed, staged, unstaged, and untracked changes; nothing is checked out):
@@ -184,7 +184,7 @@ With `--base <ref>`, the check covers only what the working tree changed since t
   a directive's line or the lines between it and its function (through the next code line for a
   directive attached to no function), or deletes a line holding one. Editing the function itself
   only touches the function;
-- the share of test code (`maxTestNcssPercent`), when the change touches a test. The share counts
+- the share of test code (`testNcssPercent`), when the change touches a test. The share counts
   every file under the target, so a file there that cannot be measured, changed or not, leaves the
   check incomplete.
 
@@ -239,7 +239,7 @@ Paths are relative to the repository root, or to the target directory outside a 
 | 2         | The check is incomplete: a file it covers could not be measured, or the arguments, config file, target, or base ref are invalid. |
 
 A file that cannot be measured causes exit code 2 only when the check covers it: a file under the
-target or, with `--base`, a changed file under the target. While `maxTestNcssPercent` applies, every
+target or, with `--base`, a changed file under the target. While `testNcssPercent` applies, every
 file under the target counts, changed or not, since the share counts all of them, and a path git
 lists but cannot reach counts as unmeasured rather than deleted. Other unmeasured files of the repository are warnings on stderr.
 
@@ -271,8 +271,8 @@ export function createClient(host, port, user, password, database, timeout, retr
 - `<metric>` is a metric name of a function, file, or duplication violation in the
   [JSON report](#json-report) (`functionCognitiveComplexity`, `duplicateLines`, ...), and the reason
   is required. `testNcssPercent` is not one: a directive naming it is an error, and the share of
-  test code is kept or turned off only by its limit: `null` in the [config](#configuration) or `off`
-  on the command line.
+  test code is kept or turned off only by its limit: `"off"` in the [config](#configuration)'s
+  `rules` or `--error testNcssPercent=off` on the command line.
 
 A directive allows warnings only: a value above an error limit is reported as usual, and is fixed
 or its limit changed in the [config](#configuration). A copy of a duplicated block is reported in
@@ -371,8 +371,8 @@ touches.
     reported);
   - `name`: only for kind `function`; a member's name follows the type, module, or object it
     belongs to (`Rules.decide`), and a function without a name is `<anonymous>`;
-  - `exceeded`: every violated threshold with its `metric` (the config key without its `max` or
-    `min` prefix, e.g. `functionNcss` for `maxFunctionNcss`), the `label` the text report prints
+  - `exceeded`: every violated threshold with its `metric` (the rule's name in the config and on
+    the command line, e.g. `functionNcss`), the `label` the text report prints
     for it, the measured `value`, the most severe
     `level` whose limit the value violates, and that `limit`. A value violates when it is above the
     limit; `duplicateLines`, the lines of the block matched in another copy, violates from the limit on;
@@ -399,44 +399,28 @@ with `--config`). The following config reproduces every built-in default:
 
 ```json
 {
+  "$schema": "./node_modules/code-gauge/schema.json",
   "duplication": {
     "minTokens": 40,
     "maxGapTokens": 30,
     "minSimilarityPercent": 70
   },
   "rank": { "top": 10 },
-  "thresholds": {
-    "warning": {
-      "maxFunctionCognitiveComplexity": 15,
-      "maxFunctionCyclomaticComplexity": null,
-      "maxFunctionNcss": 30,
-      "maxFunctionNestingDepth": null,
-      "maxFunctionParameterCount": 6,
-      "maxFunctionHalsteadVolume": null,
-      "maxFunctionHalsteadDifficulty": null,
-      "maxFunctionHalsteadEffort": null,
-      "maxFunctionDepDegree": null,
-      "maxFileNcss": 400,
-      "minDuplicateLines": 15,
-      "maxTestNcssPercent": null,
-      "languages": {}
-    },
-    "error": {
-      "maxFunctionCognitiveComplexity": 30,
-      "maxFunctionCyclomaticComplexity": null,
-      "maxFunctionNcss": 60,
-      "maxFunctionNestingDepth": null,
-      "maxFunctionParameterCount": null,
-      "maxFunctionHalsteadVolume": null,
-      "maxFunctionHalsteadDifficulty": null,
-      "maxFunctionHalsteadEffort": null,
-      "maxFunctionDepDegree": null,
-      "maxFileNcss": 1000,
-      "minDuplicateLines": null,
-      "maxTestNcssPercent": 30,
-      "languages": {}
-    }
+  "rules": {
+    "functionCognitiveComplexity": { "warn": 15, "error": 30 },
+    "functionCyclomaticComplexity": "off",
+    "functionNcss": { "warn": 30, "error": 60 },
+    "functionNestingDepth": "off",
+    "functionParameterCount": { "warn": 6, "error": "off" },
+    "functionHalsteadVolume": "off",
+    "functionHalsteadDifficulty": "off",
+    "functionHalsteadEffort": "off",
+    "functionDepDegree": "off",
+    "fileNcss": { "warn": 400, "error": 1000 },
+    "duplicateLines": { "warn": 15, "error": "off" },
+    "testNcssPercent": { "warn": "off", "error": 30 }
   },
+  "overrides": [],
   "exclude": [],
   "includeTests": false,
   "failOnError": false
@@ -445,25 +429,29 @@ with `--config`). The following config reproduces every built-in default:
 
 The command line wins over the config file, which wins over the defaults. Unknown settings are
 rejected so stale configuration fails loudly. `rank.top` and `failOnError` apply to the ranking
-command only.
+command only. `$schema` points editors to the [JSON Schema](schema.json) the package ships, which
+the CLI's own validation generates, for completion and checking as you type.
 
-`languages` in a level of `thresholds` maps a language name (`javascript`, `jsx`, `typescript`,
-`tsx`, `python`, `go`, `rust`, `java`, `ruby`, `c`, `cpp`, `csharp`, `kotlin`) to the limits that
-differ for its files, except `maxTestNcssPercent`, which applies to the whole checked directory; a
-limit it leaves out keeps the value set outside `languages`:
+`rules` maps a [metric](#threshold-check-code-gauge-check) to `"off"`, which disables it at both
+levels, or to an object with a `warn` and an `error` limit, each a non-negative number or `"off"`.
+A metric or a level it leaves out keeps its default, and `0` is a limit like any other number.
+Nothing else turns a limit off: `null`, `false`, and other values are rejected.
+
+`overrides` sets rules for the files matching any of its `files` glob patterns, relative to the
+config file's directory; when several entries match a file, the later one wins for each metric it
+sets. `testNcssPercent` is measured for the whole checked directory, so it cannot be set in an
+override:
 
 ```json
 {
-  "thresholds": {
-    "warning": {
-      "maxFunctionNcss": 30,
-      "maxFunctionParameterCount": 5,
-      "languages": {
-        "tsx": { "maxFunctionNcss": 50 },
-        "python": { "maxFunctionParameterCount": null }
-      }
-    }
-  }
+  "rules": {
+    "functionNcss": { "warn": 30 },
+    "functionParameterCount": { "warn": 5 }
+  },
+  "overrides": [
+    { "files": ["**/*.tsx"], "rules": { "functionNcss": { "warn": 50 } } },
+    { "files": ["scripts/**", "**/*.py"], "rules": { "functionParameterCount": "off" } }
+  ]
 }
 ```
 

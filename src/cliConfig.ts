@@ -1,20 +1,12 @@
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
-import { getErrorMessage, isRecord } from '@willbooster/shared-lib';
+import { getErrorMessage } from '@willbooster/shared-lib';
+import { z } from 'zod';
 
 import { defaultDuplicationOptions } from './duplication.js';
 import type { ExcludePatterns } from './exclusion.js';
-import { supportedLanguages } from './languages.js';
-import {
-  type Level,
-  levels,
-  type LevelThresholdsConfig,
-  type Limits,
-  testShareThreshold,
-  thresholds,
-  type ThresholdsConfig,
-} from './thresholds.js';
+import { type RuleOverride, type Rules, testShareThreshold, thresholds } from './thresholds.js';
 import type { DuplicationOptions } from './types.js';
 
 export const configFileName = 'code-gauge.config.json';
@@ -26,8 +18,10 @@ export interface CodeGaugeConfig {
   duplication?: DuplicationOptions;
   /** Refactoring-candidate ranking settings. */
   rank?: { top?: number };
-  /** Limits of `code-gauge check`. */
-  thresholds?: ThresholdsConfig;
+  /** Limits of `code-gauge check` by metric. */
+  rules?: Rules;
+  /** Rules for the files matching glob patterns relative to the config file's directory; later entries win. */
+  overrides?: RuleOverride[];
   /** Glob patterns, relative to the config file's directory, of files left out of every command. */
   exclude?: string[];
   includeTests?: boolean;
@@ -139,190 +133,136 @@ async function fileExists(file: string): Promise<boolean> {
   }
 }
 
-function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
-  if (!isRecord(value)) {
-    throw new Error(`Config file "${configFile}" must contain a JSON object.`);
+/** A limit as written: a non-negative number, or `"off"` to disable it. */
+const limitMessage = 'must be a non-negative number or "off"';
+const limitSchema = z.union(
+  [z.literal('off'), z.number({ error: limitMessage }).nonnegative({ error: limitMessage })],
+  {
+    error: limitMessage,
   }
+);
 
-  const knownKeys = new Set(['duplication', 'rank', 'thresholds', 'exclude', 'includeTests', 'failOnError']);
-  for (const key of Object.keys(value)) {
-    if (!knownKeys.has(key)) {
-      throw new Error(`Config file "${configFile}": unknown setting "${key}" (expected ${[...knownKeys].join(', ')}).`);
-    }
-  }
-  const config: CodeGaugeConfig = {};
+/** A rule as written: `"off"` for every level, or a limit per level; an omitted level keeps its default. */
+const ruleSchema = z.union(
+  [z.literal('off'), z.strictObject({ warn: limitSchema.optional(), error: limitSchema.optional() })],
+  { error: 'must be "off" or an object whose "warn" and "error" limits are non-negative numbers or "off"' }
+);
 
-  if (value.duplication !== undefined) {
-    config.duplication = validateDuplicationObject(value.duplication, configFile);
-  }
+type WrittenRules = Record<string, z.infer<typeof ruleSchema> | undefined>;
 
-  if (value.rank !== undefined) {
-    config.rank = validateRankObject(value.rank, configFile);
-  }
-
-  if (value.thresholds !== undefined) {
-    config.thresholds = validateThresholdsObject(value.thresholds, configFile);
-  }
-
-  if (value.exclude !== undefined) {
-    config.exclude = validateExcludePatterns(value.exclude, configFile);
-  }
-
-  for (const key of ['includeTests', 'failOnError'] as const) {
-    if (value[key] !== undefined) {
-      config[key] = requireBoolean(value[key], key, configFile);
-    }
-  }
-
-  return config;
+function rulesSchema(metrics: readonly string[]): z.ZodType<WrittenRules> {
+  return z.strictObject(Object.fromEntries(metrics.map((metric) => [metric, ruleSchema.optional()])), {
+    error: 'must be an object',
+  });
 }
 
-function validateExcludePatterns(value: unknown, configFile: string): string[] {
-  if (!Array.isArray(value) || !value.every((pattern) => typeof pattern === 'string' && pattern !== '')) {
-    throw new TypeError(`Config file "${configFile}": "exclude" must be an array of non-empty glob patterns.`);
-  }
-  return value as string[];
+const fileMetrics = thresholds.filter((threshold) => threshold !== testShareThreshold).map(({ metric }) => metric);
+
+function integerSchema(minimum: number, maximum = Number.MAX_SAFE_INTEGER): z.ZodInt {
+  const error =
+    maximum < Number.MAX_SAFE_INTEGER
+      ? `must be between ${minimum} and ${maximum}`
+      : `must be a ${minimum > 0 ? 'positive' : 'non-negative'} integer`;
+  return z.int({ error }).min(minimum, { error }).max(maximum, { error });
 }
 
-function validateRankObject(value: unknown, configFile: string): { top?: number } {
-  if (!isRecord(value)) {
-    throw new Error(`Config file "${configFile}": "rank" must be an object.`);
-  }
-  const rank: { top?: number } = {};
-  for (const [key, setting] of Object.entries(value)) {
-    if (key !== 'top') {
-      throw new Error(`Config file "${configFile}": unknown setting "${key}" in "rank" (expected top).`);
-    }
-    rank.top = requirePositiveInteger(setting, 'rank.top', configFile);
-  }
-  return rank;
-}
+const globsMessage = 'must be an array of non-empty glob patterns';
+const globMessage = 'must be a non-empty glob pattern';
+const globsSchema = z.array(z.string({ error: globMessage }).min(1, { error: globMessage }), { error: globsMessage });
 
-function validateThresholdsObject(value: unknown, configFile: string): ThresholdsConfig {
-  return Object.fromEntries(
-    Object.entries(requireRecord(value, 'thresholds', configFile)).map(([level, levelThresholds]) => {
-      if (!levels.includes(level as Level)) {
-        throw new Error(
-          `Config file "${configFile}": unknown setting "${level}" in "thresholds" (expected ${levels.join(', ')}).`
-        );
-      }
-      return [level, validateLevelThresholds(levelThresholds, `thresholds.${level}`, configFile)];
-    })
-  );
-}
-
-function validateLevelThresholds(value: unknown, settingName: string, configFile: string): LevelThresholdsConfig {
-  const { languages, ...limits } = requireRecord(value, settingName, configFile);
-  const languagesName = `${settingName}.languages`;
-  return {
-    limits: validateLimits(limits, settingName, ['languages'], configFile),
-    languages: Object.fromEntries(
-      Object.entries(languages === undefined ? {} : requireRecord(languages, languagesName, configFile)).map(
-        ([language, overrides]) => {
-          if (!supportedLanguages.includes(language)) {
-            throw new Error(
-              `Config file "${configFile}": unknown language "${language}" in "${languagesName}" (expected ${supportedLanguages.join(', ')}).`
-            );
-          }
-          const languageName = `${languagesName}.${language}`;
-          return [
-            language,
-            validateLimits(requireRecord(overrides, languageName, configFile), languageName, [], configFile, false),
-          ];
-        }
+/** The configuration file's shape; the published JSON Schema is generated from it. */
+export const configSchema = z.strictObject(
+  {
+    $schema: z.string({ error: 'must be a string' }).optional(),
+    duplication: z
+      .strictObject(
+        {
+          minTokens: integerSchema(1).optional(),
+          // 0 is meaningful: it disables gapped-clone merging.
+          maxGapTokens: integerSchema(0).optional(),
+          minSimilarityPercent: integerSchema(1, 100).optional(),
+        },
+        { error: 'must be an object' }
       )
-    ),
+      .optional(),
+    rank: z.strictObject({ top: integerSchema(1).optional() }, { error: 'must be an object' }).optional(),
+    rules: rulesSchema(thresholds.map(({ metric }) => metric)).optional(),
+    // The share of test code is measured for the whole project, so no file pattern can change its limit.
+    overrides: z
+      .array(
+        z.strictObject(
+          {
+            files: globsSchema.min(1, { error: globsMessage }),
+            rules: rulesSchema(fileMetrics),
+          },
+          { error: 'must be an object with "files" and "rules"' }
+        ),
+        { error: 'must be an array' }
+      )
+      .optional(),
+    exclude: globsSchema.optional(),
+    includeTests: z.boolean({ error: 'must be a boolean' }).optional(),
+    failOnError: z.boolean({ error: 'must be a boolean' }).optional(),
+  },
+  { error: 'must contain a JSON object' }
+);
+
+/** Settings of earlier releases, which name the setting that replaced each of them. */
+const replacedSettings: Readonly<Record<string, string>> = {
+  thresholds: '"rules" (and "overrides" for file patterns)',
+};
+
+function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
+  const result = configSchema.safeParse(value);
+  if (!result.success) {
+    throw new Error(`Config file "${configFile}": ${describeIssue(result.error.issues[0] as z.core.$ZodIssue)}`);
+  }
+  const { rules, overrides, ...rest } = result.data;
+  const { $schema: _schema, ...config } = rest;
+  return {
+    ...config,
+    ...(rules && { rules: toRules(rules) }),
+    ...(overrides && {
+      overrides: overrides.map((override) => ({ files: override.files, rules: toRules(override.rules) })),
+    }),
   };
 }
 
-/** Limits as written in the config file, where `null` disables one. */
-function validateLimits(
-  value: Record<string, unknown>,
-  settingName: string,
-  otherKeys: string[],
-  configFile: string,
-  includesProjectLimits = true
-): Limits {
-  const knownKeys = thresholds
-    .filter((threshold) => includesProjectLimits || threshold !== testShareThreshold)
-    .map(({ key }) => key);
+function describeIssue(issue: z.core.$ZodIssue): string {
+  const location = issue.path.length === 0 ? 'the config' : `"${issue.path.join('.')}"`;
+  if (issue.code === 'unrecognized_keys') {
+    const [key] = issue.keys;
+    const replacement = issue.path.length === 0 && key ? replacedSettings[key] : undefined;
+    return replacement
+      ? `"${key}" is no longer supported; use ${replacement}.`
+      : `unknown setting "${key}" in ${location}.`;
+  }
+  return issue.path.length === 0 ? `the file ${issue.message}.` : `${location} ${issue.message}.`;
+}
+
+/** Rules with `"off"` turned into an `Infinity` limit for every level, and level names as reported. */
+function toRules(rules: WrittenRules): Rules {
   return Object.fromEntries(
-    Object.entries(value).map(([key, limit]) => {
-      if (!knownKeys.includes(key)) {
-        throw new Error(
-          `Config file "${configFile}": unknown setting "${key}" in "${settingName}" (expected ${[...knownKeys, ...otherKeys].join(', ')}).`
-        );
+    Object.entries(rules).flatMap(([metric, rule]) => {
+      if (rule === undefined) {
+        return [];
       }
-      if (limit !== null && (typeof limit !== 'number' || !Number.isFinite(limit) || limit < 0)) {
-        throw new Error(`Config file "${configFile}": "${settingName}.${key}" must be a non-negative number or null.`);
+      if (rule === 'off') {
+        return [[metric, { warning: Infinity, error: Infinity }]];
       }
-      return [key, limit ?? Infinity];
+      return [
+        [
+          metric,
+          {
+            ...(rule.warn !== undefined && { warning: toLimit(rule.warn) }),
+            ...(rule.error !== undefined && { error: toLimit(rule.error) }),
+          },
+        ],
+      ];
     })
   );
 }
 
-function requireRecord(value: unknown, settingName: string, configFile: string): Record<string, unknown> {
-  if (!isRecord(value)) {
-    throw new Error(`Config file "${configFile}": "${settingName}" must be an object.`);
-  }
-  return value;
-}
-
-function validateDuplicationObject(value: unknown, configFile: string): DuplicationOptions {
-  if (!isRecord(value)) {
-    throw new Error(`Config file "${configFile}": "duplication" must be an object.`);
-  }
-  const duplication: DuplicationOptions = {};
-  for (const [key, setting] of Object.entries(value)) {
-    if (key === 'minTokens') {
-      duplication.minTokens = requirePositiveInteger(setting, 'duplication.minTokens', configFile);
-    } else if (key === 'maxGapTokens') {
-      // 0 is meaningful: it disables gapped-clone merging.
-      duplication.maxGapTokens = requireNonNegativeInteger(setting, 'duplication.maxGapTokens', configFile);
-    } else if (key === 'minSimilarityPercent') {
-      const parsed = requirePositiveInteger(setting, 'duplication.minSimilarityPercent', configFile);
-      if (parsed > 100) {
-        throw new Error(`Config file "${configFile}": "duplication.minSimilarityPercent" must be between 1 and 100.`);
-      }
-      duplication.minSimilarityPercent = parsed;
-    } else {
-      throw new Error(
-        `Config file "${configFile}": unknown setting "${key}" in "duplication" (expected minTokens, maxGapTokens, or minSimilarityPercent).`
-      );
-    }
-  }
-  return duplication;
-}
-
-function requireNonNegativeInteger(value: unknown, key: string, configFile: string): number {
-  return requireNumber(value, key, configFile, Number.isSafeInteger, 'a non-negative integer');
-}
-
-function requirePositiveInteger(value: unknown, key: string, configFile: string): number {
-  const parsed = requireNumber(value, key, configFile, Number.isSafeInteger, 'a positive integer');
-  if (parsed < 1) {
-    throw new Error(`Config file "${configFile}": "${key}" must be a positive integer.`);
-  }
-  return parsed;
-}
-
-/** Shared core of the numeric validators: the right kind of number, and never negative. */
-function requireNumber(
-  value: unknown,
-  key: string,
-  configFile: string,
-  isValidKind: (value: unknown) => boolean,
-  description: string
-): number {
-  if (typeof value !== 'number' || !isValidKind(value) || value < 0) {
-    throw new Error(`Config file "${configFile}": "${key}" must be ${description}.`);
-  }
-  return value;
-}
-
-function requireBoolean(value: unknown, key: string, configFile: string): boolean {
-  if (typeof value !== 'boolean') {
-    throw new TypeError(`Config file "${configFile}": "${key}" must be a boolean.`);
-  }
-  return value;
+function toLimit(limit: 'off' | number): number {
+  return limit === 'off' ? Infinity : limit;
 }

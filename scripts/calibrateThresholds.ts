@@ -13,13 +13,7 @@ import { scanCheckScope } from '../src/checkCommand.js';
 import { loadConfig, resolveOptions } from '../src/cliConfig.js';
 import { configSearchDirectory, resolveTarget } from '../src/scan.js';
 import { checkThresholds } from '../src/thresholdCheck.js';
-import {
-  duplicationThreshold,
-  fileThresholds,
-  functionThresholds,
-  metricNameOf,
-  thresholds,
-} from '../src/thresholds.js';
+import { duplicationThreshold, fileThresholds, functionThresholds, thresholds } from '../src/thresholds.js';
 
 interface Row {
   kind: 'function' | 'file' | 'duplication';
@@ -28,7 +22,7 @@ interface Row {
   file: string;
   startLine: number;
   endLine: number;
-  /** For a duplicated block: the `minDuplicateLines` limit it was reported at. */
+  /** For a duplicated block: the `duplicateLines` limit it was reported at. */
   limit?: number;
   /** The other copies of a duplicated block, as `file:startLine-endLine`. */
   partners?: string[];
@@ -42,7 +36,7 @@ const quantiles = [0.5, 0.75, 0.9, 0.95, 0.97, 0.98, 0.99, 0.995, 0.999];
  * are not those of another limit filtered by length; each limit is checked on its own.
  */
 const duplicateLineLimits = [5, 10, 15, 20, 30, 50];
-const noLimits = Object.fromEntries(thresholds.map(({ key }) => [key, Infinity]));
+const noLimits = Object.fromEntries(thresholds.map(({ metric }) => [metric, Infinity]));
 
 const { rowsFile, projectDirectories } = parseArguments(process.argv.slice(2));
 const rows: Row[] = [];
@@ -112,7 +106,7 @@ async function measureProject(projectDirectory: string): Promise<Row[] | undefin
     }
   }
   for (const limit of duplicateLineLimits) {
-    const limits = { warning: { ...noLimits, [duplicationThreshold.key]: limit }, error: noLimits };
+    const limits = { warning: { ...noLimits, [duplicationThreshold.metric]: limit }, error: noLimits };
     const { violations } = checkThresholds(scope.files, scope.duplication, () => limits);
     for (const { file, startLine, endLine, exceeded, partners } of violations) {
       projectRows.push({
@@ -132,12 +126,10 @@ async function measureProject(projectDirectory: string): Promise<Row[] | undefin
 }
 
 function measureAll<Subject>(
-  thresholds: readonly { key: string; measure: (subject: Subject) => number }[],
+  thresholds: readonly { metric: string; measure: (subject: Subject) => number }[],
   subject: Subject
 ): Record<string, number> {
-  return Object.fromEntries(
-    thresholds.map((threshold) => [metricNameOf(threshold as never), threshold.measure(subject)])
-  );
+  return Object.fromEntries(thresholds.map((threshold) => [threshold.metric, threshold.measure(subject)]));
 }
 
 function printTables(allRows: readonly Row[], projectCount: number): void {
@@ -154,7 +146,7 @@ function printTables(allRows: readonly Row[], projectCount: number): void {
   const thresholdsByKind = { function: functionThresholds, file: fileThresholds };
   for (const [kind, thresholds] of Object.entries(thresholdsByKind)) {
     for (const threshold of thresholds) {
-      const metric = metricNameOf(threshold as never);
+      const metric = threshold.metric;
       console.info(`### ${threshold.label} (${kind})\n`);
       console.info(`| Language | Count | ${quantiles.map((quantile) => `p${quantile * 100}`).join(' | ')} | Max |`);
       console.info(`| --- | ---: | ${quantiles.map(() => '---:').join(' | ')} | ---: |`);
