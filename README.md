@@ -431,7 +431,10 @@ The command line wins over the config file, which wins over the defaults. Unknow
 rejected so stale configuration fails loudly. `rank.top` and `failOnError` apply to the ranking
 command only. `$schema` points editors to the JSON Schema the package ships at
 `node_modules/code-gauge/schema.json`, generated from the CLI's own validation, for completion and
-checking as you type.
+checking as you type. The path is relative to the config file, so the example assumes code-gauge is
+installed as a dependency in the config's directory; a config elsewhere names the path to that
+`node_modules` (`../../node_modules/code-gauge/schema.json`), and `$schema` can be left out, since
+the CLI validates the file either way.
 
 `rules` maps a [metric](#threshold-check-code-gauge-check) to `"off"`, which disables it at both
 levels, or to an object with a `warn` and an `error` limit, each a non-negative number or `"off"`.
