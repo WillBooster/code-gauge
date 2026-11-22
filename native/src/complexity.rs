@@ -724,7 +724,7 @@ fn unwrap_attributed_statement(node: Node<'_>) -> Node<'_> {
     }
     crate::util::named_children(node)
         .into_iter()
-        .find(|child| child.kind_name() != "attribute_declaration")
+        .find(|child| !child.is_extra() && child.kind_name() != "attribute_declaration")
         .unwrap_or(node)
 }
 

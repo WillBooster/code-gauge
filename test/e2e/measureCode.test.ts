@@ -219,13 +219,16 @@ describe('measureCode: cognitive complexity and nesting', () => {
     expect(cognitiveOf('function f(a,b){ if (a) { if (b) { return 1; } else { return 2; } } }')).toBe(4);
     expect(cognitiveOf('def f(a):\n    if a:\n        return 1\n    else:\n        return 2\n', 'python')).toBe(2);
     expect(cognitiveOf('def f(a)\n  if a\n    1\n  else\n    2\n  end\nend\n', 'ruby')).toBe(2);
-    // A C++ attribute on the if of an `else if` keeps it a flat continuation.
-    expect(
-      cognitiveOf(
-        'int f(int a, int b) { if (a) { return 1; } else [[likely]] if (b) { return 2; } else { return 3; } }',
-        'cpp'
-      )
-    ).toBe(3);
+    // A C++ attribute on the if of an `else if` keeps it a flat continuation, even with a comment
+    // between the attribute and the if.
+    for (const note of ['', '/* hint */ ', '// hint\n']) {
+      expect(
+        cognitiveOf(
+          `int f(int a, int b) { if (a) { return 1; } else [[likely]] ${note}if (b) { return 2; } else { return 3; } }`,
+          'cpp'
+        )
+      ).toBe(3);
+    }
   });
 
   it('measures C++ else branches spliced in by preprocessor conditionals like a plain chain', () => {
