@@ -99,10 +99,10 @@ export async function runCheckCommand(target: string, cliOptions: CheckCliOption
     });
     const files = await attachAllowDirectives(scope.files, scope.root);
     // Overrides match a file by its real path, as exclusion does, whichever alias the scan reached it by;
-    // without overrides the path cannot change a limit, so none is resolved.
+    // without overrides every file has the project's limits.
     const hasOverrides = (config.config.overrides ?? []).length > 0;
     const codeResult = checkThresholds(files, scope.duplication, (file) =>
-      limitsOf(hasOverrides ? realPathOf(path.join(scope.root, file)) : undefined)
+      hasOverrides ? limitsOf(realPathOf(path.join(scope.root, file))) : projectLimits
     );
     const projectViolation = scope.testShare && checkTestShare(scope.testShare, scope.checkedDirectory, projectLimits);
     const result: ReportedResult = {
