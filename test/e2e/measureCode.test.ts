@@ -303,6 +303,16 @@ describe('measureCode: NCSS (non-commenting source statements)', () => {
     expect(measureCode('export declare function f(): void;', { language: 'typescript' }).ncssCount).toBe(1);
   });
 
+  it('counts a TypeScript index signature declared in a class like a field', () => {
+    for (const language of ['typescript', 'tsx']) {
+      for (const member of ['[key: string]: number;', 'static readonly [key: string]: number;']) {
+        expect(measureCode(`class R { ${member} }`, { language }).ncssCount).toBe(
+          measureCode('class R { field: number; }', { language }).ncssCount
+        );
+      }
+    }
+  });
+
   it('counts Go type members only inside named type declarations', () => {
     const named = measureCode('package p\ntype T struct {\n\ta int\n\tb string\n}\n', { language: 'go' });
     // package (1) + type (1) + two fields.

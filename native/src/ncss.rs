@@ -203,10 +203,7 @@ fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     if node.kind_name() == "block" && parent_kind == Some("class_body") {
         return true;
     }
-    // TypeScript interface members (see INTERFACE_MEMBER_NODE_TYPES).
-    if INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind_name())
-        && parent_kind == Some("interface_body")
-    {
+    if is_typescript_member_signature(node, parent_kind) {
         return true;
     }
     // A braceless Rust match-arm body (`1 => foo()`) has no expression_statement wrapper; count the
@@ -270,6 +267,14 @@ fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
         return is_go_declared_type_body(parent, "interface_type");
     }
     false
+}
+
+/// TypeScript interface members (see INTERFACE_MEMBER_NODE_TYPES), and index signatures, the one
+/// such member a class body declares (`static [key: string]: number;`).
+fn is_typescript_member_signature(node: Node<'_>, parent_kind: Option<&str>) -> bool {
+    INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind_name())
+        && (parent_kind == Some("interface_body")
+            || (node.kind_name() == "index_signature" && parent_kind == Some("class_body")))
 }
 
 fn is_go_declared_type_body(type_node: Option<Node<'_>>, expected_kind: &str) -> bool {
