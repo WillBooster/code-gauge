@@ -142,7 +142,35 @@ fn is_statement_container(node: Node<'_>) -> bool {
             CSHARP_DECLARATION_LIST_PARENT_TYPES.contains(&parent.kind_name())
         });
     }
-    STATEMENT_CONTAINER_TYPES.contains(&node.kind_name())
+    STATEMENT_CONTAINER_TYPES.contains(&node.kind_name()) || is_split_try_statement(node)
+}
+
+/// A C++ `try_statement` whose braces sit in two preprocessor conditionals (`#if X` / `try {` /
+/// `#endif` ... `#if X` / `} catch (...) { ... }` / `#endif`) has no block: the guarded statements
+/// are its own children, between the two conditionals. Every other `try_statement` starts with
+/// the `try` keyword.
+fn is_split_try_statement(node: Node<'_>) -> bool {
+    node.kind_name() == "try_statement"
+        && node
+            .child(0)
+            .is_some_and(|first| first.kind_name().starts_with("preproc_"))
+}
+
+/// Whether `child` is one of the statements in the run of `container`. A Kotlin lambda's
+/// parameters sit beside its statements, and the conditionals that open and close a split
+/// `try_statement` stay out of its run like the braces and handlers of an ordinary one.
+fn is_run_statement(container: Node<'_>, child: Node<'_>, code: &Source<'_>) -> bool {
+    child.is_named()
+        && !is_tokenless(child, code)
+        && child.kind_name() != "lambda_parameters"
+        && !(container.kind_name() == "try_statement" && is_split_try_seam(child))
+}
+
+fn is_split_try_seam(child: Node<'_>) -> bool {
+    child.kind_name().starts_with("preproc_")
+        && all_children(child)
+            .iter()
+            .any(|part| matches!(part.kind_name(), "try" | "catch_clause"))
 }
 
 /// Identifier leaves anonymized by occurrence order so consistently renamed copies still match.
@@ -553,6 +581,8 @@ fn to_token_range_payload(range: &TokenRange) -> CrossFileTokenRange {
     }
 }
 
+// code-gauge-allow functionCognitiveComplexity -- one walk emits the tokens, block ranges, and statement runs, which index into one token stream
+// code-gauge-allow functionNcss -- same walk; splitting it would thread the three outputs through every helper
 fn collect_tokens<'a>(
     root: Node<'_>,
     code: &Source<'a>,
@@ -608,12 +638,7 @@ fn collect_tokens<'a>(
                     &mut child_statements,
                 );
                 token_span = widen_token_span(token_span, &child_range);
-                // A Kotlin lambda's parameters sit beside its statements.
-                if is_container
-                    && child.is_named()
-                    && !is_tokenless(child, code)
-                    && child.kind_name() != "lambda_parameters"
-                {
+                if is_container && is_run_statement(node, child, code) {
                     if child.kind_name() == "statement_list" {
                         statement_ranges.append(&mut child_statements);
                     } else {

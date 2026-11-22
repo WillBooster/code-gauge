@@ -72,6 +72,37 @@ describe('duplication: per-language clone detection', () => {
       expect(metrics.duplication.duplicationRatio).toBeLessThanOrEqual(1);
     });
   }
+
+  it('detects a statement run copied from a C++ try block split across preprocessor conditionals', () => {
+    const run = `    auto a = read(x);
+    auto b = scale(a, x);
+    a += clamp(b, x);
+    b = write(b, a);
+    a = finalize(b, x);
+    use(a + b);
+`;
+    const code = `int f(int x) {
+#if EXCEPTIONS
+  try {
+#endif
+${run}#if EXCEPTIONS
+  } catch (...) {
+    return -1;
+  }
+#endif
+  return 0;
+}
+int g(int x) {
+${run}  return x;
+}
+`;
+    const metrics = measureCode(code, {
+      language: 'cpp',
+      duplication: { minTokens: 40, maxGapTokens: 0, minSimilarityPercent: 100 },
+    });
+
+    expect(metrics.duplication.duplicateLineNumbers).toEqual([5, 6, 7, 8, 9, 10, 19, 20, 21, 22, 23, 24]);
+  });
 });
 
 const jsClonePair = readFileSync(path.join(fixturesDir, 'duplication', 'clones.js'), 'utf8');
