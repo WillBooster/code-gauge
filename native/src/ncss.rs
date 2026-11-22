@@ -25,9 +25,10 @@ static POSITIONAL_EXCLUSION_KINDS: KindSet = KindSet::new(&[
     "lambda_parameters",
 ]);
 
-/// TypeScript interface members count like Java interface members, but the same node types appear
+/// TypeScript member signatures count like Java interface members, but the same node types appear
 /// inside object-type annotations (`let x: { a: number }`), which are part of one declaration, so
-/// they only count directly under an interface body.
+/// they only count directly under an interface body, or under a class body for the kinds in
+/// CLASS_MEMBER_SIGNATURE_NODE_TYPES.
 const INTERFACE_MEMBER_NODE_TYPES: &[&str] = &[
     "property_signature",
     "method_signature",
@@ -35,6 +36,10 @@ const INTERFACE_MEMBER_NODE_TYPES: &[&str] = &[
     "construct_signature",
     "call_signature",
 ];
+
+/// The member signatures a TypeScript class body declares: method overload signatures and index
+/// signatures (`static [key: string]: number;`).
+const CLASS_MEMBER_SIGNATURE_NODE_TYPES: &[&str] = &["method_signature", "index_signature"];
 
 /// An if-branch wrapped in one of these already counts through ncss_node_types; a bare
 /// `alternative` (Java/Go put the else branch directly in the field) needs the extra `else` count.
@@ -214,10 +219,6 @@ fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     {
         return true;
     }
-    // A TypeScript class-body method overload signature declares a member like its interface twin.
-    if node.kind_name() == "method_signature" && parent_kind == Some("class_body") {
-        return true;
-    }
     // An ambient `declare namespace M { ... }` is a bare `internal_module`; the non-ambient
     // `namespace N { ... }` is wrapped in an `expression_statement`, which already counts.
     if node.kind_name() == "internal_module" && parent_kind != Some("expression_statement") {
@@ -269,12 +270,12 @@ fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     false
 }
 
-/// TypeScript interface members (see INTERFACE_MEMBER_NODE_TYPES), and index signatures, the one
-/// such member a class body declares (`static [key: string]: number;`).
 fn is_typescript_member_signature(node: Node<'_>, parent_kind: Option<&str>) -> bool {
-    INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind_name())
-        && (parent_kind == Some("interface_body")
-            || (node.kind_name() == "index_signature" && parent_kind == Some("class_body")))
+    match parent_kind {
+        Some("interface_body") => INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind_name()),
+        Some("class_body") => CLASS_MEMBER_SIGNATURE_NODE_TYPES.contains(&node.kind_name()),
+        _ => false,
+    }
 }
 
 fn is_go_declared_type_body(type_node: Option<Node<'_>>, expected_kind: &str) -> bool {
