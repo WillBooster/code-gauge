@@ -73,7 +73,7 @@ describe('duplication: per-language clone detection', () => {
     });
   }
 
-  it('detects a statement run copied from a C++ try block split across preprocessor conditionals', () => {
+  it('detects a statement run copied between C++ try blocks split across preprocessor conditionals, without their guards', () => {
     const run = `    auto a = read(x);
     auto b = scale(a, x);
     a += clamp(b, x);
@@ -81,27 +81,25 @@ describe('duplication: per-language clone detection', () => {
     a = finalize(b, x);
     use(a + b);
 `;
-    const code = `int f(int x) {
-#if EXCEPTIONS
+    const guarded = (name: string, guard: string, handler: string): string => `int ${name}(int x) {
+#if ${guard}
   try {
 #endif
-${run}#if EXCEPTIONS
+${run}#if ${guard}
   } catch (...) {
-    return -1;
+    ${handler}
   }
 #endif
   return 0;
 }
-int g(int x) {
-${run}  return x;
-}
 `;
+    const code = guarded('f', 'EXCEPTIONS', 'return -1;') + guarded('g', 'RECOVERY', 'recover(x);');
     const metrics = measureCode(code, {
       language: 'cpp',
       duplication: { minTokens: 40, maxGapTokens: 0, minSimilarityPercent: 100 },
     });
 
-    expect(metrics.duplication.duplicateLineNumbers).toEqual([5, 6, 7, 8, 9, 10, 19, 20, 21, 22, 23, 24]);
+    expect(metrics.duplication.duplicateLineNumbers).toEqual([5, 6, 7, 8, 9, 10, 22, 23, 24, 25, 26, 27]);
   });
 });
 
