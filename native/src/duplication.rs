@@ -400,8 +400,9 @@ pub struct TokenizedSource<'a> {
 struct SourceStructure {
     block_ranges: Vec<TokenRange>,
     /// The guarded statements of each C++ try block split across two preprocessor conditionals.
-    /// Such a block has no node, so near-miss comparison takes it from here; exact matching
-    /// already covers it through its statement run, which spans the same tokens.
+    /// Such a block has no node, so within-file matching and near-miss comparison take it from
+    /// here. Cross-file candidates leave it out: they are deduplicated by region, and the body's
+    /// full statement run, which spans the same tokens, is what a copy in another file carries.
     split_try_body_ranges: Vec<TokenRange>,
     container_statement_ranges: Vec<Vec<TokenRange>>,
 }
@@ -434,6 +435,12 @@ pub fn measure_duplication(
         &source.structure.block_ranges,
         settings.min_tokens,
     );
+    candidates.extend(collect_block_candidates(
+        tokens,
+        literal_count_prefix,
+        &source.structure.split_try_body_ranges,
+        settings.min_tokens,
+    ));
     candidates.extend(collect_sequence_candidates(
         tokens,
         literal_count_prefix,
