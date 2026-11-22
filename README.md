@@ -442,7 +442,8 @@ A metric or a level that no rule or override sets keeps its default, and `0` is 
 Nothing else turns a limit off: `null`, `false`, and other values are rejected.
 
 `overrides` sets rules for the files matching any of its `files` glob patterns, relative to the
-config file's directory and matched against a file's real path, as `exclude` patterns are. A pattern
+config file's directory and matched against a file's real path: a file reached through a symbolic
+link is matched by the link's target, even where a violation prints the link's path. A pattern
 reaches outside that directory only when it starts with `..` after any leading `./` (`../src/**`,
 `./../src/**`), so a brace pattern
 mixing a parent and a local alternative is written as two patterns. Patterns follow Node's glob
