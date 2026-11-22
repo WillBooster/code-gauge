@@ -98,9 +98,11 @@ export async function runCheckCommand(target: string, cliOptions: CheckCliOption
       measuresTestShare: levels.some((level) => Number.isFinite(projectLimits[level][testShareThreshold.metric])),
     });
     const files = await attachAllowDirectives(scope.files, scope.root);
-    // Overrides match a file by its real path, as exclusion does, whichever alias the scan reached it by.
+    // Overrides match a file by its real path, as exclusion does, whichever alias the scan reached it by;
+    // without overrides the path cannot change a limit, so none is resolved.
+    const hasOverrides = (config.config.overrides ?? []).length > 0;
     const codeResult = checkThresholds(files, scope.duplication, (file) =>
-      limitsOf(realPathOf(path.join(scope.root, file)))
+      limitsOf(hasOverrides ? realPathOf(path.join(scope.root, file)) : undefined)
     );
     const projectViolation = scope.testShare && checkTestShare(scope.testShare, scope.checkedDirectory, projectLimits);
     const result: ReportedResult = {
