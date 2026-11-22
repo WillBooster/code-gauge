@@ -278,13 +278,13 @@ of the 44 that exceed an error limit, 86% A and 98% A or B.
 A warning marks code worth simplifying when it is touched, so its limit sits where most rated
 functions were A or B. An error marks code to fix, so its limit sits where nearly all were A.
 
-| Threshold                        | Warning | Error | Functions, files, or blocks above it |
-| -------------------------------- | ------: | ----: | ------------------------------------ |
-| `maxFunctionCognitiveComplexity` |      15 |    30 | 3.09% and 1.01% of functions         |
-| `maxFunctionNcss`                |      30 |    60 | 2.62% and 0.59% of functions         |
-| `maxFunctionParameterCount`      |       6 |   off | 0.48% of functions                   |
-| `maxFileNcss`                    |     400 |  1000 | 0.89% and 0.11% of files             |
-| `minDuplicateLines`              |      15 |   off | 1,137 duplicated blocks              |
+| Rule                          | Warning | Error | Functions, files, or blocks above it |
+| ----------------------------- | ------: | ----: | ------------------------------------ |
+| `functionCognitiveComplexity` |      15 |    30 | 3.09% and 1.01% of functions         |
+| `functionNcss`                |      30 |    60 | 2.62% and 0.59% of functions         |
+| `functionParameterCount`      |       6 |   off | 0.48% of functions                   |
+| `fileNcss`                    |     400 |  1000 | 0.89% and 0.11% of files             |
+| `duplicateLines`              |      15 |   off | 1,137 duplicated blocks              |
 
 - **Cognitive complexity, 15 and 30.** The share of A rises steadily with the value and the
   conventional limit of 15 is where B takes over from C. Above 30, 27 of 30 functions were A;
@@ -320,7 +320,7 @@ With these limits, `check` reports 464 errors and 2,430 warnings in the calibrat
 
 ## Test share
 
-`maxTestNcssPercent` defaults to an error above 30, and to no warning. It was set in November 2026
+`testNcssPercent` defaults to an error above 30, and to no warning. It was set in November 2026
 from the 50 WillBooster repositories on a developer's machine whose production code exceeds 3,000
 lines: their test code, counted in lines rather than NCSS, was 33% of their production code at the
 median. The limit sits just below that median. Its effect in NCSS was not measured on the corpus,
@@ -391,8 +391,8 @@ functions together, are left out):
 Python functions exceed the parameter limit several times as often as the others, partly because the
 count includes `self`. No per-language default was set from this: outside TypeScript and TSX, one
 to four repositories hold most of a language's functions, so a difference between languages cannot
-be told from a difference between those repositories. `thresholds.<level>.languages` overrides a
-limit per language.
+be told from a difference between those repositories. The config's `overrides` set a limit for the
+files matching glob patterns, such as `**/*.py` for Python.
 
 ## Public part of the corpus
 
