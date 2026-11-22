@@ -131,7 +131,7 @@ export interface TestShare {
 
 /**
  * Test code is kept in proportion to the production code it checks. The limit applies to the whole
- * checked project, so it has no per-language override.
+ * checked project, so no override for file patterns can change it.
  */
 export const testShareThreshold: Threshold<TestShare> = {
   metric: 'testNcssPercent',
