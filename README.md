@@ -127,8 +127,8 @@ change touches a test: git lists a path as changed since the merge-base or untra
 check's files still include it under the target as a test by its name. A change that
 touches no test, or only deletes or moves tests out, is never blamed for a share it did not raise;
 one that does is told to delete or merge tests so that it adds no test code. No directive allows it, and no override can change
-its limit: `"testNcssPercent": "off"` in the config's `rules` or `--error testNcssPercent=off`
-disables it.
+its limit: `"testNcssPercent": "off"` in the config's `rules`, or `--warn testNcssPercent=off
+--error testNcssPercent=off` on the command line, disables it at both levels.
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
@@ -272,7 +272,7 @@ export function createClient(host, port, user, password, database, timeout, retr
   [JSON report](#json-report) (`functionCognitiveComplexity`, `duplicateLines`, ...), and the reason
   is required. `testNcssPercent` is not one: a directive naming it is an error, and the share of
   test code is kept or turned off only by its limit: `"off"` in the [config](#configuration)'s
-  `rules` or `--error testNcssPercent=off` on the command line.
+  `rules`, or `--warn testNcssPercent=off --error testNcssPercent=off` on the command line.
 
 A directive allows warnings only: a value above an error limit is reported as usual, and is fixed
 or its limit changed in the [config](#configuration). A copy of a duplicated block is reported in
