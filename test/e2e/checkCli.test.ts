@@ -734,6 +734,8 @@ describe('code-gauge check: thresholds', () => {
     expect(result.status).toBe(1);
     expect(result.stdout).toContain('error: src/calc.ts:1-7 total: NCSS 5 (max 4)\n');
     expect(result.stdout).not.toContain('calc.py');
+    // With the error level off, the later entry's warn "off" leaves nothing to report.
+    expect(hasViolations(['--error', 'functionNcss=off'])).toBe(false);
     // The command line wins over the overrides too.
     expect(runCheck(['--warn', 'functionNcss=3']).stdout).toContain('src/calc.py:1-5 total: NCSS 5 (max 3)\n');
   });
