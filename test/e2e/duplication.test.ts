@@ -81,11 +81,12 @@ describe('duplication: per-language clone detection', () => {
     a = finalize(b, x);
     use(a + b);
 `;
-    const guarded = (name: string, guard: string, tail: string): string => `int ${name}(int x) {
+    const guarded = (name: string, guard: string, middle: string): string => `int ${name}(int x) {
 #if ${guard}
   try {
 #endif
-${run}${tail}#if ${guard}
+${run}    ${middle}
+${run}#if ${guard}
   } catch (...) {
     return -1;
   }
@@ -93,13 +94,15 @@ ${run}${tail}#if ${guard}
   return 0;
 }
 `;
-    const code = guarded('f', 'EXCEPTIONS', '') + guarded('g', 'RECOVERY', '    recover(x);\n');
+    const code = guarded('f', 'EXCEPTIONS', 'x += 1;') + guarded('g', 'RECOVERY', 'recover(x);');
     const metrics = measureCode(code, {
       language: 'cpp',
       duplication: { minTokens: 40, maxGapTokens: 0, minSimilarityPercent: 100 },
     });
 
-    expect(metrics.duplication.duplicateLineNumbers).toEqual([5, 6, 7, 8, 9, 10, 22, 23, 24, 25, 26, 27]);
+    expect(metrics.duplication.duplicateLineNumbers).toEqual(
+      [5, 12, 29, 36].flatMap((start) => [start, start + 1, start + 2, start + 3, start + 4, start + 5])
+    );
   });
 });
 
