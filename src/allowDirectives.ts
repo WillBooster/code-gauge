@@ -1,4 +1,4 @@
-import { duplicationThreshold, fileThresholds, functionThresholds, metricNameOf } from './thresholds.js';
+import { duplicationThreshold, fileThresholds, functionThresholds } from './thresholds.js';
 import type { CodeMetrics, FunctionMetrics } from './types.js';
 
 /** A `code-gauge-allow` or `code-gauge-allow-file` comment: the warnings of a metric it allows. */
@@ -42,10 +42,8 @@ const syntax = `\`${allowKeyword} <metric> -- <reason>\``;
 const directivePattern = /^[\s!#*/]*(code-gauge-allow(?:-file)?)(?![\w-])(.*)$/u;
 const argumentsPattern = /^(\w+)\s+--\s+\S/u;
 
-const fileMetrics = new Set(fileThresholds.map((threshold) => metricNameOf(threshold)));
-const functionMetrics = new Set(
-  [...functionThresholds, duplicationThreshold].map((threshold) => metricNameOf(threshold))
-);
+const fileMetrics = new Set(fileThresholds.map((threshold) => threshold.metric));
+const functionMetrics = new Set([...functionThresholds, duplicationThreshold].map((threshold) => threshold.metric));
 
 /**
  * The directives of a file, each on a comment-only line: `code-gauge-allow` attaches to the

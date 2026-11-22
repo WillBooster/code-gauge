@@ -5,6 +5,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -92,9 +93,6 @@ afterAll(() => {
     rmSync(projectDir, { recursive: true, force: true });
   }
 });
-
-// oxlint-disable-next-line unicorn/no-null -- the config file disables a limit with JSON null.
-const disabled = null;
 
 describe('cli: text report', () => {
   it('summarizes a directory and skips node_modules and test files', () => {
@@ -827,48 +825,11 @@ describe('cli: configuration discovery and validation', () => {
     });
   }
 
-  it('accepts every documented default', () => {
+  it('accepts the configuration example that documents every default', () => {
+    const readme = readFileSync(path.join(repoRoot, 'README.md'), 'utf8');
+    const example = /## Configuration\n[\s\S]*?```json\n([\s\S]*?)```/u.exec(readme)?.[1];
     const configFile = path.join(projectDir, 'full.config.json');
-    writeFileSync(
-      configFile,
-      JSON.stringify({
-        duplication: { minTokens: 40, maxGapTokens: 30, minSimilarityPercent: 70 },
-        rank: { top: 10 },
-        thresholds: {
-          warning: {
-            maxFunctionCognitiveComplexity: 15,
-            maxFunctionCyclomaticComplexity: disabled,
-            maxFunctionNcss: 30,
-            maxFunctionNestingDepth: disabled,
-            maxFunctionParameterCount: 6,
-            maxFunctionHalsteadVolume: disabled,
-            maxFunctionHalsteadDifficulty: disabled,
-            maxFunctionHalsteadEffort: disabled,
-            maxFunctionDepDegree: disabled,
-            maxFileNcss: 400,
-            minDuplicateLines: 15,
-            languages: {},
-          },
-          error: {
-            maxFunctionCognitiveComplexity: 30,
-            maxFunctionCyclomaticComplexity: disabled,
-            maxFunctionNcss: 60,
-            maxFunctionNestingDepth: disabled,
-            maxFunctionParameterCount: disabled,
-            maxFunctionHalsteadVolume: disabled,
-            maxFunctionHalsteadDifficulty: disabled,
-            maxFunctionHalsteadEffort: disabled,
-            maxFunctionDepDegree: disabled,
-            maxFileNcss: 1000,
-            minDuplicateLines: disabled,
-            languages: {},
-          },
-        },
-        exclude: [],
-        includeTests: false,
-        failOnError: false,
-      })
-    );
+    writeFileSync(configFile, example ?? '');
     expect(runCli([projectDir, '--config', configFile]).status).toBe(0);
   });
 });

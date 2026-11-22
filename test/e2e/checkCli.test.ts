@@ -65,7 +65,7 @@ function writeSource(relativePath: string, content: string): void {
   writeFileSync(path.join(repoDir, relativePath), content);
 }
 
-const baseConfig = { thresholds: { warning: { minDuplicateLines: 10, maxFunctionNestingDepth: 4 } } };
+const baseConfig = { rules: { duplicateLines: { warn: 10 }, functionNestingDepth: { warn: 4 } } };
 
 function writeConfig(config: unknown): void {
   writeSource('code-gauge.config.json', JSON.stringify(config));
@@ -126,9 +126,6 @@ function reportFunction(name: string): string {
 }
 `;
 }
-
-// oxlint-disable-next-line unicorn/no-null -- the config file disables a limit with JSON null.
-const disabled = null;
 
 // Structurally different from reportFunction, so the two never match each other.
 function otherFunction(name: string): string {
@@ -353,7 +350,7 @@ How to fix:
   });
 
   it('exits 1 and lists the errors first when a value exceeds an error limit', () => {
-    const result = runCheck(['--error-min-duplicate-lines', '12', '--error-max-function-nesting-depth', '3']);
+    const result = runCheck(['--error', 'duplicateLines=12', '--error', 'functionNestingDepth=3']);
     expect(result.status).toBe(1);
     expect(result.stdout)
       .toContain(`Threshold violations: 3 errors, 0 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
@@ -361,7 +358,7 @@ error: src/legacy.ts:1-21 decide: cognitive complexity 24 (warning max 15; large
 error: src/report.ts:1-12: duplicated lines 12 (max 11), also at src/summary.ts:1-12
 error: src/summary.ts:1-12: duplicated lines 12 (max 11), also at src/report.ts:1-12
 `);
-    expect(runCheck(['--error-min-duplicate-lines', '12']).stdout)
+    expect(runCheck(['--error', 'duplicateLines=12']).stdout)
       .toContain(`2 errors, 1 warnings (1 functions, 0 files, 2 duplicated blocks) (4 files, 5 functions checked).
 error: src/report.ts:1-12: duplicated lines 12 (max 11), also at src/summary.ts:1-12
 error: src/summary.ts:1-12: duplicated lines 12 (max 11), also at src/report.ts:1-12
@@ -404,7 +401,7 @@ warning: src/legacy.ts:1-21 decide:`);
 }
 `
     );
-    expect(runCheck(['src/factory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
+    expect(runCheck(['src/factory.ts', '--warn', 'functionCognitiveComplexity=5']).stdout).toContain(
       ' createCounter: cognitive complexity 11 (max 5; largest parts L3-8 step 5, L9-13 reset 5, L14 1)\n'
     );
     // Two functions on one line are told apart.
@@ -412,7 +409,7 @@ warning: src/legacy.ts:1-21 decide:`);
       'src/oneLine.ts',
       'export function pair(a: boolean, b: boolean): void { const first = () => { if (a) pair(b, a); }; const second = () => { if (b) pair(a, b); }; first(); second(); }\n'
     );
-    expect(runCheck(['src/oneLine.ts', '--warning-max-function-cognitive-complexity', '3']).stdout).toContain(
+    expect(runCheck(['src/oneLine.ts', '--warn', 'functionCognitiveComplexity=3']).stdout).toContain(
       'largest parts L1 first 2, L1 second 2)'
     );
     // Also when a wrapper around one of them is replaced by what it holds.
@@ -420,7 +417,7 @@ warning: src/legacy.ts:1-21 decide:`);
       'src/oneLineWrapped.ts',
       'export function wrappedPair(xs: number[], a: boolean, b: boolean): number { for (const it of xs) { const first = () => { if (a) { wrappedPair([it], b, a); } }; } const second = () => { const both = a && b; if (both) { wrappedPair(xs, b, a); } }; return 0; }\n'
     );
-    expect(runCheck(['src/oneLineWrapped.ts', '--warning-max-function-cognitive-complexity', '2']).stdout).toContain(
+    expect(runCheck(['src/oneLineWrapped.ts', '--warn', 'functionCognitiveComplexity=2']).stdout).toContain(
       'largest parts L1 first 3, L1 second 3)'
     );
   });
@@ -444,7 +441,7 @@ ep\`](value: number): number {
 }
 `
     );
-    expect(runCheck(['src/holderFactory.ts', '--warning-max-function-cognitive-complexity', '5']).stdout).toContain(
+    expect(runCheck(['src/holderFactory.ts', '--warn', 'functionCognitiveComplexity=5']).stdout).toContain(
       ' createHolder: cognitive complexity 9 (max 5; largest parts L3-11 [`st ep`] 9)\n'
     );
   });
@@ -496,7 +493,7 @@ ep\`](value: number): number {
     // The same method is named alike whether it is defined inside its namespace or outside.
     expect(stdout).toContain('src/rules.cpp:5-5 ns::Rules.other: parameters 7 (max 6)\n');
     // The `::` of the conversion type belongs to the name, not to the scope.
-    expect(runCheck(['src/rules.cpp', '--warning-max-function-cognitive-complexity', '0']).stdout).toContain(
+    expect(runCheck(['src/rules.cpp', '--warn', 'functionCognitiveComplexity=0']).stdout).toContain(
       'src/rules.cpp:4-4 Rules.operator std::string: cognitive complexity 1 (max 0; largest parts L4 1)\n'
     );
   });
@@ -561,9 +558,7 @@ ep\`](value: number): number {
       'src/copies/a.ts:1-12: duplicated lines 12 (max 9), also at src/report.ts:1-12, src/summary.ts:1-12\n'
     );
     // A fractional limit allows the whole line counts below it.
-    expect(runCheck(['src/copies', '--warning-min-duplicate-lines', '11.5']).stdout).toContain(
-      'duplicated lines 12 (max 11)'
-    );
+    expect(runCheck(['src/copies', '--warn', 'duplicateLines=11.5']).stdout).toContain('duplicated lines 12 (max 11)');
     writeSource('src/copies/b.ts', reportFunction('copyB'));
     writeSource('src/copies/c.ts', reportFunction('copyC'));
     expect(runCheck(['src/copies']).stdout).toContain(
@@ -577,7 +572,7 @@ ep\`](value: number): number {
     expect(runCheck(['src/commented.ts']).stdout).toContain(
       'src/commented.ts:1-22: duplicated lines 12 (max 9), also at src/report.ts:1-12'
     );
-    expect(runCheck(['src/commented.ts', '--warning-min-duplicate-lines', '13']).stdout).not.toContain('duplicated');
+    expect(runCheck(['src/commented.ts', '--warn', 'duplicateLines=13']).stdout).not.toContain('duplicated');
   });
 
   it('detects duplication against the git-visible files of the whole repository, with or without --base', () => {
@@ -604,7 +599,7 @@ ep\`](value: number): number {
       `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`
     );
     writeSource('src/sub/full.ts', reportFunction('full'));
-    expect(runCheck(['src/sub', '--warning-min-duplicate-lines', '5']).stdout).toContain(
+    expect(runCheck(['src/sub', '--warn', 'duplicateLines=5']).stdout).toContain(
       'src/sub/full.ts:1-12: duplicated lines 12 (max 4), also at src/report.ts:1-12, src/summary.ts:1-12, src/padded.ts:1-29\n'
     );
   });
@@ -676,7 +671,7 @@ ep\`](value: number): number {
   });
 
   it('reports a file-level violation with the file as its span', () => {
-    const result = runCheck(['--json', '--warning-max-file-ncss', '4', 'src/calc.ts']);
+    const result = runCheck(['--json', '--warn', 'fileNcss=4', 'src/calc.ts']);
     expect((JSON.parse(result.stdout) as { violations: unknown[] }).violations).toEqual([
       {
         kind: 'file',
@@ -687,7 +682,7 @@ ep\`](value: number): number {
         exceeded: [{ metric: 'fileNcss', label: 'file NCSS', value: 5, level: 'warning', limit: 4 }],
       },
     ]);
-    expect(runCheck(['--warning-max-file-ncss', '4', 'src/calc.ts']).stdout).toContain(
+    expect(runCheck(['--warn', 'fileNcss=4', 'src/calc.ts']).stdout).toContain(
       '\nwarning: src/calc.ts: file NCSS 5 (max 4)\n'
     );
   });
@@ -696,73 +691,88 @@ ep\`](value: number): number {
 describe('code-gauge check: thresholds', () => {
   it('applies the config file over the defaults and the command line over the config file', () => {
     expect(hasViolations(['src/calc.ts'])).toBe(false);
-    writeConfig({ thresholds: { warning: { maxFunctionNcss: 3 } } });
+    writeConfig({ rules: { functionNcss: { warn: 3 } } });
     expect(runCheck(['src/calc.ts']).stdout).toContain('calc.ts:1-7 total: NCSS 5 (max 3)\n');
-    expect(hasViolations(['src/calc.ts', '--warning-max-function-ncss', '5'])).toBe(false);
-    expect(runCheck(['src/calc.ts', '--warning-max-function-ncss', '4']).stdout).toContain('NCSS 5 (max 4)');
+    expect(hasViolations(['src/calc.ts', '--warn', 'functionNcss=5'])).toBe(false);
+    expect(runCheck(['src/calc.ts', '--warn', 'functionNcss=4']).stdout).toContain('NCSS 5 (max 4)');
   });
 
-  it('disables a threshold with null in the config file or "off" on the command line', () => {
+  it('disables a rule or one of its levels with "off" in the config file or on the command line', () => {
     writeConfig({
-      thresholds: {
-        warning: { maxFunctionNestingDepth: 4, maxFunctionCognitiveComplexity: disabled, minDuplicateLines: disabled },
+      rules: {
+        functionNestingDepth: { warn: 4 },
+        functionCognitiveComplexity: { warn: 'off' },
+        duplicateLines: 'off',
       },
     });
     const result = runCheck([]);
     expect(result.stdout).toContain('1 warnings (1 functions, 0 files, 0 duplicated blocks)');
     expect(result.stdout).toContain('src/legacy.ts:1-21 decide: nesting depth 5 (max 4)\n');
-    expect(hasViolations(['--warning-max-function-nesting-depth', 'off'])).toBe(false);
+    expect(hasViolations(['--warn', 'functionNestingDepth=off'])).toBe(false);
   });
 
-  it('overrides thresholds per language', () => {
+  it('overrides rules for the files matching glob patterns, each later entry changing only the levels it sets', () => {
     writeSource(
       'src/calc.py',
       'def total(items):\n    result = 0\n    for item in items:\n        result += item\n    return result\n'
     );
     writeConfig({
-      thresholds: {
-        warning: {
-          maxFunctionNcss: 3,
-          minDuplicateLines: disabled,
-          maxFunctionCognitiveComplexity: disabled,
-          maxFunctionNestingDepth: disabled,
-          languages: { python: { maxFunctionNcss: disabled }, typescript: { maxFunctionNcss: 4 } },
-        },
+      rules: {
+        functionNcss: { warn: 3 },
+        duplicateLines: 'off',
+        functionCognitiveComplexity: 'off',
+        functionNestingDepth: 'off',
       },
+      overrides: [
+        { files: ['**/*.ts'], rules: { functionNcss: { warn: 2, error: 4 } } },
+        // A later entry changes only the level it sets: the error limit of 4 stays.
+        { files: ['src/*.ts'], rules: { functionNcss: { warn: 'off' } } },
+        { files: ['**/*.py'], rules: { functionNcss: 'off' } },
+      ],
     });
     const result = runCheck([]);
-    expect(result.stdout).toContain('src/calc.ts:1-7 total: NCSS 5 (max 4)\n');
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('error: src/calc.ts:1-7 total: NCSS 5 (max 4)\n');
     expect(result.stdout).not.toContain('calc.py');
-    // The command line wins over the per-language overrides too.
-    expect(runCheck(['--warning-max-function-ncss', '3']).stdout).toContain('src/calc.py:1-5 total: NCSS 5 (max 3)\n');
+    // With the error level off, the later entry's warn "off" leaves nothing to report.
+    expect(hasViolations(['--error', 'functionNcss=off'])).toBe(false);
+    // The command line wins over the overrides too.
+    expect(runCheck(['--warn', 'functionNcss=3']).stdout).toContain('src/calc.py:1-5 total: NCSS 5 (max 3)\n');
+  });
+
+  it('keeps 0 as a limit', () => {
+    writeConfig({ rules: { functionNcss: { warn: 0 } } });
+    expect(runCheck(['src/calc.ts']).stdout).toContain('NCSS 5 (max 0)');
   });
 
   it.each([
     [
+      'the replaced thresholds section',
+      { thresholds: { error: { maxFunctionNcss: 1 } } },
+      '"thresholds" is no longer supported; use "rules" (and "overrides" for file patterns).',
+    ],
+    ['an unknown metric', { rules: { maxFunctionNcss: { warn: 1 } } }, 'unknown setting "maxFunctionNcss" in "rules"'],
+    [
       'an unknown level',
-      { thresholds: { maxFunctionNcss: 1 } },
-      'unknown setting "maxFunctionNcss" in "thresholds" (expected warning, error)',
+      { rules: { functionNcss: { warning: 1 } } },
+      'unknown setting "warning" in "rules.functionNcss"',
     ],
     [
-      'an unknown threshold',
-      { thresholds: { error: { maxFunctionLines: 1 } } },
-      'unknown setting "maxFunctionLines" in "thresholds.error"',
+      'a null limit',
+      // oxlint-disable-next-line unicorn/no-null -- JSON null is the value under test.
+      { rules: { functionNcss: { warn: null } } },
+      '"rules.functionNcss.warn" must be a non-negative number or "off"',
     ],
-    ['a removed section', { gate: {} }, 'unknown setting "gate"'],
+    ['a false rule', { rules: { functionNcss: false } }, '"rules.functionNcss" must be "off" or an object'],
     [
       'a negative limit',
-      { thresholds: { warning: { maxFileNcss: -1 } } },
-      '"thresholds.warning.maxFileNcss" must be a non-negative number or null',
+      { rules: { fileNcss: { error: -1 } } },
+      '"rules.fileNcss.error" must be a non-negative number or "off"',
     ],
     [
-      'an unknown language',
-      { thresholds: { warning: { languages: { cobol: {} } } } },
-      'unknown language "cobol" in "thresholds.warning.languages"',
-    ],
-    [
-      'an unknown per-language setting',
-      { thresholds: { warning: { languages: { python: { languages: {} } } } } },
-      'unknown setting "languages" in "thresholds.warning.languages.python"',
+      'the test share inside an override',
+      { overrides: [{ files: ['**'], rules: { testNcssPercent: 'off' } }] },
+      'unknown setting "testNcssPercent" in "overrides.0.rules"',
     ],
   ])('rejects %s in the config file', (_, config, message) => {
     writeConfig(config);
@@ -772,9 +782,15 @@ describe('code-gauge check: thresholds', () => {
   });
 
   it('rejects a threshold option that is neither a number nor "off"', () => {
-    const result = runCheck(['--warning-max-function-ncss', 'none']);
+    const result = runCheck(['--warn', 'functionNcss=none']);
     expect(result.status).toBe(2);
-    expect(result.stderr).toContain('Expected a non-negative number or "off".');
+    expect(result.stderr).toContain('Expected the limit to be a non-negative number or "off".');
+  });
+
+  it('points a per-threshold option of earlier releases to its replacement', () => {
+    const result = runCheck(['--warning-max-function-ncss', '3']);
+    expect(result.status).toBe(2);
+    expect(result.stderr).toContain('use --warn <metric=limit> or --error <metric=limit>');
   });
 });
 
@@ -788,7 +804,7 @@ describe('code-gauge check: allow directives', () => {
 
   it('never allows an error, reporting it only once', () => {
     writeSource('src/legacy.ts', allowDecide());
-    const result = runCheck(['src/legacy.ts', '--error-max-function-cognitive-complexity', '20']);
+    const result = runCheck(['src/legacy.ts', '--error', 'functionCognitiveComplexity=20']);
     expect(result.status).toBe(1);
     expect(result.stdout)
       .toBe(`Threshold violations: 1 errors, 0 warnings (1 functions, 0 files, 0 duplicated blocks) (1 files, 2 functions checked, 1 exceeded limits allowed by directives).
@@ -814,7 +830,7 @@ How to fix:
       'src/nested.ts',
       `export function outer(x: number) {\n  // code-gauge-allow functionNcss -- the steps stay together\n  function inner() {\n    const a = 1;\n    const b = 2;\n    return a + b;\n  }\n  return inner() + x;\n}\n`
     );
-    const result = runCheck(['src/nested.ts', '--warning-max-function-ncss', '2']);
+    const result = runCheck(['src/nested.ts', '--warn', 'functionNcss=2']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('warning: src/nested.ts:1-9 outer: NCSS 6 (max 2)\n');
     expect(result.stdout).not.toContain('code-gauge-allow');
@@ -1034,7 +1050,7 @@ export const scale = 2;
     runGit(['commit', '-q', '-m', 'job']);
 
     writeSource('src/job.py', `${directive}${after}`);
-    const result = runCheck(['--base', 'HEAD', '--warning-max-function-ncss', '3']);
+    const result = runCheck(['--base', 'HEAD', '--warn', 'functionNcss=3']);
     expect(result.status).toBe(1);
     expect(result.stdout).toMatch(/^Directive errors: 1 \(1 changed files, /u);
     expect(result.stdout).toContain(
@@ -1171,7 +1187,7 @@ describe('code-gauge check --base', () => {
 
   it('reports a file-level violation only for a changed file', () => {
     writeSource('src/calc.ts', `${calc}export const offset = 1;\n`);
-    const result = runCheck(['--base', 'main', '--warning-max-file-ncss', '5', '--json']);
+    const result = runCheck(['--base', 'main', '--warn', 'fileNcss=5', '--json']);
     const report = JSON.parse(result.stdout) as { base: string; mergeBase: string; violations: { file: string }[] };
     expect(report.violations.map(({ file }) => file)).toEqual(['src/calc.ts']);
     expect(report.base).toBe('main');
@@ -1180,7 +1196,7 @@ describe('code-gauge check --base', () => {
 
   it('reports no file-level violation for a file whose lines did not change', () => {
     chmodSync(path.join(repoDir, 'src', 'calc.ts'), 0o755);
-    expect(runCheck(['--base', 'main', '--warning-max-file-ncss', '1']).stdout).toMatch(
+    expect(runCheck(['--base', 'main', '--warn', 'fileNcss=1']).stdout).toMatch(
       /^No threshold violations: 1 changed files, 0 functions checked/u
     );
   });
@@ -1250,15 +1266,15 @@ describe('code-gauge check: test share', () => {
     expect(violation).toMatchObject({ kind: 'project', file: '.', level: 'error' });
     expect((violation?.testNcss ?? 0) * 100).toBeGreaterThan((violation?.productionNcss ?? 0) * 30);
 
-    writeConfig({ thresholds: { ...baseConfig.thresholds, error: { maxTestNcssPercent: disabled } } });
+    writeConfig({ rules: { ...baseConfig.rules, testNcssPercent: 'off' } });
     expect(projectViolations([])).toEqual([]);
   });
 
   it.each([
     ['the default limit', [], 0],
-    ['a warning limit stricter than the error limit', ['--warning-max-test-ncss-percent', '10'], 0],
+    ['a warning limit stricter than the error limit', ['--warn', 'testNcssPercent=10'], 0],
     // 375 production NCSS at 18.4% admit 69 test NCSS, which multiplying and flooring puts at 68.
-    ['a fractional limit', ['--error-max-test-ncss-percent', '18.4'], 326],
+    ['a fractional limit', ['--error', 'testNcssPercent=18.4'], 326],
   ])('names the least test NCSS whose deletion clears the share under %s', (_, limits, extraProduction) => {
     const constants = Array.from({ length: extraProduction }, (_, index) => `export const c${index} = ${index};\n`);
     writeSource('src/constants.ts', constants.join(''));
@@ -1546,8 +1562,8 @@ describe('code-gauge check: test share', () => {
 
   it('lists a project warning after the errors in the JSON report', () => {
     writeSource('test/calc.test.ts', testCode(1));
-    const args = ['--error-max-test-ncss-percent', 'off', '--warning-max-test-ncss-percent', '0', '--json'];
-    const report = JSON.parse(runCheck([...args, '--error-max-file-ncss', '0']).stdout) as ProjectReport;
+    const args = ['--error', 'testNcssPercent=off', '--warn', 'testNcssPercent=0', '--json'];
+    const report = JSON.parse(runCheck([...args, '--error', 'fileNcss=0']).stdout) as ProjectReport;
     const levels = report.violations.map(({ level }) => level);
     expect(levels).toContain('error');
     expect(levels.lastIndexOf('error')).toBeLessThan(levels.indexOf('warning'));
@@ -1602,7 +1618,7 @@ describe('code-gauge check outside a git repository', () => {
   });
 
   it('walks the target directory and reports overlapping duplicated ranges of a file as one block', () => {
-    const result = runCheck(['--warning-min-duplicate-lines', '5', plainDir], plainDir);
+    const result = runCheck(['--warn', 'duplicateLines=5', plainDir], plainDir);
     expect(result.stdout).toContain(`
 warning: a.ts:1-12: duplicated lines 12 (max 4), also at a.ts:14-25, b.ts:1-13
 warning: a.ts:14-25: duplicated lines 12 (max 4), also at a.ts:1-12, b.ts:1-13
@@ -1613,7 +1629,7 @@ warning: b.ts:1-13: duplicated lines 11 (max 4), also at a.ts:1-12, a.ts:14-25
   it('measures the duplicated blocks of a targeted file by their code lines too', () => {
     const padded = reportFunction('second').replaceAll(/^ {2}const /gmu, '  // A step.\n  const ');
     writeFileSync(path.join(plainDir, 'padded.ts'), `${reportFunction('first')}\n${padded}`);
-    const result = runCheck(['--warning-min-duplicate-lines', '13', 'padded.ts'], plainDir);
+    const result = runCheck(['--warn', 'duplicateLines=13', 'padded.ts'], plainDir);
     rmSync(path.join(plainDir, 'padded.ts'));
     expect(result.stdout).toBe('No threshold violations: 1 files, 2 functions checked.\n');
   });
@@ -1621,7 +1637,7 @@ warning: b.ts:1-13: duplicated lines 11 (max 4), also at a.ts:1-12, a.ts:14-25
   it('lists the copies of a duplicated block largest first', () => {
     // A copy of the statements only, which comments stretch over more lines than a full copy.
     const statements = reportFunction('partial').split('\n').slice(1, 10).join('\n  // A step.\n\n');
-    const stdout = checkProject(['--warning-min-duplicate-lines', '5'], {
+    const stdout = checkProject(['--warn', 'duplicateLines=5'], {
       'a.ts': `export function digest(items: number[], label: string): string {\n  console.log(label);\n${statements}\n  return \`\${label}: \${weighted}\`;\n}\n`,
       'm.ts': reportFunction('middle'),
       'z.ts': reportFunction('last'),
@@ -1631,7 +1647,7 @@ warning: b.ts:1-13: duplicated lines 11 (max 4), also at a.ts:1-12, a.ts:14-25
 
   it('does not list a place repeating only a part of a duplicated block among its copies', () => {
     const firstStatements = reportFunction('part').split('\n').slice(1, 7).join('\n');
-    const stdout = checkProject(['--warning-min-duplicate-lines', '5'], {
+    const stdout = checkProject(['--warn', 'duplicateLines=5'], {
       'part.ts': `export function head(items: number[], label: string): string {\n${firstStatements}\n  return \`\${label}: \${shifted}\`;\n}\n`,
       'twin.ts': reportFunction('twin'),
       'whole.ts': reportFunction('whole'),
@@ -1648,11 +1664,11 @@ warning: whole.ts:1-12: duplicated lines 12 (max 4), also at twin.ts:1-12
       'edited.ts': reportFunction('edited').replace('  const clamped =', '  console.log(shifted);\n  const clamped ='),
       'original.ts': reportFunction('original'),
     };
-    expect(checkProject(['--warning-min-duplicate-lines', '5'], files)).toContain(`
+    expect(checkProject(['--warn', 'duplicateLines=5'], files)).toContain(`
 warning: edited.ts:1-13: duplicated lines 12 (max 4), also at original.ts:1-12
 warning: original.ts:1-12: duplicated lines 12 (max 4), also at edited.ts:1-13
 `);
-    expect(checkProject(['--warning-min-duplicate-lines', '13'], files)).toBe(
+    expect(checkProject(['--warn', 'duplicateLines=13'], files)).toBe(
       'No threshold violations: 2 files, 2 functions checked.\n'
     );
   });
@@ -1668,7 +1684,7 @@ warning: wrappers.tsx:50-72: duplicated lines 20 (max 14), also at wrappers.tsx:
   });
 
   it('locates a block by the places repeating its parts when none copies it as a whole', () => {
-    expect(checkProject(['--warning-min-duplicate-lines', '10'], { 'stitched.ts': stitchedFunctions })).toContain(
+    expect(checkProject(['--warn', 'duplicateLines=10'], { 'stitched.ts': stitchedFunctions })).toContain(
       'warning: stitched.ts:2-13: duplicated lines 12 (max 9), also at stitched.ts:28-35, stitched.ts:17-21\n'
     );
   });
@@ -1694,22 +1710,21 @@ warning: wrappers.tsx:50-72: duplicated lines 20 (max 14), also at wrappers.tsx:
       { 'both.ts': `${stopped}\n${original}` },
     ];
     for (const files of layouts) {
-      const report = (limit: number): string =>
-        checkProject([...args, '--warning-min-duplicate-lines', String(limit)], files);
+      const report = (limit: number): string => checkProject([...args, '--warn', `duplicateLines=${limit}`], files);
       expect(report(12).match(/duplicated lines 12 /gu)).toHaveLength(2);
       expect(report(13)).toMatch(/^No threshold violations/u);
     }
   });
 
   it('reports a block another file copies as one block, whatever copies of each other it holds', () => {
-    const report = checkProject(['--warning-min-duplicate-lines', '8'], { 'a.ts': branchChain, 'b.ts': branchChain });
+    const report = checkProject(['--warn', 'duplicateLines=8'], { 'a.ts': branchChain, 'b.ts': branchChain });
     expect(report).toContain('warning: a.ts:1-31: duplicated lines 31 (max 7), also at b.ts:1-31\n');
     expect(report).toContain('warning: b.ts:1-31: duplicated lines 31 (max 7), also at a.ts:1-31\n');
     expect(report).toContain('2 duplicated blocks');
   });
 
   it('reports copies of each other that share a line as blocks of their own', () => {
-    expect(checkProject(['--warning-min-duplicate-lines', '8'], { 'chain.ts': branchChain })).toContain(`
+    expect(checkProject(['--warn', 'duplicateLines=8'], { 'chain.ts': branchChain })).toContain(`
 warning: chain.ts:2-11: duplicated lines 10 (max 7), also at chain.ts:11-20, chain.ts:20-29
 warning: chain.ts:11-20: duplicated lines 10 (max 7), also at chain.ts:2-11, chain.ts:20-29
 warning: chain.ts:20-29: duplicated lines 10 (max 7), also at chain.ts:2-11, chain.ts:11-20

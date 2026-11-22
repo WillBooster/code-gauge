@@ -20,16 +20,7 @@ import {
   writeStdout,
 } from './scan.js';
 import { qualifyFunctionName } from './thresholdCheck.js';
-import {
-  duplicationThreshold,
-  fileThresholds,
-  functionThresholds,
-  type Level,
-  levels,
-  type Limits,
-  testShareThreshold,
-  thresholds,
-} from './thresholds.js';
+import { type Level, thresholds } from './thresholds.js';
 import type { FunctionMetrics } from './types.js';
 
 /** The worst (highest-cognitive-complexity) function of a file, reported as the ranking evidence. */
@@ -97,28 +88,36 @@ async function main(): Promise<void> {
     '--base <ref>',
     'report code violations only in what the working tree changed since the merge-base of this git ref and HEAD; the share of test code still covers every file'
   );
-  for (const level of levels) {
-    for (const { key, defaultLimits } of thresholds) {
-      const defaultLimit = defaultLimits[level];
-      check.option(
-        `--${level}-${toKebabCase(key)} <number>`,
-        `${describeLimit(key, level)} (default ${Number.isFinite(defaultLimit) ? defaultLimit : 'off'}); "off" disables it`,
-        parseLimit
-      );
-    }
+  const metrics = thresholds.map(({ metric }) => metric).join(', ');
+  for (const [flag, level] of [
+    ['warn', 'warning'],
+    ['error', 'error'],
+  ] as const) {
+    check.option(
+      `--${flag} <metric=limit>`,
+      `the ${level} limit of a metric (repeatable): a non-negative number, or "off" to disable it; metrics: ${metrics}`,
+      (value: string, previous: readonly RuleSetting[] = []) => [...previous, parseRuleSetting(value, level)]
+    );
   }
   // Exit code 1 means error-level violations, so a rejected command line must not use it.
   check.exitOverride((error) => process.exit(error.exitCode === 0 ? 0 : 2));
-  check.action(async (target: string, cliOptions: CheckCliOptions & Record<string, unknown>) => {
-    const readLimits = (level: Level): Limits =>
-      Object.fromEntries(
-        thresholds.flatMap(({ key }) => {
-          const limit = cliOptions[`${level}${key.charAt(0).toUpperCase()}${key.slice(1)}`];
-          return limit === undefined ? [] : [[key, limit as number]];
-        })
-      );
-    await runCheckCommand(target, cliOptions, { warning: readLimits('warning'), error: readLimits('error') });
+  check.configureOutput({
+    outputError: (message, write) =>
+      write(
+        /--(?:warning|error)-(?:max|min)-/u.test(message)
+          ? `${message}Per-threshold options were replaced: use --warn <metric=limit> or --error <metric=limit>, e.g. --error functionNcss=80.\n`
+          : message
+      ),
   });
+  check.action(
+    async (target: string, cliOptions: CheckCliOptions & { warn?: RuleSetting[]; error?: RuleSetting[] }) => {
+      const rules: Record<string, Partial<Record<Level, number>>> = {};
+      for (const { metric, level, limit } of [...(cliOptions.warn ?? []), ...(cliOptions.error ?? [])]) {
+        rules[metric] = { ...rules[metric], [level]: limit };
+      }
+      await runCheckCommand(target, cliOptions, rules);
+    }
+  );
 
   await program.parseAsync();
 }
@@ -144,24 +143,6 @@ function addSharedOptions(command: Command): Command {
     )
     .option('--include-tests', 'include test files and test directories')
     .option('--json', 'print JSON output');
-}
-
-function describeLimit(key: string, level: Level): string {
-  if (key === testShareThreshold.key) {
-    return `maximum test NCSS, as a percentage of the other files' NCSS, without ${level === 'error' ? 'an error' : 'a warning'}`;
-  }
-  if (key === duplicationThreshold.key) {
-    return `code-line count from which a duplicated block is ${level === 'error' ? 'an error' : 'a warning'}`;
-  }
-  const fileThreshold = fileThresholds.find((threshold) => threshold.key === key);
-  const subject = fileThreshold
-    ? fileThreshold.label
-    : `${functionThresholds.find((threshold) => threshold.key === key)?.label} of a function`;
-  return `maximum ${subject} without ${level === 'error' ? 'an error' : 'a warning'}`;
-}
-
-function toKebabCase(key: string): string {
-  return key.replaceAll(/[A-Z]/gu, (letter) => `-${letter.toLowerCase()}`);
 }
 
 async function runRankCommand(target: string, cliOptions: CliOptions): Promise<void> {
@@ -409,15 +390,29 @@ function summarize(files: FileMetrics[]): {
   return { fileCount: files.length, functionCount, linesOfCode, maxCognitiveComplexity, ncssCount };
 }
 
-function parseLimit(value: string): number {
-  if (value === 'off') {
-    return Infinity;
+interface RuleSetting {
+  metric: string;
+  level: Level;
+  limit: number;
+}
+
+function parseRuleSetting(value: string, level: Level): RuleSetting {
+  const separator = value.indexOf('=');
+  const metric = value.slice(0, Math.max(separator, 0));
+  if (separator === -1 || !thresholds.some((threshold) => threshold.metric === metric)) {
+    throw new InvalidArgumentError(
+      `Expected <metric>=<limit> with one of the metrics ${thresholds.map((threshold) => threshold.metric).join(', ')}.`
+    );
   }
-  const parsed = value.trim() === '' ? Number.NaN : Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0) {
-    throw new InvalidArgumentError('Expected a non-negative number or "off".');
+  const written = value.slice(separator + 1);
+  if (written === 'off') {
+    return { metric, level, limit: Infinity };
   }
-  return parsed;
+  const limit = written.trim() === '' ? Number.NaN : Number(written);
+  if (!Number.isFinite(limit) || limit < 0) {
+    throw new InvalidArgumentError('Expected the limit to be a non-negative number or "off".');
+  }
+  return { metric, level, limit };
 }
 
 function parsePercentInteger(value: string): number {

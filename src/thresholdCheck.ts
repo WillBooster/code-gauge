@@ -14,7 +14,6 @@ import {
   type Level,
   levels,
   type LimitsByLevel,
-  metricNameOf,
   type TestShare,
   testShareThreshold,
   type Threshold,
@@ -126,7 +125,7 @@ const cognitiveComplexityMetric = 'functionCognitiveComplexity';
 const nestedInclusiveMetrics = new Set(
   functionThresholds
     .filter(({ includesNestedFunctions }) => includesNestedFunctions)
-    .map((threshold) => metricNameOf(threshold))
+    .map((threshold) => threshold.metric)
 );
 
 /**
@@ -136,7 +135,7 @@ const nestedInclusiveMetrics = new Set(
 export function checkThresholds(
   files: readonly CheckedFile[],
   duplication: CheckedDuplication,
-  limitsOf: (language: string) => LimitsByLevel
+  limitsOf: (file: string) => LimitsByLevel
 ): CheckResult {
   const crossFileGroupsByFile = indexGroupsByFile(duplication.crossFile, new Set(files.map(({ file }) => file)));
   const violations: CodeViolation[] = [];
@@ -145,7 +144,7 @@ export function checkThresholds(
   let allowedLimitCount = 0;
   for (const changedFile of files) {
     const checkedFile = { ...changedFile, hunks: expandHunks(changedFile) };
-    const limits = limitsOf(checkedFile.metrics.language);
+    const limits = limitsOf(checkedFile.file);
     const crossFileGroups = crossFileGroupsByFile.get(checkedFile.file) ?? [];
     const directives = checkedFile.allowDirectives?.directives ?? [];
     const applied = new Set<AllowDirective>();
@@ -210,7 +209,7 @@ export function checkTestShare(share: TestShare, file: string, limits: LimitsByL
 function allowedTestNcss({ productionNcss }: TestShare, limits: LimitsByLevel): number {
   const violates = (testNcss: number): boolean =>
     findExceeded(testShareThreshold, { testNcss, productionNcss }, limits, (value, limit) => value > limit).length > 0;
-  const strictest = Math.min(...levels.map((level) => limits[level][testShareThreshold.key] as number));
+  const strictest = Math.min(...levels.map((level) => limits[level][testShareThreshold.metric] as number));
   // The estimate is off by at most one either way from rounding.
   let allowed = Math.floor((productionNcss * strictest) / 100);
   while (allowed > 0 && violates(allowed)) {
@@ -406,15 +405,15 @@ function findExceeded<Subject>(
   violates: (value: number, limit: number) => boolean
 ): ExceededLimit[] {
   const value = threshold.measure(subject);
-  const level = levels.findLast((candidate) => violates(value, limits[candidate][threshold.key] as number));
+  const level = levels.findLast((candidate) => violates(value, limits[candidate][threshold.metric] as number));
   return level
     ? [
         {
-          metric: metricNameOf(threshold),
+          metric: threshold.metric,
           label: threshold.label,
           value,
           level,
-          limit: limits[level][threshold.key] as number,
+          limit: limits[level][threshold.metric] as number,
         },
       ]
     : [];
