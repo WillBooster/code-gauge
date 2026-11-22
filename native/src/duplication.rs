@@ -156,23 +156,6 @@ fn is_split_try_statement(node: Node<'_>) -> bool {
             .is_some_and(|first| first.kind_name().starts_with("preproc_"))
 }
 
-/// Whether `child` is one of the statements in the run of `container`. A Kotlin lambda's
-/// parameters sit beside its statements, and the conditionals that open and close a split
-/// `try_statement` stay out of its run like the braces and handlers of an ordinary one.
-fn is_run_statement(container: Node<'_>, child: Node<'_>, code: &Source<'_>) -> bool {
-    child.is_named()
-        && !is_tokenless(child, code)
-        && child.kind_name() != "lambda_parameters"
-        && !(container.kind_name() == "try_statement" && is_split_try_seam(child))
-}
-
-fn is_split_try_seam(child: Node<'_>) -> bool {
-    child.kind_name().starts_with("preproc_")
-        && all_children(child)
-            .iter()
-            .any(|part| matches!(part.kind_name(), "try" | "catch_clause"))
-}
-
 /// Identifier leaves anonymized by occurrence order so consistently renamed copies still match.
 const ANONYMIZED_IDENTIFIER_TYPES: &[&str] = &[
     "identifier",
@@ -684,6 +667,23 @@ fn collect_tokens<'a>(
         container_statement_ranges,
         &mut Vec::new(),
     );
+}
+
+/// Whether `child` is one of the statements in the run of `container`. A Kotlin lambda's
+/// parameters sit beside its statements, and the conditionals that open and close a split
+/// `try_statement` stay out of its run like the braces and handlers of an ordinary one.
+fn is_run_statement(container: Node<'_>, child: Node<'_>, code: &Source<'_>) -> bool {
+    child.is_named()
+        && !is_tokenless(child, code)
+        && child.kind_name() != "lambda_parameters"
+        && !(container.kind_name() == "try_statement" && is_split_try_seam(child))
+}
+
+fn is_split_try_seam(child: Node<'_>) -> bool {
+    child.kind_name().starts_with("preproc_")
+        && all_children(child)
+            .iter()
+            .any(|part| matches!(part.kind_name(), "try" | "catch_clause"))
 }
 
 #[derive(Clone, Copy)]
