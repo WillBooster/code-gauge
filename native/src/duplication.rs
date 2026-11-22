@@ -392,27 +392,28 @@ struct DuplicateCandidate {
 /// matches over, built once per parse and shared by within-file and cross-file detection.
 pub struct TokenizedSource<'a> {
     tokens: Vec<Token<'a>>,
-    block_ranges: Vec<TokenRange>,
-    container_statement_ranges: Vec<Vec<TokenRange>>,
+    structure: SourceStructure,
     literal_count_prefix: Vec<usize>,
+}
+
+#[derive(Default)]
+struct SourceStructure {
+    block_ranges: Vec<TokenRange>,
+    /// The guarded statements of each C++ try block split across two preprocessor conditionals.
+    /// Such a block has no node, so near-miss comparison takes it from here; exact matching
+    /// already covers it through its statement run, which spans the same tokens.
+    split_try_body_ranges: Vec<TokenRange>,
+    container_statement_ranges: Vec<Vec<TokenRange>>,
 }
 
 pub fn tokenize<'a>(root: Node<'_>, code: &Source<'a>) -> TokenizedSource<'a> {
     let mut tokens: Vec<Token<'a>> = Vec::new();
-    let mut block_ranges: Vec<TokenRange> = Vec::new();
-    let mut container_statement_ranges: Vec<Vec<TokenRange>> = Vec::new();
-    collect_tokens(
-        root,
-        code,
-        &mut tokens,
-        &mut block_ranges,
-        &mut container_statement_ranges,
-    );
+    let mut structure = SourceStructure::default();
+    collect_tokens(root, code, &mut tokens, &mut structure);
     let literal_count_prefix = build_literal_count_prefix(&tokens);
     TokenizedSource {
         tokens,
-        block_ranges,
-        container_statement_ranges,
+        structure,
         literal_count_prefix,
     }
 }
@@ -430,13 +431,13 @@ pub fn measure_duplication(
     let mut candidates = collect_block_candidates(
         tokens,
         literal_count_prefix,
-        &source.block_ranges,
+        &source.structure.block_ranges,
         settings.min_tokens,
     );
     candidates.extend(collect_sequence_candidates(
         tokens,
         literal_count_prefix,
-        &source.container_statement_ranges,
+        &source.structure.container_statement_ranges,
         settings.min_tokens,
     ));
     let counted = select_maximal_duplicates(candidates);
@@ -467,12 +468,12 @@ pub fn collect_cross_file_file_data(
     let mut candidates = collect_block_candidates(
         tokens,
         literal_count_prefix,
-        &source.block_ranges,
+        &source.structure.block_ranges,
         min_tokens,
     );
     // Single-statement containers are catalogued too: a file whose only top-level statement is not
     // a block type (a lone exported table) must still be matchable when wholly copied.
-    for statements in &source.container_statement_ranges {
+    for statements in &source.structure.container_statement_ranges {
         let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
             continue;
         };
@@ -526,6 +527,7 @@ pub fn collect_cross_file_file_data(
         })
         .collect();
     let container_statement_payloads = source
+        .structure
         .container_statement_ranges
         .iter()
         .map(|statements| statements.iter().map(to_token_range_payload).collect())
@@ -559,8 +561,7 @@ fn collect_tokens<'a>(
     root: Node<'_>,
     code: &Source<'a>,
     tokens: &mut Vec<Token<'a>>,
-    block_ranges: &mut Vec<TokenRange>,
-    container_statement_ranges: &mut Vec<Vec<TokenRange>>,
+    structure: &mut SourceStructure,
 ) {
     /// `statement_list_statements` receives the statements of a Go `statement_list`, which wraps
     /// the statements of blocks and case clauses and whose statements belong to the run of the
@@ -569,8 +570,7 @@ fn collect_tokens<'a>(
         node: Node<'_>,
         code: &Source<'a>,
         tokens: &mut Vec<Token<'a>>,
-        block_ranges: &mut Vec<TokenRange>,
-        container_statement_ranges: &mut Vec<Vec<TokenRange>>,
+        structure: &mut SourceStructure,
         statement_list_statements: &mut Vec<TokenRange>,
     ) -> TokenRange {
         let start_token_index = tokens.len();
@@ -601,14 +601,7 @@ fn collect_tokens<'a>(
             let is_container = is_statement_list || is_statement_container(node);
             for child in all_children(node) {
                 let mut child_statements = Vec::new();
-                let child_range = visit(
-                    child,
-                    code,
-                    tokens,
-                    block_ranges,
-                    container_statement_ranges,
-                    &mut child_statements,
-                );
+                let child_range = visit(child, code, tokens, structure, &mut child_statements);
                 token_span = widen_token_span(token_span, &child_range);
                 if is_container && is_run_statement(node, child, code) {
                     if child.kind_name() == "statement_list" {
@@ -621,12 +614,7 @@ fn collect_tokens<'a>(
             if is_statement_list {
                 *statement_list_statements = statement_ranges;
             } else if is_container && !statement_ranges.is_empty() {
-                record_statement_run(
-                    node,
-                    statement_ranges,
-                    block_ranges,
-                    container_statement_ranges,
-                );
+                record_statement_run(node, statement_ranges, structure);
             }
         }
 
@@ -645,19 +633,12 @@ fn collect_tokens<'a>(
             end_line: span.end_line,
         };
         if is_duplicate_block(node) {
-            block_ranges.push(TokenRange { ..range });
+            structure.block_ranges.push(TokenRange { ..range });
         }
         range
     }
 
-    visit(
-        root,
-        code,
-        tokens,
-        block_ranges,
-        container_statement_ranges,
-        &mut Vec::new(),
-    );
+    visit(root, code, tokens, structure, &mut Vec::new());
 }
 
 /// Whether `child` is one of the statements in the run of `container`. A Kotlin lambda's
@@ -676,15 +657,14 @@ fn is_run_statement(container: Node<'_>, child: Node<'_>, code: &Source<'_>) -> 
 fn record_statement_run(
     node: Node<'_>,
     statements: Vec<TokenRange>,
-    block_ranges: &mut Vec<TokenRange>,
-    container_statement_ranges: &mut Vec<Vec<TokenRange>>,
+    structure: &mut SourceStructure,
 ) {
-    // The block of an ordinary try is a block candidate through its node; a split try's block has
-    // no node of its own.
     if is_split_try_statement(node) {
-        block_ranges.push(spanning_range(&statements));
+        structure
+            .split_try_body_ranges
+            .push(spanning_range(&statements));
     }
-    container_statement_ranges.push(statements);
+    structure.container_statement_ranges.push(statements);
 }
 
 /// A C++ `try_statement` whose braces sit in two preprocessor conditionals (`#if X` / `try {` /
@@ -2144,7 +2124,7 @@ fn collect_near_miss_groups(
     };
 
     let (symbols, is_content, token_keys) = to_symbol_stream(tokens);
-    let statements = top_level_statement_finder(&source.container_statement_ranges);
+    let statements = top_level_statement_finder(&source.structure.container_statement_ranges);
     let mut blocks: Vec<Block> = comparable
         .iter()
         .map(|range| {
@@ -2554,8 +2534,10 @@ fn select_near_miss_blocks<'s>(
 ) -> Vec<&'s TokenRange> {
     let literal_count_prefix = &source.literal_count_prefix;
     let mut eligible: Vec<&TokenRange> = source
+        .structure
         .block_ranges
         .iter()
+        .chain(&source.structure.split_try_body_ranges)
         .filter(|range| {
             let token_count = range.end_token_index - range.start_token_index;
             let literal_count = literal_count_prefix[range.end_token_index]
