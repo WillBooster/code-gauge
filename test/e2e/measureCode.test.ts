@@ -219,6 +219,13 @@ describe('measureCode: cognitive complexity and nesting', () => {
     expect(cognitiveOf('function f(a,b){ if (a) { if (b) { return 1; } else { return 2; } } }')).toBe(4);
     expect(cognitiveOf('def f(a):\n    if a:\n        return 1\n    else:\n        return 2\n', 'python')).toBe(2);
     expect(cognitiveOf('def f(a)\n  if a\n    1\n  else\n    2\n  end\nend\n', 'ruby')).toBe(2);
+    // A C++ attribute on the if of an `else if` keeps it a flat continuation.
+    expect(
+      cognitiveOf(
+        'int f(int a, int b) { if (a) { return 1; } else [[likely]] if (b) { return 2; } else { return 3; } }',
+        'cpp'
+      )
+    ).toBe(3);
   });
 
   it('measures C++ else branches spliced in by preprocessor conditionals like a plain chain', () => {
@@ -231,6 +238,8 @@ describe('measureCode: cognitive complexity and nesting', () => {
       [['else'], []],
       // C++23 code guards this with __cpp_if_consteval; it has an `if` token but no condition field.
       [['else if consteval'], ['else']],
+      [['else [[likely]] if (x == 0)'], ['else']],
+      [['else [[unlikely]] if (x == 0)'], []],
     ];
     for (const [guardedHeads, trailingHeads] of cases) {
       const guarded = guardedHeads.map((head, index) => `#ifdef CASE_${index}\n${cppBranch(head)}#endif\n`).join('');
