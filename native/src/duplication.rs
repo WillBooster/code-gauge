@@ -145,17 +145,6 @@ fn is_statement_container(node: Node<'_>) -> bool {
     STATEMENT_CONTAINER_TYPES.contains(&node.kind_name()) || is_split_try_statement(node)
 }
 
-/// A C++ `try_statement` whose braces sit in two preprocessor conditionals (`#if X` / `try {` /
-/// `#endif` ... `#if X` / `} catch (...) { ... }` / `#endif`) has no block: the guarded statements
-/// are its own children, between the two conditionals. Every other `try_statement` starts with
-/// the `try` keyword.
-fn is_split_try_statement(node: Node<'_>) -> bool {
-    node.kind_name() == "try_statement"
-        && node
-            .child(0)
-            .is_some_and(|first| first.kind_name().starts_with("preproc_"))
-}
-
 /// Identifier leaves anonymized by occurrence order so consistently renamed copies still match.
 const ANONYMIZED_IDENTIFIER_TYPES: &[&str] = &[
     "identifier",
@@ -696,6 +685,17 @@ fn record_statement_run(
         block_ranges.push(spanning_range(&statements));
     }
     container_statement_ranges.push(statements);
+}
+
+/// A C++ `try_statement` whose braces sit in two preprocessor conditionals (`#if X` / `try {` /
+/// `#endif` ... `#if X` / `} catch (...) { ... }` / `#endif`) has no block: the guarded statements
+/// are its own children, between the two conditionals. Every other `try_statement` starts with
+/// the `try` keyword.
+fn is_split_try_statement(node: Node<'_>) -> bool {
+    node.kind_name() == "try_statement"
+        && node
+            .child(0)
+            .is_some_and(|first| first.kind_name().starts_with("preproc_"))
 }
 
 /// The range from the first of `statements` through the last; `statements` is not empty.
