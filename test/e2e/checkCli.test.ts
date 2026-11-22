@@ -701,8 +701,8 @@ describe('code-gauge check: thresholds', () => {
     writeConfig({
       rules: {
         functionNestingDepth: { warn: 4 },
-        functionCognitiveComplexity: 'off',
-        duplicateLines: { warn: 'off' },
+        functionCognitiveComplexity: { warn: 'off' },
+        duplicateLines: 'off',
       },
     });
     const result = runCheck([]);
