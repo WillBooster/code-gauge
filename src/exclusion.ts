@@ -57,9 +57,9 @@ export function matchesGlobs(root: string, absolutePath: string, patterns: reado
   // segments differs between runtimes (Node's matchesGlob says no, Bun's says yes). A path on
   // another Windows drive has no relative form, so path.relative returns it absolute.
   const outsideRoot = relativePath === '..' || relativePath.startsWith('../') || path.isAbsolute(nativeRelativePath);
-  return patterns.some(
-    (pattern) => (!outsideRoot || pattern.startsWith('..')) && path.posix.matchesGlob(relativePath, pattern)
-  );
+  return patterns
+    .map((pattern) => pattern.replace(/^(?:\.\/)+/u, ''))
+    .some((pattern) => (!outsideRoot || pattern.startsWith('..')) && path.posix.matchesGlob(relativePath, pattern));
 }
 
 /** The exclusion that never excludes the given absolute paths (explicitly targeted files). */
