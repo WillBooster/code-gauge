@@ -435,12 +435,13 @@ checking as you type.
 
 `rules` maps a [metric](#threshold-check-code-gauge-check) to `"off"`, which disables it at both
 levels, or to an object with a `warn` and an `error` limit, each a non-negative number or `"off"`.
-A metric or a level it leaves out keeps its default, and `0` is a limit like any other number.
+A metric or a level that no rule or override sets keeps its default, and `0` is a limit like any other number.
 Nothing else turns a limit off: `null`, `false`, and other values are rejected.
 
 `overrides` sets rules for the files matching any of its `files` glob patterns, relative to the
-config file's directory; when several entries match a file, the later one wins for each metric it
-sets. `testNcssPercent` is measured for the whole checked directory, so it cannot be set in an
+config file's directory. As in ESLint's flat config, each matching entry changes only the levels it
+sets, later entries winning: an override with `{ "error": 100 }` keeps the `warn` limit set by
+`rules` or an earlier entry, and `"off"` sets both levels off. `testNcssPercent` is measured for the whole checked directory, so it cannot be set in an
 override:
 
 ```json

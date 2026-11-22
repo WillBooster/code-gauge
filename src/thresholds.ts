@@ -166,23 +166,23 @@ export interface RulesConfig {
 }
 
 /**
- * The limits of each level applying to a file. A metric's rule comes whole from the last config
- * layer that sets it (the config's rules, then the overrides matching the file in order), a level it
- * leaves out keeping its default; the command line then sets single levels over it. Without a file,
- * the limits of the whole project, which overrides never touch.
+ * The limits of each level applying to a file, each level taken from the last layer that sets it:
+ * built-in defaults, the config's rules, the overrides matching the file in order, then the command
+ * line. A layer changes only the levels it sets, as a later ESLint config entry does. Without a
+ * file, the limits of the whole project, which overrides never touch.
  */
 export function resolveLimits(cliRules: Rules, config: RulesConfig): (file?: string) => LimitsByLevel {
   return (file) => {
     const matchingOverrides =
       file === undefined ? [] : config.overrides.filter(({ files }) => matchesGlobs(config.root, file, files));
-    const configLayers = [config.rules, ...matchingOverrides.map(({ rules }) => rules)];
+    const layers = [config.rules, ...matchingOverrides.map(({ rules }) => rules), cliRules];
     const resolveLevel = (level: Level): Limits =>
       Object.fromEntries(
-        thresholds.map(({ metric, defaultLimits }) => {
-          const configRule = configLayers.findLast((rules) => ruleOf(rules, metric) !== undefined);
-          const configLimit = configRule && ruleOf(configRule, metric)?.[level];
-          return [metric, ruleOf(cliRules, metric)?.[level] ?? configLimit ?? defaultLimits[level]];
-        })
+        thresholds.map(({ metric, defaultLimits }) => [
+          metric,
+          layers.findLast((rules) => ruleOf(rules, metric)?.[level] !== undefined)?.[metric]?.[level] ??
+            defaultLimits[level],
+        ])
       );
     return { warning: resolveLevel('warning'), error: resolveLevel('error') };
   };

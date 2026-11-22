@@ -711,7 +711,7 @@ describe('code-gauge check: thresholds', () => {
     expect(hasViolations(['--warn', 'functionNestingDepth=off'])).toBe(false);
   });
 
-  it('overrides rules for the files matching glob patterns, later overrides winning', () => {
+  it('overrides rules for the files matching glob patterns, each later entry changing only the levels it sets', () => {
     writeSource(
       'src/calc.py',
       'def total(items):\n    result = 0\n    for item in items:\n        result += item\n    return result\n'
@@ -724,15 +724,15 @@ describe('code-gauge check: thresholds', () => {
         functionNestingDepth: 'off',
       },
       overrides: [
-        { files: ['**/*.ts'], rules: { functionNcss: { warn: 2, error: 0 } } },
-        // The later rule replaces the earlier one whole: its error level is the default again.
-        { files: ['src/*.ts'], rules: { functionNcss: { warn: 4 } } },
+        { files: ['**/*.ts'], rules: { functionNcss: { warn: 2, error: 4 } } },
+        // A later entry changes only the level it sets: the error limit of 4 stays.
+        { files: ['src/*.ts'], rules: { functionNcss: { warn: 'off' } } },
         { files: ['**/*.py'], rules: { functionNcss: 'off' } },
       ],
     });
     const result = runCheck([]);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toContain('src/calc.ts:1-7 total: NCSS 5 (max 4)\n');
+    expect(result.status).toBe(1);
+    expect(result.stdout).toContain('error: src/calc.ts:1-7 total: NCSS 5 (max 4)\n');
     expect(result.stdout).not.toContain('calc.py');
     // The command line wins over the overrides too.
     expect(runCheck(['--warn', 'functionNcss=3']).stdout).toContain('src/calc.py:1-5 total: NCSS 5 (max 3)\n');
