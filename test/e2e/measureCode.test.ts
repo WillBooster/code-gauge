@@ -229,6 +229,8 @@ describe('measureCode: cognitive complexity and nesting', () => {
       [['else if (x == 0)', 'else if (x == 1)'], ['else']],
       [['else if (x == 0)'], []],
       [['else'], []],
+      // C++23 code guards this with __cpp_if_consteval; it has an `if` token but no condition field.
+      [['else if consteval'], ['else']],
     ];
     for (const [guardedHeads, trailingHeads] of cases) {
       const guarded = guardedHeads.map((head, index) => `#ifdef CASE_${index}\n${cppBranch(head)}#endif\n`).join('');

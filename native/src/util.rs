@@ -186,13 +186,19 @@ pub fn to_int32(value: i64) -> i32 {
     value as i32
 }
 
-/// A flat `else if` that holds the condition of the `if` it continues instead of nesting one:
-/// Rust's `else_clause`, and C++'s `else_continuation` (a preprocessor conditional that closes an
-/// if block with `} else if (...) {`, leaving the branch body to its following siblings). A
-/// final `else` of either kind has no condition.
+/// A flat `else if` that stands for the `if` it continues instead of nesting one: Rust's
+/// `else_clause` holding a condition (a final `else` holds only its block), and C++'s
+/// `else_continuation` (a preprocessor conditional that closes an if block with `} else if ... {`,
+/// leaving the branch body to its following siblings) holding an `if` token. The C++ check is on
+/// the token because `else if consteval` has no `condition` field.
 pub fn is_else_if_clause(node: Node<'_>) -> bool {
-    matches!(node.kind_name(), "else_clause" | "else_continuation")
-        && node.child_by_field_name("condition").is_some()
+    match node.kind_name() {
+        "else_clause" => node.child_by_field_name("condition").is_some(),
+        "else_continuation" => all_children(node)
+            .iter()
+            .any(|child| !child.is_named() && child.kind_name() == "if"),
+        _ => false,
+    }
 }
 
 /// Kotlin's `try { } catch { }` shares its node kind with Rust's `?` operator; only the Kotlin form
