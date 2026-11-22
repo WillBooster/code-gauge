@@ -192,7 +192,7 @@ export const configSchema = z.strictObject(
       .array(
         z.strictObject(
           {
-            files: globsSchema.min(1, { error: globsMessage }),
+            files: globsSchema.min(1, { error: 'must list at least one glob pattern' }),
             rules: rulesSchema(fileMetrics),
           },
           { error: 'must be an object with "files" and "rules"' }
