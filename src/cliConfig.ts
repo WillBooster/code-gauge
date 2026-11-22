@@ -12,7 +12,7 @@ import type { DuplicationOptions } from './types.js';
 export const configFileName = 'code-gauge.config.json';
 export const defaultTopFileCount = 10;
 
-/** Shape of the JSON configuration file. All fields are optional and fall back to the built-in defaults. */
+/** The loaded configuration, converted from the file shape `configSchema` validates; every field is optional. */
 export interface CodeGaugeConfig {
   /** Duplication detection settings applied to every measured file. */
   duplication?: DuplicationOptions;
@@ -142,7 +142,7 @@ const limitSchema = z.union(
   }
 );
 
-/** A rule as written: `"off"` for every level, or a limit per level; an omitted level keeps its default. */
+/** A rule as written: `"off"` for every level, or a limit per level; an omitted level is left unset, keeping the limit an earlier layer or the default sets. */
 const ruleSchema = z.union(
   [z.literal('off'), z.strictObject({ warn: limitSchema.optional(), error: limitSchema.optional() })],
   { error: 'must be "off" or an object whose "warn" and "error" limits are non-negative numbers or "off"' }
