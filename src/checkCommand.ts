@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { readFile, realpath, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -97,7 +98,10 @@ export async function runCheckCommand(target: string, cliOptions: CheckCliOption
       measuresTestShare: levels.some((level) => Number.isFinite(projectLimits[level][testShareThreshold.metric])),
     });
     const files = await attachAllowDirectives(scope.files, scope.root);
-    const codeResult = checkThresholds(files, scope.duplication, (file) => limitsOf(path.join(scope.root, file)));
+    // Overrides match a file by its real path, as exclusion does, whichever alias the scan reached it by.
+    const codeResult = checkThresholds(files, scope.duplication, (file) =>
+      limitsOf(realPathOf(path.join(scope.root, file)))
+    );
     const projectViolation = scope.testShare && checkTestShare(scope.testShare, scope.checkedDirectory, projectLimits);
     const result: ReportedResult = {
       ...codeResult,
@@ -118,6 +122,14 @@ export async function runCheckCommand(target: string, cliOptions: CheckCliOption
   } catch (error) {
     writeStderr(`Error: ${getErrorMessage(error)}\n`);
     process.exitCode = 2;
+  }
+}
+
+function realPathOf(file: string): string {
+  try {
+    return realpathSync(file);
+  } catch {
+    return file;
   }
 }
 
