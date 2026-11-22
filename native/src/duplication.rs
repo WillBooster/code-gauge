@@ -698,9 +698,11 @@ fn spanning_range(statements: &[TokenRange]) -> TokenRange {
 
 fn is_split_try_seam(child: Node<'_>) -> bool {
     child.kind_name().starts_with("preproc_")
-        && all_children(child)
-            .iter()
-            .any(|part| matches!(part.kind_name(), "try" | "catch_clause"))
+        && (0..child.child_count()).any(|index| {
+            child
+                .child(index)
+                .is_some_and(|part| matches!(part.kind_name(), "try" | "catch_clause"))
+        })
 }
 
 #[derive(Clone, Copy)]
