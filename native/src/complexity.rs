@@ -529,6 +529,9 @@ impl FunctionBodyPass<'_, '_, '_> {
 /// Plain else branches attached to `current`: an `else_clause`/`else_continuation`/Ruby `else`
 /// whose branch is not an `else if` continuation, or a bare Java/Go/Kotlin `alternative:` branch
 /// without a clause wrapper.
+// Inlined into the recursive visit, its child scans enlarge every frame enough to cut the depth the
+// Workers runtime's stack can measure by ~10%.
+#[inline(never)]
 fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64 {
     if !current.is_named() {
         return 0;
@@ -687,6 +690,9 @@ fn is_pattern_guard(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
 
 /// Ruby `elsif`, Python `elif`, Rust `else if` clauses, and `else if` (an if node in an
 /// else/alternative position).
+// Inlined into the recursive visit, its child scans enlarge every frame enough to cut the depth the
+// Workers runtime's stack can measure by ~10%.
+#[inline(never)]
 fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     let kind = node.kind_name();
     if kind == "elsif" || kind == "elif_clause" || crate::util::is_else_if_clause(node) {

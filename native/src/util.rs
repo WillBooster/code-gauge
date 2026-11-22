@@ -191,6 +191,9 @@ pub fn to_int32(value: i64) -> i32 {
 /// `else_continuation` (a preprocessor conditional that closes an if block with `} else if ... {`,
 /// leaving the branch body to its following siblings) holding an `if` token. The C++ check is on
 /// the token because `else if consteval` has no `condition` field.
+// Inlined into the recursive visit, its child scans enlarge every frame enough to cut the depth the
+// Workers runtime's stack can measure by ~10%.
+#[inline(never)]
 pub fn is_else_if_clause(node: Node<'_>) -> bool {
     match node.kind_name() {
         "else_clause" => node.child_by_field_name("condition").is_some(),
