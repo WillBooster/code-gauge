@@ -238,7 +238,8 @@ function describeIssue(issue: z.core.$ZodIssue): string {
   const location = issue.path.length === 0 ? 'the config' : `"${issue.path.join('.')}"`;
   if (issue.code === 'unrecognized_keys') {
     const [key] = issue.keys;
-    const replacement = issue.path.length === 0 && key ? replacedSettings[key] : undefined;
+    const replacement =
+      issue.path.length === 0 && key && Object.hasOwn(replacedSettings, key) ? replacedSettings[key] : undefined;
     return replacement
       ? `"${key}" is no longer supported; use ${replacement}.`
       : `unknown setting "${key}" in ${location}.`;
