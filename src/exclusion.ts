@@ -53,14 +53,12 @@ export function createExclusion(
 export function matchesGlobs(root: string, absolutePath: string, patterns: readonly string[]): boolean {
   const nativeRelativePath = path.relative(root, absolutePath);
   const relativePath = nativeRelativePath.split(path.sep).join('/');
-  // Only a pattern spelling out a `..` segment, also inside a brace alternative, reaches outside the
-  // root: whether `*` and `**` match `..` segments differs between runtimes (Node's matchesGlob says
-  // no, Bun's says yes). A path on another Windows drive has no relative form, so path.relative
-  // returns it absolute.
+  // Only a pattern spelling out `..` reaches outside the root: whether `*` and `**` match `..`
+  // segments differs between runtimes (Node's matchesGlob says no, Bun's says yes). A path on
+  // another Windows drive has no relative form, so path.relative returns it absolute.
   const outsideRoot = relativePath === '..' || relativePath.startsWith('../') || path.isAbsolute(nativeRelativePath);
   return patterns.some(
-    (pattern) =>
-      (!outsideRoot || pattern.split(/[,/{}]/u).includes('..')) && path.posix.matchesGlob(relativePath, pattern)
+    (pattern) => (!outsideRoot || pattern.startsWith('..')) && path.posix.matchesGlob(relativePath, pattern)
   );
 }
 
