@@ -148,7 +148,7 @@ export const thresholds: readonly Threshold[] = [
   testShareThreshold,
 ];
 
-/** A rule as written in the config or on the command line: a limit per level, `Infinity` for `"off"`. */
+/** A parsed rule of the config or the command line: a limit per reported level, `Infinity` for `"off"`. */
 export type RuleLimits = Readonly<Partial<Record<Level, number>>>;
 export type Rules = Readonly<Record<string, RuleLimits>>;
 
