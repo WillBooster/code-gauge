@@ -632,15 +632,12 @@ fn collect_tokens<'a>(
             if is_statement_list {
                 *statement_list_statements = statement_ranges;
             } else if is_container && !statement_ranges.is_empty() {
-                // The block of an ordinary try is a block candidate through its node; a split
-                // try's block has no node of its own.
-                if is_split_try_statement(node) {
-                    block_ranges.push(spanning_range(&statement_ranges));
-                }
-                // Single-statement containers are recorded too: window enumeration needs two
-                // statements and yields nothing for them, but cross-file matching catalogues each
-                // container's full run.
-                container_statement_ranges.push(statement_ranges);
+                record_statement_run(
+                    node,
+                    statement_ranges,
+                    block_ranges,
+                    container_statement_ranges,
+                );
             }
         }
 
@@ -682,6 +679,23 @@ fn is_run_statement(container: Node<'_>, child: Node<'_>, code: &Source<'_>) -> 
         && !is_tokenless(child, code)
         && child.kind_name() != "lambda_parameters"
         && !(container.kind_name() == "try_statement" && is_split_try_seam(child))
+}
+
+/// Records the non-empty statement run of the container `node`. Single-statement runs are
+/// recorded too: window enumeration needs two statements and yields nothing for them, but
+/// cross-file matching catalogues each container's full run.
+fn record_statement_run(
+    node: Node<'_>,
+    statements: Vec<TokenRange>,
+    block_ranges: &mut Vec<TokenRange>,
+    container_statement_ranges: &mut Vec<Vec<TokenRange>>,
+) {
+    // The block of an ordinary try is a block candidate through its node; a split try's block has
+    // no node of its own.
+    if is_split_try_statement(node) {
+        block_ranges.push(spanning_range(&statements));
+    }
+    container_statement_ranges.push(statements);
 }
 
 /// The range from the first of `statements` through the last; `statements` is not empty.
