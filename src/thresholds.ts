@@ -166,26 +166,29 @@ export interface RulesConfig {
 }
 
 /**
- * The limits of each level applying to a file, with precedence command-line rules > the config's
- * overrides matching the file, later ones first > the config's rules > built-in defaults. Without a
- * file, the limits of the whole project, which overrides never touch.
+ * The limits of each level applying to a file. A metric's rule comes whole from the last config
+ * layer that sets it (the config's rules, then the overrides matching the file in order), a level it
+ * leaves out keeping its default; the command line then sets single levels over it. Without a file,
+ * the limits of the whole project, which overrides never touch.
  */
 export function resolveLimits(cliRules: Rules, config: RulesConfig): (file?: string) => LimitsByLevel {
   return (file) => {
     const matchingOverrides =
       file === undefined ? [] : config.overrides.filter(({ files }) => matchesGlobs(config.root, file, files));
-    const layers = [config.rules, ...matchingOverrides.map(({ rules }) => rules), cliRules];
+    const configLayers = [config.rules, ...matchingOverrides.map(({ rules }) => rules)];
     const resolveLevel = (level: Level): Limits =>
       Object.fromEntries(
         thresholds.map(({ metric, defaultLimits }) => {
-          let limit = defaultLimits[level];
-          for (const rules of layers) {
-            // Object.hasOwn: a metric named like an Object.prototype member must not read an inherited value.
-            limit = (Object.hasOwn(rules, metric) ? rules[metric]?.[level] : undefined) ?? limit;
-          }
-          return [metric, limit];
+          const configRule = configLayers.findLast((rules) => ruleOf(rules, metric) !== undefined);
+          const configLimit = configRule && ruleOf(configRule, metric)?.[level];
+          return [metric, ruleOf(cliRules, metric)?.[level] ?? configLimit ?? defaultLimits[level]];
         })
       );
     return { warning: resolveLevel('warning'), error: resolveLevel('error') };
   };
+}
+
+function ruleOf(rules: Rules, metric: string): RuleLimits | undefined {
+  // Object.hasOwn: a metric named like an Object.prototype member must not read an inherited value.
+  return Object.hasOwn(rules, metric) ? rules[metric] : undefined;
 }

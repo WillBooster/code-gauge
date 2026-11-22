@@ -724,12 +724,14 @@ describe('code-gauge check: thresholds', () => {
         functionNestingDepth: 'off',
       },
       overrides: [
-        { files: ['**/*.ts'], rules: { functionNcss: { warn: 2 } } },
+        { files: ['**/*.ts'], rules: { functionNcss: { warn: 2, error: 0 } } },
+        // The later rule replaces the earlier one whole: its error level is the default again.
         { files: ['src/*.ts'], rules: { functionNcss: { warn: 4 } } },
         { files: ['**/*.py'], rules: { functionNcss: 'off' } },
       ],
     });
     const result = runCheck([]);
+    expect(result.status).toBe(0);
     expect(result.stdout).toContain('src/calc.ts:1-7 total: NCSS 5 (max 4)\n');
     expect(result.stdout).not.toContain('calc.py');
     // The command line wins over the overrides too.
