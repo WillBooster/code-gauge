@@ -439,7 +439,9 @@ A metric or a level that no rule or override sets keeps its default, and `0` is 
 Nothing else turns a limit off: `null`, `false`, and other values are rejected.
 
 `overrides` sets rules for the files matching any of its `files` glob patterns, relative to the
-config file's directory. As in ESLint's flat config, each matching entry changes only the levels it
+config file's directory and matched against a file's real path, as `exclude` patterns are. A pattern
+reaches outside that directory only when it starts with `..` (`../src/**`), so a brace pattern
+mixing a parent and a local alternative is written as two patterns. As in ESLint's flat config, each matching entry changes only the levels it
 sets, later entries winning: an override with `{ "error": 100 }` keeps the `warn` limit set by
 `rules` or an earlier entry, and `"off"` sets both levels off. `testNcssPercent` is measured for the whole checked directory, so it cannot be set in an
 override:
