@@ -229,6 +229,12 @@ function validateConfig(value: unknown, configFile: string): CodeGaugeConfig {
 }
 
 function describeIssue(issue: z.core.$ZodIssue): string {
+  // An object written for a rule fails the union as a whole; its own issue names the level to edit.
+  const nested =
+    issue.code === 'invalid_union' ? issue.errors.flat().find((branchIssue) => branchIssue.path.length > 0) : undefined;
+  if (nested) {
+    return describeIssue({ ...nested, path: [...issue.path, ...nested.path] });
+  }
   const location = issue.path.length === 0 ? 'the config' : `"${issue.path.join('.')}"`;
   if (issue.code === 'unrecognized_keys') {
     const [key] = issue.keys;

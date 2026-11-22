@@ -753,8 +753,12 @@ describe('code-gauge check: thresholds', () => {
       { rules: { functionNcss: { warning: 1 } } },
       'unknown setting "warning" in "rules.functionNcss"',
     ],
-    // oxlint-disable-next-line unicorn/no-null -- JSON null is the value under test.
-    ['a null limit', { rules: { functionNcss: { warn: null } } }, '"rules.functionNcss" must be "off" or an object'],
+    [
+      'a null limit',
+      // oxlint-disable-next-line unicorn/no-null -- JSON null is the value under test.
+      { rules: { functionNcss: { warn: null } } },
+      '"rules.functionNcss.warn" must be a non-negative number or "off"',
+    ],
     ['a false rule', { rules: { functionNcss: false } }, '"rules.functionNcss" must be "off" or an object'],
     [
       'a negative limit',
