@@ -25,9 +25,10 @@ static POSITIONAL_EXCLUSION_KINDS: KindSet = KindSet::new(&[
     "lambda_parameters",
 ]);
 
-/// TypeScript interface members count like Java interface members, but the same node types appear
+/// TypeScript member signatures count like Java interface members, but the same node types appear
 /// inside object-type annotations (`let x: { a: number }`), which are part of one declaration, so
-/// they only count directly under an interface body.
+/// they only count directly under an interface body, or under a class body for the kinds in
+/// CLASS_MEMBER_SIGNATURE_NODE_TYPES.
 const INTERFACE_MEMBER_NODE_TYPES: &[&str] = &[
     "property_signature",
     "method_signature",
@@ -35,6 +36,11 @@ const INTERFACE_MEMBER_NODE_TYPES: &[&str] = &[
     "construct_signature",
     "call_signature",
 ];
+
+/// Member signatures counted by their place in a TypeScript class body: method signatures without a
+/// body (overloads, ambient classes) and index signatures (`static [key: string]: number;`).
+/// Abstract method signatures count through the language's NCSS node types instead.
+const CLASS_MEMBER_SIGNATURE_NODE_TYPES: &[&str] = &["method_signature", "index_signature"];
 
 /// An if-branch wrapped in one of these already counts through ncss_node_types; a bare
 /// `alternative` (Java/Go put the else branch directly in the field) needs the extra `else` count.
@@ -203,10 +209,7 @@ fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     if node.kind_name() == "block" && parent_kind == Some("class_body") {
         return true;
     }
-    // TypeScript interface members (see INTERFACE_MEMBER_NODE_TYPES).
-    if INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind_name())
-        && parent_kind == Some("interface_body")
-    {
+    if is_typescript_member_signature(node, parent_kind) {
         return true;
     }
     // A braceless Rust match-arm body (`1 => foo()`) has no expression_statement wrapper; count the
@@ -215,10 +218,6 @@ fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
         && node.kind_name() != "block"
         && is_field_of_parent(node, parent, "value")
     {
-        return true;
-    }
-    // A TypeScript class-body method overload signature declares a member like its interface twin.
-    if node.kind_name() == "method_signature" && parent_kind == Some("class_body") {
         return true;
     }
     // An ambient `declare namespace M { ... }` is a bare `internal_module`; the non-ambient
@@ -270,6 +269,14 @@ fn counts_contextually(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
         return is_go_declared_type_body(parent, "interface_type");
     }
     false
+}
+
+fn is_typescript_member_signature(node: Node<'_>, parent_kind: Option<&str>) -> bool {
+    match parent_kind {
+        Some("interface_body") => INTERFACE_MEMBER_NODE_TYPES.contains(&node.kind_name()),
+        Some("class_body") => CLASS_MEMBER_SIGNATURE_NODE_TYPES.contains(&node.kind_name()),
+        _ => false,
+    }
 }
 
 fn is_go_declared_type_body(type_node: Option<Node<'_>>, expected_kind: &str) -> bool {

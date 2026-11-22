@@ -22,18 +22,18 @@ rustc-hash = "2"
 # `willbooster-*` crates are WillBooster's forks of the runtime and grammars. Every grammar crate
 # depends only on `tree-sitter-language`, never on upstream's `tree-sitter` crate, whose
 # `links = "tree-sitter"` would conflict with the forked runtime's.
-tree-sitter = { package = "willbooster-tree-sitter", version = "20" }
-tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=36.0.0" }
-tree-sitter-c-sharp = { package = "willbooster-tree-sitter-c-sharp", version = "=21.0.0" }
-tree-sitter-cpp = { package = "willbooster-tree-sitter-cpp", version = "=30.0.0" }
-tree-sitter-go = { package = "willbooster-tree-sitter-go", version = "=11.0.0" }
-tree-sitter-java = { package = "willbooster-tree-sitter-java", version = "=34.0.0" }
-tree-sitter-javascript = { package = "willbooster-tree-sitter-javascript", version = "=25.0.0" }
-tree-sitter-kotlin = { package = "willbooster-tree-sitter-kotlin", version = "=21.0.0" }
-tree-sitter-python = { package = "willbooster-tree-sitter-python", version = "=19.0.0" }
-tree-sitter-ruby = { package = "willbooster-tree-sitter-ruby", version = "=17.0.1" }
-tree-sitter-rust = { package = "willbooster-tree-sitter-rust", version = "=19.0.0" }
-tree-sitter-typescript = { package = "willbooster-tree-sitter-typescript", version = "=29.0.0" }
+tree-sitter = { package = "willbooster-tree-sitter", version = "23.0.4" }
+tree-sitter-c = { package = "willbooster-tree-sitter-c", version = "=40.0.4" }
+tree-sitter-c-sharp = { package = "willbooster-tree-sitter-c-sharp", version = "=22.0.3" }
+tree-sitter-cpp = { package = "willbooster-tree-sitter-cpp", version = "=37.0.0" }
+tree-sitter-go = { package = "willbooster-tree-sitter-go", version = "=13.0.3" }
+tree-sitter-java = { package = "willbooster-tree-sitter-java", version = "=35.0.3" }
+tree-sitter-javascript = { package = "willbooster-tree-sitter-javascript", version = "=27.0.2" }
+tree-sitter-kotlin = { package = "willbooster-tree-sitter-kotlin", version = "=22.0.5" }
+tree-sitter-python = { package = "willbooster-tree-sitter-python", version = "=21.0.3" }
+tree-sitter-ruby = { package = "willbooster-tree-sitter-ruby", version = "=20.0.3" }
+tree-sitter-rust = { package = "willbooster-tree-sitter-rust", version = "=22.0.0" }
+tree-sitter-typescript = { package = "willbooster-tree-sitter-typescript", version = "=34.0.2" }
 
 # The WebAssembly build (src/wasm.rs) exports a plain C ABI instead of N-API.
 [target.'cfg(not(target_family = "wasm"))'.dependencies]

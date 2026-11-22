@@ -376,7 +376,6 @@ version = "1.0.150"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8014e44b4736ed0538adeecded0fce2a272f22dc9578a7eb6b2d9993c74cfb9"
 dependencies = [
- "indexmap",
  "itoa",
  "memchr",
  "serde",
@@ -438,20 +437,19 @@ checksum = "c6f5d3c3b1bf09027a88a6bc961fc00497d651009560b5463668dc81b0fa87a8"
 
 [[package]]
 name = "willbooster-tree-sitter"
-version = "20.0.0"
+version = "23.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b4de532faa6ce35b9e82a90f60a1b5f850b994fdf6256921a298981b443298d5"
+checksum = "51d5a610794a6fba215031918c95b8528131917d60ca3e76095bfb9655994f94"
 dependencies = [
  "cc",
- "serde_json",
  "tree-sitter-language",
 ]
 
 [[package]]
 name = "willbooster-tree-sitter-c"
-version = "36.0.0"
+version = "40.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2660e4af357b28cb76c63e685a29d32eb1d53d86cd06e5eca889dd933279cec"
+checksum = "046cc7d996c7a9b152a82bd89b21a32cd0602c95f61434a1235a549a628e8b9d"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -459,9 +457,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-c-sharp"
-version = "21.0.0"
+version = "22.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e87b46f9b5e17354ce037cc592f2db5a85cc52febd3bf5076ef2c7899dc30285"
+checksum = "feb5471cce967d0cd1edc8bcdeb444396c46df811978f67b1ce50a86ce907029"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -469,9 +467,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-cpp"
-version = "30.0.0"
+version = "37.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5c42459561f3701713382c753445f955892ebc5f02ae9c754926ae70d4257ed2"
+checksum = "85f68e73fa8d4294da95e0ad62bcc30c1a6c977aefb71570285b0690e385a83f"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -479,9 +477,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-go"
-version = "11.0.0"
+version = "13.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "131acf4d726572a85d1283253c8e4ad0e1f597e4efcbf6049f751d8b694b0ab9"
+checksum = "ee175ac11f8a462e2d1257d5349a1eeea2acb87ce1fc4be0ff506da46856f767"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -489,9 +487,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-java"
-version = "34.0.0"
+version = "35.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc57f37811445eb52dd3aa016f8cf553a12cb8fcf57f6727c651b2686c6068b4"
+checksum = "5f947121cd474fe43fb669978e30b61c600bafd252e29ea7273dcfe744d11d41"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -499,9 +497,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-javascript"
-version = "25.0.0"
+version = "27.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa70f625a6ea49a02cc08eb2ff36d3162f85bbab505027a97ab52f248664342c"
+checksum = "7c22d88cb91592cbc27ce2a8623c546a7675fe10198e45d62e770282825b4124"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -509,9 +507,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-kotlin"
-version = "21.0.0"
+version = "22.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6c4df86f1c5b23cc50d984372b876425dd959a3a3d4bb15c4b890da976c9270"
+checksum = "c891b043cc737cec56d18bdcf6bfaa675ed9449bd6ab1d885d8ea3f0173de6be"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -519,9 +517,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-python"
-version = "19.0.0"
+version = "21.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2da92fc605cd9f75d84627d810eb8ba52535b180ad2c36a9bd7655b5cef36a00"
+checksum = "0cc8b487c57c200ba1de7e9249b70ba5b757221afb9bca7d6064e83a1e35dd36"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -529,9 +527,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-ruby"
-version = "17.0.1"
+version = "20.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "151968f325e7e2e2fad7a2e93772c36d78d9c62173f11b3da5a9d9bb14ad6049"
+checksum = "836b0555662f3088de30c0bdfada7abd70aa582356e005d25d791a229c40ef65"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -539,9 +537,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-rust"
-version = "19.0.0"
+version = "22.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c893350ad34fc0f621b99366a5700a8e6eff92a2e09aef089dd689fb4cc7e05c"
+checksum = "051cae1f3eaa7321358122e5d59bc8a2633cd90414f995ec2daebb2e88c184c4"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -549,9 +547,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-typescript"
-version = "29.0.0"
+version = "34.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6d4468276e74547a72798f403e09c0ac6934ccc22b2b923383dc8f498cf5788f"
+checksum = "94fe80397f8636e498be6f92c96418436b4580211f84ea8db1c79fb35fcca42e"
 dependencies = [
  "cc",
  "tree-sitter-language",

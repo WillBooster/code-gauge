@@ -1679,7 +1679,7 @@ warning: original.ts:1-12: duplicated lines 12 (max 4), also at edited.ts:1-13
     expect(checkProject([], { 'wrappers.tsx': wrapperFunctions })).toContain(`
 warning: wrappers.tsx:1-21: duplicated lines 17 (max 14), also at wrappers.tsx:23-48, wrappers.tsx:50-72
 warning: wrappers.tsx:23-48: duplicated lines 24 (max 14), also at wrappers.tsx:50-72, wrappers.tsx:1-21
-warning: wrappers.tsx:50-72: duplicated lines 20 (max 14), also at wrappers.tsx:23-48, wrappers.tsx:1-21
+warning: wrappers.tsx:50-72: duplicated lines 21 (max 14), also at wrappers.tsx:23-48, wrappers.tsx:1-21
 `);
   });
 

@@ -526,8 +526,12 @@ impl FunctionBodyPass<'_, '_, '_> {
     }
 }
 
-/// Plain else branches attached to `current`: an `else_clause`/Ruby `else` whose branch is not an
-/// `else if` continuation, or a bare Java/Go/Kotlin `alternative:` branch without a clause wrapper.
+/// Plain else branches attached to `current`: an `else_clause`/`else_continuation`/Ruby `else`
+/// whose branch is not an `else if` continuation, or a bare Java/Go/Kotlin `alternative:` branch
+/// without a clause wrapper.
+// Inlined into the recursive visit, its child scans enlarge every frame enough to cut the depth the
+// Workers runtime's stack can measure by ~10%.
+#[inline(never)]
 fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64 {
     if !current.is_named() {
         return 0;
@@ -539,12 +543,16 @@ fn count_plain_else_branches(current: Node<'_>, parent: Option<Node<'_>>) -> u64
         // branches count one point each.
         return u64::from(!is_case_else_parent(parent));
     }
+    if kind == "else_continuation" {
+        return u64::from(!crate::util::is_else_if_clause(current));
+    }
     if kind == "else_clause" {
         if crate::util::is_else_if_clause(current) {
             return 0;
         }
         let has_if_like_child = crate::util::named_children(current)
-            .iter()
+            .into_iter()
+            .map(unwrap_attributed_statement)
             .any(|child| IF_LIKE_NODE_TYPES.contains(&child.kind_name()));
         return if has_if_like_child { 0 } else { 1 };
     }
@@ -682,6 +690,9 @@ fn is_pattern_guard(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
 
 /// Ruby `elsif`, Python `elif`, Rust `else if` clauses, and `else if` (an if node in an
 /// else/alternative position).
+// Inlined into the recursive visit, its child scans enlarge every frame enough to cut the depth the
+// Workers runtime's stack can measure by ~10%.
+#[inline(never)]
 fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool {
     let kind = node.kind_name();
     if kind == "elsif" || kind == "elif_clause" || crate::util::is_else_if_clause(node) {
@@ -690,15 +701,37 @@ fn is_flat_chain_continuation(node: Node<'_>, parent: Option<Node<'_>>) -> bool 
     if kind != "if_statement" && kind != "if_expression" && kind != "if" {
         return false;
     }
-    let Some(parent) = parent else {
+    let Some(mut parent) = parent else {
         return false;
     };
+    // C++ `else [[likely]] if` wraps the if in an attributed statement inside the else clause.
+    if parent.kind_name() == "attributed_statement" {
+        let Some(grandparent) = parent.parent_node() else {
+            return false;
+        };
+        if grandparent.kind_name() != "else_clause" {
+            return false;
+        }
+        parent = grandparent;
+    }
     // JS/C/C++/C# wrap `else if` in an else clause; Java/Go/Kotlin put it directly in
     // `alternative`. An if inside a Rust else-if clause is its condition, not a continuation.
     (parent.kind_name() == "else_clause" && !crate::util::is_else_if_clause(parent))
         || parent
             .child_by_field_name("alternative")
             .is_some_and(|alternative| alternative.id() == node.id())
+}
+
+/// The statement a C++ `attributed_statement` (`[[likely]] if (...)`) applies its attributes to,
+/// or the node itself.
+fn unwrap_attributed_statement(node: Node<'_>) -> Node<'_> {
+    if node.kind_name() != "attributed_statement" {
+        return node;
+    }
+    crate::util::named_children(node)
+        .into_iter()
+        .find(|child| !child.is_extra() && child.kind_name() != "attribute_declaration")
+        .unwrap_or(node)
 }
 
 /// Switch branches that add no path. NIST SP 500-235 counts one path per case-labelled statement:
