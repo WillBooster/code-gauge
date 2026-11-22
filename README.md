@@ -429,8 +429,9 @@ with `--config`). The following config reproduces every built-in default:
 
 The command line wins over the config file, which wins over the defaults. Unknown settings are
 rejected so stale configuration fails loudly. `rank.top` and `failOnError` apply to the ranking
-command only. `$schema` points editors to the [JSON Schema](schema.json) the package ships, which
-the CLI's own validation generates, for completion and checking as you type.
+command only. `$schema` points editors to the JSON Schema the package ships at
+`node_modules/code-gauge/schema.json`, generated from the CLI's own validation, for completion and
+checking as you type.
 
 `rules` maps a [metric](#threshold-check-code-gauge-check) to `"off"`, which disables it at both
 levels, or to an object with a `warn` and an `error` limit, each a non-negative number or `"off"`.
