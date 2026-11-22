@@ -37,8 +37,9 @@ const INTERFACE_MEMBER_NODE_TYPES: &[&str] = &[
     "call_signature",
 ];
 
-/// The member signatures a TypeScript class body declares: method overload signatures and index
-/// signatures (`static [key: string]: number;`).
+/// Member signatures counted by their place in a TypeScript class body: method signatures without a
+/// body (overloads, ambient classes) and index signatures (`static [key: string]: number;`).
+/// Abstract method signatures count through the language's NCSS node types instead.
 const CLASS_MEMBER_SIGNATURE_NODE_TYPES: &[&str] = &["method_signature", "index_signature"];
 
 /// An if-branch wrapped in one of these already counts through ncss_node_types; a bare
