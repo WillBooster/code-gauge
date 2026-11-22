@@ -447,9 +447,9 @@ dependencies = [
 
 [[package]]
 name = "willbooster-tree-sitter-c"
-version = "40.0.3"
+version = "40.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e4eb59a587e2b25b159049db71706864565f7405d1dda538e001b273f0d85d8"
+checksum = "046cc7d996c7a9b152a82bd89b21a32cd0602c95f61434a1235a549a628e8b9d"
 dependencies = [
  "cc",
  "tree-sitter-language",
