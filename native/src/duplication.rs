@@ -1,309 +1,16 @@
 use indexmap::IndexMap;
 use rustc_hash::{FxHashMap, FxHashSet};
-use std::borrow::Cow;
-use std::sync::OnceLock;
-use tree_sitter::Node;
 
-use crate::near_miss::{
-    Block, CorePair, Matcher, PairMatch, TokenRuns, FILTRATION_PERCENT, MAX_LENGTH_RATIO,
-};
-use crate::tree_index::NodeExt;
+use crate::near_miss_groups::{collect_near_miss_groups, select_near_miss_blocks};
+pub use crate::tokenize::{hash_text, tokenize, TokenizedSource};
+use crate::tokenize::{hash_text2, Token, TokenRange};
 use crate::types::{
     CrossFileCandidate, CrossFileToken, CrossFileTokenRange, DuplicateBlockOccurrence,
     DuplicationMetrics,
 };
-use crate::util::{all_children, is_token, named_children, node_text, to_int32, Source};
+use crate::util::to_int32;
 
-/// Block-like nodes considered as whole-subtree duplicate candidates.
-const DUPLICATE_BLOCK_TYPES: &[&str] = &[
-    "statement_block",
-    "block",
-    "compound_statement",
-    "body_statement",
-    "constructor_body",
-    "do_block",
-    "if_statement",
-    "for_statement",
-    "for_in_statement",
-    "enhanced_for_statement",
-    "for_range_loop",
-    "while_statement",
-    "do_statement",
-    "try_statement",
-    "try_with_resources_statement",
-    "with_statement",
-    "switch_statement",
-    "switch_expression",
-    "switch_case",
-    "switch_block_statement_group",
-    "switch_rule",
-    "case_clause",
-    "case_statement",
-    "match_statement",
-    "match_arm",
-    "except_clause",
-    "catch_clause",
-    "finally_clause",
-    "elif_clause",
-    "ensure",
-    "expression_statement",
-    "return_statement",
-    "return_expression",
-    "if_expression",
-    "for_expression",
-    "while_expression",
-    "loop_expression",
-    "match_expression",
-    "foreach_statement",
-    "switch_section",
-    "switch_expression_arm",
-    "using_statement",
-    "lock_statement",
-    "when_expression",
-    "when_entry",
-    "do_while_statement",
-    "catch_block",
-    "finally_block",
-    "function_body",
-    "jsx_element",
-    "jsx_self_closing_element",
-    "if",
-    "unless",
-    "case",
-    "case_match",
-    "while",
-    "until",
-    "for",
-    "begin",
-    "when",
-];
-
-/// Nodes whose direct named children form statement sequences scanned for copy-pasted runs.
-const STATEMENT_CONTAINER_TYPES: &[&str] = &[
-    "program",
-    "source_file",
-    "translation_unit",
-    "module",
-    "statement_block",
-    "block",
-    "compound_statement",
-    "body_statement",
-    "constructor_body",
-    "class_body",
-    "block_body",
-    "do_block",
-    "do",
-    "ensure",
-    "then",
-    "else",
-    "case_statement",
-    "switch_block_statement_group",
-    "switch_rule",
-    "expression_case",
-    "type_case",
-    "communication_case",
-    "default_case",
-    "compilation_unit",
-    "switch_section",
-    "extension_body",
-    "enum_class_body",
-    "function_body",
-    "lambda_literal",
-];
-
-/// C# type bodies are `declaration_list`s, a name Rust also uses for `mod`/`impl`/`trait` bodies;
-/// only the C# ones (under these parents) hold member runs scanned like Java's `class_body`.
-const CSHARP_DECLARATION_LIST_PARENT_TYPES: &[&str] = &[
-    "class_declaration",
-    "struct_declaration",
-    "interface_declaration",
-    "record_declaration",
-    "namespace_declaration",
-];
-
-/// Whole-subtree duplicate candidates: DUPLICATE_BLOCK_TYPES plus Kotlin's `try_expression`, which
-/// shares its name with Rust's `?` operator (see is_kotlin_try_expression).
-fn is_duplicate_block(node: Node<'_>) -> bool {
-    if !node.is_named() {
-        return false;
-    }
-    if node.kind_name() == "try_expression" {
-        return crate::util::is_kotlin_try_expression(node);
-    }
-    DUPLICATE_BLOCK_TYPES.contains(&node.kind_name())
-}
-
-fn is_statement_container(node: Node<'_>) -> bool {
-    if !node.is_named() {
-        return false;
-    }
-    if node.kind_name() == "declaration_list" {
-        return node.parent_node().is_some_and(|parent| {
-            CSHARP_DECLARATION_LIST_PARENT_TYPES.contains(&parent.kind_name())
-        });
-    }
-    STATEMENT_CONTAINER_TYPES.contains(&node.kind_name()) || is_split_try_statement(node)
-}
-
-/// Identifier leaves anonymized by occurrence order so consistently renamed copies still match.
-const ANONYMIZED_IDENTIFIER_TYPES: &[&str] = &[
-    "identifier",
-    "implicit_parameter",
-    "constant",
-    "instance_variable",
-    "class_variable",
-    "global_variable",
-];
-
-const SHORTHAND_PROPERTY_TYPES: &[&str] = &[
-    "shorthand_property_identifier",
-    "shorthand_property_identifier_pattern",
-];
-
-/// Literal leaves normalized to a kind tag so copies differing only in literal values still match.
-const LITERAL_KIND_BY_TYPE: &[(&str, &str)] = &[
-    ("number", "#num"),
-    ("number_literal", "#num"),
-    ("integer", "#num"),
-    ("float", "#num"),
-    ("integer_literal", "#num"),
-    ("float_literal", "#num"),
-    ("real_literal", "#num"),
-    ("int_literal", "#num"),
-    ("rune_literal", "#char"),
-    ("imaginary_literal", "#num"),
-    ("decimal_integer_literal", "#num"),
-    ("hex_integer_literal", "#num"),
-    ("octal_integer_literal", "#num"),
-    ("binary_integer_literal", "#num"),
-    ("decimal_floating_point_literal", "#num"),
-    ("hex_floating_point_literal", "#num"),
-    ("string_fragment", "#str"),
-    ("multiline_string_fragment", "#str"),
-    ("string_content", "#str"),
-    ("string_literal_content", "#str"),
-    ("character_literal_content", "#char"),
-    ("verbatim_string_literal", "#str"),
-    ("interpolated_string_expression", "#str"),
-    ("raw_string_content", "#str"),
-    ("heredoc_content", "#str"),
-    ("heredoc_beginning", "#heredoc"),
-    ("heredoc_end", "#heredoc"),
-    ("string", "#str"),
-    ("template_string", "#str"),
-    ("string_literal", "#str"),
-    ("interpreted_string_literal", "#str"),
-    ("raw_string_literal", "#str"),
-    ("raw_string", "#str"),
-    ("escape_sequence", "#str"),
-    ("char_literal", "#char"),
-    ("character_literal", "#char"),
-    ("character", "#char"),
-    ("regex_pattern", "#regex"),
-];
-
-const COMMENT_TYPES: &[&str] = &["comment", "line_comment", "block_comment"];
-
-/// Declaration kinds that only name dependencies (imports, package clauses, includes).
-const DEPENDENCY_DECLARATION_TYPES: &[&str] = &[
-    "import_statement",
-    "import_from_statement",
-    "future_import_statement",
-    "import_alias",
-    "import_declaration",
-    "package_clause",
-    "package_declaration",
-    "package_header",
-    "use_declaration",
-    "extern_crate_declaration",
-    "using_directive",
-    "extern_alias_directive",
-    "preproc_include",
-];
-
-/// Ruby methods that load another file, called without a receiver.
-const RUBY_REQUIRE_METHODS: &[&str] = &["require", "require_relative"];
-
-/// Children of a string node that carry only literal content; anything else is interpolation.
-const STRING_FRAGMENT_TYPES: &[&str] = &[
-    "string_fragment",
-    "multiline_string_fragment",
-    "string_content",
-    "string_literal_content",
-    "character_literal_content",
-    "raw_string_content",
-    "interpreted_string_literal_content",
-    "raw_string_literal_content",
-    "format_specifier",
-    "raw_string_start",
-    "raw_string_end",
-    "escape_sequence",
-    "heredoc_content",
-    "string_start",
-    "string_end",
-    "string_literal_encoding",
-    "interpolation_start",
-    "interpolation_quote",
-];
-
-/// Grammar fields whose plain-`identifier` leaves are semantic API names, kept verbatim.
-const SEMANTIC_NAME_FIELD_BY_PARENT_TYPE: &[(&str, &str)] = &[
-    ("call_expression", "function"),
-    ("method_invocation", "name"),
-    ("call", "method"),
-    ("attribute", "attribute"),
-    ("macro_invocation", "macro"),
-    ("field_access", "field"),
-    ("new_expression", "constructor"),
-    ("keyword_argument", "name"),
-    ("element_value_pair", "key"),
-    ("generic_function", "function"),
-    ("template_function", "name"),
-    ("invocation_expression", "function"),
-    ("member_access_expression", "name"),
-    ("member_binding_expression", "name"),
-    ("argument", "name"),
-];
-
-/// Rust's `Some(x)` variant patterns and Java's `uses Foo;` also put a plain identifier in a `type`
-/// field; they stay anonymized as before C# support. Rust's `generic_type` head is normally a
-/// `type_identifier` (kept verbatim like every type name); the entry covers the reserved-word
-/// heads the grammar spells as a plain identifier.
-const NON_CSHARP_TYPE_FIELD_PARENT_TYPES: &[&str] = &[
-    "tuple_struct_pattern",
-    "generic_type",
-    "uses_module_directive",
-];
-
-/// C# spells type names as plain `identifier`s (Java has `type_identifier`); an identifier under
-/// one of these parents, or in any other parent's `type` field, names a type and stays verbatim.
-const CSHARP_TYPE_PARENT_TYPES: &[&str] = &[
-    "generic_name",
-    "qualified_name",
-    "alias_qualified_name",
-    "type_argument_list",
-    "base_list",
-    "explicit_interface_specifier",
-    "using_directive",
-];
-
-/// Kind tags whose raw source text re-enters the fingerprint in literal-dense (data-like) regions.
-const VALUE_CARRYING_LITERAL_KINDS: &[&str] = &["#num", "#str", "#char", "#regex"];
-
-/// String children that carry actual content (STRING_FRAGMENT_TYPES minus the delimiter nodes).
-const STRING_CONTENT_FRAGMENT_TYPES: &[&str] = &[
-    "string_fragment",
-    "multiline_string_fragment",
-    "string_content",
-    "string_literal_content",
-    "character_literal_content",
-    "raw_string_content",
-    "interpreted_string_literal_content",
-    "raw_string_literal_content",
-    "format_specifier",
-    "escape_sequence",
-    "heredoc_content",
-];
+// code-gauge-allow-file fileNcss -- exact candidate enumeration, maximal selection, and gap merging share candidate and occurrence types
 
 const MIN_SEQUENCE_STATEMENT_COUNT: usize = 2;
 const MAX_SEQUENCE_STATEMENT_COUNT: usize = 100;
@@ -329,49 +36,6 @@ impl Default for DuplicationSettings {
         }
     }
 }
-/// See isLiteralDense in duplication.ts: >= 20% literal values marks a region as data-like.
-fn is_literal_dense(literal_count: usize, token_count: usize) -> bool {
-    literal_count * 5 >= token_count
-}
-
-fn literal_kind_by_type() -> &'static FxHashMap<&'static str, &'static str> {
-    static MAP: OnceLock<FxHashMap<&'static str, &'static str>> = OnceLock::new();
-    MAP.get_or_init(|| LITERAL_KIND_BY_TYPE.iter().copied().collect())
-}
-
-fn semantic_name_field_by_parent_type() -> &'static FxHashMap<&'static str, &'static str> {
-    static MAP: OnceLock<FxHashMap<&'static str, &'static str>> = OnceLock::new();
-    MAP.get_or_init(|| SEMANTIC_NAME_FIELD_BY_PARENT_TYPE.iter().copied().collect())
-}
-
-fn pascal_case_regex() -> &'static regex::Regex {
-    static REGEX: OnceLock<regex::Regex> = OnceLock::new();
-    REGEX.get_or_init(|| regex::Regex::new(r"^\p{Lu}").unwrap())
-}
-
-struct Token<'a> {
-    is_id: bool,
-    text: Cow<'a, str>,
-    /// Two independent hashes of `text` (djb2 and FNV-1a); see the Token doc in duplication.ts.
-    text_hash: i32,
-    text_hash2: i32,
-    /// Hash pair of a value-carrying literal's value, folded into data-like region fingerprints.
-    literal_hash: Option<i32>,
-    literal_hash2: Option<i32>,
-    /// True for verbatim-kept NAMES (named grammar leaves); see the Token doc in duplication.ts.
-    is_name: bool,
-    start_row: usize,
-    end_row: usize,
-}
-
-struct TokenRange {
-    start_token_index: usize,
-    end_token_index: usize,
-    start_index: usize,
-    end_index: usize,
-    start_line: usize,
-    end_line: usize,
-}
 
 #[derive(Clone)]
 struct DuplicateCandidate {
@@ -386,37 +50,6 @@ struct DuplicateCandidate {
     /// Set by select_maximal_duplicates on a copy lying inside a larger group's region: it is
     /// reported with its group, but its span is already counted by that larger group.
     nested_in_larger_group: bool,
-}
-
-/// A file's normalized token stream with the block and statement structure clone detection
-/// matches over, built once per parse and shared by within-file and cross-file detection.
-pub struct TokenizedSource<'a> {
-    tokens: Vec<Token<'a>>,
-    structure: SourceStructure,
-    literal_count_prefix: Vec<usize>,
-}
-
-#[derive(Default)]
-struct SourceStructure {
-    block_ranges: Vec<TokenRange>,
-    /// The guarded statements of each C++ try block split across two preprocessor conditionals.
-    /// Such a block has no node, so within-file matching and near-miss comparison take it from
-    /// here. Cross-file candidates leave it out: they are deduplicated by region, and the body's
-    /// full statement run, which spans the same tokens, is what a copy in another file carries.
-    split_try_body_ranges: Vec<TokenRange>,
-    container_statement_ranges: Vec<Vec<TokenRange>>,
-}
-
-pub fn tokenize<'a>(root: Node<'_>, code: &Source<'a>) -> TokenizedSource<'a> {
-    let mut tokens: Vec<Token<'a>> = Vec::new();
-    let mut structure = SourceStructure::default();
-    collect_tokens(root, code, &mut tokens, &mut structure);
-    let literal_count_prefix = build_literal_count_prefix(&tokens);
-    TokenizedSource {
-        tokens,
-        structure,
-        literal_count_prefix,
-    }
 }
 
 /// Detects copy-pasted regions within a file. Fingerprints replicate the JavaScript int32 hash
@@ -484,26 +117,14 @@ pub fn collect_cross_file_file_data(
         let (Some(first), Some(last)) = (statements.first(), statements.last()) else {
             continue;
         };
-        let token_count = last.end_token_index - first.start_token_index;
-        if token_count < min_tokens {
-            continue;
-        }
-        let fingerprint = format!(
-            "s:{}",
-            fingerprint_key(
+        if last.end_token_index - first.start_token_index >= min_tokens {
+            candidates.push(sequence_candidate(
                 tokens,
                 literal_count_prefix,
-                first.start_token_index,
-                last.end_token_index
-            )
-        );
-        candidates.push(to_candidate(
-            fingerprint,
-            first.start_token_index,
-            last.end_token_index,
-            first,
-            last,
-        ));
+                first,
+                last,
+            ));
+        }
     }
 
     let candidate_payloads = dedupe_by_region(candidates)
@@ -562,615 +183,6 @@ fn to_token_range_payload(range: &TokenRange) -> CrossFileTokenRange {
     }
 }
 
-// code-gauge-allow functionCognitiveComplexity -- one walk emits the tokens, block ranges, and statement runs, which index into one token stream
-// code-gauge-allow functionNcss -- same walk; splitting it would thread the three outputs through every helper
-fn collect_tokens<'a>(
-    root: Node<'_>,
-    code: &Source<'a>,
-    tokens: &mut Vec<Token<'a>>,
-    structure: &mut SourceStructure,
-) {
-    /// `statement_list_statements` receives the statements of a Go `statement_list`, which wraps
-    /// the statements of blocks and case clauses and whose statements belong to the run of the
-    /// enclosing container.
-    fn visit<'a>(
-        node: Node<'_>,
-        code: &Source<'a>,
-        tokens: &mut Vec<Token<'a>>,
-        structure: &mut SourceStructure,
-        statement_list_statements: &mut Vec<TokenRange>,
-    ) -> TokenRange {
-        let start_token_index = tokens.len();
-        // The span of the node's tokens, which can be narrower than the node: a Python block
-        // starts at its header's colon, and a Rust declaration starts at its doc comment.
-        let mut token_span: Option<SourceSpan> = None;
-        let is_token = is_token(node);
-        let atomic_kind = if is_token {
-            None
-        } else {
-            atomic_literal_kind(node)
-        };
-        if is_token {
-            append_leaf_token(node, code, tokens);
-        } else if let Some(atomic_kind) = atomic_kind {
-            // Interpolation-free strings collapse to their kind tag so copies differing only in
-            // quote style or content still match.
-            tokens.push(make_text_token(
-                Cow::Borrowed(atomic_kind),
-                Some(literal_value_text(node, atomic_kind, code)),
-                false,
-                node.start_position().row,
-                node.end_position().row,
-            ));
-        } else if !is_tokenless(node, code) {
-            let mut statement_ranges: Vec<TokenRange> = Vec::new();
-            let is_statement_list = node.kind_name() == "statement_list";
-            let is_container = is_statement_list || is_statement_container(node);
-            for child in all_children(node) {
-                let mut child_statements = Vec::new();
-                let child_range = visit(child, code, tokens, structure, &mut child_statements);
-                token_span = widen_token_span(token_span, &child_range);
-                if is_container && is_run_statement(node, child, code) {
-                    if child.kind_name() == "statement_list" {
-                        statement_ranges.append(&mut child_statements);
-                    } else {
-                        statement_ranges.push(child_range);
-                    }
-                }
-            }
-            if is_statement_list {
-                *statement_list_statements = statement_ranges;
-            } else if is_container && !statement_ranges.is_empty() {
-                record_statement_run(node, statement_ranges, structure);
-            }
-        }
-
-        let span = token_span.unwrap_or(SourceSpan {
-            start_index: node.start_byte(),
-            end_index: node.end_byte(),
-            start_line: node.start_position().row + 1,
-            end_line: node.end_position().row + 1,
-        });
-        let range = TokenRange {
-            start_token_index,
-            end_token_index: tokens.len(),
-            start_index: span.start_index,
-            end_index: span.end_index,
-            start_line: span.start_line,
-            end_line: span.end_line,
-        };
-        if is_duplicate_block(node) {
-            structure.block_ranges.push(TokenRange { ..range });
-        }
-        range
-    }
-
-    visit(root, code, tokens, structure, &mut Vec::new());
-}
-
-/// Whether `child` is one of the statements in the run of `container`. A Kotlin lambda's
-/// parameters sit beside its statements, and the conditionals that open and close a split
-/// `try_statement` stay out of its run like the braces and handlers of an ordinary one.
-fn is_run_statement(container: Node<'_>, child: Node<'_>, code: &Source<'_>) -> bool {
-    child.is_named()
-        && !is_tokenless(child, code)
-        && child.kind_name() != "lambda_parameters"
-        && !(container.kind_name() == "try_statement" && is_split_try_seam(child))
-}
-
-/// Records the non-empty statement run of the container `node`. Single-statement runs are
-/// recorded too: window enumeration needs two statements and yields nothing for them, but
-/// cross-file matching catalogues each container's full run.
-fn record_statement_run(
-    node: Node<'_>,
-    statements: Vec<TokenRange>,
-    structure: &mut SourceStructure,
-) {
-    if is_split_try_statement(node) {
-        structure
-            .split_try_body_ranges
-            .push(spanning_range(&statements));
-    }
-    structure.container_statement_ranges.push(statements);
-}
-
-/// A C++ `try_statement` whose braces sit in two preprocessor conditionals (`#if X` / `try {` /
-/// `#endif` ... `#if X` / `} catch (...) { ... }` / `#endif`) has no block: the guarded statements
-/// are its own children, between the two conditionals. Every other `try_statement` starts with
-/// the `try` keyword.
-fn is_split_try_statement(node: Node<'_>) -> bool {
-    node.kind_name() == "try_statement"
-        && node
-            .child(0)
-            .is_some_and(|first| first.kind_name().starts_with("preproc_"))
-}
-
-/// The range from the first of `statements` through the last; `statements` is not empty.
-fn spanning_range(statements: &[TokenRange]) -> TokenRange {
-    let (first, last) = (&statements[0], &statements[statements.len() - 1]);
-    TokenRange {
-        end_token_index: last.end_token_index,
-        end_index: last.end_index,
-        end_line: last.end_line,
-        ..*first
-    }
-}
-
-fn is_split_try_seam(child: Node<'_>) -> bool {
-    child.kind_name().starts_with("preproc_")
-        && (0..child.child_count()).any(|index| {
-            child
-                .child(index)
-                .is_some_and(|part| matches!(part.kind_name(), "try" | "catch_clause"))
-        })
-}
-
-#[derive(Clone, Copy)]
-struct SourceSpan {
-    start_index: usize,
-    end_index: usize,
-    start_line: usize,
-    end_line: usize,
-}
-
-/// `span` extended to the end of `child`'s tokens, or `child`'s token span when `span` is empty;
-/// a child without tokens leaves it as it is.
-fn widen_token_span(span: Option<SourceSpan>, child: &TokenRange) -> Option<SourceSpan> {
-    if child.start_token_index == child.end_token_index {
-        return span;
-    }
-    Some(SourceSpan {
-        start_index: span.map_or(child.start_index, |span| span.start_index),
-        end_index: child.end_index,
-        start_line: span.map_or(child.start_line, |span| span.start_line),
-        end_line: child.end_line,
-    })
-}
-
-/// Comments and dependency declarations contribute no tokens, so no clone consists of them; the
-/// tokens around them stay adjacent, so a clone may still extend across one.
-fn is_tokenless(node: Node<'_>, code: &Source<'_>) -> bool {
-    COMMENT_TYPES.contains(&node.kind_name()) || is_dependency_declaration(node, code)
-}
-
-/// Every module must spell out its own dependencies, so a clone made of them has no refactoring
-/// that could remove it; they are left out of clone detection entirely.
-fn is_dependency_declaration(node: Node<'_>, code: &Source<'_>) -> bool {
-    if !node.is_named() {
-        return false;
-    }
-    let kind = node.kind_name();
-    if DEPENDENCY_DECLARATION_TYPES.contains(&kind) {
-        return true;
-    }
-    match (crate::tree_index::language_name(), kind) {
-        // JavaScript's dynamic `import(...)` is a named `import` node too.
-        ("kotlin", "import") => true,
-        ("cpp", "using_declaration") => true,
-        // `mod name;` loads a file; a `mod name { ... }` with a body is code.
-        ("rust", "mod_item") => node.child_by_field_name("body").is_none(),
-        // Re-exports (`export { a } from './a'`); other exports wrap declarations.
-        ("javascript" | "jsx" | "typescript" | "tsx", "export_statement") => {
-            node.child_by_field_name("source").is_some()
-        }
-        (
-            "javascript" | "jsx" | "typescript" | "tsx",
-            "lexical_declaration" | "variable_declaration",
-        ) => is_require_declaration(node, code),
-        // `require('a');` and CommonJS re-exports such as `module.exports = require('a');`.
-        ("javascript" | "jsx" | "typescript" | "tsx", "expression_statement") => {
-            named_children(node).first().is_some_and(|expression| {
-                if expression.kind_name() == "assignment_expression" {
-                    expression
-                        .child_by_field_name("right")
-                        .is_some_and(|right| is_require_value(right, code))
-                } else {
-                    is_require_value(*expression, code)
-                }
-            })
-        }
-        ("ruby", "call") => {
-            node.child_by_field_name("receiver").is_none()
-                && node
-                    .child_by_field_name("method")
-                    .is_some_and(|method| RUBY_REQUIRE_METHODS.contains(&node_text(method, code)))
-        }
-        _ => false,
-    }
-}
-
-/// `const a = require('a')` (including destructuring and `require('a').b`) in every declarator.
-fn is_require_declaration(node: Node<'_>, code: &Source<'_>) -> bool {
-    let declarators: Vec<Node<'_>> = named_children(node)
-        .into_iter()
-        .filter(|child| child.kind_name() == "variable_declarator")
-        .collect();
-    !declarators.is_empty()
-        && declarators.iter().all(|declarator| {
-            declarator
-                .child_by_field_name("value")
-                .is_some_and(|value| is_require_value(value, code))
-        })
-}
-
-/// `require('a')` or a property read from it (`require('a').b`), but not a call on the module.
-fn is_require_value(node: Node<'_>, code: &Source<'_>) -> bool {
-    let mut value = node;
-    while value.kind_name() == "member_expression" {
-        let Some(object) = value.child_by_field_name("object") else {
-            return false;
-        };
-        value = object;
-    }
-    value.kind_name() == "call_expression"
-        && value
-            .child_by_field_name("function")
-            .is_some_and(|function| {
-                function.kind_name() == "identifier" && node_text(function, code) == "require"
-            })
-}
-
-/// The kind tag of a string-like node with no interpolation, or None to descend normally.
-fn atomic_literal_kind(node: Node<'_>) -> Option<&'static str> {
-    let kind = if node.is_named() {
-        literal_kind_by_type().get(node.kind_name()).copied()
-    } else {
-        None
-    };
-    let kind = kind?;
-    if named_children(node)
-        .iter()
-        .all(|child| STRING_FRAGMENT_TYPES.contains(&child.kind_name()))
-    {
-        Some(kind)
-    } else {
-        None
-    }
-}
-
-fn append_leaf_token<'a>(node: Node<'_>, code: &Source<'a>, tokens: &mut Vec<Token<'a>>) {
-    if COMMENT_TYPES.contains(&node.kind_name()) {
-        return;
-    }
-
-    let start_row = node.start_position().row;
-    let end_row = node.end_position().row;
-    if node.is_named() && SHORTHAND_PROPERTY_TYPES.contains(&node.kind_name()) {
-        let text = node_text(node, code);
-        tokens.push(make_text_token(
-            Cow::Borrowed(text),
-            None,
-            true,
-            start_row,
-            end_row,
-        ));
-        tokens.push(make_text_token(
-            Cow::Borrowed(":"),
-            None,
-            false,
-            start_row,
-            end_row,
-        ));
-        tokens.push(Token {
-            is_id: true,
-            text: Cow::Borrowed(text),
-            text_hash: 0,
-            text_hash2: 0,
-            literal_hash: None,
-            literal_hash2: None,
-            is_name: false,
-            start_row,
-            end_row,
-        });
-        return;
-    }
-
-    if crate::util::is_kotlin_keyword_literal(node, code) {
-        tokens.push(make_text_token(
-            Cow::Borrowed(node_text(node, code)),
-            None,
-            false,
-            start_row,
-            end_row,
-        ));
-        return;
-    }
-    if node.is_named()
-        && ANONYMIZED_IDENTIFIER_TYPES.contains(&node.kind_name())
-        && !is_semantic_name_leaf(node, code)
-    {
-        tokens.push(Token {
-            is_id: true,
-            text: Cow::Borrowed(node_text(node, code)),
-            text_hash: 0,
-            text_hash2: 0,
-            literal_hash: None,
-            literal_hash2: None,
-            is_name: false,
-            start_row,
-            end_row,
-        });
-        return;
-    }
-
-    // Anything else keeps its text: keywords, operators, punctuation, and semantic names.
-    let literal_kind = if node.is_named() {
-        literal_kind_by_type().get(node.kind_name()).copied()
-    } else {
-        None
-    };
-    tokens.push(match literal_kind {
-        Some(kind) => make_text_token(
-            Cow::Borrowed(kind),
-            Some(literal_value_text(node, kind, code)),
-            false,
-            start_row,
-            end_row,
-        ),
-        None => make_text_token(
-            Cow::Borrowed(node_text(node, code)),
-            None,
-            node.is_named(),
-            start_row,
-            end_row,
-        ),
-    });
-}
-
-fn make_text_token<'a>(
-    text: Cow<'a, str>,
-    literal_value_text: Option<Cow<'a, str>>,
-    is_name: bool,
-    start_row: usize,
-    end_row: usize,
-) -> Token<'a> {
-    let text_hash = hash_text(&text);
-    let text_hash2 = hash_text2(&text);
-    let (literal_hash, literal_hash2) = match literal_value_text {
-        Some(value) if VALUE_CARRYING_LITERAL_KINDS.contains(&text.as_ref()) => {
-            (Some(hash_text(&value)), Some(hash_text2(&value)))
-        }
-        _ => (None, None),
-    };
-    Token {
-        is_id: false,
-        text,
-        text_hash,
-        text_hash2,
-        literal_hash,
-        literal_hash2,
-        is_name,
-        start_row,
-        end_row,
-    }
-}
-
-/// The value of a literal as folded into literal-dense fingerprints, independent of its delimiter
-/// spelling (quote style, C# verbatim prefix) so equal values in differently quoted copies match.
-fn literal_value_text<'a>(node: Node<'_>, kind: &str, code: &Source<'a>) -> Cow<'a, str> {
-    if kind != "#str" && kind != "#char" {
-        return Cow::Borrowed(node_text(node, code));
-    }
-    // Fragment leaves already carry bare content; a quote appearing there is content.
-    if STRING_CONTENT_FRAGMENT_TYPES.contains(&node.kind_name()) {
-        return Cow::Borrowed(node_text(node, code));
-    }
-    let fragments: Vec<&str> = named_children(node)
-        .iter()
-        .filter(|child| STRING_CONTENT_FRAGMENT_TYPES.contains(&child.kind_name()))
-        .map(|child| node_text(*child, code))
-        .collect();
-    if !fragments.is_empty() {
-        return Cow::Owned(fragments.concat());
-    }
-    // A C# verbatim string (`@"..."`) carries the same value as its ordinary spelling.
-    let text = node_text(node, code);
-    let text = if node.kind_name() == "verbatim_string_literal" {
-        text.strip_prefix('@').unwrap_or(text)
-    } else {
-        text
-    };
-    Cow::Borrowed(strip_matching_quotes(text))
-}
-
-/// Strips one matching pair of surrounding ASCII quotes (quote characters are ASCII, so byte
-/// indexing is UTF-8 safe).
-fn strip_matching_quotes(text: &str) -> &str {
-    let bytes = text.as_bytes();
-    if bytes.len() >= 2 {
-        let first = bytes[0];
-        if (first == b'"' || first == b'\'' || first == b'`') && bytes[bytes.len() - 1] == first {
-            return &text[1..text.len() - 1];
-        }
-    }
-    text
-}
-
-/// literal_count_prefix[i] = value-carrying literal tokens in tokens[0..i), for O(1) density checks.
-fn build_literal_count_prefix(tokens: &[Token<'_>]) -> Vec<usize> {
-    let mut prefix = vec![0usize; tokens.len() + 1];
-    for (index, token) in tokens.iter().enumerate() {
-        prefix[index + 1] = prefix[index] + usize::from(token.literal_hash.is_some());
-    }
-    prefix
-}
-
-fn is_semantic_name_leaf(node: Node<'_>, code: &Source<'_>) -> bool {
-    let Some(parent) = node.parent_node() else {
-        return false;
-    };
-
-    // Java method references (`Foo::bar`) and Kotlin callable references (`::bar`) name their
-    // identifiers without grammar fields, and Kotlin spells type names as identifiers.
-    if matches!(
-        parent.kind_name(),
-        "method_reference" | "callable_reference" | "user_type"
-    ) {
-        return true;
-    }
-    // A Kotlin type parameter's name has no field (C# puts its own in `name`).
-    if parent.kind_name() == "type_parameter" && parent.child_by_field_name("name").is_none() {
-        return true;
-    }
-
-    // C# type positions (see CSHARP_TYPE_PARENT_TYPES, plus any parent's `type` field, e.g.
-    // `new Foo()`) and attribute names (`[Obsolete]`, an `attribute` inside an `attribute_list`, or
-    // `[assembly: Foo]` inside a `global_attribute`; C/C++ attributes hang off other parents and
-    // Python's `attribute` has no `name` field).
-    if node.kind_name() == "identifier" {
-        let occupies = |field: &str| {
-            parent
-                .child_by_field_name(field)
-                .is_some_and(|field_node| field_node.id() == node.id())
-        };
-        let is_csharp_attribute = parent.kind_name() == "attribute"
-            && parent.parent_node().is_some_and(|list| {
-                matches!(list.kind_name(), "attribute_list" | "global_attribute")
-            });
-        if CSHARP_TYPE_PARENT_TYPES.contains(&parent.kind_name())
-            || (occupies("type")
-                && !NON_CSHARP_TYPE_FIELD_PARENT_TYPES.contains(&parent.kind_name()))
-            || (is_csharp_attribute && occupies("name"))
-        {
-            return true;
-        }
-    }
-
-    // Kotlin (no callee or member fields): a callee (`foo(...)`, whose call ends in Kotlin's own
-    // argument nodes), a member name (`a.foo`), an infix function (`a shl b`), and a named
-    // argument (`foo(name = x)`) are API names.
-    if node.kind_name() == "identifier" {
-        let is_first_named = parent
-            .named_child(0)
-            .is_some_and(|first| first.id() == node.id());
-        let is_last_named = parent
-            .named_child(parent.named_child_count().saturating_sub(1) as u32)
-            .is_some_and(|last| last.id() == node.id());
-        if parent.kind_name() == "navigation_expression" && is_last_named && !is_first_named {
-            return true;
-        }
-        if parent.kind_name() == "call_expression"
-            && is_first_named
-            && parent
-                .named_child(parent.named_child_count().saturating_sub(1) as u32)
-                .is_some_and(|arguments| {
-                    matches!(
-                        arguments.kind_name(),
-                        "value_arguments" | "annotated_lambda"
-                    )
-                })
-        {
-            return true;
-        }
-        if parent.kind_name() == "infix_expression"
-            && parent
-                .named_child(1)
-                .is_some_and(|operator| operator.id() == node.id())
-        {
-            return true;
-        }
-        if parent.kind_name() == "value_argument"
-            && is_first_named
-            && node
-                .next_sibling()
-                .is_some_and(|next| !next.is_named() && next.kind_name() == "=")
-        {
-            return true;
-        }
-    }
-
-    // `call` names its callee `method` in Ruby but `function` in Python; accept both fields.
-    if parent.kind_name() == "call"
-        && parent
-            .child_by_field_name("function")
-            .is_some_and(|function| function.id() == node.id())
-    {
-        return true;
-    }
-
-    // A Ruby constant receiving a call (`Alpha.new(...)`) names the invoked API.
-    if node.kind_name() == "constant"
-        && parent.kind_name() == "call"
-        && parent
-            .child_by_field_name("receiver")
-            .is_some_and(|receiver| receiver.id() == node.id())
-    {
-        return true;
-    }
-
-    // Java/C# static receivers (`Alpha.run(...)`, `Console.WriteLine(...)`) name the invoked type;
-    // PascalCase is the discriminator because the tokenizer has no symbol table.
-    let is_static_receiver = match parent.kind_name() {
-        "method_invocation" => parent
-            .child_by_field_name("object")
-            .is_some_and(|object| object.id() == node.id()),
-        "member_access_expression" => parent
-            .child_by_field_name("expression")
-            .is_some_and(|receiver| receiver.id() == node.id()),
-        // Kotlin has no fields: the receiver is the first child of `navigation_expression`.
-        "navigation_expression" => parent
-            .named_child(0)
-            .is_some_and(|first| first.id() == node.id()),
-        _ => false,
-    };
-    if is_static_receiver && pascal_case_regex().is_match(node_text(node, code)) {
-        return true;
-    }
-
-    // Qualified/generic callees are semantic in call position only.
-    if (parent.kind_name() == "scoped_identifier" || parent.kind_name() == "qualified_identifier")
-        && (parent
-            .child_by_field_name("name")
-            .is_some_and(|name| name.id() == node.id())
-            || parent
-                .child_by_field_name("path")
-                .is_some_and(|path| path.id() == node.id()))
-    {
-        let mut outer = parent;
-        while let Some(outer_parent) = outer.parent_node() {
-            if matches!(
-                outer_parent.kind_name(),
-                "scoped_identifier"
-                    | "qualified_identifier"
-                    | "generic_function"
-                    | "template_function"
-            ) {
-                outer = outer_parent;
-            } else {
-                break;
-            }
-        }
-        if outer.parent_node().is_some_and(|call| {
-            call.kind_name() == "call_expression"
-                && call
-                    .child_by_field_name("function")
-                    .is_some_and(|function| function.id() == outer.id())
-        }) {
-            return true;
-        }
-    }
-
-    // Go struct-literal keys (`Config{Timeout: ...}`) have no `key` field in the grammar.
-    if parent.kind_name() == "literal_element"
-        && parent.parent_node().is_some_and(|grandparent| {
-            grandparent.kind_name() == "keyed_element"
-                && grandparent
-                    .named_child(0)
-                    .is_some_and(|first| first.id() == parent.id())
-        })
-    {
-        return true;
-    }
-
-    semantic_name_field_by_parent_type()
-        .get(parent.kind_name())
-        .is_some_and(|field| {
-            parent
-                .child_by_field_name(*field)
-                .is_some_and(|child| child.id() == node.id())
-        })
-}
-
 fn collect_block_candidates(
     tokens: &[Token<'_>],
     literal_count_prefix: &[usize],
@@ -1225,6 +237,11 @@ struct ContainerWindows {
     statement_hashes: Vec<i32>,
 }
 
+struct WindowCatalog {
+    container_windows: Vec<ContainerWindows>,
+    occurrences_by_key: FxHashMap<i64, WindowOccurrences>,
+}
+
 /// Enumerates runs of consecutive sibling statements; see collectSequenceWindowCandidates in
 /// duplication.ts for the maximality and sub-window rules replicated here.
 fn collect_sequence_candidates(
@@ -1233,165 +250,120 @@ fn collect_sequence_candidates(
     containers: &[Vec<TokenRange>],
     min_tokens: usize,
 ) -> Vec<DuplicateCandidate> {
+    let catalog = WindowCatalog::new(tokens, containers, min_tokens);
+    let maximal_windows = catalog.maximal_windows();
+    // Every emitted window exposes its repeating, unvisited sub-windows; lengths strictly
+    // decrease, so the worklist terminates.
+    let mut visited: FxHashSet<SequenceWindow> = maximal_windows.iter().copied().collect();
+    let mut frontier = maximal_windows;
     let mut candidates = Vec::new();
-    let mut occurrences_by_window_key: FxHashMap<i64, WindowOccurrences> = FxHashMap::default();
-    let container_windows: Vec<ContainerWindows> = containers
-        .iter()
-        .map(|statements| enumerate_container_windows(tokens, statements, min_tokens))
-        .collect();
-    for (container_index, windows) in container_windows.iter().enumerate() {
-        for (start, row) in windows.window_keys_by_start.iter().enumerate() {
-            for window_key in row.iter().flatten() {
-                match occurrences_by_window_key.get_mut(window_key) {
-                    Some(occurrences) => {
-                        occurrences.count += 1;
-                        if occurrences.container_index != container_index {
-                            occurrences.container_index = usize::MAX;
-                        }
-                        occurrences.min_start = occurrences.min_start.min(start);
-                        occurrences.max_start = occurrences.max_start.max(start);
-                    }
-                    None => {
-                        occurrences_by_window_key.insert(
-                            *window_key,
-                            WindowOccurrences {
-                                count: 1,
-                                container_index,
-                                min_start: start,
-                                max_start: start,
-                            },
-                        );
+    while !frontier.is_empty() {
+        let emitted = emit_frontier_windows(
+            &frontier,
+            containers,
+            tokens,
+            literal_count_prefix,
+            &mut candidates,
+        );
+        frontier = enqueue_subwindows(&emitted, &catalog, &mut visited);
+    }
+    candidates
+}
+
+impl WindowCatalog {
+    fn new(tokens: &[Token<'_>], containers: &[Vec<TokenRange>], min_tokens: usize) -> Self {
+        let container_windows: Vec<ContainerWindows> = containers
+            .iter()
+            .map(|statements| enumerate_container_windows(tokens, statements, min_tokens))
+            .collect();
+        let occurrences_by_key = count_window_occurrences(&container_windows);
+        Self {
+            container_windows,
+            occurrences_by_key,
+        }
+    }
+
+    fn maximal_windows(&self) -> Vec<SequenceWindow> {
+        let mut maximal = Vec::new();
+        for (container_index, windows) in self.container_windows.iter().enumerate() {
+            for (start, row) in windows.window_keys_by_start.iter().enumerate() {
+                for (length, &window_key) in row.iter().enumerate() {
+                    let window = SequenceWindow {
+                        container_index,
+                        start,
+                        length,
+                    };
+                    if self.is_maximal(window, window_key) {
+                        maximal.push(window);
                     }
                 }
             }
         }
+        maximal
     }
 
-    // A window only "repeats" when two of its occurrences can coexist without overlapping.
-    let repeats = |window_key: Option<i64>, length: usize| -> bool {
+    fn is_maximal(&self, window: SequenceWindow, window_key: Option<i64>) -> bool {
+        if !self.is_repeating_diverse(window, window_key) {
+            return false;
+        }
+        // Dominated windows are skipped: the one-statement extension also repeats.
+        let next_len = window.length + 1;
+        let extended_right =
+            self.window_key_at(window.container_index, Some(window.start), next_len);
+        let extended_left = self.window_key_at(
+            window.container_index,
+            window.start.checked_sub(1),
+            next_len,
+        );
+        !self.repeats(extended_right, next_len) && !self.repeats(extended_left, next_len)
+    }
+
+    fn is_repeating_diverse(&self, window: SequenceWindow, window_key: Option<i64>) -> bool {
+        self.repeats(window_key, window.length) && self.has_distinct_statements(window)
+    }
+
+    /// A window only "repeats" when two of its occurrences can coexist without overlapping.
+    fn repeats(&self, window_key: Option<i64>, length: usize) -> bool {
         let Some(window_key) = window_key else {
             return false;
         };
-        occurrences_by_window_key
+        self.occurrences_by_key
             .get(&window_key)
             .is_some_and(|occurrences| {
                 occurrences.count >= 2
                     && (occurrences.container_index == usize::MAX
                         || occurrences.max_start - occurrences.min_start >= length)
             })
-    };
+    }
 
-    // A window whose statements all share one normalized shape is a homogeneous preamble, not a
-    // copy-paste: two distinct per-statement shapes are required.
-    let has_distinct_statements = |window: SequenceWindow| -> bool {
-        let hashes = container_windows
+    /// A window whose statements all share one normalized shape is a homogeneous preamble, not a
+    /// copy-paste: two distinct per-statement shapes are required.
+    fn has_distinct_statements(&self, window: SequenceWindow) -> bool {
+        let hashes = self
+            .container_windows
             .get(window.container_index)
             .map(|windows| windows.statement_hashes.as_slice())
             .unwrap_or(&[]);
         let first_hash = hashes.get(window.start);
-        for index in window.start + 1..window.start + window.length {
-            if hashes.get(index) != first_hash {
-                return true;
-            }
-        }
-        false
-    };
-
-    let window_key_at =
-        |container_index: usize, start: Option<usize>, length: usize| -> Option<i64> {
-            let start = start?;
-            container_windows
-                .get(container_index)?
-                .window_keys_by_start
-                .get(start)?
-                .get(length)
-                .copied()
-                .flatten()
-        };
-
-    let mut maximal_windows: Vec<SequenceWindow> = Vec::new();
-    for (container_index, windows) in container_windows.iter().enumerate() {
-        for (start, row) in windows.window_keys_by_start.iter().enumerate() {
-            for (length, window_key) in row.iter().enumerate() {
-                if !repeats(*window_key, length)
-                    || !has_distinct_statements(SequenceWindow {
-                        container_index,
-                        start,
-                        length,
-                    })
-                {
-                    continue;
-                }
-                // Dominated windows are skipped: the one-statement extension also repeats.
-                let extended_right = window_key_at(container_index, Some(start), length + 1);
-                let extended_left =
-                    window_key_at(container_index, start.checked_sub(1), length + 1);
-                if repeats(extended_right, length + 1) || repeats(extended_left, length + 1) {
-                    continue;
-                }
-                maximal_windows.push(SequenceWindow {
-                    container_index,
-                    start,
-                    length,
-                });
-            }
-        }
+        (window.start + 1..window.start + window.length)
+            .any(|index| hashes.get(index) != first_hash)
     }
 
-    // Every emitted window exposes its repeating, unvisited sub-windows; lengths strictly
-    // decrease, so the worklist terminates.
-    let mut visited: FxHashSet<SequenceWindow> = maximal_windows.iter().copied().collect();
-    let mut frontier = maximal_windows;
-    while !frontier.is_empty() {
-        let mut emitted: Vec<SequenceWindow> = Vec::new();
-        for window in &frontier {
-            let statements = containers.get(window.container_index);
-            let first = statements.and_then(|statements| statements.get(window.start));
-            let last =
-                statements.and_then(|statements| statements.get(window.start + window.length - 1));
-            let (Some(first), Some(last)) = (first, last) else {
-                continue;
-            };
-            let fingerprint = format!(
-                "s:{}",
-                fingerprint_key(
-                    tokens,
-                    literal_count_prefix,
-                    first.start_token_index,
-                    last.end_token_index
-                )
-            );
-            candidates.push(to_candidate(
-                fingerprint,
-                first.start_token_index,
-                last.end_token_index,
-                first,
-                last,
-            ));
-            emitted.push(*window);
-        }
-        frontier = Vec::new();
-        for window in emitted {
-            for start in [window.start, window.start + 1] {
-                let sub_window = SequenceWindow {
-                    container_index: window.container_index,
-                    start,
-                    length: window.length - 1,
-                };
-                let sub_window_key =
-                    window_key_at(window.container_index, Some(start), sub_window.length);
-                if visited.contains(&sub_window)
-                    || !repeats(sub_window_key, sub_window.length)
-                    || !has_distinct_statements(sub_window)
-                {
-                    continue;
-                }
-                visited.insert(sub_window);
-                frontier.push(sub_window);
-            }
-        }
+    fn window_key_at(
+        &self,
+        container_index: usize,
+        start: Option<usize>,
+        length: usize,
+    ) -> Option<i64> {
+        let start = start?;
+        self.container_windows
+            .get(container_index)?
+            .window_keys_by_start
+            .get(start)?
+            .get(length)
+            .copied()
+            .flatten()
     }
-    candidates
 }
 
 fn enumerate_container_windows(
@@ -1417,8 +389,7 @@ fn enumerate_container_windows(
         let max_end = statements.len().min(start + MAX_SEQUENCE_STATEMENT_COUNT);
         for end in start..max_end {
             let statement = &statements[end];
-            let statement_hash = statement_hashes[end];
-            hash = combine_hashes(hash, statement_hash as i64);
+            hash = combine_hashes(hash, statement_hashes[end] as i64);
             token_count += statement.end_token_index - statement.start_token_index;
             let statement_count = end - start + 1;
             let key =
@@ -1438,6 +409,124 @@ fn enumerate_container_windows(
         window_keys_by_start,
         statement_hashes,
     }
+}
+
+fn count_window_occurrences(
+    container_windows: &[ContainerWindows],
+) -> FxHashMap<i64, WindowOccurrences> {
+    let mut occurrences_by_key: FxHashMap<i64, WindowOccurrences> = FxHashMap::default();
+    for (container_index, windows) in container_windows.iter().enumerate() {
+        for (start, row) in windows.window_keys_by_start.iter().enumerate() {
+            for &window_key in row.iter().flatten() {
+                record_window_occurrence(
+                    &mut occurrences_by_key,
+                    window_key,
+                    container_index,
+                    start,
+                );
+            }
+        }
+    }
+    occurrences_by_key
+}
+
+fn record_window_occurrence(
+    occurrences_by_key: &mut FxHashMap<i64, WindowOccurrences>,
+    window_key: i64,
+    container_index: usize,
+    start: usize,
+) {
+    let Some(occurrences) = occurrences_by_key.get_mut(&window_key) else {
+        occurrences_by_key.insert(
+            window_key,
+            WindowOccurrences {
+                count: 1,
+                container_index,
+                min_start: start,
+                max_start: start,
+            },
+        );
+        return;
+    };
+    occurrences.count += 1;
+    if occurrences.container_index != container_index {
+        occurrences.container_index = usize::MAX;
+    }
+    occurrences.min_start = occurrences.min_start.min(start);
+    occurrences.max_start = occurrences.max_start.max(start);
+}
+
+fn emit_frontier_windows(
+    frontier: &[SequenceWindow],
+    containers: &[Vec<TokenRange>],
+    tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
+    candidates: &mut Vec<DuplicateCandidate>,
+) -> Vec<SequenceWindow> {
+    let mut emitted = Vec::new();
+    for window in frontier {
+        let statements = containers.get(window.container_index);
+        let first = statements.and_then(|statements| statements.get(window.start));
+        let last =
+            statements.and_then(|statements| statements.get(window.start + window.length - 1));
+        if let (Some(first), Some(last)) = (first, last) {
+            candidates.push(sequence_candidate(
+                tokens,
+                literal_count_prefix,
+                first,
+                last,
+            ));
+            emitted.push(*window);
+        }
+    }
+    emitted
+}
+
+fn enqueue_subwindows(
+    emitted: &[SequenceWindow],
+    catalog: &WindowCatalog,
+    visited: &mut FxHashSet<SequenceWindow>,
+) -> Vec<SequenceWindow> {
+    let mut frontier = Vec::new();
+    for window in emitted {
+        for start in [window.start, window.start + 1] {
+            let sub_window = SequenceWindow {
+                container_index: window.container_index,
+                start,
+                length: window.length - 1,
+            };
+            let key = catalog.window_key_at(window.container_index, Some(start), sub_window.length);
+            if !visited.contains(&sub_window) && catalog.is_repeating_diverse(sub_window, key) {
+                visited.insert(sub_window);
+                frontier.push(sub_window);
+            }
+        }
+    }
+    frontier
+}
+
+fn sequence_candidate(
+    tokens: &[Token<'_>],
+    literal_count_prefix: &[usize],
+    first: &TokenRange,
+    last: &TokenRange,
+) -> DuplicateCandidate {
+    let fingerprint = format!(
+        "s:{}",
+        fingerprint_key(
+            tokens,
+            literal_count_prefix,
+            first.start_token_index,
+            last.end_token_index
+        )
+    );
+    to_candidate(
+        fingerprint,
+        first.start_token_index,
+        last.end_token_index,
+        first,
+        last,
+    )
 }
 
 fn to_candidate(
@@ -1482,6 +571,11 @@ fn fingerprint_key(
     )
 }
 
+/// See isLiteralDense in duplication.ts: >= 20% literal values marks a region as data-like.
+pub(crate) fn is_literal_dense(literal_count: usize, token_count: usize) -> bool {
+    literal_count * 5 >= token_count
+}
+
 /// A single 32-bit summary of a range for the coarse rolling-hash phase. Deliberately
 /// density-agnostic; see fingerprintHash in duplication.ts for the rationale.
 fn fingerprint_hash(tokens: &[Token<'_>], start_token_index: usize, end_token_index: usize) -> i32 {
@@ -1508,9 +602,7 @@ fn fingerprint_hash_pair(
         // in duplication.ts.
         let (part, part2) = if token.is_id {
             let next_index = index_by_identifier.len();
-            let identifier_index = *index_by_identifier
-                .entry(token.text.as_ref())
-                .or_insert(next_index);
+            let identifier_index = *index_by_identifier.entry(token.text).or_insert(next_index);
             if identifier_index == index_hashes.len() {
                 let name = format!("${identifier_index}");
                 index_hashes.push((hash_text(&name), hash_text2(&name)));
@@ -1533,24 +625,6 @@ fn fingerprint_hash_pair(
     (primary, secondary)
 }
 
-/// djb2-style hash over UTF-16 code units, matching hashText in duplication.ts exactly.
-pub fn hash_text(text: &str) -> i32 {
-    let mut hash: i32 = 5381;
-    for unit in text.encode_utf16() {
-        hash = hash.wrapping_mul(33) ^ (unit as i32);
-    }
-    hash
-}
-
-/// FNV-1a over UTF-16 code units, matching hashText2 in duplication.ts exactly.
-fn hash_text2(text: &str) -> i32 {
-    let mut hash: i32 = -2_128_831_035; // 2166136261 as int32 (the FNV-1a offset basis)
-    for unit in text.encode_utf16() {
-        hash = (hash ^ (unit as i32)).wrapping_mul(16_777_619);
-    }
-    hash
-}
-
 /// `Math.imul(hash, 31) + value`: the sum is NOT wrapped to int32 in JS, so it stays i64 here.
 fn combine_hashes(hash: i64, value: i64) -> i64 {
     (to_int32(hash).wrapping_mul(31)) as i64 + value
@@ -1561,6 +635,34 @@ fn combine_hashes(hash: i64, value: i64) -> i64 {
 fn select_maximal_duplicates(
     candidates: Vec<DuplicateCandidate>,
 ) -> IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> {
+    let mut duplicates = rank_duplicate_candidates(candidates);
+    // Greedy selection can keep a candidate whose group ends up below two survivors; the failed
+    // groups are removed and the selection reruns: the largest one at a time, then all at once.
+    let mut rerun = 0;
+    loop {
+        let (mut counted, blockers) = select_greedily(&duplicates);
+        // No failed fingerprint means every counted group kept at least two survivors.
+        let Some(largest_failed) = largest_failed_fingerprint(&counted, &blockers) else {
+            return counted;
+        };
+        if rerun >= 2 * MAX_SELECTION_RERUN_COUNT {
+            drop_failed_groups(&mut counted);
+            return counted;
+        }
+        if rerun < MAX_SELECTION_RERUN_COUNT {
+            duplicates.retain(|candidate| candidate.fingerprint != largest_failed);
+        } else {
+            duplicates.retain(|candidate| {
+                counted
+                    .get(&candidate.fingerprint)
+                    .is_none_or(|group| group.len() >= 2)
+            });
+        }
+        rerun += 1;
+    }
+}
+
+fn rank_duplicate_candidates(candidates: Vec<DuplicateCandidate>) -> Vec<DuplicateCandidate> {
     let mut by_fingerprint: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> = IndexMap::new();
     for candidate in candidates {
         by_fingerprint
@@ -1568,7 +670,6 @@ fn select_maximal_duplicates(
             .or_default()
             .push(candidate);
     }
-
     let groups: Vec<Vec<DuplicateCandidate>> = by_fingerprint
         .into_values()
         .map(dedupe_by_region)
@@ -1587,68 +688,64 @@ fn select_maximal_duplicates(
             )
         })
         .collect();
-    let coverage = |candidate: &DuplicateCandidate| -> usize {
-        candidate.token_count
-            * group_size_by_fingerprint
-                .get(&candidate.fingerprint)
-                .copied()
-                .unwrap_or(1)
-    };
     let mut duplicates: Vec<DuplicateCandidate> = groups.into_iter().flatten().collect();
-    duplicates.sort_by_key(|candidate| std::cmp::Reverse(coverage(candidate)));
-
-    // Greedy selection can keep a candidate whose group ends up below two survivors; the failed
-    // groups are removed and the selection reruns: the largest one at a time, then all at once.
-    let mut rerun = 0;
-    loop {
-        let (mut counted, blockers) = select_greedily(&duplicates);
-        let failed = |group: &[DuplicateCandidate]| group.len() < 2;
-        // A failed group that another failed group kept a copy from is not shed before it:
-        // shedding the blocking group can rescue it, while shedding it frees nothing the other
-        // waits for.
-        let blocked_by_failed = |fingerprint: &std::rc::Rc<str>| {
-            blockers.get(fingerprint).is_some_and(|blocking| {
-                blocking.iter().any(|other| {
-                    other != fingerprint && counted.get(other).is_some_and(|group| failed(group))
-                })
-            })
-        };
-        let largest_failed = counted
-            .iter()
-            .filter(|(_, group)| failed(group))
-            // The first of the largest, as in selectMaximalGroups.
-            .rev()
-            .max_by_key(|(fingerprint, group)| {
-                (
-                    !blocked_by_failed(fingerprint),
-                    group.first().map_or(0, |first| first.token_count),
-                )
-            })
-            .map(|(fingerprint, _)| fingerprint.clone());
-        // No failed fingerprint means every counted group kept at least two survivors.
-        let Some(largest_failed) = largest_failed else {
-            return counted;
-        };
-        if rerun >= 2 * MAX_SELECTION_RERUN_COUNT {
-            drop_failed_groups(&mut counted);
-            return counted;
-        }
-        if rerun < MAX_SELECTION_RERUN_COUNT {
-            duplicates.retain(|candidate| candidate.fingerprint != largest_failed);
-        } else {
-            duplicates.retain(|candidate| {
-                counted
-                    .get(&candidate.fingerprint)
-                    .is_none_or(|group| !failed(group))
-            });
-        }
-        rerun += 1;
-    }
+    duplicates.sort_by_key(|candidate| {
+        let copies = group_size_by_fingerprint
+            .get(&candidate.fingerprint)
+            .copied()
+            .unwrap_or(1);
+        std::cmp::Reverse(candidate.token_count * copies)
+    });
+    duplicates
 }
 
 /// Per fingerprint, the fingerprints of the kept regions that kept a candidate of it from being
 /// selected.
 type BlockersByFingerprint = FxHashMap<std::rc::Rc<str>, Vec<std::rc::Rc<str>>>;
+
+fn largest_failed_fingerprint(
+    counted: &IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
+    blockers: &BlockersByFingerprint,
+) -> Option<std::rc::Rc<str>> {
+    // A failed group that another failed group kept a copy from is not shed before it:
+    // shedding the blocking group can rescue it, while shedding it frees nothing the other
+    // waits for.
+    let blocked_by_failed = |fingerprint: &std::rc::Rc<str>| {
+        blockers.get(fingerprint).is_some_and(|blocking| {
+            blocking.iter().any(|other| {
+                other != fingerprint && counted.get(other).is_some_and(|group| group.len() < 2)
+            })
+        })
+    };
+    counted
+        .iter()
+        .filter(|(_, group)| group.len() < 2)
+        // The first of the largest, as in selectMaximalGroups.
+        .rev()
+        .max_by_key(|(fingerprint, group)| {
+            (
+                !blocked_by_failed(fingerprint),
+                group.first().map_or(0, |first| first.token_count),
+            )
+        })
+        .map(|(fingerprint, _)| fingerprint.clone())
+}
+
+#[derive(Default)]
+struct GreedySelection<'a> {
+    /// Mutually non-overlapping, each with the fingerprint of the candidate occupying it.
+    kept_regions: Vec<((usize, usize), std::rc::Rc<str>)>,
+    counted: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
+    nested: Vec<DuplicateCandidate>,
+    left_over: Vec<&'a DuplicateCandidate>,
+    blockers: BlockersByFingerprint,
+}
+
+enum RegionOverlap {
+    DisjointOrEnclosing(Vec<usize>),
+    Nested,
+    PartiallyBlocked(Option<std::rc::Rc<str>>),
+}
 
 /// One greedy selection in ranking order, in two passes. The first keeps each candidate that
 /// overlaps no kept region and lets a candidate a kept region contains join its group as a nested
@@ -1663,91 +760,115 @@ fn select_greedily(
     IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
     BlockersByFingerprint,
 ) {
-    let is_region = |candidate: &DuplicateCandidate, region: (usize, usize)| {
-        (candidate.start_index, candidate.end_index) == region
-    };
-    // Mutually non-overlapping, each with the fingerprint of the candidate occupying it.
-    let mut kept_regions: Vec<((usize, usize), std::rc::Rc<str>)> = Vec::new();
-    let mut counted: IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>> = IndexMap::new();
-    let mut nested: Vec<DuplicateCandidate> = Vec::new();
-    let mut left_over: Vec<&DuplicateCandidate> = Vec::new();
-    let mut blockers = BlockersByFingerprint::default();
+    let mut state = GreedySelection::default();
     for encloses in [false, true] {
         let candidates: Vec<&DuplicateCandidate> = if encloses {
-            std::mem::take(&mut left_over)
+            std::mem::take(&mut state.left_over)
         } else {
             duplicates.iter().collect()
         };
-        'candidates: for candidate in candidates {
-            let (start, end) = (candidate.start_index, candidate.end_index);
-            let mut enclosed: Vec<usize> = Vec::new();
-            for (index, ((region_start, region_end), blocker)) in kept_regions.iter().enumerate() {
-                let (region_start, region_end) = (*region_start, *region_end);
-                if region_start >= end || start >= region_end {
-                    continue;
-                }
-                if region_start <= start && end <= region_end {
-                    nested.push(DuplicateCandidate {
-                        nested_in_larger_group: true,
-                        ..candidate.clone()
-                    });
-                    continue 'candidates;
-                }
-                if encloses && start <= region_start && region_end <= end {
-                    enclosed.push(index);
-                } else {
-                    left_over.push(candidate);
-                    if encloses {
-                        blockers
-                            .entry(candidate.fingerprint.clone())
-                            .or_default()
-                            .push(blocker.clone());
-                    }
-                    continue 'candidates;
-                }
-            }
-            // Descending, so that removing one keeps the indexes of the others.
-            for &index in enclosed.iter().rev() {
-                let (region, fingerprint) = kept_regions.remove(index);
-                if let Some(inner) = counted
-                    .get_mut(&fingerprint)
-                    .and_then(|group| group.iter_mut().find(|inner| is_region(inner, region)))
-                {
-                    inner.nested_in_larger_group = true;
-                }
-            }
-            kept_regions.push(((start, end), candidate.fingerprint.clone()));
-            counted
-                .entry(candidate.fingerprint.clone())
-                .or_default()
-                .push(candidate.clone());
+        for candidate in candidates {
+            state.place(candidate, encloses);
         }
     }
-    // A candidate still left over overlapped a kept region partially when its turn came. Where
-    // an enclosing candidate took that region since, the candidate lies inside a kept region now
-    // and is a nested copy like one visited later.
-    for candidate in left_over {
-        let lies_in = |&((start, end), _): &((usize, usize), std::rc::Rc<str>)| {
-            start <= candidate.start_index && candidate.end_index <= end
-        };
-        if kept_regions.iter().any(lies_in) {
-            nested.push(DuplicateCandidate {
+    state.finish()
+}
+
+impl<'a> GreedySelection<'a> {
+    fn place(&mut self, candidate: &'a DuplicateCandidate, encloses: bool) {
+        let span = (candidate.start_index, candidate.end_index);
+        match self.classify_overlap(span, encloses) {
+            RegionOverlap::Nested => self.nested.push(DuplicateCandidate {
                 nested_in_larger_group: true,
                 ..candidate.clone()
+            }),
+            RegionOverlap::PartiallyBlocked(blocker) => {
+                self.left_over.push(candidate);
+                if let Some(blocker) = blocker {
+                    self.blockers
+                        .entry(candidate.fingerprint.clone())
+                        .or_default()
+                        .push(blocker);
+                }
+            }
+            RegionOverlap::DisjointOrEnclosing(enclosed) => {
+                self.demote_enclosed(&enclosed);
+                self.kept_regions
+                    .push((span, candidate.fingerprint.clone()));
+                self.counted
+                    .entry(candidate.fingerprint.clone())
+                    .or_default()
+                    .push(candidate.clone());
+            }
+        }
+    }
+
+    fn classify_overlap(&self, (start, end): (usize, usize), encloses: bool) -> RegionOverlap {
+        let mut enclosed = Vec::new();
+        for (index, &((region_start, region_end), ref blocker)) in
+            self.kept_regions.iter().enumerate()
+        {
+            if region_start >= end || start >= region_end {
+                continue;
+            }
+            if region_start <= start && end <= region_end {
+                return RegionOverlap::Nested;
+            }
+            if encloses && start <= region_start && region_end <= end {
+                enclosed.push(index);
+            } else {
+                return RegionOverlap::PartiallyBlocked(encloses.then(|| blocker.clone()));
+            }
+        }
+        RegionOverlap::DisjointOrEnclosing(enclosed)
+    }
+
+    fn demote_enclosed(&mut self, enclosed: &[usize]) {
+        // Descending, so that removing one keeps the indexes of the others.
+        for &index in enclosed.iter().rev() {
+            let (region, fingerprint) = self.kept_regions.remove(index);
+            if let Some(inner) = self.counted.get_mut(&fingerprint).and_then(|group| {
+                group
+                    .iter_mut()
+                    .find(|inner| (inner.start_index, inner.end_index) == region)
+            }) {
+                inner.nested_in_larger_group = true;
+            }
+        }
+    }
+
+    fn finish(
+        mut self,
+    ) -> (
+        IndexMap<std::rc::Rc<str>, Vec<DuplicateCandidate>>,
+        BlockersByFingerprint,
+    ) {
+        // A candidate still left over overlapped a kept region partially when its turn came. Where
+        // an enclosing candidate took that region since, the candidate lies inside a kept region now
+        // and is a nested copy like one visited later.
+        for candidate in self.left_over {
+            let enclosed_now = self.kept_regions.iter().any(|&((start, end), _)| {
+                start <= candidate.start_index && candidate.end_index <= end
             });
+            if enclosed_now {
+                self.nested.push(DuplicateCandidate {
+                    nested_in_larger_group: true,
+                    ..candidate.clone()
+                });
+            }
         }
-    }
-    for candidate in nested {
-        if let Some(group) = counted.get_mut(&candidate.fingerprint) {
-            group.push(candidate);
+        for candidate in self.nested {
+            if let Some(group) = self.counted.get_mut(&candidate.fingerprint) {
+                group.push(candidate);
+            }
         }
+        self.counted.retain(|_, group| {
+            group
+                .iter()
+                .any(|candidate| !candidate.nested_in_larger_group)
+        });
+        (self.counted, self.blockers)
     }
-    counted.retain(|_, group| {
-        group
-            .iter()
-            .any(|candidate| !candidate.nested_in_larger_group)
-    });
-    (counted, blockers)
 }
 
 /// Past the rerun caps: drops the groups below two copies without another selection pass, and
@@ -1802,33 +923,33 @@ fn dedupe_by_region(group: Vec<DuplicateCandidate>) -> Vec<DuplicateCandidate> {
 
 /// A contiguous run of matched tokens; gapped (merged) duplicates carry several per occurrence.
 #[derive(Clone)]
-struct CountedOccurrence {
-    segments: Vec<(usize, usize)>,
+pub(crate) struct CountedOccurrence {
+    pub segments: Vec<(usize, usize)>,
     /// Set on an occurrence whose span another group counts, so block counting must not count it
     /// again: a retained group's occurrence that a partial gapped merge also paired into a merged
     /// group, and a near-miss anchor, which overlaps the reported occurrence it was matched through.
-    shared_with_merged_group: bool,
+    pub shared_with_merged_group: bool,
     /// Set on a copy nested inside a larger group's region (it also sets
     /// `shared_with_merged_group`); see `nestedInLargerGroup` in duplication.ts.
-    nested_in_larger_group: bool,
+    pub nested_in_larger_group: bool,
     /// The token runs of a near-miss copy that its partners match, within its segments;
     /// `None` for an exact or gapped copy, whose segments are matched throughout.
-    matched_runs: Option<Vec<(usize, usize)>>,
+    pub matched_runs: Option<Vec<(usize, usize)>>,
     /// The exact fragments coalesced into a near-miss copy: each line they reach is duplicated,
     /// whatever else of the copy shares the line.
-    exact_runs: Vec<(usize, usize)>,
+    pub exact_runs: Vec<(usize, usize)>,
     /// Sum of segment token counts (the gap tokens are not matched content).
-    token_count: usize,
-    start_token_index: usize,
-    end_token_index: usize,
-    start_line: usize,
-    end_line: usize,
+    pub token_count: usize,
+    pub start_token_index: usize,
+    pub end_token_index: usize,
+    pub start_line: usize,
+    pub end_line: usize,
 }
 
 impl CountedOccurrence {
     /// Whether a matched segment overlaps the token range: the gap of a gapped clone is not
     /// matched content.
-    fn matches_within(&self, (start, end): (usize, usize)) -> bool {
+    pub fn matches_within(&self, (start, end): (usize, usize)) -> bool {
         self.segments
             .iter()
             .any(|&(segment_start, segment_end)| segment_start < end && start < segment_end)
@@ -1874,52 +995,65 @@ fn merge_adjacent_groups(
         return groups;
     }
     groups.sort_by_key(|group| group_sort_key(group));
-    let mut restart = true;
-    while restart {
-        restart = false;
-        let partners_by_group = collect_gap_adjacent_partners(&groups, max_gap_tokens);
-        'outer: for (left_index, partners) in partners_by_group.iter().enumerate() {
-            for &right_index in partners {
-                let forward =
-                    merge_groups(&groups[left_index], &groups[right_index], max_gap_tokens);
-                let swapped = forward.is_none();
-                let result = forward.or_else(|| {
-                    merge_groups(&groups[right_index], &groups[left_index], max_gap_tokens)
-                });
-                let Some(result) = result else {
-                    continue;
-                };
-                let (left, right) = if swapped {
-                    (result.second, result.first)
-                } else {
-                    (result.first, result.second)
-                };
-                // A group that stays keeps ALL its occurrences, so its paired occurrences now
-                // also live inside the merged group's occurrences: mark them so
-                // duplicate_block_count counts each token span once.
-                for (group_index, side) in [(left_index, &left), (right_index, &right)] {
-                    if !side.replaced {
-                        for &occurrence_index in &side.paired_indexes {
-                            groups[group_index][occurrence_index].shared_with_merged_group = true;
-                        }
-                    }
-                }
-                match (left.replaced, right.replaced) {
-                    (true, true) => {
-                        groups[left_index] = result.merged;
-                        groups.remove(right_index);
-                    }
-                    (false, true) => groups[right_index] = result.merged,
-                    (true, false) => groups[left_index] = result.merged,
-                    (false, false) => groups.push(result.merged),
-                }
-                groups.sort_by_key(|group| group_sort_key(group));
-                restart = true;
-                break 'outer;
+    while merge_one_adjacent_pair(&mut groups, max_gap_tokens) {
+        groups.sort_by_key(|group| group_sort_key(group));
+    }
+    groups
+}
+
+fn merge_one_adjacent_pair(
+    groups: &mut Vec<Vec<CountedOccurrence>>,
+    max_gap_tokens: usize,
+) -> bool {
+    let partners_by_group = collect_gap_adjacent_partners(groups, max_gap_tokens);
+    for (left_index, partners) in partners_by_group.iter().enumerate() {
+        for &right_index in partners {
+            if apply_group_merge(groups, left_index, right_index, max_gap_tokens) {
+                return true;
             }
         }
     }
-    groups
+    false
+}
+
+fn apply_group_merge(
+    groups: &mut Vec<Vec<CountedOccurrence>>,
+    left_index: usize,
+    right_index: usize,
+    max_gap_tokens: usize,
+) -> bool {
+    let forward = merge_groups(&groups[left_index], &groups[right_index], max_gap_tokens);
+    let swapped = forward.is_none();
+    let result =
+        forward.or_else(|| merge_groups(&groups[right_index], &groups[left_index], max_gap_tokens));
+    let Some(result) = result else {
+        return false;
+    };
+    let (left, right) = if swapped {
+        (result.second, result.first)
+    } else {
+        (result.first, result.second)
+    };
+    // A group that stays keeps ALL its occurrences, so its paired occurrences now also live
+    // inside the merged group's occurrences: mark them so duplicate_block_count counts each token
+    // span once.
+    for (group_index, side) in [(left_index, &left), (right_index, &right)] {
+        if !side.replaced {
+            for &occurrence_index in &side.paired_indexes {
+                groups[group_index][occurrence_index].shared_with_merged_group = true;
+            }
+        }
+    }
+    match (left.replaced, right.replaced) {
+        (true, true) => {
+            groups[left_index] = result.merged;
+            groups.remove(right_index);
+        }
+        (false, true) => groups[right_index] = result.merged,
+        (true, false) => groups[left_index] = result.merged,
+        (false, false) => groups.push(result.merged),
+    }
+    true
 }
 
 /// Per group index, the ascending indexes of later groups that merge_groups can pair with it;
@@ -1959,7 +1093,7 @@ fn collect_gap_adjacent_partners(
         .collect()
 }
 
-fn group_sort_key(group: &[CountedOccurrence]) -> (usize, usize) {
+pub(crate) fn group_sort_key(group: &[CountedOccurrence]) -> (usize, usize) {
     group
         .first()
         .map(|first| (first.start_token_index, first.end_token_index))
@@ -2076,756 +1210,54 @@ fn merge_groups(
     })
 }
 
-/// A verified near-miss pair of blocks; without `cores`, the blocks match as wholes.
-struct MatchEdge {
-    left: usize,
-    right: usize,
-    cores: Option<CorePair>,
-    /// The token runs the pair matches, on the left and on the right.
-    matched_runs: (TokenRuns, TokenRuns),
-}
-
-impl MatchEdge {
-    /// The (block, core) on each side.
-    fn sides(&self) -> [(usize, Option<(usize, usize)>); 2] {
-        let (left_core, right_core) = self.cores.unzip();
-        [(self.left, left_core), (self.right, right_core)]
-    }
-}
-
-/// Detects near-miss (Type-3) clone groups among block candidates the exact pipeline left
-/// unreported: NIL-style n-gram filtration, then pair verification (near_miss::Matcher), then
-/// transitive clustering of verified pairs (crossFileNearMiss.ts applies the same model across
-/// files). A block that matched only locally is reported as its matched cores (overlapping cores
-/// merged), each clustered with its own partners, so code no verified pair matched never counts
-/// as duplicated. A node overlapping a reported occurrence is an anchor: it joins its group at its
-/// own size, so the copies of a block are listed at the size they matched it, and is marked as
-/// counted elsewhere unless the group takes over the reported occurrences it overlaps. An anchor
-/// still counts the lines its partners match outside those occurrences.
-fn collect_near_miss_groups(
-    source: &TokenizedSource<'_>,
-    settings: &DuplicationSettings,
-    reported_groups: &mut [Vec<CountedOccurrence>],
-) -> Vec<Vec<CountedOccurrence>> {
-    if settings.min_similarity_percent >= 100 {
-        return Vec::new();
-    }
-    let tokens = &source.tokens;
-    let comparable = select_near_miss_blocks(source, settings.min_tokens);
-    if comparable.len() < 2 {
-        return Vec::new();
-    }
-
-    // Reported-group indices whose occurrences' matched segments overlap a token range (the gap
-    // of a gapped clone is not reported content): near-miss nodes covering such content anchor
-    // comparisons but are never re-reported.
-    let touched_groups_in = |start: usize, end: usize| -> Vec<usize> {
-        reported_groups
+fn summarize_duplicates(
+    groups: &[Vec<CountedOccurrence>],
+    code_line_numbers: &FxHashSet<usize>,
+    tokens: &[Token<'_>],
+) -> DuplicationMetrics {
+    let mut duplicate_block_count = 0;
+    let mut max_duplicate_block_size = 0;
+    let mut duplicate_block_groups: Vec<Vec<DuplicateBlockOccurrence>> = Vec::new();
+    let mut duplicated_lines: FxHashSet<usize> = FxHashSet::default();
+    for group in groups {
+        duplicate_block_count += count_redundant_fragments(group);
+        let mut occurrences: Vec<DuplicateBlockOccurrence> = group
             .iter()
-            .enumerate()
-            .filter(|(_, group)| {
-                group
-                    .iter()
-                    .any(|occurrence| occurrence.matches_within((start, end)))
-            })
-            .map(|(group_index, _)| group_index)
-            .collect()
-    };
-
-    let (symbols, is_content, token_keys) = to_symbol_stream(tokens);
-    let statements = top_level_statement_finder(&source.structure.container_statement_ranges);
-    let mut blocks: Vec<Block> = comparable
-        .iter()
-        .map(|range| {
-            Block::new(
-                &symbols,
-                &is_content,
-                &token_keys,
-                range.start_token_index,
-                range.end_token_index,
-                statements(range.start_token_index, range.end_token_index),
-            )
-        })
-        .collect();
-    let matcher = Matcher::new(
-        &mut blocks,
-        settings.min_tokens,
-        settings.min_similarity_percent,
-    );
-
-    // The lines of a near-miss copy that are duplicated are those a verified partner matches,
-    // which takes the pairing itself. Every pair kept is aligned: verifying it already cost a
-    // longest common subsequence of the same sequences, and any choice among a copy's partners
-    // would let their number or their order decide what the copy counts.
-    //
-    // A pair matching nothing outside listed content has nothing to add to it and is dropped
-    // before clustering, so that it neither collapses the blocks' core nodes nor widens a node
-    // beyond what the pairs clustering it matched. Any other pair is kept however much of it is
-    // reported: what the exact pipeline reports of a copy depends on where its copies stand, and
-    // the lines the copy counts must not.
-    let reported_prefix_of = |groups: &mut dyn Iterator<Item = &Vec<CountedOccurrence>>| {
-        let mut reported = vec![false; tokens.len()];
-        for occurrence in groups.flatten() {
-            for &(start, end) in &occurrence.segments {
-                reported[start..end].fill(true);
-            }
-        }
-        let mut prefix = vec![0usize; tokens.len() + 1];
-        for (index, &flag) in reported.iter().enumerate() {
-            prefix[index + 1] = prefix[index] + usize::from(flag);
-        }
-        prefix
-    };
-    let reported_prefix = reported_prefix_of(&mut reported_groups.iter());
-    let reported_count =
-        |(start, end): (usize, usize)| reported_prefix[end] - reported_prefix[start];
-    // Listed content is the reported content without the groups holding nested copies. Such a
-    // group lists a part of larger copies with a copy standing elsewhere, which makes no pair
-    // redundant: the blocks around its copies may be copies as wholes, which only their pair can
-    // list at that size, taking the group over.
-    let listed_prefix = reported_prefix_of(&mut reported_groups.iter().filter(|group| {
-        group
-            .iter()
-            .all(|occurrence| !occurrence.nested_in_larger_group)
-    }));
-    let unreported_count = |runs: &[(usize, usize)]| -> usize {
-        runs.iter()
-            .map(|&(start, end)| end - start - (listed_prefix[end] - listed_prefix[start]))
-            .sum()
-    };
-    let block_span = |index: usize| {
-        (
-            comparable[index].start_token_index,
-            comparable[index].end_token_index,
-        )
-    };
-    let mut edges: Vec<MatchEdge> = Vec::new();
-    let mut add_edge = |left: usize, right: usize, cores: Option<CorePair>, alignment| {
-        let (left_span, right_span) = cores.unwrap_or((block_span(left), block_span(right)));
-        // Fully listed spans need no alignment to be dropped.
-        if unreported_count(&[left_span, right_span]) == 0 {
-            return;
-        }
-        let matched_runs =
-            matcher.align(&blocks[left], &blocks[right], cores, alignment, &token_keys);
-        if unreported_count(&matched_runs.0) + unreported_count(&matched_runs.1) == 0 {
-            return;
-        }
-        edges.push(MatchEdge {
-            left,
-            right,
-            cores,
-            matched_runs,
-        });
-    };
-    for_each_candidate_pair(
-        &blocks,
-        settings.min_similarity_percent,
-        |left_index, right_index| match matcher.verify(&blocks[left_index], &blocks[right_index]) {
-            None => {}
-            Some(PairMatch::Whole(alignment)) => add_edge(left_index, right_index, None, alignment),
-            Some(PairMatch::Local(cores)) => {
-                for (core_pair, alignment) in cores {
-                    add_edge(left_index, right_index, Some(core_pair), alignment);
-                }
-            }
-        },
-    );
-
-    // Clustering runs over (block, core) nodes: a block with a recorded whole match is one
-    // node, and otherwise each union of its overlapping local cores is its own node, so disjoint
-    // cores matched with different partners fall into separate groups.
-    let mut matched_whole = vec![false; comparable.len()];
-    let mut local_cores: Vec<Vec<(usize, usize)>> = vec![Vec::new(); comparable.len()];
-    for edge in &edges {
-        for (index, core) in edge.sides() {
-            match core {
-                Some(core) => local_cores[index].push(core),
-                None => matched_whole[index] = true,
-            }
-        }
-    }
-    let mut node_blocks: Vec<usize> = Vec::new();
-    let mut node_spans: Vec<Option<(usize, usize)>> = Vec::new();
-    let mut first_node_by_block: Vec<usize> = Vec::with_capacity(comparable.len());
-    for index in 0..comparable.len() {
-        first_node_by_block.push(node_blocks.len());
-        let cores = if matched_whole[index] {
-            Vec::new()
-        } else {
-            merge_overlapping_cores(&local_cores[index])
-        };
-        if cores.is_empty() {
-            node_blocks.push(index);
-            node_spans.push(None);
-        }
-        for core in cores {
-            node_blocks.push(index);
-            node_spans.push(Some(core));
-        }
-    }
-    let node_of = |index: usize, core: Option<(usize, usize)>| {
-        let first = first_node_by_block[index];
-        match core {
-            Some(core) if !matched_whole[index] => (first..node_blocks.len())
-                .take_while(|&node| node_blocks[node] == index)
-                .find(|&node| {
-                    node_spans[node].is_some_and(|span| span.0 <= core.0 && core.1 <= span.1)
-                })
-                .expect("every local core lies in one of its block's merged cores"),
-            _ => first,
-        }
-    };
-
-    let mut parent: Vec<usize> = (0..node_blocks.len()).collect();
-    fn find(parent: &mut [usize], mut index: usize) -> usize {
-        let mut root = index;
-        while parent[root] != root {
-            root = parent[root];
-        }
-        while parent[index] != root {
-            let next = parent[index];
-            parent[index] = root;
-            index = next;
-        }
-        root
-    }
-    // Coverage is judged per node: a core is covered only when a reported occurrence overlaps
-    // the core itself, not merely elsewhere in its block.
-    let node_range = |node: usize| {
-        node_spans[node].unwrap_or((
-            comparable[node_blocks[node]].start_token_index,
-            comparable[node_blocks[node]].end_token_index,
-        ))
-    };
-    let touched_groups_by_node: Vec<Vec<usize>> = (0..node_blocks.len())
-        .map(|node| {
-            let (start, end) = node_range(node);
-            touched_groups_in(start, end)
-        })
-        .collect();
-    let edge_nodes: Vec<[usize; 2]> = edges
-        .iter()
-        .map(|edge| edge.sides().map(|(index, core)| node_of(index, core)))
-        .collect();
-    for &[left_node, right_node] in &edge_nodes {
-        let left_root = find(&mut parent, left_node);
-        let right_root = find(&mut parent, right_node);
-        parent[left_root.max(right_root)] = left_root.min(right_root);
-    }
-
-    let mut matched_runs_by_node: Vec<Vec<(usize, usize)>> = vec![Vec::new(); node_blocks.len()];
-    for (edge, nodes) in edges.iter().zip(&edge_nodes) {
-        matched_runs_by_node[nodes[0]].extend(&edge.matched_runs.0);
-        matched_runs_by_node[nodes[1]].extend(&edge.matched_runs.1);
-    }
-
-    let mut members_by_root: IndexMap<usize, Vec<usize>> = IndexMap::new();
-    for node in 0..node_blocks.len() {
-        let root = find(&mut parent, node);
-        members_by_root.entry(root).or_default().push(node);
-    }
-    // A group's nodes from one block become ONE occurrence whose segments are its cores, so the
-    // fragment-weighted count charges the block as one copy (as for gapped clones), not once per
-    // core.
-    let to_occurrences = |nodes: &[usize]| -> Vec<CountedOccurrence> {
-        let mut spans_by_block: IndexMap<usize, Vec<Option<(usize, usize)>>> = IndexMap::new();
-        for &node in nodes {
-            spans_by_block
-                .entry(node_blocks[node])
-                .or_default()
-                .push(node_spans[node]);
-        }
-        spans_by_block
-            .into_iter()
-            .map(|(block, spans)| {
-                let range = comparable[block];
-                let mut segments: Vec<(usize, usize)> = spans
-                    .iter()
-                    .map(|span| span.unwrap_or((range.start_token_index, range.end_token_index)))
-                    .collect();
-                segments.sort_unstable();
-                let whole = spans.iter().any(Option::is_none);
-                let (start, end) = (segments[0].0, segments[segments.len() - 1].1);
-                let matched_runs: Vec<(usize, usize)> = nodes
-                    .iter()
-                    .filter(|&&node| node_blocks[node] == block)
-                    .flat_map(|&node| matched_runs_by_node[node].iter().copied())
-                    .collect();
-                CountedOccurrence {
-                    shared_with_merged_group: false,
-                    nested_in_larger_group: false,
-                    matched_runs: Some(merge_overlapping_cores(&matched_runs)),
-                    exact_runs: Vec::new(),
-                    token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
-                    segments,
-                    start_token_index: start,
-                    end_token_index: end,
-                    start_line: if whole {
-                        range.start_line
-                    } else {
-                        tokens[start].start_row + 1
-                    },
-                    end_line: if whole {
-                        range.end_line
-                    } else {
-                        tokens[end - 1].end_row + 1
-                    },
+            .map(|occurrence| {
+                max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
+                let lines = collect_matched_lines(occurrence, code_line_numbers, tokens);
+                duplicated_lines.extend(&lines);
+                let mut line_numbers: Vec<usize> = lines.into_iter().collect();
+                line_numbers.sort_unstable();
+                DuplicateBlockOccurrence {
+                    start_line: occurrence.start_line,
+                    end_line: occurrence.end_line,
+                    line_numbers,
+                    token_count: occurrence.token_count,
                 }
             })
-            .collect()
-    };
-    let touched_groups_of = |node: usize| &touched_groups_by_node[node];
-    let to_anchor_occurrences = |nodes: &[usize]| -> Vec<CountedOccurrence> {
-        let mut anchors = to_occurrences(nodes);
-        for anchor in &mut anchors {
-            anchor.shared_with_merged_group = true;
-        }
-        anchors
-    };
-    let mut groups: Vec<Vec<CountedOccurrence>> = Vec::new();
-    for members in members_by_root.values() {
-        if members.len() < 2 {
-            continue;
-        }
-        let uncovered: Vec<usize> = members
-            .iter()
-            .copied()
-            .filter(|&index| touched_groups_of(index).is_empty())
             .collect();
-        let covered: Vec<usize> = members
-            .iter()
-            .copied()
-            .filter(|&index| !touched_groups_of(index).is_empty())
-            .collect();
-        if covered.is_empty() {
-            let occurrences = to_occurrences(members);
-            if occurrences.len() >= 2 {
-                groups.push(occurrences);
-            }
-            continue;
-        }
-        if members.iter().all(|&node| {
-            let (start, end) = node_range(node);
-            reported_count((start, end)) == end - start
-        }) {
-            continue;
-        }
-        // An anchored cluster extends a reported group only when it stands for the same copies:
-        // every occurrence of the group overlaps the member nodes of exactly one block (one
-        // disjoint from all members reports content the cluster does not share, and one reaching
-        // into two members would make one copy take over lines of the next), exceeds the span of
-        // those nodes by less than `min_tokens` (a copy is listed at the size it matched, not at
-        // that of a clone larger by a reportable part, which may run into code no member
-        // matched), and shares that block with no other occurrence of the group (those repeat
-        // within the copy, not between the copies).
-        let member_block_of = |occurrence: &CountedOccurrence| {
-            let mut blocks = members
-                .iter()
-                .filter(|&&index| occurrence.matches_within(node_range(index)))
-                .map(|&index| node_blocks[index]);
-            let block = blocks.next()?;
-            let mut spans = members
-                .iter()
-                .filter(|&&index| node_blocks[index] == block)
-                .map(|&index| node_range(index));
-            let first = spans.next()?;
-            let span = spans.fold(first, |span, node| (span.0.min(node.0), span.1.max(node.1)));
-            let excess = span.0.saturating_sub(occurrence.start_token_index)
-                + occurrence.end_token_index.saturating_sub(span.1);
-            (blocks.all(|other| other == block) && excess < settings.min_tokens).then_some(block)
-        };
-        let stands_for_members = |group: &[CountedOccurrence]| {
-            let mut blocks: FxHashSet<usize> = FxHashSet::default();
-            !group.is_empty()
-                && group.iter().all(|occurrence| {
-                    member_block_of(occurrence).is_some_and(|block| blocks.insert(block))
-                })
-        };
-        // Ascending by construction: BTreeSet iteration is sorted and filter preserves order.
-        let fully_clustered: Vec<usize> = covered
-            .iter()
-            .flat_map(|&index| touched_groups_of(index).iter().copied())
-            .collect::<std::collections::BTreeSet<usize>>()
-            .into_iter()
-            .filter(|&group_index| stands_for_members(&reported_groups[group_index]))
-            .collect();
-        if let Some((&target_index, source_indexes)) = fully_clustered.split_first() {
-            // Rebuild the component as ONE group with one coalesced occurrence per member block:
-            // the fragments the nodes of a block overlap are collected together, since a block's
-            // cores are parts of one copy.
-            let mut merged: Vec<CountedOccurrence> = Vec::new();
-            let mut unanchored_nodes: Vec<usize> = Vec::new();
-            let mut anchor_nodes: Vec<usize> = Vec::new();
-            let mut nodes_by_block: IndexMap<usize, Vec<usize>> = IndexMap::new();
-            for &member_index in members {
-                nodes_by_block
-                    .entry(node_blocks[member_index])
-                    .or_default()
-                    .push(member_index);
-            }
-            for block_nodes in nodes_by_block.values() {
-                let overlaps_block_node = |occurrence: &&CountedOccurrence| {
-                    block_nodes
-                        .iter()
-                        .any(|&node| occurrence.matches_within(node_range(node)))
-                };
-                let mut fragments: Vec<CountedOccurrence> = fully_clustered
-                    .iter()
-                    .flat_map(|&group_index| &reported_groups[group_index])
-                    .filter(overlaps_block_node)
-                    .cloned()
-                    .collect();
-                if fragments.is_empty() {
-                    let (anchors, plain): (Vec<usize>, Vec<usize>) = block_nodes
-                        .iter()
-                        .partition(|&&node| !touched_groups_of(node).is_empty());
-                    anchor_nodes.extend(anchors);
-                    unanchored_nodes.extend(plain);
-                    continue;
-                }
-                // The block's nodes are part of the same copy as its fragments: a block matched
-                // beyond the fragments it holds is a copy at that size.
-                fragments.extend(to_occurrences(block_nodes));
-                merged.push(coalesce_occurrences(fragments));
-            }
-            merged.extend(to_occurrences(&unanchored_nodes));
-            // The rebuild consumed every fully-clustered group, so shared-span marks from earlier
-            // partial merges no longer point at a separate merged group. A copy counts the
-            // fragments it took over itself, unless a group left in place still counts all of it:
-            // a larger clone whose matched segments enclose those of the copy, which its
-            // fragments were nested in.
-            for occurrence in &mut merged {
-                occurrence.shared_with_merged_group = reported_groups
-                    .iter()
-                    .enumerate()
-                    .filter(|(group_index, _)| !fully_clustered.contains(group_index))
-                    .flat_map(|(_, group)| group)
-                    .any(|counting| {
-                        !counting.shared_with_merged_group
-                            && occurrence.segments.iter().all(|segment| {
-                                counting
-                                    .segments
-                                    .iter()
-                                    .any(|matched| matched.0 <= segment.0 && segment.1 <= matched.1)
-                            })
-                    });
-            }
-            merged.extend(to_anchor_occurrences(&anchor_nodes));
-            merged.sort_by_key(|occurrence| {
-                (occurrence.start_token_index, occurrence.end_token_index)
-            });
-            reported_groups[target_index] = merged;
-            for &source_index in source_indexes {
-                reported_groups[source_index].clear();
-            }
+        occurrences.sort_by_key(|occurrence| occurrence.start_line);
+        duplicate_block_groups.push(occurrences);
+    }
+    duplicate_block_groups
+        .sort_by_key(|group| group.first().map(|first| first.start_line).unwrap_or(0));
+
+    let mut duplicate_line_numbers: Vec<usize> = duplicated_lines.iter().copied().collect();
+    duplicate_line_numbers.sort_unstable();
+
+    DuplicationMetrics {
+        duplicate_block_count,
+        duplicate_block_group_count: groups.len(),
+        duplicate_block_groups,
+        duplicate_line_count: duplicated_lines.len(),
+        duplicate_line_numbers,
+        duplication_ratio: if code_line_numbers.is_empty() {
+            0.0
         } else {
-            let mut occurrences = to_occurrences(&uncovered);
-            occurrences.extend(to_anchor_occurrences(&covered));
-            if occurrences.len() >= 2 {
-                occurrences.sort_by_key(|occurrence| {
-                    (occurrence.start_token_index, occurrence.end_token_index)
-                });
-                groups.push(occurrences);
-            }
-        }
-    }
-    groups.sort_by_key(|group| group_sort_key(group));
-    groups
-}
-
-/// The mutually disjoint blocks near-miss comparison considers: at least `min_tokens` long, not
-/// literal-dense (data tables are compared by value, not shape), and selected by
-/// select_comparable_blocks.
-fn select_near_miss_blocks<'s>(
-    source: &'s TokenizedSource<'_>,
-    min_tokens: usize,
-) -> Vec<&'s TokenRange> {
-    let literal_count_prefix = &source.literal_count_prefix;
-    let mut eligible: Vec<&TokenRange> = source
-        .structure
-        .block_ranges
-        .iter()
-        .chain(&source.structure.split_try_body_ranges)
-        .filter(|range| {
-            let token_count = range.end_token_index - range.start_token_index;
-            let literal_count = literal_count_prefix[range.end_token_index]
-                - literal_count_prefix[range.start_token_index];
-            token_count >= min_tokens && !is_literal_dense(literal_count, token_count)
-        })
-        .collect();
-    eligible.sort_by_key(|range| {
-        (
-            range.start_token_index,
-            std::cmp::Reverse(range.end_token_index),
-        )
-    });
-    select_comparable_blocks(&eligible)
-}
-
-/// Keeps the block ranges the near-miss phase compares: wrappers whose subtree branches into two
-/// or more disjoint eligible sub-blocks are descended through; linear chains keep their top.
-fn select_comparable_blocks<'a>(eligible: &[&'a TokenRange]) -> Vec<&'a TokenRange> {
-    struct ForestNode<'a> {
-        range: &'a TokenRange,
-        children: Vec<usize>,
-    }
-    // Index arena: nodes never move, so ancestor references on the stack stay valid.
-    let mut nodes: Vec<ForestNode<'a>> = Vec::new();
-    let mut roots: Vec<usize> = Vec::new();
-    let mut stack: Vec<usize> = Vec::new();
-    for &range in eligible {
-        while let Some(&top) = stack.last() {
-            if nodes[top].range.end_token_index <= range.start_token_index {
-                stack.pop();
-            } else {
-                break;
-            }
-        }
-        if let Some(&top) = stack.last() {
-            // Equal spans (two node types covering the same tokens) collapse into the first.
-            if nodes[top].range.start_token_index == range.start_token_index
-                && nodes[top].range.end_token_index == range.end_token_index
-            {
-                continue;
-            }
-        }
-        let id = nodes.len();
-        nodes.push(ForestNode {
-            range,
-            children: Vec::new(),
-        });
-        match stack.last() {
-            Some(&top) => nodes[top].children.push(id),
-            None => roots.push(id),
-        }
-        stack.push(id);
-    }
-
-    fn branches(nodes: &[ForestNode<'_>], id: usize) -> bool {
-        let children = &nodes[id].children;
-        children.len() >= 2 || (children.len() == 1 && branches(nodes, children[0]))
-    }
-    fn visit<'a>(nodes: &[ForestNode<'a>], id: usize, kept: &mut Vec<&'a TokenRange>) {
-        if branches(nodes, id) {
-            for &child in &nodes[id].children {
-                visit(nodes, child, kept);
-            }
-        } else {
-            kept.push(nodes[id].range);
-        }
-    }
-    let mut kept = Vec::new();
-    for &root in &roots {
-        visit(&nodes, root, &mut kept);
-    }
-    kept
-}
-
-/// One copy's fragments (an exact prefix and suffix split by a large edit) as one occurrence.
-fn coalesce_occurrences(occurrences: Vec<CountedOccurrence>) -> CountedOccurrence {
-    if occurrences.len() == 1 {
-        return occurrences.into_iter().next().expect("non-empty");
-    }
-    // A partial gapped merge retains the leftover group with ALL its occurrences, so a copy's
-    // fragments can arrive both standalone and embedded in a merged occurrence: union overlapping
-    // segments so no token span is reported or counted twice.
-    let mut sorted: Vec<(usize, usize)> = occurrences
-        .iter()
-        .flat_map(|occurrence| occurrence.segments.iter().copied())
-        .collect();
-    sorted.sort_by_key(|segment| *segment);
-    let mut segments: Vec<(usize, usize)> = Vec::with_capacity(sorted.len());
-    for segment in sorted {
-        match segments.last_mut() {
-            Some(last) if segment.0 < last.1 => last.1 = last.1.max(segment.1),
-            _ => segments.push(segment),
-        }
-    }
-    // An exact fragment is matched throughout, a near-miss part where its partners match it.
-    let matched_runs = occurrences
-        .iter()
-        .any(|occurrence| occurrence.matched_runs.is_some())
-        .then(|| {
-            let runs: Vec<(usize, usize)> = occurrences
-                .iter()
-                .flat_map(|occurrence| {
-                    occurrence
-                        .matched_runs
-                        .as_ref()
-                        .unwrap_or(&occurrence.segments)
-                        .iter()
-                        .copied()
-                })
-                .collect();
-            merge_overlapping_cores(&runs)
-        });
-    let exact_runs: Vec<(usize, usize)> = occurrences
-        .iter()
-        .flat_map(|occurrence| match occurrence.matched_runs {
-            Some(_) => &occurrence.exact_runs,
-            None => &occurrence.segments,
-        })
-        .copied()
-        .collect();
-    CountedOccurrence {
-        shared_with_merged_group: false,
-        nested_in_larger_group: false,
-        // Without a near-miss part, the segments are matched throughout and say it all.
-        exact_runs: if matched_runs.is_some() {
-            merge_overlapping_cores(&exact_runs)
-        } else {
-            Vec::new()
+            duplicated_lines.len() as f64 / code_line_numbers.len() as f64
         },
-        matched_runs,
-        token_count: segments.iter().map(|segment| segment.1 - segment.0).sum(),
-        start_token_index: occurrences
-            .iter()
-            .map(|o| o.start_token_index)
-            .min()
-            .unwrap_or(0),
-        end_token_index: occurrences
-            .iter()
-            .map(|o| o.end_token_index)
-            .max()
-            .unwrap_or(0),
-        start_line: occurrences.iter().map(|o| o.start_line).min().unwrap_or(0),
-        end_line: occurrences.iter().map(|o| o.end_line).max().unwrap_or(0),
-        segments,
-    }
-}
-
-/// The unions of overlapping cores, in position order.
-fn merge_overlapping_cores(cores: &[(usize, usize)]) -> Vec<(usize, usize)> {
-    let mut sorted = cores.to_vec();
-    sorted.sort_unstable();
-    let mut merged: Vec<(usize, usize)> = Vec::new();
-    for (start, end) in sorted {
-        match merged.last_mut() {
-            Some(last) if start < last.1 => last.1 = last.1.max(end),
-            _ => merged.push((start, end)),
-        }
-    }
-    merged
-}
-
-/// The file's tokens as a near-miss symbol stream: identifiers as -(file-level id + 1), every
-/// other token interned from its hash pairs (literal VALUES folded in, unlike the exact
-/// fingerprint's kind tags), plus which tokens are content-bearing (names and literal values).
-/// Interned per call so a file's symbol ids (and thus its n-gram hashes) never depend on which
-/// other files the process measured before it. A symbol id still depends on where in the file its
-/// token first occurs, so each non-identifier token also gets a key of its content alone.
-fn to_symbol_stream(tokens: &[Token<'_>]) -> (Vec<i32>, Vec<bool>, Vec<i64>) {
-    let mut symbol_by_token_hashes: FxHashMap<(i32, i32, i32, i32), i32> = FxHashMap::default();
-    let mut id_by_identifier: FxHashMap<&str, i32> = FxHashMap::default();
-    let mut symbols = Vec::with_capacity(tokens.len());
-    let mut is_content = Vec::with_capacity(tokens.len());
-    let mut token_keys = Vec::with_capacity(tokens.len());
-    for token in tokens {
-        if token.is_id {
-            let next_id = id_by_identifier.len() as i32;
-            let id = *id_by_identifier
-                .entry(token.text.as_ref())
-                .or_insert(next_id);
-            symbols.push(-(id + 1));
-            is_content.push(false);
-            token_keys.push(0);
-            continue;
-        }
-        let hashes = (
-            token.text_hash,
-            token.text_hash2,
-            token.literal_hash.unwrap_or(0),
-            token.literal_hash2.unwrap_or(0),
-        );
-        let next_symbol = symbol_by_token_hashes.len() as i32;
-        symbols.push(*symbol_by_token_hashes.entry(hashes).or_insert(next_symbol));
-        is_content.push(token.is_name || token.literal_hash.is_some());
-        token_keys.push(token_content_key(hashes));
-    }
-    (symbols, is_content, token_keys)
-}
-
-/// A 53-bit key of a token's two text hashes, each mixed with the matching literal value hash; the
-/// same key as `tokenKey` in crossFileNearMiss.ts, so that both detectors order content alike.
-fn token_content_key((text, text2, literal, literal2): (i32, i32, i32, i32)) -> i64 {
-    let primary = (text ^ literal.wrapping_mul(0x9E37_79B1_u32 as i32)) as u32;
-    let secondary = (text2 ^ literal2.wrapping_mul(0x85EB_CA6B_u32 as i32)) as u32;
-    i64::from(primary) * 0x20_0000 + i64::from(secondary >> 11)
-}
-
-/// Returns a lookup of the outermost container statements inside a token range, excluding a
-/// statement spanning the whole range (the block itself).
-fn top_level_statement_finder(
-    container_statement_ranges: &[Vec<TokenRange>],
-) -> impl Fn(usize, usize) -> Vec<(usize, usize)> {
-    let mut statements: Vec<(usize, usize)> = container_statement_ranges
-        .iter()
-        .flatten()
-        .map(|range| (range.start_token_index, range.end_token_index))
-        .filter(|(start, end)| start < end)
-        .collect();
-    statements.sort_by_key(|&(start, end)| (start, std::cmp::Reverse(end)));
-    move |start, end| {
-        let mut top_level: Vec<(usize, usize)> = Vec::new();
-        let first = statements.partition_point(|statement| statement.0 < start);
-        for &statement in statements[first..]
-            .iter()
-            .take_while(|statement| statement.0 < end)
-        {
-            let nested = top_level.last().is_some_and(|last| statement.0 < last.1);
-            if statement.1 <= end && statement != (start, end) && !nested {
-                top_level.push(statement);
-            }
-        }
-        top_level
-    }
-}
-
-/// Visits every block pair sharing at least FILTRATION_PERCENT of the smaller block's distinct
-/// n-grams, except pairs whose length ratio rules out both whole-block similarity and
-/// MAX_LENGTH_RATIO; the same scan as forEachCandidatePair in crossFileNearMiss.ts. Blocks are
-/// visited in ascending length, so each posting list is scanned backwards only while its blocks are
-/// long enough, and shared counts accumulate in a dense counter instead of a pair map.
-fn for_each_candidate_pair(
-    blocks: &[Block],
-    min_similarity_percent: usize,
-    mut visit: impl FnMut(usize, usize),
-) {
-    let mut order: Vec<usize> = (0..blocks.len()).collect();
-    order.sort_by_key(|&index| blocks[index].len());
-    let mut postings: FxHashMap<i32, Vec<usize>> = FxHashMap::default();
-    let mut shared_counts = vec![0usize; blocks.len()];
-    let mut touched: Vec<usize> = Vec::new();
-    for right in order {
-        let length = blocks[right].len();
-        let min_left_length = length
-            .div_ceil(MAX_LENGTH_RATIO)
-            .min((min_similarity_percent * length).div_ceil(100));
-        for &ngram in &blocks[right].ngrams {
-            let posting = postings.entry(ngram).or_default();
-            for &left in posting.iter().rev() {
-                if blocks[left].len() < min_left_length {
-                    break;
-                }
-                if shared_counts[left] == 0 {
-                    touched.push(left);
-                }
-                shared_counts[left] += 1;
-            }
-            posting.push(right);
-        }
-        // Ascending so the visit order does not depend on the n-gram set's iteration order.
-        touched.sort_unstable();
-        for &left in &touched {
-            let shared = std::mem::take(&mut shared_counts[left]);
-            if shared * 100
-                >= FILTRATION_PERCENT * blocks[left].ngrams.len().min(blocks[right].ngrams.len())
-            {
-                visit(left, right);
-            }
-        }
-        touched.clear();
+        max_duplicate_block_size,
     }
 }
 
@@ -2893,55 +1325,4 @@ fn collect_matched_lines(
         })
         .map(|(line, _)| line)
         .collect()
-}
-
-fn summarize_duplicates(
-    groups: &[Vec<CountedOccurrence>],
-    code_line_numbers: &FxHashSet<usize>,
-    tokens: &[Token<'_>],
-) -> DuplicationMetrics {
-    let mut duplicate_block_count = 0;
-    let mut max_duplicate_block_size = 0;
-    let mut duplicate_block_groups: Vec<Vec<DuplicateBlockOccurrence>> = Vec::new();
-    let mut duplicated_lines: FxHashSet<usize> = FxHashSet::default();
-    for group in groups {
-        duplicate_block_count += count_redundant_fragments(group);
-        let mut occurrences: Vec<DuplicateBlockOccurrence> = group
-            .iter()
-            .map(|occurrence| {
-                max_duplicate_block_size = max_duplicate_block_size.max(occurrence.token_count);
-                let lines = collect_matched_lines(occurrence, code_line_numbers, tokens);
-                duplicated_lines.extend(&lines);
-                let mut line_numbers: Vec<usize> = lines.into_iter().collect();
-                line_numbers.sort_unstable();
-                DuplicateBlockOccurrence {
-                    start_line: occurrence.start_line,
-                    end_line: occurrence.end_line,
-                    line_numbers,
-                    token_count: occurrence.token_count,
-                }
-            })
-            .collect();
-        occurrences.sort_by_key(|occurrence| occurrence.start_line);
-        duplicate_block_groups.push(occurrences);
-    }
-    duplicate_block_groups
-        .sort_by_key(|group| group.first().map(|first| first.start_line).unwrap_or(0));
-
-    let mut duplicate_line_numbers: Vec<usize> = duplicated_lines.iter().copied().collect();
-    duplicate_line_numbers.sort_unstable();
-
-    DuplicationMetrics {
-        duplicate_block_count,
-        duplicate_block_group_count: groups.len(),
-        duplicate_block_groups,
-        duplicate_line_count: duplicated_lines.len(),
-        duplicate_line_numbers,
-        duplication_ratio: if code_line_numbers.is_empty() {
-            0.0
-        } else {
-            duplicated_lines.len() as f64 / code_line_numbers.len() as f64
-        },
-        max_duplicate_block_size,
-    }
 }

@@ -13,6 +13,8 @@ mod measure;
 mod napi;
 mod ncss;
 mod near_miss;
+mod near_miss_groups;
+mod tokenize;
 mod tree_index;
 mod types;
 mod util;

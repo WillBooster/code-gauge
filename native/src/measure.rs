@@ -20,7 +20,6 @@ use crate::util::{
     all_children, is_js_whitespace, is_token, named_children, node_text, split_lines, Source,
 };
 
-// code-gauge-allow functionNcss -- assembles the file's metrics from every pass in one place
 pub fn measure(
     code: &str,
     language: &LanguageDefinition,
@@ -138,11 +137,7 @@ pub fn measure(
         }),
         halstead_counts,
         functions: function_metrics,
-        syntax_tree: if include_syntax_tree {
-            Some(root.to_sexp())
-        } else {
-            None
-        },
+        syntax_tree: include_syntax_tree.then(|| root.to_sexp()),
     })
 }
 
@@ -339,24 +334,35 @@ fn parse_source(
     source: &Source<'_>,
     language: &LanguageDefinition,
 ) -> Result<tree_sitter::Tree, String> {
+    const MAX_RETAINED_UTF16: usize = 4 * 1024 * 1024;
     thread_local! {
         static PARSER: std::cell::RefCell<(tree_sitter::Parser, Option<usize>)> =
             std::cell::RefCell::new((tree_sitter::Parser::new(), None));
+        static UTF16: std::cell::RefCell<Vec<u16>> = const { std::cell::RefCell::new(Vec::new()) };
     }
-    let utf16 = source.to_utf16();
-    PARSER.with_borrow_mut(|(parser, grammar_index)| {
-        if *grammar_index != Some(language.grammar_index()) {
-            *grammar_index = None;
-            parser
-                .set_language(&language.grammar())
-                .map_err(|error| error.to_string())?;
-            *grammar_index = Some(language.grammar_index());
+    UTF16.with_borrow_mut(|utf16| {
+        utf16.clear();
+        utf16.reserve(source.code.len());
+        utf16.extend(source.code.encode_utf16());
+        let result = PARSER.with_borrow_mut(|(parser, grammar_index)| {
+            if *grammar_index != Some(language.grammar_index()) {
+                *grammar_index = None;
+                parser
+                    .set_language(&language.grammar())
+                    .map_err(|error| error.to_string())?;
+                *grammar_index = Some(language.grammar_index());
+            }
+            let tree = parser.parse_utf16_le(&*utf16);
+            if tree.is_none() {
+                parser.reset();
+            }
+            tree.ok_or_else(|| "parse failed".to_string())
+        });
+        utf16.clear();
+        if utf16.capacity() > MAX_RETAINED_UTF16 {
+            *utf16 = Vec::new();
         }
-        let tree = parser.parse_utf16_le(utf16);
-        if tree.is_none() {
-            parser.reset();
-        }
-        tree.ok_or_else(|| "parse failed".to_string())
+        result
     })
 }
 
@@ -410,38 +416,40 @@ fn classify_lines(code: &Source<'_>, root: Node<'_>) -> (LineMetrics, FxHashSet<
 
 fn collect_comment_spans(root: Node<'_>) -> Vec<CommentSpan> {
     let mut spans = Vec::new();
+    collect_comment_spans_into(root, &mut spans);
+    spans
+}
 
-    fn visit(node: Node<'_>, spans: &mut Vec<CommentSpan>) {
-        if matches!(
-            node.kind_name(),
-            "comment" | "line_comment" | "block_comment"
-        ) {
-            for row in node.start_position().row..=node.end_position().row {
-                // Node columns are UTF-16 code units x 2 (the tree is parsed from UTF-16);
-                // halving matches the code-unit columns the line scan below counts.
-                spans.push(CommentSpan {
-                    line: row,
-                    start_column: if row == node.start_position().row {
-                        node.start_position().column / 2
-                    } else {
-                        0
-                    },
-                    end_column: if row == node.end_position().row {
-                        node.end_position().column / 2
-                    } else {
-                        usize::MAX
-                    },
-                });
-            }
-        }
-
-        for child in named_children(node) {
-            visit(child, spans);
+fn collect_comment_spans_into(node: Node<'_>, spans: &mut Vec<CommentSpan>) {
+    if matches!(
+        node.kind_name(),
+        "comment" | "line_comment" | "block_comment"
+    ) {
+        for row in node.start_position().row..=node.end_position().row {
+            spans.push(comment_span_for_row(node, row));
         }
     }
+    for child in named_children(node) {
+        collect_comment_spans_into(child, spans);
+    }
+}
 
-    visit(root, &mut spans);
-    spans
+fn comment_span_for_row(node: Node<'_>, row: usize) -> CommentSpan {
+    // Node columns are UTF-16 code units x 2 (the tree is parsed from UTF-16);
+    // halving matches the code-unit columns the line scan below counts.
+    CommentSpan {
+        line: row,
+        start_column: if row == node.start_position().row {
+            node.start_position().column / 2
+        } else {
+            0
+        },
+        end_column: if row == node.end_position().row {
+            node.end_position().column / 2
+        } else {
+            usize::MAX
+        },
+    }
 }
 
 fn is_comment_only_line(line: &str, relevant_spans: &[CommentSpan]) -> bool {

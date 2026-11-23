@@ -37,10 +37,6 @@ impl<'a> Source<'a> {
         }
     }
 
-    pub fn to_utf16(&self) -> Vec<u16> {
-        self.code.encode_utf16().collect()
-    }
-
     fn utf8_offset(&self, node_byte: usize) -> usize {
         match &self.utf8_offset_by_unit {
             None => node_byte / 2,
@@ -70,11 +66,7 @@ pub fn is_token(node: Node<'_>) -> bool {
 
 pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
     with_indexed_children(node, |children| {
-        children
-            .iter()
-            .map(|&(child, _)| child)
-            .filter(Node::is_named)
-            .collect()
+        children.iter().copied().filter(Node::is_named).collect()
     })
     .unwrap_or_else(|| {
         let mut cursor = node.walk();
@@ -83,30 +75,19 @@ pub fn named_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
 }
 
 pub fn all_children<'t>(node: Node<'t>) -> Vec<Node<'t>> {
-    with_indexed_children(node, |children| {
-        children.iter().map(|&(child, _)| child).collect()
-    })
-    .unwrap_or_else(|| {
+    with_indexed_children(node, <[_]>::to_vec).unwrap_or_else(|| {
         let mut cursor = node.walk();
         node.children(&mut cursor).collect()
     })
 }
 
-/// The children with their field names as a TreeCursor reports them.
-pub fn children_with_field_names<'t>(node: Node<'t>) -> Vec<(Node<'t>, Option<&'t str>)> {
-    with_indexed_children(node, <[_]>::to_vec).unwrap_or_else(|| {
-        let mut children = Vec::new();
-        let mut cursor = node.walk();
-        if cursor.goto_first_child() {
-            loop {
-                children.push((cursor.node(), cursor.field_name()));
-                if !cursor.goto_next_sibling() {
-                    break;
-                }
-            }
-        }
-        children
-    })
+/// Returns a cleared buffer to thread-local storage unless an outlier file grew it past `max_capacity`.
+pub fn recycle_vec<T>(used: &mut Vec<T>, retained: &mut Vec<T>, max_capacity: usize) {
+    let mut buffer = std::mem::take(used);
+    buffer.clear();
+    if buffer.capacity() <= max_capacity && buffer.capacity() > retained.capacity() {
+        *retained = buffer;
+    }
 }
 
 /// Children carrying the field, with node-tree-sitter's vendored-core semantics: extra children

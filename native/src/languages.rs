@@ -67,17 +67,36 @@ impl LanguageDefinition {
             [const { OnceLock::new() }; GRAMMAR_COUNT];
         KIND_NAMES[self.grammar_id as usize].get_or_init(|| {
             let grammar = self.grammar();
-            (0..grammar.node_kind_count())
-                .map(|id| {
-                    u16::try_from(id)
-                        .ok()
-                        .and_then(|id| grammar.node_kind_for_id(id))
-                        .unwrap_or_default()
-                        .to_string()
-                })
-                .collect()
+            resolve_grammar_names(grammar.node_kind_count(), |id| grammar.node_kind_for_id(id))
         })
     }
+
+    /// The grammar's field names, indexed by field id (0 is unused).
+    pub fn field_names(&self) -> &'static [String] {
+        static FIELD_NAMES: [OnceLock<Vec<String>>; GRAMMAR_COUNT] =
+            [const { OnceLock::new() }; GRAMMAR_COUNT];
+        FIELD_NAMES[self.grammar_id as usize].get_or_init(|| {
+            let grammar = self.grammar();
+            resolve_grammar_names(grammar.field_count() + 1, |id| {
+                grammar.field_name_for_id(id)
+            })
+        })
+    }
+}
+
+fn resolve_grammar_names<'a>(
+    count: usize,
+    mut lookup: impl FnMut(u16) -> Option<&'a str>,
+) -> Vec<String> {
+    (0..count)
+        .map(|id| {
+            u16::try_from(id)
+                .ok()
+                .and_then(&mut lookup)
+                .unwrap_or_default()
+                .to_string()
+        })
+        .collect()
 }
 
 const COMMON_FUNCTION_NODES: &[&str] = &[

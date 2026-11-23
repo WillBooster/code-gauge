@@ -1,5 +1,6 @@
 use std::cell::{Cell, RefCell};
 use std::marker::PhantomData;
+use std::num::NonZeroU16;
 use std::sync::OnceLock;
 
 use rustc_hash::FxHashMap;
@@ -7,9 +8,12 @@ use tree_sitter::{Node, Tree};
 
 use crate::languages::{LanguageDefinition, GRAMMAR_COUNT};
 
-/// A node of the indexed tree: its parent and where its children lie in CHILDREN.
+const NO_PARENT: u32 = u32::MAX;
+const MAX_RETAINED_NODES: usize = 1_048_576;
+
+/// A node of the indexed tree: its parent's slot in CHILD_NODES and where its children lie there.
 struct IndexedNode {
-    parent: Option<Node<'static>>,
+    parent: u32,
     first_child: u32,
     child_count: u32,
 }
@@ -19,10 +23,14 @@ thread_local! {
     /// to store the nodes; TreeIndex borrows the tree and clears the tables on drop, so no entry
     /// outlives it.
     static NODES: RefCell<FxHashMap<usize, IndexedNode>> = RefCell::new(FxHashMap::default());
-    /// The children of every indexed node with their field names, each node's children contiguous.
-    static CHILDREN: RefCell<Vec<(Node<'static>, Option<&'static str>)>> = const { RefCell::new(Vec::new()) };
+    /// The root at slot 0, then the children of every indexed node, each node's children contiguous.
+    static CHILD_NODES: RefCell<Vec<Node<'static>>> = const { RefCell::new(Vec::new()) };
+    /// Parallel to CHILD_NODES: each child's field id, or 0 when unnamed.
+    static CHILD_FIELDS: RefCell<Vec<u16>> = const { RefCell::new(Vec::new()) };
     /// Node kind names of the indexed tree's language, indexed by kind id.
     static KIND_NAMES: Cell<&'static [String]> = const { Cell::new(&[]) };
+    /// Field names of the indexed tree's language, indexed by field id.
+    static FIELD_NAMES: Cell<&'static [String]> = const { Cell::new(&[]) };
     /// Name of the indexed tree's language.
     static LANGUAGE_NAME: Cell<&'static str> = const { Cell::new("") };
     /// LanguageDefinition::grammar_index of the indexed tree's language.
@@ -51,12 +59,19 @@ impl<'t> TreeIndex<'t> {
         // Constructed first so that the depth error below also clears the partial index on drop.
         let index = TreeIndex { tree: PhantomData };
         KIND_NAMES.set(language.kind_names());
+        FIELD_NAMES.set(language.field_names());
         LANGUAGE_NAME.set(language.name);
         GRAMMAR_INDEX.set(Some(language.grammar_index()));
+        let node_count = tree.root_node().descendant_count();
         NODES.with_borrow_mut(|nodes| {
-            CHILDREN.with_borrow_mut(|children| {
-                assert!(nodes.is_empty(), "one tree is indexed per thread at a time");
-                index_tree(tree, nodes, children)
+            CHILD_NODES.with_borrow_mut(|child_nodes| {
+                CHILD_FIELDS.with_borrow_mut(|child_fields| {
+                    assert!(nodes.is_empty(), "one tree is indexed per thread at a time");
+                    nodes.reserve(node_count);
+                    child_nodes.reserve(node_count);
+                    child_fields.reserve(node_count);
+                    index_tree(tree, nodes, child_nodes, child_fields)
+                })
             })
         })?;
         Ok(index)
@@ -64,32 +79,34 @@ impl<'t> TreeIndex<'t> {
 }
 
 /// One cursor pass: each node's children are gathered on `pending` while its subtree is walked
-/// and moved to `children` in one piece when the walk leaves it.
+/// and moved to `child_nodes`/`child_fields` in one piece when the walk leaves it.
 fn index_tree(
     tree: &Tree,
     nodes: &mut FxHashMap<usize, IndexedNode>,
-    children: &mut Vec<(Node<'static>, Option<&'static str>)>,
+    child_nodes: &mut Vec<Node<'static>>,
+    child_fields: &mut Vec<u16>,
 ) -> Result<(), String> {
     let mut cursor = tree.walk();
+    child_nodes.push(erase_lifetime(cursor.node()));
+    child_fields.push(0);
     // The entered ancestors, each with the length `pending` had when its first child was reached.
-    let mut stack: Vec<(Node<'static>, usize)> = Vec::new();
-    let mut pending: Vec<(Node<'static>, Option<&'static str>)> = Vec::new();
+    let mut stack: Vec<(usize, usize)> = Vec::new();
+    let mut pending: Vec<(Node<'static>, u16)> = Vec::new();
     loop {
         let node = erase_lifetime(cursor.node());
-        let parent = stack.last().map(|&(parent, _)| parent);
         nodes.insert(
             node.id(),
             IndexedNode {
-                parent,
+                parent: NO_PARENT,
                 first_child: 0,
                 child_count: 0,
             },
         );
-        if parent.is_some() {
-            pending.push((node, erase_field_lifetime(cursor.field_name())));
+        if !stack.is_empty() {
+            pending.push((node, cursor.field_id().map_or(0, NonZeroU16::get)));
         }
         if cursor.goto_first_child() {
-            stack.push((node, pending.len()));
+            stack.push((node.id(), pending.len()));
             if stack.len() > MAX_TREE_DEPTH {
                 return Err(format!("tree depth exceeds {MAX_TREE_DEPTH}"));
             }
@@ -97,57 +114,131 @@ fn index_tree(
         }
         while !cursor.goto_next_sibling() {
             if !cursor.goto_parent() {
+                assign_parents(nodes, child_nodes);
                 return Ok(());
             }
-            let (closed, first_pending) = stack.pop().expect("a child's parent was entered");
-            let entry = nodes
-                .get_mut(&closed.id())
-                .expect("every entered node is indexed");
-            entry.first_child = children.len() as u32;
-            entry.child_count = (pending.len() - first_pending) as u32;
-            children.extend(pending.drain(first_pending..));
+            let (closed_id, first_pending) = stack.pop().expect("a child's parent was entered");
+            flush_pending_children(
+                nodes,
+                child_nodes,
+                child_fields,
+                &mut pending,
+                (closed_id, first_pending),
+            );
         }
     }
 }
 
+fn flush_pending_children(
+    nodes: &mut FxHashMap<usize, IndexedNode>,
+    child_nodes: &mut Vec<Node<'static>>,
+    child_fields: &mut Vec<u16>,
+    pending: &mut Vec<(Node<'static>, u16)>,
+    (closed_id, first_pending): (usize, usize),
+) {
+    let entry = nodes
+        .get_mut(&closed_id)
+        .expect("every entered node is indexed");
+    entry.first_child = child_nodes.len() as u32;
+    entry.child_count = (pending.len() - first_pending) as u32;
+    for (child, field_id) in pending.drain(first_pending..) {
+        child_nodes.push(child);
+        child_fields.push(field_id);
+    }
+}
+
+fn assign_parents(nodes: &mut FxHashMap<usize, IndexedNode>, child_nodes: &[Node<'static>]) {
+    for (parent_index, parent_node) in child_nodes.iter().enumerate() {
+        let entry = &nodes[&parent_node.id()];
+        let (first, count) = (entry.first_child as usize, entry.child_count as usize);
+        for child_node in &child_nodes[first..first + count] {
+            if let Some(child_entry) = nodes.get_mut(&child_node.id()) {
+                child_entry.parent = parent_index as u32;
+            }
+        }
+    }
+}
+
+fn erase_lifetime(node: Node<'_>) -> Node<'static> {
+    // SAFETY: Node only borrows its tree; the erased node is stored in CHILD_NODES, which the
+    // TreeIndex borrowing that tree empties before the tree can be dropped. Every lookup checks
+    // that the caller's Node<'t> belongs to the indexed tree — by matching its id in NODES or
+    // against the root at CHILD_NODES[0] — so any node handed back borrows that same tree.
+    unsafe { std::mem::transmute::<Node<'_>, Node<'static>>(node) }
+}
+
 impl Drop for TreeIndex<'_> {
     fn drop(&mut self) {
-        NODES.with_borrow_mut(|nodes| nodes.clear());
-        CHILDREN.with_borrow_mut(|children| children.clear());
+        NODES.with_borrow_mut(|nodes| {
+            nodes.clear();
+            if nodes.capacity() > MAX_RETAINED_NODES {
+                *nodes = FxHashMap::default();
+            }
+        });
+        CHILD_NODES.with_borrow_mut(|children| {
+            children.clear();
+            if children.capacity() > MAX_RETAINED_NODES {
+                *children = Vec::new();
+            }
+        });
+        CHILD_FIELDS.with_borrow_mut(|fields| {
+            fields.clear();
+            if fields.capacity() > MAX_RETAINED_NODES {
+                *fields = Vec::new();
+            }
+        });
         KIND_NAMES.set(&[]);
+        FIELD_NAMES.set(&[]);
         LANGUAGE_NAME.set("");
         GRAMMAR_INDEX.set(None);
     }
 }
 
-fn erase_lifetime(node: Node<'_>) -> Node<'static> {
-    // SAFETY: Node only borrows its tree; the erased node is stored in NODES and CHILDREN, which
-    // the TreeIndex borrowing that tree empties before the tree can be dropped. Lookups are keyed
-    // by node id, an address inside the indexed tree, so a node handed back for a node of the
-    // indexed tree belongs to the tree that node borrows.
-    unsafe { std::mem::transmute::<Node<'_>, Node<'static>>(node) }
-}
-
-fn erase_field_lifetime(field_name: Option<&str>) -> Option<&'static str> {
-    // SAFETY: as in erase_lifetime; field names borrow the tree's language as nodes borrow the tree.
-    unsafe { std::mem::transmute::<Option<&str>, Option<&'static str>>(field_name) }
-}
-
-/// Calls `visit` with the node's children and their field names (TreeCursor::field_name), or
-/// returns None when no installed index holds the node.
+/// Calls `visit` with the node's children, or returns None when no installed index holds the node.
 pub fn with_indexed_children<'t, R>(
     node: Node<'t>,
-    visit: impl FnOnce(&[(Node<'t>, Option<&'t str>)]) -> R,
+    visit: impl FnOnce(&[Node<'t>]) -> R,
 ) -> Option<R> {
     let (first_child, child_count) = NODES.with_borrow(|nodes| {
         nodes
             .get(&node.id())
             .map(|entry| (entry.first_child as usize, entry.child_count as usize))
     })?;
-    CHILDREN.with_borrow(|children| {
-        let children = &children[first_child..first_child + child_count];
-        Some(visit(children))
+    CHILD_NODES
+        .with_borrow(|children| Some(visit(&children[first_child..first_child + child_count])))
+}
+
+/// The contiguous slot range of `node`'s children in `CHILD_NODES`, when `node` is indexed.
+pub fn indexed_child_slots(node: Node<'_>) -> Option<std::ops::Range<u32>> {
+    NODES.with_borrow(|nodes| {
+        nodes
+            .get(&node.id())
+            .map(|entry| entry.first_child..entry.first_child + entry.child_count)
     })
+}
+
+/// The node and field name at `slot` of the indexed tree whose root is `root`.
+pub fn indexed_slot<'t>(root: Node<'t>, slot: u32) -> (Node<'t>, Option<&'t str>) {
+    let index = slot as usize;
+    let node = CHILD_NODES.with_borrow(|children| {
+        assert!(
+            children
+                .first()
+                .is_some_and(|first| first.id() == root.id()),
+            "indexed_slot requires the indexed tree root"
+        );
+        children[index]
+    });
+    let field_id = CHILD_FIELDS.with_borrow(|fields| fields[index]);
+    let field_name = (field_id != 0)
+        .then(|| {
+            FIELD_NAMES
+                .get()
+                .get(usize::from(field_id))
+                .map(String::as_str)
+        })
+        .flatten();
+    (node, field_name)
 }
 
 pub trait NodeExt<'t> {
@@ -166,7 +257,14 @@ impl<'t> NodeExt<'t> for Node<'t> {
             return self.parent();
         }
         NODES
-            .with_borrow(|nodes| nodes.get(&self.id()).map(|entry| entry.parent))
+            .with_borrow(|nodes| {
+                let entry = nodes.get(&self.id())?;
+                Some(if entry.parent == NO_PARENT {
+                    None
+                } else {
+                    CHILD_NODES.with_borrow(|children| Some(children[entry.parent as usize]))
+                })
+            })
             .unwrap_or_else(|| self.parent())
     }
 
