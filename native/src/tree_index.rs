@@ -161,9 +161,9 @@ fn assign_parents(nodes: &mut FxHashMap<usize, IndexedNode>, child_nodes: &[Node
 
 fn erase_lifetime(node: Node<'_>) -> Node<'static> {
     // SAFETY: Node only borrows its tree; the erased node is stored in CHILD_NODES, which the
-    // TreeIndex borrowing that tree empties before the tree can be dropped. Lookups are keyed by
-    // node id, an address inside the indexed tree, so a node handed back for a node of the indexed
-    // tree belongs to the tree that node borrows.
+    // TreeIndex borrowing that tree empties before the tree can be dropped. Every lookup checks
+    // that the caller's Node<'t> belongs to the indexed tree — by matching its id in NODES or
+    // against the root at CHILD_NODES[0] — so any node handed back borrows that same tree.
     unsafe { std::mem::transmute::<Node<'_>, Node<'static>>(node) }
 }
 
@@ -217,11 +217,18 @@ pub fn indexed_child_slots(node: Node<'_>) -> Option<std::ops::Range<u32>> {
     })
 }
 
-/// The node and field name at `slot` of the indexed tree `tree_node` belongs to.
-pub fn indexed_slot<'t>(tree_node: Node<'t>, slot: u32) -> (Node<'t>, Option<&'t str>) {
-    debug_assert!(NODES.with_borrow(|nodes| nodes.contains_key(&tree_node.id())));
+/// The node and field name at `slot` of the indexed tree whose root is `root`.
+pub fn indexed_slot<'t>(root: Node<'t>, slot: u32) -> (Node<'t>, Option<&'t str>) {
     let index = slot as usize;
-    let node = CHILD_NODES.with_borrow(|children| children[index]);
+    let node = CHILD_NODES.with_borrow(|children| {
+        assert!(
+            children
+                .first()
+                .is_some_and(|first| first.id() == root.id()),
+            "indexed_slot requires the indexed tree root"
+        );
+        children[index]
+    });
     let field_id = CHILD_FIELDS.with_borrow(|fields| fields[index]);
     let field_name = (field_id != 0)
         .then(|| {
