@@ -1,9 +1,10 @@
 use rustc_hash::{FxHashMap, FxHashSet};
+use std::cell::RefCell;
 use tree_sitter::Node;
 
 use crate::complexity::is_function_boundary;
-use crate::tree_index::{KindSet, NodeExt};
-use crate::util::{node_text, Source};
+use crate::tree_index::{indexed_child_slots, indexed_slot, KindSet, NodeExt};
+use crate::util::{node_text, recycle_vec, Source};
 
 /// Leaf node types treated as variable references by the def-use approximation.
 const VARIABLE_NODE_TYPES: &[&str] = &[
@@ -89,6 +90,8 @@ const DEFINITION_LIST_HOLDER_TYPES: &[&str] = &[
 /// Parameter-position fields that annotate or initialize rather than bind (`x: T`, `x = default`).
 const NON_BINDING_PARAMETER_FIELDS: &[&str] = &["type", "value"];
 
+const MAX_RETAINED_LEAVES: usize = 1_048_576;
+
 /// One leaf of the def-use walk: its field in the parent and its function scope.
 struct DepDegreeLeaf<'t> {
     node: Node<'t>,
@@ -97,9 +100,16 @@ struct DepDegreeLeaf<'t> {
     scope: usize,
 }
 
+#[derive(Clone, Copy)]
+struct IndexedLeaf {
+    slot: u32,
+    scope: u32,
+}
+
 /// The non-comment leaves of a subtree in walk order, with the function scopes they lie in.
 struct LeafWalk<'t> {
-    leaves: Vec<DepDegreeLeaf<'t>>,
+    root: Node<'t>,
+    leaves: Vec<IndexedLeaf>,
     /// The last scope nested in each scope, by preorder number; scope 0 is the walked subtree's
     /// own, and scope `outer` encloses scope `inner` exactly when
     /// `outer <= inner && inner <= last_nested_scopes[outer]`.
@@ -111,8 +121,7 @@ struct LeafWalk<'t> {
 /// What a variable leaf does in the def-use walk, which depends only on the leaf and the leaf
 /// after it.
 #[derive(Clone, Copy)]
-struct VariableUse<'a> {
-    name: &'a str,
+struct VariableRole {
     next_operator: Option<AssignmentOperator>,
     /// Whether the leaf is a definition even when no assignment operator follows it.
     is_binding: bool,
@@ -124,6 +133,16 @@ enum AssignmentOperator {
     Compound,
 }
 
+#[derive(Default)]
+struct DepDegreeBuffers {
+    leaves: Vec<IndexedLeaf>,
+    variable_roles: Vec<Option<Option<VariableRole>>>,
+}
+
+thread_local! {
+    static DEP_DEGREE_BUFFERS: RefCell<DepDegreeBuffers> = RefCell::new(DepDegreeBuffers::default());
+}
+
 /// Approximate def-use pairs of the subtree of each function in `functions`, by node id: one walk
 /// of the file gathers every function's leaves, since a function's leaves and the scopes they lie
 /// in are the same wherever the walk starts.
@@ -133,13 +152,18 @@ pub fn measure_dep_degrees(
     code: &Source<'_>,
     function_nodes: &KindSet,
 ) -> FxHashMap<usize, u64> {
+    if functions.is_empty() {
+        return FxHashMap::default();
+    }
     let walk = LeafWalk::new(
         root,
         function_nodes,
         &functions.iter().map(Node::id).collect(),
     );
-    let mut variable_uses = vec![None; walk.leaves.len()];
-    functions
+    let mut variable_roles =
+        DEP_DEGREE_BUFFERS.with_borrow_mut(|buffers| std::mem::take(&mut buffers.variable_roles));
+    variable_roles.resize(walk.leaves.len(), None);
+    let counts = functions
         .iter()
         .map(|&function_node| {
             let (leaf_range, body_scope) = walk
@@ -152,23 +176,120 @@ pub fn measure_dep_degrees(
                 *body_scope,
                 function_node,
                 code,
-                &mut variable_uses,
+                &mut variable_roles,
             );
             (function_node.id(), pairs)
         })
-        .collect()
+        .collect();
+    DEP_DEGREE_BUFFERS.with_borrow_mut(|buffers| {
+        recycle_vec(
+            &mut variable_roles,
+            &mut buffers.variable_roles,
+            MAX_RETAINED_LEAVES,
+        );
+    });
+    counts
+}
+
+impl<'t> LeafWalk<'t> {
+    /// Walks the subtree of `root`, recording the span of each function in `function_ids` it
+    /// enters.
+    fn new(
+        root: Node<'t>,
+        function_nodes: &KindSet,
+        function_ids: &FxHashSet<usize>,
+    ) -> LeafWalk<'t> {
+        assert!(
+            indexed_slot(root, 0).0.id() == root.id(),
+            "measure_dep_degrees walks from the indexed tree root"
+        );
+        let mut leaves =
+            DEP_DEGREE_BUFFERS.with_borrow_mut(|buffers| std::mem::take(&mut buffers.leaves));
+        leaves.reserve(root.descendant_count() / 2);
+        let mut walk = LeafWalk {
+            root,
+            leaves,
+            last_nested_scopes: vec![0],
+            function_spans: FxHashMap::default(),
+        };
+        walk.visit(0, 0, function_nodes, function_ids);
+        // The walked subtree's own scope encloses every scope opened inside it.
+        walk.last_nested_scopes[0] = walk.last_nested_scopes.len() - 1;
+        walk
+    }
+
+    fn visit(
+        &mut self,
+        slot: u32,
+        scope: u32,
+        function_nodes: &KindSet,
+        function_ids: &FxHashSet<usize>,
+    ) {
+        let (node, _) = indexed_slot(self.root, slot);
+        if matches!(
+            node.kind_name(),
+            "comment" | "line_comment" | "block_comment"
+        ) {
+            return;
+        }
+        if crate::util::is_token(node) {
+            self.leaves.push(IndexedLeaf { slot, scope });
+            return;
+        }
+        let opens_scope = is_function_boundary(node, function_nodes);
+        let child_scope = if opens_scope {
+            self.last_nested_scopes.push(0);
+            (self.last_nested_scopes.len() - 1) as u32
+        } else {
+            scope
+        };
+        let first_leaf = self.leaves.len();
+        let child_slots =
+            indexed_child_slots(node).expect("every node of the indexed tree is in NODES");
+        for child_slot in child_slots {
+            self.visit(child_slot, child_scope, function_nodes, function_ids);
+        }
+        if opens_scope {
+            self.last_nested_scopes[child_scope as usize] = self.last_nested_scopes.len() - 1;
+        }
+        // Every measured function is a function boundary.
+        if opens_scope && function_ids.contains(&node.id()) {
+            self.function_spans.insert(
+                node.id(),
+                (first_leaf..self.leaves.len(), child_scope as usize),
+            );
+        }
+    }
+
+    fn leaf(&self, index: usize) -> DepDegreeLeaf<'t> {
+        let entry = self.leaves[index];
+        let (node, field_name) = indexed_slot(self.root, entry.slot);
+        DepDegreeLeaf {
+            node,
+            field_name,
+            scope: entry.scope as usize,
+        }
+    }
+}
+
+impl Drop for LeafWalk<'_> {
+    fn drop(&mut self) {
+        DEP_DEGREE_BUFFERS.with_borrow_mut(|buffers| {
+            recycle_vec(&mut self.leaves, &mut buffers.leaves, MAX_RETAINED_LEAVES);
+        });
+    }
 }
 
 /// The def-use pairs among the leaves in `leaf_range` of the function whose own body is
-/// `body_scope`; `variable_uses` caches what each leaf of the walk does, as `Some(None)` for a
+/// `body_scope`; `variable_roles` caches what each leaf of the walk does, as `Some(None)` for a
 /// leaf that is no variable.
-fn count_pairs<'a>(
+fn count_pairs(
     walk: &LeafWalk<'_>,
     leaf_range: std::ops::Range<usize>,
     body_scope: usize,
     function_node: Node<'_>,
-    code: &Source<'a>,
-    variable_uses: &mut [Option<Option<VariableUse<'a>>>],
+    code: &Source<'_>,
+    variable_roles: &mut [Option<Option<VariableRole>>],
 ) -> u64 {
     let is_visible = |definition_scopes: Option<&Vec<usize>>, scope: usize| {
         definition_scopes.is_some_and(|scopes| {
@@ -184,15 +305,15 @@ fn count_pairs<'a>(
     let leaf_end = leaf_range.end;
     let mut pairs = 0u64;
     for index in leaf_range {
-        let leaf = &walk.leaves[index];
-        let Some(variable_use) =
-            *variable_uses[index].get_or_insert_with(|| variable_use(&walk.leaves, index, code))
+        let leaf = walk.leaf(index);
+        let Some(role) =
+            *variable_roles[index].get_or_insert_with(|| variable_role(walk, index, &leaf, code))
         else {
             continue;
         };
-        let name = variable_use.name;
+        let name = node_text(leaf.node, code);
         // The function's last leaf has no next leaf within the function.
-        let next_operator = variable_use.next_operator.filter(|_| index + 1 != leaf_end);
+        let next_operator = role.next_operator.filter(|_| index + 1 != leaf_end);
         if next_operator == Some(AssignmentOperator::Compound) {
             if is_visible(definition_scopes_by_name.get(name), leaf.scope) {
                 pairs += 1;
@@ -200,7 +321,7 @@ fn count_pairs<'a>(
             add_definition(&mut definition_scopes_by_name, name, leaf.scope);
             continue;
         }
-        if next_operator == Some(AssignmentOperator::Pure) || variable_use.is_binding {
+        if next_operator == Some(AssignmentOperator::Pure) || role.is_binding {
             add_definition(&mut definition_scopes_by_name, name, leaf.scope);
             continue;
         }
@@ -211,18 +332,18 @@ fn count_pairs<'a>(
     pairs
 }
 
-fn variable_use<'a>(
-    leaves: &[DepDegreeLeaf<'_>],
+fn variable_role(
+    walk: &LeafWalk<'_>,
     index: usize,
-    code: &Source<'a>,
-) -> Option<VariableUse<'a>> {
-    let leaf = &leaves[index];
+    leaf: &DepDegreeLeaf<'_>,
+    code: &Source<'_>,
+) -> Option<VariableRole> {
     if !is_variable_leaf(leaf) {
         return None;
     }
-    let next_text = leaves.get(index + 1).map(|next| node_text(next.node, code));
-    Some(VariableUse {
-        name: node_text(leaf.node, code),
+    let next_text =
+        (index + 1 < walk.leaves.len()).then(|| node_text(walk.leaf(index + 1).node, code));
+    Some(VariableRole {
         next_operator: next_text.and_then(|next| {
             if COMPOUND_ASSIGNMENT_OPERATORS.contains(&next) {
                 Some(AssignmentOperator::Compound)
@@ -301,75 +422,6 @@ fn implicit_accessor_definitions<'a>(function_node: Node<'_>, code: &Source<'a>)
         names.extend(declared.map(|name| node_text(name, code)));
     }
     names
-}
-
-impl<'t> LeafWalk<'t> {
-    /// Walks the subtree of `root`, recording the span of each function in `function_ids` it
-    /// enters.
-    fn new(
-        root: Node<'t>,
-        function_nodes: &KindSet,
-        function_ids: &FxHashSet<usize>,
-    ) -> LeafWalk<'t> {
-        let mut walk = LeafWalk {
-            leaves: Vec::new(),
-            last_nested_scopes: vec![0],
-            function_spans: FxHashMap::default(),
-        };
-        walk.visit(root, None, 0, function_nodes, function_ids);
-        // The walked subtree's own scope encloses every scope opened inside it.
-        walk.last_nested_scopes[0] = walk.last_nested_scopes.len() - 1;
-        walk
-    }
-
-    fn visit(
-        &mut self,
-        node: Node<'t>,
-        field_name: Option<&'t str>,
-        scope: usize,
-        function_nodes: &KindSet,
-        function_ids: &FxHashSet<usize>,
-    ) {
-        if matches!(
-            node.kind_name(),
-            "comment" | "line_comment" | "block_comment"
-        ) {
-            return;
-        }
-        if crate::util::is_token(node) {
-            self.leaves.push(DepDegreeLeaf {
-                node,
-                field_name,
-                scope,
-            });
-            return;
-        }
-        let opens_scope = is_function_boundary(node, function_nodes);
-        let child_scope = if opens_scope {
-            self.last_nested_scopes.push(0);
-            self.last_nested_scopes.len() - 1
-        } else {
-            scope
-        };
-        let first_leaf = self.leaves.len();
-        for (child, child_field_name) in crate::util::children_with_field_names(node) {
-            self.visit(
-                child,
-                child_field_name,
-                child_scope,
-                function_nodes,
-                function_ids,
-            );
-        }
-        if opens_scope {
-            self.last_nested_scopes[child_scope] = self.last_nested_scopes.len() - 1;
-        }
-        // Every measured function is a function boundary.
-        if opens_scope && function_ids.contains(&node.id()) {
-            self.function_spans
-                .insert(node.id(), (first_leaf..self.leaves.len(), child_scope));
-        }
-    }
 }
 
 fn add_definition<'a>(
