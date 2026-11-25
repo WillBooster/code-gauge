@@ -138,7 +138,7 @@ export const testShareThreshold: Threshold<TestShare> = {
   metric: 'testNcssPercent',
   label: 'test NCSS percent',
   defaultLimits: { warning: 30, error: Infinity },
-  hint: "review the tests the violation names (with --base, those the change adds) against the project's test rule and delete or merge those it does not justify; a share still above the limit after that needs no further change.",
+  hint: "review the tests the violation names (with --base, those the change adds) against the project's test rule and delete or merge those it does not justify.",
   measure: ({ testNcss, productionNcss }) => (testNcss * 100) / productionNcss,
 };
 

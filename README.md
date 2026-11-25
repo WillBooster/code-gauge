@@ -127,19 +127,16 @@ change touches a test: git lists a path as changed since the merge-base or untra
 check's files still include it under the target as a test by its name. A change that
 touches no test, or only deletes or moves tests out, is never blamed for a share it did not raise;
 one that does is told to keep a test it adds only when the project's test rule (the project's own
-criteria for when a test is worth having) justifies it, and to delete or merge the others; once every test the change adds is justified, the
-violation stays reported and needs no further change. Without
+criteria for when a test is worth having) justifies it, and to delete or merge the others. Without
 `--base`, a violation states how much test NCSS is above the strictest active limit and asks to review the tests
-against the project's test rule and delete or merge those it does not justify; a share still above
-the limit after that needs no further change.
+against the project's test rule and delete or merge those it does not justify.
 No directive allows it, and no override can change
 its limit: `"testNcssPercent": "off"` in the config's `rules`, or `--warn testNcssPercent=off
 --error testNcssPercent=off` on the command line, disables it at both levels.
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
-mark code to fix (except a test share whose tests the project's test rule justifies, as above), and
-only errors fail the check (exit code 1).
+mark code to fix, and only errors fail the check (exit code 1).
 
 The defaults, except that of `testNcssPercent`, come from the 45,123 functions the WillBooster organization wrote in its repositories
 (of 153,771 measured; copies of third-party projects and course material are left out), and from
