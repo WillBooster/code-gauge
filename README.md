@@ -128,7 +128,7 @@ check's files still include it under the target as a test by its name. A change 
 touches no test, or only deletes or moves tests out, is never blamed for a share it did not raise;
 one that does is told to keep a test it adds only when the project's test rule (the project's own
 criteria for when a test is worth having) justifies it, and to delete or merge the others; once every test the change adds is justified, the
-error stays reported and needs no further change. Without
+violation stays reported and needs no further change. Without
 `--base`, a violation names the test NCSS to delete or merge to bring the share within its limit.
 No directive allows it, and no override can change
 its limit: `"testNcssPercent": "off"` in the config's `rules`, or `--warn testNcssPercent=off
