@@ -129,7 +129,7 @@ touches no test, or only deletes or moves tests out, is never blamed for a share
 one that does is told to keep a test it adds only when the project's test rule (the project's own
 criteria for when a test is worth having) justifies it, and to delete or merge the others; once every test the change adds is justified, the
 violation stays reported and needs no further change. Without
-`--base`, a violation states how much test NCSS is above the limit and asks to review the tests
+`--base`, a violation states how much test NCSS is above the strictest active limit and asks to review the tests
 against the project's test rule and delete or merge those it does not justify; a share still above
 the limit after that needs no further change.
 No directive allows it, and no override can change
