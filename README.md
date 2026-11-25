@@ -147,8 +147,8 @@ thresholds that are off, nesting depth flags no function that cognitive complexi
 cyclomatic complexity and Halstead difficulty flag functions rated like unflagged ones; Halstead
 volume, Halstead effort, and DepDegree are high mostly where a function is long or takes many
 parameters, which the limits above already flag.
-The `testNcssPercent` default is a warning at the median test share, in NCSS, of 62 of the
-organization's repositories, and no error: no ratings back it, so it asks for a review of the tests
+The `testNcssPercent` default is a warning just below the median test share in NCSS (31.6%) of 62
+checkouts of the organization's repositories on one developer's machine, and no error: no ratings back it, so it asks for a review of the tests
 rather than marking code to fix.
 [How the default thresholds were calibrated](docs/threshold-calibration.md) holds the corpus, the
 distributions per language, the ratings, and the reasoning per threshold.

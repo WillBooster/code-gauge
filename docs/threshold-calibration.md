@@ -325,8 +325,8 @@ November 2026 from the 50 WillBooster repositories on a developer's machine whos
 exceeds 3,000 lines: their test code, counted in lines rather than NCSS, was 33% of their production
 code at the median.
 
-The share was then measured in NCSS on the 62 WillBooster repositories on one developer's machine
-whose production NCSS is at least 1,000 (the sample includes second clones and forks), with
+The share was then measured in NCSS on the 62 checkouts of WillBooster repositories on one
+developer's machine whose production NCSS is at least 1,000 (second clones and forks among them), with
 `check` of code-gauge 11.1.0 reporting every share as a warning:
 
 | Percentile | Test NCSS percent |
@@ -335,10 +335,10 @@ whose production NCSS is at least 1,000 (the sample includes second clones and f
 | 75th       |              60.8 |
 | 90th       |              76.2 |
 
-32 of the 62 (52%) are above 30%, and 17 (27%) above 60%. A limit of 30 thus sits at the median in
-NCSS too. No ratings tell whether a share above it holds tests worth deleting, so it is a warning,
+32 of the 62 (52%) are above 30%, and 17 (27%) above 60%. A limit of 30 thus sits just below the
+median in NCSS too. No ratings tell whether a share above it holds tests worth deleting, so it is a warning,
 which marks code worth simplifying when it is touched, and not an error, which would mark half of
-these repositories as code to fix: exceeding it asks for a review of the tests against the
+these checkouts as code to fix: exceeding it asks for a review of the tests against the
 project's test rule.
 
 ## Duplicated blocks measured in matched lines
