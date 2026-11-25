@@ -1257,13 +1257,8 @@ describe('code-gauge check: test share', () => {
 
   it('reports a project whose test code exceeds 30% of its production code, unless the config disables it', () => {
     writeSource('test/calc.test.ts', testCode(60));
-    const result = runCheck([]);
-    expect(result.status).toBe(1);
-    expect(result.stdout).toMatch(
-      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+; delete or merge \d+ test NCSS$/mu
-    );
     const [violation] = projectViolations([]);
-    expect(violation).toMatchObject({ kind: 'project', file: '.', level: 'error' });
+    expect(violation).toMatchObject({ kind: 'project', file: '.', level: 'warning' });
     expect((violation?.testNcss ?? 0) * 100).toBeGreaterThan((violation?.productionNcss ?? 0) * 30);
 
     writeConfig({ rules: { ...baseConfig.rules, testNcssPercent: 'off' } });
@@ -1272,7 +1267,7 @@ describe('code-gauge check: test share', () => {
 
   it.each([
     ['the default limit', [], 0],
-    ['a warning limit stricter than the error limit', ['--warn', 'testNcssPercent=10'], 0],
+    ['an error limit looser than the warning limit', ['--error', 'testNcssPercent=50'], 0],
     // 375 production NCSS at 18.4% admit 69 test NCSS, which multiplying and flooring puts at 68.
     ['a fractional limit', ['--error', 'testNcssPercent=18.4'], 326],
   ])('names the least test NCSS whose deletion clears the share under %s', (_, limits, extraProduction) => {
@@ -1380,11 +1375,7 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['--base', 'HEAD']), 'a change that only deletes tests').toEqual([]);
 
     writeSource('test/calc.test.ts', testCode(59));
-    const changed = runCheck(['--base', 'HEAD']);
-    expect(changed.stdout).toMatch(
-      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+; this change edits tests while test code exceeds 30% of production code: delete or merge tests so the change adds no test code$/mu
-    );
-    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', level: 'error' }]);
+    expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', level: 'warning' }]);
   });
 
   it('reports the share of a targeted directory with --base only for a test edited inside it', () => {
@@ -1474,7 +1465,7 @@ describe('code-gauge check: test share', () => {
     chmodSync(path.join(repoDir, 'private'), 0o000);
     try {
       const result = runCheck(['--json']);
-      expect(result.status, result.stderr).toBe(1);
+      expect(result.status, result.stderr).toBe(0);
       expect((JSON.parse(result.stdout) as ProjectReport).violations).toContainEqual(
         expect.objectContaining({ kind: 'project' })
       );
