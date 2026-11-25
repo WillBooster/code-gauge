@@ -130,14 +130,15 @@ export interface TestShare {
 }
 
 /**
- * Test code is kept in proportion to the production code it checks. The limit applies to the whole
- * checked project, so no override for file patterns can change it.
+ * Test code in proportion to the production code it checks; exceeding the limit calls for reviewing
+ * tests against the project's test rule. The limit applies to the whole checked project, so no
+ * override for file patterns can change it.
  */
 export const testShareThreshold: Threshold<TestShare> = {
   metric: 'testNcssPercent',
   label: 'test NCSS percent',
   defaultLimits: { warning: Infinity, error: 30 },
-  hint: 'delete or merge tests as the violation says, in the same change.',
+  hint: "keep a test only when the project's test rule justifies it, and delete or merge the others as the violation says, in the same change.",
   measure: ({ testNcss, productionNcss }) => (testNcss * 100) / productionNcss,
 };
 

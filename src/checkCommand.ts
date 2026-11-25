@@ -695,7 +695,7 @@ function describeViolation(violation: Violation, exceeded: string, checksChange:
   switch (violation.kind) {
     case 'project': {
       const remedy = checksChange
-        ? `this change edits tests while test code exceeds ${violation.exceeded[0]?.limit}% of production code: delete or merge tests so the change adds no test code`
+        ? `this change edits tests while test code exceeds ${violation.exceeded[0]?.limit}% of production code: keep a test it adds only when the project's test rule justifies it, and delete or merge the others`
         : `delete or merge ${violation.excessTestNcss} test NCSS`;
       return `${violation.file}: ${exceeded}, test NCSS ${violation.testNcss} of production NCSS ${violation.productionNcss}; ${remedy}`;
     }

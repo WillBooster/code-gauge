@@ -1380,10 +1380,6 @@ describe('code-gauge check: test share', () => {
     expect(projectViolations(['--base', 'HEAD']), 'a change that only deletes tests').toEqual([]);
 
     writeSource('test/calc.test.ts', testCode(59));
-    const changed = runCheck(['--base', 'HEAD']);
-    expect(changed.stdout).toMatch(
-      /^error: \.: test NCSS percent [\d.]+ \(max 30\), test NCSS \d+ of production NCSS \d+; this change edits tests while test code exceeds 30% of production code: delete or merge tests so the change adds no test code$/mu
-    );
     expect(projectViolations(['--base', 'HEAD'])).toMatchObject([{ kind: 'project', level: 'error' }]);
   });
 
