@@ -109,7 +109,7 @@ like the ranking command. The thresholds:
 | `functionDepDegree`            | a function's DepDegree is above it                                  | off    | off     |
 | `fileNcss`                     | a file's NCSS is above it                                           | 400    | 1000    |
 | `duplicateLines`               | a duplicated block holds at least this many lines matched in a copy | 15     | off     |
-| `testNcssPercent`              | the target's test NCSS, as a percentage of its other NCSS, is above | off    | 30      |
+| `testNcssPercent`              | the target's test NCSS, as a percentage of its other NCSS, is above | 30     | off     |
 
 `testNcssPercent` holds the test code of the checked directory in proportion to its production
 code: the NCSS of its test files against that of the other files the check measures. A file counts
@@ -129,14 +129,16 @@ touches no test, or only deletes or moves tests out, is never blamed for a share
 one that does is told to keep a test it adds only when the project's test rule (the project's own
 criteria for when a test is worth having) justifies it, and to delete or merge the others; once every test the change adds is justified, the
 violation stays reported and needs no further change. Without
-`--base`, a violation names the test NCSS to delete or merge to bring the share within its limit.
+`--base`, a violation states how much test NCSS is above the limit and asks to review the tests
+against the project's test rule and delete or merge those it does not justify; a share still above
+the limit after that needs no further change.
 No directive allows it, and no override can change
 its limit: `"testNcssPercent": "off"` in the config's `rules`, or `--warn testNcssPercent=off
 --error testNcssPercent=off` on the command line, disables it at both levels.
 
 Every threshold has a limit per level, and a value is reported at the most severe level whose limit
 it violates. The warning limits mark code worth simplifying when it is touched; the error limits
-mark code to fix (except a `--base` test share whose added tests are all justified, as above), and
+mark code to fix (except a test share whose tests the project's test rule justifies, as above), and
 only errors fail the check (exit code 1).
 
 The defaults, except that of `testNcssPercent`, come from the 45,123 functions the WillBooster organization wrote in its repositories
@@ -148,8 +150,9 @@ thresholds that are off, nesting depth flags no function that cognitive complexi
 cyclomatic complexity and Halstead difficulty flag functions rated like unflagged ones; Halstead
 volume, Halstead effort, and DepDegree are high mostly where a function is long or takes many
 parameters, which the limits above already flag.
-The `testNcssPercent` default sits just below the median test share, in lines, of 50 of the
-organization's repositories; no ratings back it.
+The `testNcssPercent` default is a warning at the median test share, in NCSS, of 62 of the
+organization's repositories, and no error: no ratings back it, so it asks for a review of the tests
+rather than marking code to fix.
 [How the default thresholds were calibrated](docs/threshold-calibration.md) holds the corpus, the
 distributions per language, the ratings, and the reasoning per threshold.
 
@@ -371,9 +374,8 @@ touches.
     kind `file`, the first and last line of the file; for kind `project`, only `file`, the checked
     directory relative to the repository root (`.` for the root);
   - `testNcss`, `productionNcss`, and `excessTestNcss`: only for kind `project`; the NCSS of the
-    test files and of the other files, and the test NCSS above the strictest active limit (what a
-    whole project deletes or merges to clear every level, which can exceed what clears the level
-    reported);
+    test files and of the other files, and the test NCSS above the strictest active limit (which
+    can exceed what is above the limit of the level reported);
   - `name`: only for kind `function`; a member's name follows the type, module, or object it
     belongs to (`Rules.decide`), and a function without a name is `<anonymous>`;
   - `exceeded`: every violated threshold with its `metric` (the rule's name in the config and on
@@ -423,7 +425,7 @@ with `--config`). The following config reproduces every built-in default:
     "functionDepDegree": "off",
     "fileNcss": { "warn": 400, "error": 1000 },
     "duplicateLines": { "warn": 15, "error": "off" },
-    "testNcssPercent": { "warn": "off", "error": 30 }
+    "testNcssPercent": { "warn": 30, "error": "off" }
   },
   "overrides": [],
   "exclude": [],

@@ -320,13 +320,26 @@ With these limits, `check` reports 464 errors and 2,430 warnings in the calibrat
 
 ## Test share
 
-`testNcssPercent` defaults to an error above 30, and to no warning. It was set in November 2026
-from the 50 WillBooster repositories on a developer's machine whose production code exceeds 3,000
-lines: their test code, counted in lines rather than NCSS, was 33% of their production code at the
-median. The limit sits just below that median. Its effect in NCSS was not measured on the corpus,
-which would tell how many projects it holds and whether halving the tests of the median project
-brings it under the limit: a line of test code can hold more or fewer statements than a line of
-production code.
+`testNcssPercent` defaults to a warning above 30, and to no error. The value was first set in
+November 2026 from the 50 WillBooster repositories on a developer's machine whose production code
+exceeds 3,000 lines: their test code, counted in lines rather than NCSS, was 33% of their production
+code at the median.
+
+The share was then measured in NCSS on the 62 WillBooster repositories on one developer's machine
+whose production NCSS is at least 1,000 (the sample includes second clones and forks), with
+`check` of code-gauge 11.1.0 reporting every share as a warning:
+
+| Percentile | Test NCSS percent |
+| ---------- | ----------------: |
+| 50th       |              31.6 |
+| 75th       |              60.8 |
+| 90th       |              76.2 |
+
+32 of the 62 (52%) are above 30%, and 17 (27%) above 60%. A limit of 30 thus sits at the median in
+NCSS too. No ratings tell whether a share above it holds tests worth deleting, so it is a warning,
+which marks code worth simplifying when it is touched, and not an error, which would mark half of
+these repositories as code to fix: exceeding it asks for a review of the tests against the
+project's test rule.
 
 ## Duplicated blocks measured in matched lines
 
